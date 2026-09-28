@@ -45,12 +45,11 @@ export async function handleMenu(id: string) {
       return say("Filter updated");
     }
     case "rules.bp-before":
-      return actions.quickexec("bpu *");
+      return import("./breakpoints").then((m) => m.setAuto("before"));
     case "rules.bp-after":
-      return actions.quickexec("bpafter *");
+      return import("./breakpoints").then((m) => m.setAuto("after"));
     case "rules.bp-off":
-      await actions.quickexec("bpu");
-      return actions.quickexec("bpafter");
+      return import("./breakpoints").then((m) => m.setAuto("off"));
     case "rules.customize":
       return set({ dialog: { kind: "rules" } });
     case "tools.options":

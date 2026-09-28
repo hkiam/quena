@@ -1252,3 +1252,82 @@ pre {
 .cmp-hist:hover {
   background: var(--active-line);
 }
+
+/* autoresponder */
+.ar {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 0;
+  height: 100%;
+  padding: 6px;
+  gap: 6px;
+}
+.ar.drop {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+.ar-top {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ar-list {
+  overflow: auto;
+  min-height: 0;
+  border: 1px solid var(--border);
+}
+.ar-table td {
+  word-break: break-all;
+}
+.ar-table tr.sel td {
+  background: var(--sel-inactive-bg);
+}
+.ar-table tr.disabled td {
+  color: var(--muted);
+}
+.combo {
+  display: flex;
+  gap: 4px;
+}
+.combo input {
+  flex: 1;
+}
+.ar-editor {
+  margin: 0;
+}
+
+/* tamper */
+.tamper-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--mark-red);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.tamper-title {
+  font-weight: 700;
+  color: var(--row-red);
+}
+.tamper {
+  display: grid;
+  grid-template-rows: auto minmax(90px, 40%) auto 1fr;
+  min-height: 0;
+  height: 100%;
+}
+.tamper-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+.tamper-head,
+.tamper-body {
+  min-height: 0;
+  display: grid;
+}

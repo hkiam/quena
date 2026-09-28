@@ -10,6 +10,7 @@ import { HexView } from "./HexView";
 import { AuthView, CachingView, CookiesView, ImageView, JsonView, RawView, TransformerView, WebFormsView, WebViewPane, XmlView } from "./views";
 import { actions } from "../actions";
 import { patchSettings } from "../settingsActions";
+import { TamperBar, TamperEditor, pausedPart, type TamperEdits } from "./Tamper";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
@@ -37,21 +38,25 @@ function useDetail(): Detail | null {
   const gridNonce = useStore((s) => s.gridNonce);
   const [detail, setDetail] = useState<Detail | null>(null);
   const req = useRef(0);
-  const last = useRef(0);
-  const live = detail != null && detail.summary.state !== "done" && detail.summary.state !== "aborted";
+  const live = detail != null && detail.summary.id === focusId && detail.summary.state !== "done" && detail.summary.state !== "aborted";
   useEffect(() => {
     if (focusId == null) {
       setDetail(null);
       return;
     }
-    const now = performance.now();
-    // Throttle refreshes of in-flight sessions to 4 Hz.
-    if (detail?.summary.id === focusId && live && now - last.current < 250) return;
-    last.current = now;
-    const my = ++req.current;
-    api.detail(focusId).then((d) => {
-      if (my === req.current) setDetail(d);
-    });
+    // Immediate load on selection change; trailing-edge debounce (≤ 5 Hz) while in flight,
+    // so the final state is never missed.
+    const fresh = detail?.summary.id !== focusId;
+    const t = window.setTimeout(
+      () => {
+        const my = ++req.current;
+        api.detail(focusId).then((d) => {
+          if (my === req.current) setDetail(d);
+        });
+      },
+      fresh ? 0 : 200,
+    );
+    return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, gridNonce, live ? listVersion : 0]);
   return focusId == null ? null : detail;
@@ -115,7 +120,7 @@ function TextPane({ detail, part, syntax }: { detail: Detail; part: Part; syntax
   );
 }
 
-function Pane({ detail, part }: { detail: Detail | null; part: Part }) {
+function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tamper?: { edits: TamperEdits; setEdits: (e: TamperEdits) => void } }) {
   const tab = useStore((s) => (part === "request" ? s.layout.requestTab : s.layout.responseTab));
   const decode = useStore((s) => s.settings?.decode ?? true);
   const tabs = part === "request" ? REQUEST_TABS : RESPONSE_TABS;
@@ -124,7 +129,9 @@ function Pane({ detail, part }: { detail: Detail | null; part: Part }) {
     actions.saveLayout();
   };
   let content: React.ReactNode = <div className="placeholder">Select a session to inspect it.</div>;
-  if (detail) {
+  if (detail && tamper) {
+    content = <TamperEditor detail={detail} part={part} edits={tamper.edits} setEdits={tamper.setEdits} />;
+  } else if (detail) {
     const info = part === "request" ? detail.requestBody : detail.responseBody;
     switch (tab) {
       case "headers":
@@ -202,16 +209,27 @@ export function Inspectors() {
   const detail = useDetail();
   const split = useStore((s) => s.layout.inspectorSplit);
   const stacked = useStore((s) => s.layout.stacked);
+  const paused = pausedPart(detail);
+  const [edits, setEdits] = useState<TamperEdits>({ head: null, body: null, file: null });
+  const pausedKey = detail && paused ? `${detail.summary.id}:${paused}` : "";
+  useEffect(() => setEdits({ head: null, body: null, file: null }), [pausedKey]);
+  const tamper = { edits, setEdits };
   return (
     <div className="inspectors">
-      {detail ? <SessionHeader detail={detail} /> : <div className="insp-summary muted">No session selected</div>}
+      {detail && paused ? (
+        <TamperBar detail={detail} part={paused} edits={edits} onDone={() => setEdits({ head: null, body: null, file: null })} />
+      ) : detail ? (
+        <SessionHeader detail={detail} />
+      ) : (
+        <div className="insp-summary muted">No session selected</div>
+      )}
       <div
         className={`insp-split ${stacked ? "stacked" : "side"}`}
         style={stacked ? { gridTemplateRows: `${split * 100}% 5px 1fr` } : { gridTemplateColumns: `${split * 100}% 5px 1fr` }}
       >
-        <Pane detail={detail} part="request" />
+        <Pane detail={detail} part="request" tamper={paused === "request" ? tamper : undefined} />
         <Splitter vertical={stacked} onDrag={(f) => set((s) => ({ layout: { ...s.layout, inspectorSplit: f } }))} />
-        <Pane detail={detail} part="response" />
+        <Pane detail={detail} part="response" tamper={paused === "response" ? tamper : undefined} />
       </div>
     </div>
   );

@@ -11,7 +11,7 @@ mod body;
 mod conn;
 mod connector;
 mod forward;
-mod hooks;
+pub mod hooks;
 mod landing;
 mod recorder;
 mod tunnel;

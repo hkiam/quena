@@ -10,6 +10,7 @@ pub mod engine;
 pub mod find;
 pub mod logbuf;
 pub mod mock;
+pub mod rules;
 pub mod settings;
 pub mod stats;
 
@@ -95,6 +96,7 @@ pub struct AppCore {
     sink: RwLock<Option<Arc<dyn EventSink>>>,
     engine: RwLock<Option<Arc<dyn CaptureEngine>>>,
     pub(crate) proxy_engine: RwLock<Option<Arc<engine::ProxyEngine>>>,
+    pub rules: Option<Arc<rules::Rules>>,
     filters: RwLock<FilterSettings>,
     quick_filter: RwLock<String>,
     pub(crate) mock: Mutex<Option<mock::MockHandle>>,
@@ -109,6 +111,7 @@ impl AppCore {
         std::fs::create_dir_all(&paths.captures).context("create data dir")?;
         let settings = Settings::load(&paths.settings);
         let capture = Self::new_temp_capture(&paths, &settings)?;
+        let rules = rules::Rules::new(&paths.data);
         let core = Arc::new(AppCore {
             paths,
             settings: RwLock::new(settings),
@@ -118,6 +121,7 @@ impl AppCore {
             sink: RwLock::new(None),
             engine: RwLock::new(None),
             proxy_engine: RwLock::new(None),
+            rules: Some(rules),
             filters: RwLock::new(FilterSettings::default()),
             quick_filter: RwLock::new(String::new()),
             mock: Mutex::new(None),
@@ -125,6 +129,9 @@ impl AppCore {
             finds: Mutex::new(Default::default()),
             started: Instant::now(),
         });
+        if let Some(r) = &core.rules {
+            r.attach(&core);
+        }
         Ok(core)
     }
 
@@ -430,9 +437,44 @@ impl AppCore {
                     Err(e) => QuickExecResult::error(e.to_string()),
                 }
             }
-            // Breakpoints and Go are handled by the capture engine (M8).
-            other => QuickExecResult { action: Some(format!("{other:?}")), engine_command: Some(input.to_string()), ..Default::default() },
+            Command::BreakRequest(t) | Command::BreakResponse(t) | Command::BreakStatus(t) | Command::BreakMethod(t)
+                if self.rules.is_none() =>
+            {
+                let _ = t;
+                QuickExecResult::error("breakpoints unavailable")
+            }
+            Command::BreakRequest(t) => self.set_bp(|b| b.request_url = target_text(&t), "bpu"),
+            Command::BreakResponse(t) => self.set_bp(|b| b.response_url = target_text(&t), "bpafter"),
+            Command::BreakStatus(t) => self.set_bp(
+                |b| {
+                    b.status = match t {
+                        quickexec::BreakTarget::Status(s) => Some(s),
+                        _ => None,
+                    }
+                },
+                "bps",
+            ),
+            Command::BreakMethod(t) => self.set_bp(
+                |b| {
+                    b.method = match t {
+                        quickexec::BreakTarget::Method(m) => Some(m),
+                        _ => None,
+                    }
+                },
+                "bpv",
+            ),
+            Command::Go => {
+                let n = self.rules.as_ref().map(|r| r.go_all()).unwrap_or(0);
+                QuickExecResult::msg(format!("Resumed {n} session(s)"))
+            }
         }
+    }
+
+    fn set_bp(&self, f: impl FnOnce(&mut rules::BreakpointState), name: &str) -> QuickExecResult {
+        let Some(r) = &self.rules else { return QuickExecResult::error("breakpoints unavailable") };
+        r.update_breakpoints(f);
+        let labels = r.breakpoints().labels();
+        QuickExecResult::msg(if labels.is_empty() { format!("{name}: breakpoints cleared") } else { format!("Breakpoints: {}", labels.join(", ")) })
     }
 
     // ------------------------------------------------------------------ jobs
@@ -513,5 +555,12 @@ impl AppCore {
     pub fn summaries(&self, ids: &[SessionId]) -> Vec<piper_model::SessionSummary> {
         let cap = self.capture();
         ids.iter().take(5000).filter_map(|id| cap.index.get(*id)).collect()
+    }
+}
+
+fn target_text(t: &quickexec::BreakTarget) -> Option<String> {
+    match t {
+        quickexec::BreakTarget::UrlContains(u) => Some(u.clone()),
+        _ => None,
     }
 }

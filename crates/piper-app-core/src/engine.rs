@@ -17,6 +17,7 @@ pub struct ProxyEngine {
     ca: RwLock<Option<Arc<CertAuthority>>>,
     data_dir: PathBuf,
     state: Mutex<State>,
+    rules: RwLock<Option<Arc<crate::rules::Rules>>>,
 }
 
 #[derive(Default)]
@@ -105,11 +106,15 @@ impl ProxyEngine {
         let detected = detect_upstream(s.proxy.port);
         let proxy = Proxy::new(core.capture(), proxy_config(&s, detected.0.clone()), ca.clone()).map_err(|e| anyhow!("{e}"))?;
         proxy.shared.recorder.set_lossless(s.lossless_recording);
+        if let Some(r) = &core.rules {
+            proxy.set_interceptor(r.clone());
+        }
         let e = Arc::new(ProxyEngine {
             proxy,
             ca: RwLock::new(ca),
             data_dir: data,
             state: Mutex::new(State { detected_upstream: detected.0, pac_url: detected.1, ..Default::default() }),
+            rules: RwLock::new(core.rules.clone()),
         });
         Ok(e)
     }
@@ -265,9 +270,9 @@ impl CaptureEngine for ProxyEngine {
             decrypting: cfg.decrypt && self.ca.read().is_some(),
             upstream: st.upstream.clone(),
             error: st.error.clone(),
-            breakpoints: vec![],
-            paused: 0,
-            autoresponder: false,
+            breakpoints: self.rules.read().as_ref().map(|r| r.breakpoints().labels()).unwrap_or_default(),
+            paused: self.rules.read().as_ref().map(|r| r.paused().len()).unwrap_or(0),
+            autoresponder: self.rules.read().as_ref().is_some_and(|r| r.autoresponder_active()),
         }
     }
 

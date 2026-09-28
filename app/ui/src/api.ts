@@ -361,6 +361,42 @@ export interface ComposeRequest {
   breakpoint?: boolean;
 }
 
+export interface ArRule {
+  id: number;
+  enabled: boolean;
+  match: string;
+  action: string;
+  latencyMs: number;
+  matchOnce: boolean;
+  comment: string;
+  hits: number;
+}
+
+export interface ArState {
+  enabled: boolean;
+  unmatchedPassthrough: boolean;
+  enableLatency: boolean;
+  rules: ArRule[];
+}
+
+export interface BpState {
+  allRequests: boolean;
+  allResponses: boolean;
+  requestUrl: string | null;
+  responseUrl: string | null;
+  status: number | null;
+  method: string | null;
+  timeoutS: number;
+}
+
+export interface Resume {
+  action: "continue" | "breakOnResponse" | "abort" | "respond";
+  headText?: string | null;
+  bodyText?: string | null;
+  bodyFile?: string | null;
+  status?: number | null;
+}
+
 export interface CaInfo {
   exists: boolean;
   trusted: boolean;
@@ -438,6 +474,16 @@ export const api = {
   exportArchive: (ids: SessionId[], path: string) => invoke<number>("export_archive", { ids, path }),
   importArchive: (path: string) => invoke<number>("import_archive", { path }),
   writeTextFile: (path: string, text: string) => invoke<void>("write_text_file", { path, text }),
+  arGet: () => invoke<ArState>("ar_get"),
+  arSet: (state: ArState) => invoke<void>("ar_set", { state }),
+  arAddSessions: (ids: SessionId[], exact: boolean) => invoke<number>("ar_add_sessions", { ids, exact }),
+  arImportFarx: (path: string) => invoke<ArState>("ar_import_farx", { path }),
+  arExportFarx: (path: string) => invoke<void>("ar_export_farx", { path }),
+  bpGet: () => invoke<BpState>("bp_get"),
+  bpSet: (state: BpState) => invoke<void>("bp_set", { state }),
+  bpPaused: () => invoke<{ id: SessionId; phase: string; url: string; since: number }[]>("bp_paused"),
+  bpResume: (id: SessionId, resume: Resume) => invoke<void>("bp_resume", { id, resume }),
+  bpGo: () => invoke<number>("bp_go"),
   deviceInfo: () => invoke<DeviceInfo>("device_info"),
   replay: (ids: SessionId[], options: { unconditional?: boolean; count?: number; breakpoint?: boolean; sequential?: boolean }) =>
     invoke<number>("replay", { ids, options }),

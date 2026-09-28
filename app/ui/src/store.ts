@@ -108,6 +108,8 @@ export interface AppState {
   gridNonce: number;
   /** Request to load a session into the Composer. */
   composerLoad: { id: SessionId; nonce: number } | null;
+  /** Bumped when AutoResponder rules change outside the panel. */
+  arNonce: number;
 }
 
 export const useStore = create<AppState>(() => ({
@@ -131,6 +133,7 @@ export const useStore = create<AppState>(() => ({
   dialog: null,
   gridNonce: 0,
   composerLoad: null,
+  arNonce: 0,
 }));
 
 export const set = useStore.setState;

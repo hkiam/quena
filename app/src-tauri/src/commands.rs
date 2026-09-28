@@ -351,6 +351,75 @@ async fn write_text_file(path: String, text: String) -> R<()> {
     blocking(move || std::fs::write(path, text).map_err(e)).await
 }
 
+use piper_app_core::rules::{AutoResponderState, BreakpointState, PausedInfo, Resume};
+
+fn rules(core: &Core) -> R<std::sync::Arc<piper_app_core::rules::Rules>> {
+    core.rules.clone().ok_or_else(|| "rules unavailable".to_string())
+}
+
+#[tauri::command]
+async fn ar_get(core: State<'_, Core>) -> R<AutoResponderState> {
+    Ok(rules(core.inner())?.autoresponder())
+}
+
+#[tauri::command]
+async fn ar_set(core: State<'_, Core>, state: AutoResponderState) -> R<()> {
+    rules(core.inner())?.set_autoresponder(state, true).map_err(e)
+}
+
+#[tauri::command]
+async fn ar_add_sessions(core: State<'_, Core>, ids: Vec<SessionId>, exact: bool) -> R<usize> {
+    let r = rules(core.inner())?;
+    blocking(move || r.add_rules_from_sessions(&ids, exact).map_err(e)).await
+}
+
+#[tauri::command]
+async fn ar_import_farx(core: State<'_, Core>, path: String) -> R<AutoResponderState> {
+    let r = rules(core.inner())?;
+    blocking(move || {
+        let xml = std::fs::read_to_string(&path).map_err(e)?;
+        let mut incoming = piper_app_core::rules::import_farx(&xml).map_err(e)?;
+        let mut cur = r.autoresponder();
+        cur.rules.append(&mut incoming.rules);
+        cur.enabled = cur.enabled || incoming.enabled;
+        r.set_autoresponder(cur, true).map_err(e)?;
+        Ok(r.autoresponder())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn ar_export_farx(core: State<'_, Core>, path: String) -> R<()> {
+    let r = rules(core.inner())?;
+    std::fs::write(path, piper_app_core::rules::export_farx(&r.autoresponder())).map_err(e)
+}
+
+#[tauri::command]
+async fn bp_get(core: State<'_, Core>) -> R<BreakpointState> {
+    Ok(rules(core.inner())?.breakpoints())
+}
+
+#[tauri::command]
+async fn bp_set(core: State<'_, Core>, state: BreakpointState) -> R<()> {
+    rules(core.inner())?.set_breakpoints(state);
+    Ok(())
+}
+
+#[tauri::command]
+async fn bp_paused(core: State<'_, Core>) -> R<Vec<PausedInfo>> {
+    Ok(rules(core.inner())?.paused())
+}
+
+#[tauri::command]
+async fn bp_resume(core: State<'_, Core>, id: SessionId, resume: Resume) -> R<()> {
+    rules(core.inner())?.resume(id, resume).map_err(e)
+}
+
+#[tauri::command]
+async fn bp_go(core: State<'_, Core>) -> R<usize> {
+    Ok(rules(core.inner())?.go_all())
+}
+
 mod piper_store_dto {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -414,5 +483,15 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         export_archive,
         import_archive,
         write_text_file,
+        ar_get,
+        ar_set,
+        ar_add_sessions,
+        ar_import_farx,
+        ar_export_farx,
+        bp_get,
+        bp_set,
+        bp_paused,
+        bp_resume,
+        bp_go,
     ]
 }

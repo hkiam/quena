@@ -28,6 +28,7 @@ time.workspace = true
 flate2.workspace = true
 regex.workspace = true
 tokio.workspace = true
+quick-xml = "0.38"
 
 [dev-dependencies]
 tempfile.workspace = true

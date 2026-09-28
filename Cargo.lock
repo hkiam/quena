@@ -2776,6 +2776,7 @@ dependencies = [
  "piper-query",
  "piper-store",
  "piper-tls",
+ "quick-xml 0.38.4",
  "rand",
  "regex",
  "serde",
