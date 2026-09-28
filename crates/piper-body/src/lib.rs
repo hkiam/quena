@@ -45,7 +45,20 @@ pub fn free_space(path: &std::path::Path) -> Option<u64> {
         }
         None
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        unsafe extern "system" {
+            fn GetDiskFreeSpaceExW(dir: *const u16, avail: *mut u64, total: *mut u64, free: *mut u64) -> i32;
+        }
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
+        if unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut avail, &mut total, &mut free) } != 0 {
+            return Some(avail);
+        }
+        None
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         None

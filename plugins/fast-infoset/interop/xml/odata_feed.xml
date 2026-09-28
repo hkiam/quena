@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xml:base="https://erp.example.com/odata/Orders.svc/" xmlns="http://www.w3.org/2005/Atom" xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices" xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata" xmlns:georss="http://www.georss.org/georss" xmlns:gml="http://www.opengis.net/gml">
+  <id>https://erp.example.com/odata/Orders.svc/Orders</id>
+  <title type="text">Orders</title>
+  <updated>2026-09-28T19:14:48Z</updated>
+  <link rel="self" title="Orders" href="Orders" />
+  <m:count>2</m:count>
+  <entry m:etag="W/&quot;datetime'2026-09-28T19%3A14%3A48'&quot;">
+    <id>https://erp.example.com/odata/Orders.svc/Orders(4711)</id>
+    <category term="Demo.ERP.Order" scheme="http://schemas.microsoft.com/ado/2007/08/dataservices/scheme" />
+    <link rel="edit" title="Order" href="Orders(4711)" />
+    <link rel="http://schemas.microsoft.com/ado/2007/08/dataservices/related/Customer" type="application/atom+xml;type=entry" title="Customer" href="Orders(4711)/Customer">
+      <m:inline>
+        <entry>
+          <id>https://erp.example.com/odata/Orders.svc/Customers('K-0815')</id>
+          <title type="text" />
+          <updated>2026-09-28T19:14:48Z</updated>
+          <author><name /></author>
+          <content type="application/xml"><m:properties><d:CustomerId>K-0815</d:CustomerId><d:Name>Müller &amp; Söhne GmbH</d:Name></m:properties></content>
+        </entry>
+      </m:inline>
+    </link>
+    <title type="text" />
+    <updated>2026-09-28T19:14:48Z</updated>
+    <author><name /></author>
+    <content type="application/xml">
+      <m:properties>
+        <d:OrderId m:type="Edm.Int32">4711</d:OrderId>
+        <d:Status>Shipped</d:Status>
+        <d:Total m:type="Edm.Decimal">99.95</d:Total>
+        <d:OrderDate m:type="Edm.DateTime">2026-09-28T19:14:48</d:OrderDate>
+        <d:Delivered m:type="Edm.Boolean">true</d:Delivered>
+        <d:Note m:null="true" />
+        <d:Guid m:type="Edm.Guid">4f0c7b1e-3c2a-4b8e-9d7f-1a2b3c4d5e6f</d:Guid>
+      </m:properties>
+    </content>
+  </entry>
+  <entry>
+    <id>https://erp.example.com/odata/Orders.svc/Orders(4712)</id>
+    <category term="Demo.ERP.Order" scheme="http://schemas.microsoft.com/ado/2007/08/dataservices/scheme" />
+    <link rel="edit" title="Order" href="Orders(4712)" />
+    <title type="text" />
+    <updated>2026-09-28T19:14:48Z</updated>
+    <author><name /></author>
+    <content type="application/xml">
+      <m:properties>
+        <d:OrderId m:type="Edm.Int32">4712</d:OrderId>
+        <d:Status>New</d:Status>
+        <d:Total m:type="Edm.Decimal">12.00</d:Total>
+        <d:OrderDate m:type="Edm.DateTime">2026-09-29T08:00:00</d:OrderDate>
+        <d:Delivered m:type="Edm.Boolean">false</d:Delivered>
+        <d:Note>Bitte „schnell“ liefern – danke!</d:Note>
+        <d:Guid m:type="Edm.Guid">00000000-0000-0000-0000-000000000000</d:Guid>
+      </m:properties>
+    </content>
+  </entry>
+  <link rel="next" href="Orders?$skiptoken=4712" />
+</feed>

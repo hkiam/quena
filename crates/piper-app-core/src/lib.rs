@@ -50,9 +50,27 @@ impl Paths {
     pub fn default_paths() -> Paths {
         let data = std::env::var_os("PIPER_DATA_DIR")
             .map(PathBuf::from)
+            .or_else(Self::portable_dir)
             .or_else(|| dirs::data_dir().map(|d| d.join("Piper")))
             .unwrap_or_else(|| PathBuf::from(".piper"));
         Paths::at(data)
+    }
+
+    /// Portable mode (PLAN.md §31): a `piper-data` folder (or `portable` marker file)
+    /// next to the executable keeps all data beside the app (USB stick, Windows portable zip).
+    fn portable_dir() -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let dir = exe.parent()?;
+        let data = dir.join("piper-data");
+        if data.is_dir() || dir.join("portable").exists() {
+            let _ = std::fs::create_dir_all(&data);
+            return Some(data);
+        }
+        None
+    }
+
+    pub fn is_portable(&self) -> bool {
+        Self::portable_dir().is_some_and(|d| d == self.data)
     }
     pub fn at(data: PathBuf) -> Paths {
         Paths { captures: data.join("captures"), settings: data.join("settings.json"), data }

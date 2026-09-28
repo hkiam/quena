@@ -12,6 +12,7 @@ import { actions } from "../actions";
 import { patchSettings } from "../settingsActions";
 import { TamperBar, TamperEditor, pausedPart, type TamperEdits } from "./Tamper";
 import { SoapView, soapCandidate } from "./Soap";
+import { AtomView, atomCandidate } from "./Atom";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
@@ -31,6 +32,7 @@ const TITLES: Record<string, string> = {
   webview: "WebView",
   caching: "Caching",
   soap: "SOAP",
+  atom: "Atom/OData",
 };
 
 /** Load the focused session's detail; refresh while it is in flight. */
@@ -148,7 +150,8 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   const info0 = detail ? (part === "request" ? detail.requestBody : detail.responseBody) : null;
   const pluginTabs = (info0?.plugins ?? []).map((p) => ({ key: `plugin:${p.variant}`, title: p.tab, p }));
   const soap = detail ? soapCandidate(detail, part) : false;
-  const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...(soap ? ["soap"] : []), ...pluginTabs.map((t) => t.key)];
+  const atom = detail ? atomCandidate(detail, part) : false;
+  const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...(soap ? ["soap"] : []), ...(atom ? ["atom"] : []), ...pluginTabs.map((t) => t.key)];
   const setTab = (t: string) => {
     set((s) => ({ layout: { ...s.layout, [part === "request" ? "requestTab" : "responseTab"]: t } }));
     actions.saveLayout();
@@ -200,6 +203,9 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         break;
       case "caching":
         content = <CachingView detail={detail} />;
+        break;
+      case "atom":
+        content = atom ? <AtomView detail={detail} part={part} /> : <div className="placeholder">Not an Atom/OData document.</div>;
         break;
       case "soap":
         content = soap ? <SoapView detail={detail} part={part} /> : <div className="placeholder">Not a SOAP message.</div>;

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?><edmx:Edmx xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx" Version="1.0">
+  <edmx:DataServices xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata" m:DataServiceVersion="2.0">
+    <Schema xmlns="http://schemas.microsoft.com/ado/2008/09/edm" Namespace="Demo.ERP">
+      <EntityType Name="Order"><Key><PropertyRef Name="OrderId"/></Key>
+        <Property Name="OrderId" Type="Edm.Int32" Nullable="false"/>
+        <Property Name="Status" Type="Edm.String" MaxLength="20"/>
+        <Property Name="Total" Type="Edm.Decimal" Precision="18" Scale="2"/>
+        <NavigationProperty Name="Customer" Relationship="Demo.ERP.Order_Customer" FromRole="Order" ToRole="Customer"/>
+      </EntityType>
+      <EntityContainer Name="ErpEntities" m:IsDefaultEntityContainer="true">
+        <EntitySet Name="Orders" EntityType="Demo.ERP.Order"/>
+      </EntityContainer>
+    </Schema>
+  </edmx:DataServices>
+</edmx:Edmx>

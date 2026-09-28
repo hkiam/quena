@@ -36,7 +36,9 @@
     "active": true,
     "targets": [
       "app",
-      "dmg"
+      "dmg",
+      "nsis",
+      "msi"
     ],
     "category": "DeveloperTool",
     "shortDescription": "HTTP(S) traffic workbench",
@@ -51,6 +53,43 @@
     ],
     "macOS": {
       "minimumSystemVersion": "12.0"
-    }
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      },
+      "wix": {
+        "language": [
+          "en-US",
+          "de-DE"
+        ]
+      }
+    },
+    "resources": {
+      "../../plugins/dist/fast-infoset": "plugins/fast-infoset"
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "saz"
+        ],
+        "name": "Fiddler Session Archive",
+        "description": "Session archive",
+        "role": "Editor"
+      },
+      {
+        "ext": [
+          "har"
+        ],
+        "name": "HTTP Archive",
+        "description": "HTTP Archive",
+        "role": "Editor"
+      }
+    ]
   }
 }

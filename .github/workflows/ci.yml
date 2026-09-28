@@ -1,0 +1,47 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: UI dependencies
+        run: npm ci --prefix app/ui
+      - name: UI typecheck + build
+        run: npm run build --prefix app/ui
+      - name: Plugins
+        shell: bash
+        run: |
+          for p in rot13-test evil-test fast-infoset; do
+            (cd plugins/$p && cargo build --release --target wasm32-wasip2)
+          done
+          ./plugins/build.sh
+      - name: Rust tests
+        run: cargo test --workspace --exclude piper-app
+      - name: Fast Infoset interop (Java reference)
+        shell: bash
+        run: ./plugins/fast-infoset/interop/run.sh
+      - name: License check
+        shell: bash
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny check licenses
+      - name: Bundle
+        run: npm run tauri --prefix app/ui -- build

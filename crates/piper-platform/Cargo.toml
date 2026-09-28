@@ -15,3 +15,12 @@ thiserror.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 libproc = "0.14"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_Networking_WinInet",
+    "Win32_System_Threading",
+] }

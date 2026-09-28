@@ -1335,3 +1335,21 @@ pre {
   margin-bottom: 8px;
   border-radius: 4px;
 }
+.atom h4 {
+  margin-top: 12px;
+}
+.atom-grid {
+  overflow: auto;
+  max-height: 40vh;
+}
+.atom table.kv tr.sel td {
+  background: var(--sel-inactive-bg);
+}
+.atom table.kv {
+  margin-bottom: 6px;
+}
+.atom-grid table.kv td,
+.atom-grid table.kv th {
+  white-space: nowrap;
+  word-break: normal;
+}
