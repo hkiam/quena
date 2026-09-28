@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" xmlns:a="http://www.w3.org/2005/08/addressing">
+  <s:Header>
+    <a:Action s:mustUnderstand="1">urn:orders/IOrderService/GetOrder</a:Action>
+    <a:MessageID>urn:uuid:4f0c7b1e-3c2a-4b8e-9d7f-1a2b3c4d5e6f</a:MessageID>
+    <a:To s:mustUnderstand="1">https://soap.example.com/OrderService.svc</a:To>
+  </s:Header>
+  <s:Body>
+    <GetOrderResponse xmlns="urn:orders">
+      <GetOrderResult xmlns:i="http://www.w3.org/2001/XMLSchema-instance">
+        <Id>4711</Id><Status>Shipped</Status><Total>99.95</Total><Notes i:nil="true"/>
+        <Lines><Line><Sku>A-1</Sku><Qty>2</Qty></Line><Line><Sku>B-7</Sku><Qty>1</Qty></Line></Lines>
+      </GetOrderResult>
+    </GetOrderResponse>
+  </s:Body>
+</s:Envelope>

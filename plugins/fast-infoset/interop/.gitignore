@@ -1,0 +1,5 @@
+corpus/large.*
+xml/large.xml
+xml/indexes.xml
+time.txt
+build/

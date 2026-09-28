@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<!-- leading comment -->
+<?piper-pi some data?>
+<doc>mixed <b>bold</b> and <i>italic</i> text<!-- inner comment --><![CDATA[<not> & markup]]><?inner pi?>tail
+  <ws>   spaced   </ws>
+</doc>

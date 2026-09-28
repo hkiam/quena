@@ -1,0 +1,1 @@
+<?xml version="1.0" encoding="UTF-8"?><items count="3" kind="demo"><item id="1" name="one" price="1.50"/><item id="2" name="two" price="2.00" note="a &quot;quoted&quot; &amp; escaped &lt;value&gt;"/><item id="3" name="one" price="1.50"/></items>

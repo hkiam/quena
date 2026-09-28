@@ -1,0 +1,10 @@
+id = "io.github.hkiam.fast-infoset"
+name = "Fast Infoset"
+version = "0.1.0"
+api_version = "1"
+wasm = "fast_infoset.wasm"
+description = "Decodes Fast Infoset (binary XML, e.g. SOAP/FI) into XML."
+
+[decoder]
+mime_types = ["application/fastinfoset", "application/soap+fastinfoset", "application/x-fastinfoset"]
+extensions = ["fi", "finf"]

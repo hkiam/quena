@@ -1,0 +1,17 @@
+[package]
+name = "fast-infoset"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Fast Infoset (ITU-T X.891 | ISO/IEC 24824-1) decoder plugin for Piper"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen = "0.62"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

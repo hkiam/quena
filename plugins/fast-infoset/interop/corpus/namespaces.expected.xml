@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?><r:root xmlns:r="urn:root" xmlns="urn:default" xmlns:x="urn:x">
+  <child x:attr="v" plain="p">text<x:inner r:ref="1"/></child>
+  <other xmlns="urn:other"><deep xmlns:x="urn:x2"><x:leaf/></deep></other>
+  <xmlattr xml:lang="de-DE" xml:space="preserve">  keep  </xmlattr>
+</r:root>
