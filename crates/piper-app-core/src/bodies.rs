@@ -197,6 +197,32 @@ impl AppCore {
         self.searches.lock().get(&job).map(|r| r.lock().clone())
     }
 
+    /// Save a byte range of a body variant to a file (multipart part export).
+    pub fn save_body_range(&self, id: SessionId, part: Part, offset: u64, len: u64, path: std::path::PathBuf) -> Result<u64> {
+        let (body, _v, _) = self.variant_body(id, part, Variant::Raw)?;
+        let title = format!("Saving part of #{id} to {}", path.display());
+        Ok(self.jobs.submit(format!("savepart:{}:{}", body.id(), path.display()), title, Priority::Background, len > 8 << 20, move |ctx| {
+            use std::io::Write;
+            let mut out = std::io::BufWriter::new(std::fs::File::create(&path).map_err(|e| e.to_string())?);
+            let mut done = 0u64;
+            let mut buf = vec![0u8; 1 << 20];
+            while done < len {
+                if ctx.cancelled() {
+                    return Err("cancelled".into());
+                }
+                let want = (len - done).min(buf.len() as u64) as usize;
+                let n = body.read_at(offset + done, &mut buf[..want]).map_err(|e| e.to_string())?;
+                if n == 0 {
+                    break;
+                }
+                out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+                done += n as u64;
+                ctx.progress(done, len);
+            }
+            out.flush().map_err(|e| e.to_string())
+        }))
+    }
+
     /// Save a body variant to a file (runs as a job, streaming).
     pub fn save_body(&self, id: SessionId, part: Part, variant: Variant, path: std::path::PathBuf) -> Result<JobId> {
         let (body, v, _) = self.variant_body(id, part, variant)?;

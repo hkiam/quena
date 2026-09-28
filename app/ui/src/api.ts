@@ -449,6 +449,28 @@ export interface WsMessages {
   truncated: boolean;
 }
 
+export interface MultipartPart {
+  index: number;
+  headers: [string, string][];
+  contentType: string;
+  contentId: string;
+  name: string;
+  filename: string;
+  encoding: string;
+  offset: number;
+  len: number;
+  isText: boolean;
+  preview: string | null;
+}
+export interface Multipart {
+  boundary: string;
+  subtype: string;
+  rootType: string;
+  start: string;
+  parts: MultipartPart[];
+  error: string | null;
+}
+
 export interface CaInfo {
   exists: boolean;
   trusted: boolean;
@@ -544,6 +566,9 @@ export const api = {
   pluginSetEnabled: (id: string, enabled: boolean) => invoke<void>("plugin_set_enabled", { id, enabled }),
   pluginsRescan: () => invoke<PluginInfo[]>("plugins_rescan"),
   pluginsReveal: () => invoke<void>("plugins_reveal"),
+  saveBodyRange: (id: SessionId, part: Part, offset: number, len: number, path: string) =>
+    invoke<number>("save_body_range", { id, part, offset, len, path }),
+  multipart: (id: SessionId, part: Part) => invoke<Multipart | null>("multipart", { id, part }),
   wsFrames: (id: SessionId, start: number, count: number) => invoke<WsMessages>("ws_frames", { id, start, count }),
   deviceInfo: () => invoke<DeviceInfo>("device_info"),
   replay: (ids: SessionId[], options: { unconditional?: boolean; count?: number; breakpoint?: boolean; sequential?: boolean }) =>

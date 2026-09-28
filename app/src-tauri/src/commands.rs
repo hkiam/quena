@@ -467,6 +467,18 @@ async fn ws_frames(core: State<'_, Core>, id: SessionId, start: u64, count: usiz
     blocking(move || Ok(core.ws_frames(id, start, count))).await
 }
 
+#[tauri::command]
+async fn save_body_range(core: State<'_, Core>, id: SessionId, part: Part, offset: u64, len: u64, path: String) -> R<u64> {
+    let core = core.inner().clone();
+    blocking(move || core.save_body_range(id, part, offset, len, path.into()).map_err(e)).await
+}
+
+#[tauri::command]
+async fn multipart(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<piper_app_core::multipart::Multipart>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.multipart(id, part))).await
+}
+
 mod piper_store_dto {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -522,6 +534,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         auth_set_credential,
         auth_remove_credential,
         ws_frames,
+        multipart,
+        save_body_range,
         ca_info,
         ca_trust,
         ca_remove,

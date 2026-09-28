@@ -12,6 +12,7 @@ pub mod engine;
 pub mod find;
 pub mod logbuf;
 pub mod mock;
+pub mod multipart;
 pub mod plugins;
 pub mod rules;
 pub mod settings;

@@ -15,6 +15,7 @@ import { SoapView, soapCandidate } from "./Soap";
 import { AtomView, atomCandidate } from "./Atom";
 import { WebSocketView } from "./WebSocketView";
 import { SseView } from "./SseView";
+import { MultipartView, multipartCandidate } from "./MultipartView";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
@@ -37,6 +38,7 @@ const TITLES: Record<string, string> = {
   atom: "Atom/OData",
   websocket: "WebSocket",
   sse: "SSE",
+  multipart: "Parts",
 };
 
 /** Load the focused session's detail; refresh while it is in flight. */
@@ -158,7 +160,8 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   const atom = detail ? atomCandidate(detail, part) : false;
   const isWs = part === "response" && detail?.summary.kind === "webSocket";
   const isSse = part === "response" && (detail?.responseBody.contentType ?? "").toLowerCase().includes("text/event-stream");
-  const special = [isWs ? "websocket" : "", isSse ? "sse" : "", soap ? "soap" : "", atom ? "atom" : ""].filter(Boolean);
+  const mp = detail ? multipartCandidate(detail, part) : false;
+  const special = [isWs ? "websocket" : "", isSse ? "sse" : "", mp ? "multipart" : "", soap ? "soap" : "", atom ? "atom" : ""].filter(Boolean);
   const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...special, ...pluginTabs.map((t) => t.key)];
   const setTab = (t: string) => {
     set((s) => ({ layout: { ...s.layout, [part === "request" ? "requestTab" : "responseTab"]: t } }));
@@ -214,6 +217,9 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         break;
       case "atom":
         content = atom ? <AtomView detail={detail} part={part} /> : <div className="placeholder">Not an Atom/OData document.</div>;
+        break;
+      case "multipart":
+        content = <MultipartView detail={detail} part={part} />;
         break;
       case "websocket":
         content = <WebSocketView detail={detail} />;
