@@ -2,6 +2,7 @@
 //! [`AppCore`]. The Tauri shell is a thin binding on top; headless tests and a
 //! future CLI use the same API.
 
+pub mod archive;
 pub mod bodies;
 pub mod compose;
 pub mod dto;

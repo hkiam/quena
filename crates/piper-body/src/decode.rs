@@ -71,6 +71,14 @@ impl<R: Read> Read for Counting<'_, R> {
     }
 }
 
+/// Wrap `r` with decoders for `encodings` (applied in header order).
+pub fn decoding_reader<'a>(mut r: Box<dyn Read + 'a>, encodings: &[Encoding]) -> Box<dyn Read + 'a> {
+    for e in encodings.iter().rev() {
+        r = wrap_decoder(r, *e);
+    }
+    r
+}
+
 fn wrap_decoder<'a>(r: Box<dyn Read + 'a>, e: Encoding) -> Box<dyn Read + 'a> {
     match e {
         Encoding::Gzip => Box::new(flate2::read::MultiGzDecoder::new(r)),

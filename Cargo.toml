@@ -11,6 +11,7 @@ members = [
     "crates/piper-tls",
     "crates/piper-platform",
     "crates/piper-proxy",
+    "crates/piper-formats",
     "app/src-tauri",
 ]
 
@@ -33,6 +34,7 @@ piper-app-core = { path = "crates/piper-app-core" }
 piper-tls = { path = "crates/piper-tls" }
 piper-platform = { path = "crates/piper-platform" }
 piper-proxy = { path = "crates/piper-proxy" }
+piper-formats = { path = "crates/piper-formats" }
 
 anyhow = "1"
 thiserror = "2"

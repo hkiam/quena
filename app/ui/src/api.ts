@@ -435,6 +435,9 @@ export const api = {
   caRemove: () => invoke<CaInfo>("ca_remove"),
   caRegenerate: () => invoke<CaInfo>("ca_regenerate"),
   caExport: (path: string, der: boolean) => invoke<void>("ca_export", { path, der }),
+  exportArchive: (ids: SessionId[], path: string) => invoke<number>("export_archive", { ids, path }),
+  importArchive: (path: string) => invoke<number>("import_archive", { path }),
+  writeTextFile: (path: string, text: string) => invoke<void>("write_text_file", { path, text }),
   deviceInfo: () => invoke<DeviceInfo>("device_info"),
   replay: (ids: SessionId[], options: { unconditional?: boolean; count?: number; breakpoint?: boolean; sequential?: boolean }) =>
     invoke<number>("replay", { ids, options }),
