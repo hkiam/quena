@@ -34,6 +34,8 @@ fn main() {
     }
     tracing::info!(target: "piper", "Piper {} started, data in {}", env!("CARGO_PKG_VERSION"), core.paths.data.display());
 
+    install_signal_handlers(core.clone());
+    let exit_core = core.clone();
     let proto_core = core.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -74,6 +76,33 @@ fn main() {
             }
         })
         .invoke_handler(commands::handler())
-        .run(tauri::generate_context!())
-        .expect("error while running Piper");
+        .build(tauri::generate_context!())
+        .expect("error while building Piper")
+        .run(move |_app, event| {
+            // Cmd+Q, dock "Quit", logout: always shut down cleanly (restores the system proxy).
+            if let tauri::RunEvent::Exit = event {
+                exit_core.shutdown();
+            }
+        });
 }
+
+/// SIGTERM/SIGINT/SIGHUP (e.g. `kill`, system shutdown, dev-mode restarts): shut down
+/// cleanly so the system proxy is restored and the capture is not reported as crashed.
+#[cfg(unix)]
+fn install_signal_handlers(core: Core) {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+    let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP]) else { return };
+    std::thread::Builder::new()
+        .name("piper-signals".into())
+        .spawn(move || {
+            if let Some(sig) = signals.forever().next() {
+                tracing::info!(target: "piper", "signal {sig} received, shutting down");
+                core.shutdown();
+                std::process::exit(0);
+            }
+        })
+        .ok();
+}
+
+#[cfg(not(unix))]
+fn install_signal_handlers(_core: Core) {}

@@ -94,6 +94,8 @@ pub struct Settings {
     pub lossless_recording: bool,
     /// Keep temporary captures after a clean exit.
     pub keep_captures: bool,
+    /// Offer to restore captures after a crash.
+    pub offer_recovery: bool,
     /// Opaque UI preferences (column layout, splitters …).
     pub ui: serde_json::Value,
 }
@@ -111,6 +113,7 @@ impl Default for Settings {
             headers_only_types: String::new(),
             lossless_recording: false,
             keep_captures: false,
+            offer_recovery: true,
             ui: serde_json::Value::Null,
         }
     }

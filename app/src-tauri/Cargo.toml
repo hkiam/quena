@@ -28,3 +28,6 @@ tracing.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 percent-encoding = "2"
+
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"

@@ -274,6 +274,12 @@ async fn recover(core: State<'_, Core>, dir: String) -> R<()> {
 }
 
 #[tauri::command]
+async fn discard_all(core: State<'_, Core>) -> R<usize> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.discard_all_captures())).await
+}
+
+#[tauri::command]
 async fn discard(core: State<'_, Core>, dir: String) -> R<()> {
     let core = core.inner().clone();
     blocking(move || core.discard_capture(dir.into()).map_err(e)).await
@@ -494,6 +500,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         recoverable,
         recover,
         discard,
+        discard_all,
         ca_info,
         ca_trust,
         ca_remove,

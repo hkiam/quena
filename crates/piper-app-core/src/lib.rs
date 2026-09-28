@@ -123,6 +123,7 @@ pub struct AppCore {
     pub(crate) searches: Mutex<std::collections::HashMap<JobId, Arc<Mutex<SearchResult>>>>,
     pub(crate) finds: Mutex<std::collections::HashMap<JobId, Arc<Mutex<find::FindResult>>>>,
     started: Instant,
+    shut_down: std::sync::atomic::AtomicBool,
 }
 
 impl AppCore {
@@ -149,6 +150,7 @@ impl AppCore {
             searches: Mutex::new(Default::default()),
             finds: Mutex::new(Default::default()),
             started: Instant::now(),
+            shut_down: std::sync::atomic::AtomicBool::new(false),
         });
         if let Some(r) = &core.rules {
             r.attach(&core);
@@ -508,6 +510,10 @@ impl AppCore {
 
     /// Clean shutdown.
     pub fn shutdown(self: &Arc<Self>) {
+        // Idempotent: window close, RunEvent::Exit and signals may all call this.
+        if self.shut_down.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         let _ = self.stop_capture();
         if let Some(e) = self.engine() {
             e.shutdown(self);
@@ -529,6 +535,16 @@ impl AppCore {
         if let Some(e) = self.engine() {
             e.capture_changed(self);
         }
+    }
+
+    /// Delete all crashed captures (recovery dialog "Discard all").
+    pub fn discard_all_captures(&self) -> usize {
+        let list = self.recoverable_captures();
+        let n = list.len();
+        for c in list {
+            let _ = self.discard_capture(c.dir);
+        }
+        n
     }
 
     pub fn recoverable_captures(&self) -> Vec<piper_store::RecoverableCapture> {

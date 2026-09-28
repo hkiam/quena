@@ -337,6 +337,7 @@ export interface Settings {
   headersOnlyTypes: string;
   losslessRecording: boolean;
   keepCaptures: boolean;
+  offerRecovery: boolean;
   ui: unknown;
 }
 
@@ -481,6 +482,7 @@ export const api = {
   recoverable: () => invoke<Recoverable[]>("recoverable"),
   recover: (dir: string) => invoke<void>("recover", { dir }),
   discard: (dir: string) => invoke<void>("discard", { dir }),
+  discardAll: () => invoke<number>("discard_all"),
   caInfo: () => invoke<CaInfo>("ca_info"),
   caTrust: () => invoke<CaInfo>("ca_trust"),
   caRemove: () => invoke<CaInfo>("ca_remove"),

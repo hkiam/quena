@@ -147,7 +147,38 @@ function RecoverDialog() {
     load();
   }, []);
   return (
-    <Modal title="Recover previous capture" onClose={close} wide>
+    <Modal
+      title="Recover previous capture"
+      onClose={close}
+      wide
+      footer={
+        <>
+          <label className="f-check" style={{ marginRight: "auto" }}>
+            <input
+              type="checkbox"
+              onChange={async (e) => {
+                const s = get().settings;
+                if (!s) return;
+                const next = { ...s, offerRecovery: !e.target.checked };
+                set({ settings: next });
+                await api.settingsSet(next);
+              }}
+            />{" "}
+            Don't ask again (Options → General)
+          </label>
+          <button
+            onClick={async () => {
+              const n = await api.discardAll();
+              say(`${n} old capture(s) discarded`);
+              close();
+            }}
+          >
+            Discard all
+          </button>
+          <button onClick={close}>Later</button>
+        </>
+      }
+    >
       {!list ? (
         "Loading…"
       ) : list.length === 0 ? (
@@ -280,6 +311,9 @@ function OptionsDialog() {
             </label>
             <label className="f-check">
               <input type="checkbox" checked={s.keepCaptures} onChange={(e) => up((x) => (x.keepCaptures = e.target.checked))} /> Keep capture data after exit
+            </label>
+            <label className="f-check">
+              <input type="checkbox" checked={s.offerRecovery !== false} onChange={(e) => up((x) => (x.offerRecovery = e.target.checked))} /> Offer to recover sessions after a crash
             </label>
           </>
         )}
