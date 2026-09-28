@@ -1,5 +1,7 @@
 [workspace]
 resolver = "3"
+# Plugins are separate cargo projects built for wasm32-wasip2.
+exclude = ["plugins"]
 members = [
     "crates/piper-model",
     "crates/piper-body",
@@ -12,6 +14,7 @@ members = [
     "crates/piper-platform",
     "crates/piper-proxy",
     "crates/piper-formats",
+    "crates/piper-plugin-host",
     "app/src-tauri",
 ]
 
@@ -35,6 +38,7 @@ piper-tls = { path = "crates/piper-tls" }
 piper-platform = { path = "crates/piper-platform" }
 piper-proxy = { path = "crates/piper-proxy" }
 piper-formats = { path = "crates/piper-formats" }
+piper-plugin-host = { path = "crates/piper-plugin-host" }
 
 anyhow = "1"
 thiserror = "2"

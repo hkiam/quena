@@ -1,0 +1,43 @@
+// Piper plugin API, version 1 (PLAN.md §12–§15).
+//
+// Decoders are streaming from the start (§2.12.3): the host pushes the body
+// in chunks and collects output chunks, so a plugin never has to hold a
+// 500 MB payload in its memory.
+package piper:plugin@1.0.0;
+
+interface decoder {
+    /// How the host should present the output.
+    enum representation {
+        text,
+        xml,
+        json,
+    }
+
+    record info {
+        /// Stable id, e.g. `io.github.hkiam.fast-infoset`.
+        id: string,
+        name: string,
+        version: string,
+        /// Inspector tab title, e.g. `Fast Infoset`.
+        tab: string,
+        output: representation,
+    }
+
+    get-info: func() -> info;
+
+    /// Confidence 0..=100 that this decoder applies. Only the first bytes are passed.
+    detect: func(content-type: option<string>, prefix: list<u8>) -> u8;
+
+    /// One decoding run.
+    resource session {
+        constructor(content-type: option<string>);
+        /// Feed the next chunk; returns output produced so far (may be empty).
+        push: func(chunk: list<u8>) -> result<list<u8>, string>;
+        /// End of input; returns the remaining output.
+        finish: func() -> result<list<u8>, string>;
+    }
+}
+
+world plugin {
+    export decoder;
+}

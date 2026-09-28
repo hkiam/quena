@@ -8,6 +8,7 @@ import { CompareView } from "./CompareView";
 import { FindDialog } from "./FindDialog";
 import { HttpsPanel } from "./HttpsDialog";
 import { DeviceAssistant } from "./DeviceDialog";
+import { PluginsPanel } from "./PluginsDialog";
 
 function Modal({ title, children, onClose, wide, footer }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; footer?: React.ReactNode }) {
   return (
@@ -480,7 +481,11 @@ export function Dialogs() {
         </Modal>
       );
     case "plugins":
-      return <Pending title="Plugins" what="The plugin host arrives with milestone M10." />;
+      return (
+        <Modal title="Plugins" onClose={close} wide>
+          <PluginsPanel />
+        </Modal>
+      );
     case "rules":
       return <Pending title="Customize Rules" what="Scripting (FiddlerScript replacement) arrives with milestone M14." />;
   }

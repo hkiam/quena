@@ -1,0 +1,9 @@
+id = "io.github.hkiam.rot13-test"
+name = "ROT13 (test)"
+version = "0.1.0"
+api_version = "1"
+wasm = "rot13_test.wasm"
+description = "Trivial decoder used to validate the plugin architecture."
+
+[decoder]
+mime_types = ["text/x-rot13"]

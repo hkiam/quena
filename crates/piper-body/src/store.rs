@@ -39,8 +39,7 @@ impl Default for BodyConfig {
 }
 
 /// Which representation of a body is requested.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Variant {
     /// Exactly as stored (content-encoding still applied).
     Raw,
@@ -48,6 +47,8 @@ pub enum Variant {
     Decoded,
     /// Decoded and pretty printed (JSON/XML).
     Pretty,
+    /// Decoded by plugin `n` (output pretty printed if the plugin emits XML/JSON).
+    Plugin(u16),
 }
 
 impl Variant {
@@ -56,16 +57,44 @@ impl Variant {
             "raw" => Variant::Raw,
             "decoded" => Variant::Decoded,
             "pretty" => Variant::Pretty,
-            _ => return None,
+            p => Variant::Plugin(p.strip_prefix("plugin:")?.parse().ok()?),
         })
     }
-    fn ext(self) -> &'static str {
+    pub fn name(self) -> String {
         match self {
-            Variant::Raw => "bin",
-            Variant::Decoded => "dec",
-            Variant::Pretty => "pretty",
+            Variant::Raw => "raw".into(),
+            Variant::Decoded => "decoded".into(),
+            Variant::Pretty => "pretty".into(),
+            Variant::Plugin(n) => format!("plugin:{n}"),
         }
     }
+    fn ext(self) -> String {
+        match self {
+            Variant::Raw => "bin".into(),
+            Variant::Decoded => "dec".into(),
+            Variant::Pretty => "pretty".into(),
+            Variant::Plugin(n) => format!("plugin{n}"),
+        }
+    }
+}
+
+impl Serialize for Variant {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.name())
+    }
+}
+
+impl<'de> Deserialize<'de> for Variant {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Variant::parse(&s).ok_or_else(|| serde::de::Error::custom(format!("unknown variant {s}")))
+    }
+}
+
+/// Decoder plugins (implemented by the plugin host, installed by the app).
+pub trait PluginDecoders: Send + Sync {
+    fn decode(&self, index: u16, content_type: Option<&str>, input: &mut dyn std::io::Read, output: &mut dyn std::io::Write, cancelled: &dyn Fn() -> bool) -> std::io::Result<u64>;
+    fn pretty_kind(&self, index: u16) -> Option<crate::pretty::PrettyKind>;
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -85,6 +114,7 @@ pub struct BodyStore {
     cfg: parking_lot::RwLock<BodyConfig>,
     derived: Mutex<HashMap<(u64, Variant), Body>>,
     line_indexes: Mutex<HashMap<(u64, Variant), Arc<LineIndex>>>,
+    plugins: parking_lot::RwLock<Option<Arc<dyn PluginDecoders>>>,
 }
 
 impl BodyStore {
@@ -101,7 +131,16 @@ impl BodyStore {
             cfg: parking_lot::RwLock::new(cfg),
             derived: Mutex::new(HashMap::new()),
             line_indexes: Mutex::new(HashMap::new()),
+            plugins: parking_lot::RwLock::new(None),
         }))
+    }
+
+    pub fn set_plugins(&self, p: Option<Arc<dyn PluginDecoders>>) {
+        *self.plugins.write() = p;
+    }
+
+    pub fn plugins(&self) -> Option<Arc<dyn PluginDecoders>> {
+        self.plugins.read().clone()
     }
 
     pub fn root(&self) -> &Path {
@@ -269,7 +308,8 @@ impl BodyStore {
         let len = body.path().map(|_| body.len()).unwrap_or(0);
         body.delete_file();
         self.used.fetch_sub(len.min(self.used.load(Ordering::Relaxed)), Ordering::Relaxed);
-        for v in [Variant::Raw, Variant::Decoded, Variant::Pretty] {
+        let keys: Vec<Variant> = self.derived.lock().keys().filter(|(id, _)| *id == body.id()).map(|(_, v)| *v).collect();
+        for v in keys {
             self.forget_derived(body.id(), v);
         }
     }

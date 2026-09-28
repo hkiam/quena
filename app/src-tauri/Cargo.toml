@@ -18,6 +18,8 @@ piper-model.workspace = true
 piper-body.workspace = true
 piper-index.workspace = true
 piper-query.workspace = true
+piper-plugin-host.workspace = true
+piper-platform.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde.workspace = true

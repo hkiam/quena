@@ -187,6 +187,7 @@ pub fn variant_applies(spec: &DeriveSpec, v: Variant) -> bool {
             .map(|ce| parse_encodings(ce).map(|e| !e.is_empty()).unwrap_or(false))
             .unwrap_or(false),
         Variant::Pretty => pretty::kind_for(spec.content_type.as_deref()).is_some(),
+        Variant::Plugin(_) => true,
     }
 }
 
@@ -199,6 +200,44 @@ pub fn derive(store: &Arc<BodyStore>, source: &Body, v: Variant, spec: &DeriveSp
         Some(ce) => parse_encodings(ce).map_err(|e| BodyError::Unsupported(format!("content-encoding {e}")))?,
         None => vec![],
     };
+    if let Variant::Plugin(n) = v {
+        let Some(plugins) = store.plugins() else { return Err(BodyError::Unsupported("plugins are not available".into())) };
+        let (body, writer) = store.derived_or_create(source, v);
+        let Some(writer) = writer else { return Ok(Derivation { body, work: None }) };
+        let source = source.clone();
+        let store2 = store.clone();
+        let ct = spec.content_type.clone();
+        let work = move |p: &dyn Progress| -> Result<()> {
+            let total = source.len();
+            let src = source.stream(0, true);
+            let counted = Counting { inner: src, count: 0, total, last_report: 0, progress: p };
+            let mut reader = decoding_reader(Box::new(counted), &encodings);
+            let buffered = BufWriter::with_capacity(256 * 1024, writer);
+            let kind = plugins.pretty_kind(n);
+            let cancelled = || p.cancelled();
+            let r = match kind {
+                Some(k) => {
+                    let mut f = pretty::Formatter::new(k, buffered);
+                    plugins.decode(n, ct.as_deref(), &mut reader, &mut f, &cancelled).and_then(|_| f.finish())
+                }
+                None => {
+                    let mut w = buffered;
+                    plugins.decode(n, ct.as_deref(), &mut reader, &mut w, &cancelled).and_then(|_| w.flush())
+                }
+            };
+            p.progress(total, total);
+            match r {
+                Ok(()) => Ok(()),
+                Err(e) if p.cancelled() => {
+                    store2.forget_derived(source.id(), v);
+                    let _ = e;
+                    Err(BodyError::Cancelled)
+                }
+                Err(e) => Err(BodyError::Io(e)),
+            }
+        };
+        return Ok(Derivation { body, work: Some(Box::new(work)) });
+    }
     let pretty_kind = pretty::kind_for(spec.content_type.as_deref());
     if v == Variant::Decoded && encodings.is_empty() {
         return Ok(Derivation { body: source.clone(), work: None });

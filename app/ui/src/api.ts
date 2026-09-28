@@ -71,7 +71,7 @@ export interface ResponseHead {
   version: HttpVersion;
   headers: Headers;
 }
-export type Variant = "raw" | "decoded" | "pretty";
+export type Variant = "raw" | "decoded" | "pretty" | `plugin:${number}`;
 export type Part = "request" | "response";
 
 export interface BodyInfo {
@@ -86,6 +86,21 @@ export interface BodyInfo {
   isText: boolean;
   isImage: boolean;
   variants: Variant[];
+  plugins: { variant: Variant; tab: string; confidence: number; output: "text" | "xml" | "json" }[];
+}
+
+export interface PluginInfo {
+  index: number;
+  id: string;
+  name: string;
+  version: string;
+  tab: string;
+  output: "text" | "xml" | "json";
+  enabled: boolean;
+  status: string;
+  error: string | null;
+  path: string;
+  mimeTypes: string[];
 }
 
 export interface Timers {
@@ -484,6 +499,10 @@ export const api = {
   bpPaused: () => invoke<{ id: SessionId; phase: string; url: string; since: number }[]>("bp_paused"),
   bpResume: (id: SessionId, resume: Resume) => invoke<void>("bp_resume", { id, resume }),
   bpGo: () => invoke<number>("bp_go"),
+  pluginsList: () => invoke<PluginInfo[]>("plugins_list"),
+  pluginSetEnabled: (id: string, enabled: boolean) => invoke<void>("plugin_set_enabled", { id, enabled }),
+  pluginsRescan: () => invoke<PluginInfo[]>("plugins_rescan"),
+  pluginsReveal: () => invoke<void>("plugins_reveal"),
   deviceInfo: () => invoke<DeviceInfo>("device_info"),
   replay: (ids: SessionId[], options: { unconditional?: boolean; count?: number; breakpoint?: boolean; sequential?: boolean }) =>
     invoke<number>("replay", { ids, options }),

@@ -120,10 +120,32 @@ function TextPane({ detail, part, syntax }: { detail: Detail; part: Part; syntax
   );
 }
 
+function PluginView({ detail, part, variant, output }: { detail: Detail; part: Part; variant: Variant; output: "text" | "xml" | "json" }) {
+  const [wrap, setWrap] = useState(false);
+  const info = part === "request" ? detail.requestBody : detail.responseBody;
+  const fake = { ...info, contentType: output === "xml" ? "application/xml" : output === "json" ? "application/json" : "text/plain", isText: true };
+  return (
+    <div className="textpane">
+      <div />
+      <div className="tp-bar">
+        <label>
+          <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} /> Wrap
+        </label>
+        <span className="muted">decoded by plugin · {output}</span>
+      </div>
+      <div className="tp-body">
+        <BodyText id={detail.summary.id} part={part} info={fake} variant={variant} highlight wrap={wrap} />
+      </div>
+    </div>
+  );
+}
+
 function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tamper?: { edits: TamperEdits; setEdits: (e: TamperEdits) => void } }) {
   const tab = useStore((s) => (part === "request" ? s.layout.requestTab : s.layout.responseTab));
   const decode = useStore((s) => s.settings?.decode ?? true);
-  const tabs = part === "request" ? REQUEST_TABS : RESPONSE_TABS;
+  const info0 = detail ? (part === "request" ? detail.requestBody : detail.responseBody) : null;
+  const pluginTabs = (info0?.plugins ?? []).map((p) => ({ key: `plugin:${p.variant}`, title: p.tab, p }));
+  const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...pluginTabs.map((t) => t.key)];
   const setTab = (t: string) => {
     set((s) => ({ layout: { ...s.layout, [part === "request" ? "requestTab" : "responseTab"]: t } }));
     actions.saveLayout();
@@ -176,6 +198,18 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
       case "caching":
         content = <CachingView detail={detail} />;
         break;
+      default: {
+        const pt = pluginTabs.find((t) => t.key === tab);
+        content = pt ? (
+          info.len ? (
+            <PluginView detail={detail} part={part} variant={pt.p.variant} output={pt.p.output} />
+          ) : (
+            <div className="placeholder">No body</div>
+          )
+        ) : (
+          <div className="placeholder">This decoder does not apply to this session.</div>
+        );
+      }
     }
   }
   return (
@@ -183,7 +217,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
       <div className="insp-tabs">
         {tabs.map((t) => (
           <div key={t} className={`insp-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {TITLES[t]}
+            {TITLES[t] ?? pluginTabs.find((p) => p.key === t)?.title ?? t}
           </div>
         ))}
       </div>

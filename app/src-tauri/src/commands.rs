@@ -420,6 +420,29 @@ async fn bp_go(core: State<'_, Core>) -> R<usize> {
     Ok(rules(core.inner())?.go_all())
 }
 
+#[tauri::command]
+async fn plugins_list(core: State<'_, Core>) -> R<Vec<piper_plugin_host::PluginInfo>> {
+    Ok(core.plugins())
+}
+
+#[tauri::command]
+async fn plugin_set_enabled(core: State<'_, Core>, id: String, enabled: bool) -> R<()> {
+    core.plugin_set_enabled(&id, enabled).map_err(e)
+}
+
+#[tauri::command]
+async fn plugins_rescan(core: State<'_, Core>) -> R<Vec<piper_plugin_host::PluginInfo>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.plugins_rescan())).await
+}
+
+#[tauri::command]
+async fn plugins_reveal(core: State<'_, Core>) -> R<()> {
+    let d = core.plugin_dir();
+    let _ = std::fs::create_dir_all(&d);
+    piper_platform::open(&d.display().to_string()).map_err(e)
+}
+
 mod piper_store_dto {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -493,5 +516,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         bp_paused,
         bp_resume,
         bp_go,
+        plugins_list,
+        plugin_set_enabled,
+        plugins_rescan,
+        plugins_reveal,
     ]
 }

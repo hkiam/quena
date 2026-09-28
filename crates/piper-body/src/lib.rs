@@ -15,7 +15,7 @@ pub mod search;
 mod store;
 
 pub use body::{Body, BodyReader, BodyWriter};
-pub use store::{BodyConfig, BodyStore, StoreStats, Variant};
+pub use store::{BodyConfig, BodyStore, PluginDecoders, StoreStats, Variant};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BodyError {

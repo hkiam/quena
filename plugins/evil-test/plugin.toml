@@ -1,0 +1,5 @@
+id = "io.github.hkiam.evil-test"
+name = "Evil (test)"
+version = "0.1.0"
+api_version = "1"
+wasm = "evil_test.wasm"

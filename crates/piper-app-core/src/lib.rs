@@ -10,6 +10,7 @@ pub mod engine;
 pub mod find;
 pub mod logbuf;
 pub mod mock;
+pub mod plugins;
 pub mod rules;
 pub mod settings;
 pub mod stats;
@@ -97,6 +98,7 @@ pub struct AppCore {
     engine: RwLock<Option<Arc<dyn CaptureEngine>>>,
     pub(crate) proxy_engine: RwLock<Option<Arc<engine::ProxyEngine>>>,
     pub rules: Option<Arc<rules::Rules>>,
+    pub(crate) plugin_host: RwLock<Option<Arc<piper_plugin_host::PluginHost>>>,
     filters: RwLock<FilterSettings>,
     quick_filter: RwLock<String>,
     pub(crate) mock: Mutex<Option<mock::MockHandle>>,
@@ -122,6 +124,7 @@ impl AppCore {
             engine: RwLock::new(None),
             proxy_engine: RwLock::new(None),
             rules: Some(rules),
+            plugin_host: RwLock::new(None),
             filters: RwLock::new(FilterSettings::default()),
             quick_filter: RwLock::new(String::new()),
             mock: Mutex::new(None),
@@ -387,7 +390,9 @@ impl AppCore {
         let cap = self.capture();
         let d = cap.detail(id)?;
         let (req_body, resp_body) = cap.bodies_of(id)?;
-        Some(DetailDto::build(d, &req_body, &resp_body))
+        let mut dto = DetailDto::build(d, &req_body, &resp_body);
+        self.add_plugin_candidates(&mut dto, &req_body, &resp_body);
+        Some(dto)
     }
 
     // ------------------------------------------------------------- quickexec
@@ -496,6 +501,7 @@ impl AppCore {
 
     /// Replace the current capture (open recovered/other capture).
     pub fn switch_capture(self: &Arc<Self>, cap: Arc<Capture>) {
+        self.install_plugin_decoders(&cap);
         let old = std::mem::replace(&mut *self.capture.write(), cap);
         old.close(!self.settings.read().keep_captures);
         let _ = self.apply_filter();

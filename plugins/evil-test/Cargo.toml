@@ -1,0 +1,17 @@
+[package]
+name = "evil-test"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Misbehaving plugin for sandbox tests (never shipped)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.62"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

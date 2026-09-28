@@ -83,6 +83,18 @@ pub struct BodyInfo {
     pub is_image: bool,
     /// Variants that differ from raw.
     pub variants: Vec<Variant>,
+    /// Decoder plugins that apply (tab title, confidence).
+    pub plugins: Vec<PluginCandidate>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginCandidate {
+    pub variant: Variant,
+    pub tab: String,
+    pub confidence: u8,
+    /// "text" | "xml" | "json"
+    pub output: String,
 }
 
 pub fn spec_of(headers: &Headers) -> DeriveSpec {
@@ -150,6 +162,7 @@ impl BodyInfo {
             transfer_encoding: headers.get("transfer-encoding").map(|s| s.to_string()),
             is_text,
             variants,
+            plugins: vec![],
         }
     }
 }

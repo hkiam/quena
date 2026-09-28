@@ -26,18 +26,15 @@ const VISIBLE_JOB_BYTES: u64 = 8 << 20;
 
 fn effective(spec: &DeriveSpec, v: Variant) -> Variant {
     match v {
+        Variant::Plugin(_) => v,
         Variant::Pretty if variant_applies(spec, Variant::Pretty) => Variant::Pretty,
         Variant::Pretty | Variant::Decoded if variant_applies(spec, Variant::Decoded) => Variant::Decoded,
         _ => Variant::Raw,
     }
 }
 
-fn vname(v: Variant) -> &'static str {
-    match v {
-        Variant::Raw => "raw",
-        Variant::Decoded => "decoded",
-        Variant::Pretty => "pretty",
-    }
+fn vname(v: Variant) -> String {
+    v.name()
 }
 
 impl AppCore {
@@ -60,7 +57,15 @@ impl AppCore {
         let key = format!("derive:{}:{}", src.id(), vname(v));
         let job = match d.work {
             Some(work) => {
-                let title = format!("{} body of #{id} ({})", if v == Variant::Pretty { "Formatting" } else { "Decoding" }, human(src.len()));
+                let title = format!(
+                    "{} body of #{id} ({})",
+                    match v {
+                        Variant::Pretty => "Formatting",
+                        Variant::Plugin(_) => "Plugin-decoding",
+                        _ => "Decoding",
+                    },
+                    human(src.len())
+                );
                 Some(self.jobs.submit(key, title, Priority::Interactive, src.len() > VISIBLE_JOB_BYTES, move |ctx| {
                     work(&CtxProgress(ctx)).map_err(|e| e.to_string())
                 }))

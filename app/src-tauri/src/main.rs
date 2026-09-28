@@ -45,6 +45,17 @@ fn main() {
         })
         .setup(move |app| {
             let handle = app.handle().clone();
+            // Bundled plugins live in the app resources; dev builds use plugins/dist.
+            let bundled = app
+                .path()
+                .resource_dir()
+                .ok()
+                .map(|d| d.join("plugins"))
+                .filter(|d| d.exists())
+                .or_else(|| Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist")).filter(|d| d.exists()));
+            if let Err(e) = core.init_plugins(bundled) {
+                tracing::error!(target: "piper", "plugin host: {e:#}");
+            }
             core.set_sink(Arc::new(TauriSink(handle.clone())));
             core.start_ticker();
             let m = menu::build(&handle)?;
