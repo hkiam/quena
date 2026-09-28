@@ -362,7 +362,7 @@ export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
   );
 }
 
-function XNode({ n, depth }: { n: Element; depth: number }) {
+export function XNode({ n, depth }: { n: Element; depth: number }) {
   const [open, setOpen] = useState(depth < 3);
   const kids = Array.from(n.childNodes).filter((c) => c.nodeType === 1 || (c.nodeType === 3 && c.textContent!.trim()) || c.nodeType === 4);
   const attrs = Array.from(n.attributes);

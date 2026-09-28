@@ -11,6 +11,7 @@ import { AuthView, CachingView, CookiesView, ImageView, JsonView, RawView, Trans
 import { actions } from "../actions";
 import { patchSettings } from "../settingsActions";
 import { TamperBar, TamperEditor, pausedPart, type TamperEdits } from "./Tamper";
+import { SoapView, soapCandidate } from "./Soap";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
@@ -29,6 +30,7 @@ const TITLES: Record<string, string> = {
   imageview: "ImageView",
   webview: "WebView",
   caching: "Caching",
+  soap: "SOAP",
 };
 
 /** Load the focused session's detail; refresh while it is in flight. */
@@ -145,7 +147,8 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   const decode = useStore((s) => s.settings?.decode ?? true);
   const info0 = detail ? (part === "request" ? detail.requestBody : detail.responseBody) : null;
   const pluginTabs = (info0?.plugins ?? []).map((p) => ({ key: `plugin:${p.variant}`, title: p.tab, p }));
-  const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...pluginTabs.map((t) => t.key)];
+  const soap = detail ? soapCandidate(detail, part) : false;
+  const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...(soap ? ["soap"] : []), ...pluginTabs.map((t) => t.key)];
   const setTab = (t: string) => {
     set((s) => ({ layout: { ...s.layout, [part === "request" ? "requestTab" : "responseTab"]: t } }));
     actions.saveLayout();
@@ -197,6 +200,9 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         break;
       case "caching":
         content = <CachingView detail={detail} />;
+        break;
+      case "soap":
+        content = soap ? <SoapView detail={detail} part={part} /> : <div className="placeholder">Not a SOAP message.</div>;
         break;
       default: {
         const pt = pluginTabs.find((t) => t.key === tab);
