@@ -471,6 +471,28 @@ export interface Multipart {
   error: string | null;
 }
 
+export interface PbField {
+  number: number;
+  wireType: number;
+  kind: string;
+  value: string;
+  children: PbField[];
+}
+export interface GrpcMessage {
+  index: number;
+  compressed: boolean;
+  len: number;
+  fields: PbField[];
+  error: string | null;
+}
+export interface Grpc {
+  isGrpc: boolean;
+  messages: GrpcMessage[];
+  status: string | null;
+  statusMessage: string | null;
+  error: string | null;
+}
+
 export interface CaInfo {
   exists: boolean;
   trusted: boolean;
@@ -568,6 +590,7 @@ export const api = {
   pluginsReveal: () => invoke<void>("plugins_reveal"),
   saveBodyRange: (id: SessionId, part: Part, offset: number, len: number, path: string) =>
     invoke<number>("save_body_range", { id, part, offset, len, path }),
+  grpc: (id: SessionId, part: Part) => invoke<Grpc | null>("grpc", { id, part }),
   multipart: (id: SessionId, part: Part) => invoke<Multipart | null>("multipart", { id, part }),
   wsFrames: (id: SessionId, start: number, count: number) => invoke<WsMessages>("ws_frames", { id, start, count }),
   deviceInfo: () => invoke<DeviceInfo>("device_info"),

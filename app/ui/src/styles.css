@@ -1501,3 +1501,33 @@ pre {
   background: var(--toolbar-bg);
   border-bottom: 1px solid var(--border);
 }
+
+/* grpc / protobuf */
+.grpc-msg {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin: 6px 0;
+}
+.grpc-msg-head {
+  padding: 2px 6px;
+  background: var(--toolbar-bg);
+  border-bottom: 1px solid var(--border);
+}
+.grpc .mono {
+  padding: 4px 6px;
+}
+.pb-row {
+  line-height: 17px;
+}
+.pb-num {
+  color: var(--row-blue);
+  margin-right: 6px;
+}
+.pb-kind {
+  color: var(--muted);
+  margin-right: 8px;
+  font-size: 11px;
+}
+.pb-val {
+  color: var(--fg);
+}

@@ -474,6 +474,12 @@ async fn save_body_range(core: State<'_, Core>, id: SessionId, part: Part, offse
 }
 
 #[tauri::command]
+async fn grpc(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<piper_app_core::grpc::Grpc>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.grpc(id, part))).await
+}
+
+#[tauri::command]
 async fn multipart(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<piper_app_core::multipart::Multipart>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.multipart(id, part))).await
@@ -536,6 +542,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         ws_frames,
         multipart,
         save_body_range,
+        grpc,
         ca_info,
         ca_trust,
         ca_remove,
