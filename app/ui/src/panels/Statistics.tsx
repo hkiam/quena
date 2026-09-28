@@ -1,0 +1,81 @@
+import { useEffect, useState } from "react";
+import { api, type Statistics } from "../api";
+import { fmtBytes, fmtDateTime, fmtInt, fmtMs } from "../lib/format";
+import { useStore } from "../store";
+
+export function StatisticsPanel() {
+  const selection = useStore((s) => s.selection);
+  const version = useStore((s) => s.listVersion);
+  const [st, setSt] = useState<Statistics | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => api.statistics([...selection]).then(setSt), 150);
+    return () => clearTimeout(t);
+  }, [selection, Math.floor(version / 30)]);
+  if (!st) return <div className="placeholder">Computing…</div>;
+  const maxCt = Math.max(1, ...st.contentTypes.map((c) => c[2]));
+  const elapsed = st.firstRequest && st.lastResponse ? (st.lastResponse - st.firstRequest) / 1000 : null;
+  return (
+    <div className="scroll pad stats">
+      <div className="muted">{selection.size ? `${fmtInt(selection.size)} selected session(s)` : "All sessions"}</div>
+      <table className="kv">
+        <tbody>
+          <tr><td>Request Count</td><td>{fmtInt(st.sessions)}</td></tr>
+          <tr><td>Bytes Sent (bodies)</td><td>{fmtInt(st.requestBytes)} ({fmtBytes(st.requestBytes)})</td></tr>
+          <tr><td>Bytes Received (bodies)</td><td>{fmtInt(st.responseBytes)} ({fmtBytes(st.responseBytes)})</td></tr>
+          <tr><td>Requests started at</td><td>{fmtDateTime(st.firstRequest)}</td></tr>
+          <tr><td>Responses completed at</td><td>{fmtDateTime(st.lastResponse)}</td></tr>
+          <tr><td>Sequence (clock) duration</td><td>{elapsed != null ? fmtMs(Math.round(elapsed)) : ""}</td></tr>
+          <tr><td>Aggregate Session time</td><td>{fmtMs(st.aggregateMs)}</td></tr>
+          <tr><td>In flight / aborted</td><td>{st.inFlight} / {st.aborted}</td></tr>
+        </tbody>
+      </table>
+      <h4>Response Codes</h4>
+      <table className="kv">
+        <tbody>
+          {Object.entries(st.statusCodes).map(([k, v]) => (
+            <tr key={k}>
+              <td>HTTP/{k}</td>
+              <td>{fmtInt(v)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <h4>Response Bytes (by Content-Type)</h4>
+      <div className="bars">
+        {st.contentTypes.map(([ct, n, b]) => (
+          <div key={ct} className="bar-row">
+            <span className="bar-label" title={ct}>{ct}</span>
+            <span className="bar"><span style={{ width: `${(b / maxCt) * 100}%` }} /></span>
+            <span className="bar-val">{fmtBytes(b)} · {fmtInt(n)}</span>
+          </div>
+        ))}
+      </div>
+      <h4>Hosts</h4>
+      <table className="kv">
+        <tbody>
+          {st.hosts.slice(0, 20).map(([h, n, b]) => (
+            <tr key={h}>
+              <td>{h}</td>
+              <td>{fmtInt(n)} · {fmtBytes(b)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {st.processes.length > 0 && (
+        <>
+          <h4>Processes</h4>
+          <table className="kv">
+            <tbody>
+              {st.processes.map(([p, n]) => (
+                <tr key={p}>
+                  <td>{p}</td>
+                  <td>{fmtInt(n)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  );
+}

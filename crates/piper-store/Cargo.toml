@@ -1,0 +1,21 @@
+[package]
+name = "piper-store"
+description = "Capture store: live sessions, SQLite persistence, bodies, crash recovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+piper-model.workspace = true
+piper-body.workspace = true
+piper-index.workspace = true
+parking_lot.workspace = true
+crossbeam-channel.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+rmp-serde = "1"
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

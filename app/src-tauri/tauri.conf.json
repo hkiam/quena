@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Piper",
+  "version": "0.1.0",
+  "identifier": "io.github.hkiam.piper",
+  "build": {
+    "beforeDevCommand": {
+      "script": "npm run dev",
+      "cwd": "../ui",
+      "wait": false
+    },
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../ui"
+    },
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Piper",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 900,
+        "minHeight": 560,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' piper: http://piper.localhost data: blob:; media-src 'self' piper: http://piper.localhost blob:; connect-src 'self' ipc: http://ipc.localhost piper: http://piper.localhost; style-src 'self' 'unsafe-inline'; frame-src 'self' piper: http://piper.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "HTTP(S) traffic workbench",
+    "longDescription": "Piper is an HTTP(S) debugging proxy inspired by Fiddler Classic.",
+    "copyright": "\u00a9 2026 Maik Hofmann",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}

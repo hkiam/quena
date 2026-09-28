@@ -1,0 +1,28 @@
+[package]
+name = "piper-app"
+description = "Piper desktop application (Tauri shell)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "piper"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+piper-app-core.workspace = true
+piper-model.workspace = true
+piper-body.workspace = true
+piper-index.workspace = true
+piper-query.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+percent-encoding = "2"

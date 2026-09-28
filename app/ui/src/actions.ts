@@ -1,0 +1,318 @@
+// Central command dispatcher shared by menu, toolbar, keyboard, context menu
+// and QuickExec. Every action returns immediately (optimistic UI, R11); the
+// core confirms asynchronously.
+import { api, type Detail, type MarkColor, type SessionId, type Sort } from "./api";
+import { get, say, set, DEFAULT_COLUMNS, type RightTab } from "./store";
+import { grid, idAtIndex, rowCache } from "./grid/SessionGrid";
+import { buildCurl, rawRequestText, rawResponseHead } from "./lib/http";
+import { fmtInt } from "./lib/format";
+
+const MARKS: MarkColor[] = ["red", "blue", "gold", "green", "orange", "purple"];
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+}
+
+async function details(ids: SessionId[], limit = 200): Promise<Detail[]> {
+  const out: Detail[] = [];
+  for (const id of ids.slice(0, limit)) {
+    const d = await api.detail(id);
+    if (d) out.push(d);
+  }
+  return out;
+}
+
+export const actions = {
+  // ---------------------------------------------------------------- selection
+  async selectIndex(i: number, mode: "single" | "toggle" | "range") {
+    const id = await idAtIndex(i);
+    if (id === undefined) return;
+    const s = get();
+    if (mode === "single") {
+      set({ selection: new Set([id]), focusIndex: i, focusId: id, anchorIndex: i });
+    } else if (mode === "toggle") {
+      const sel = new Set(s.selection);
+      if (sel.has(id)) sel.delete(id);
+      else sel.add(id);
+      set({ selection: sel, focusIndex: i, focusId: id, anchorIndex: i });
+    } else {
+      const a = s.anchorIndex ?? i;
+      const [lo, hi] = a < i ? [a, i] : [i, a];
+      const ids = rowCache.idsIfCached(lo, hi) ?? (await api.viewIds(lo, hi - lo + 1));
+      set({ selection: new Set(ids), focusIndex: i, focusId: id });
+    }
+    grid.scrollToIndex(i);
+  },
+
+  clearSelection() {
+    set({ selection: new Set(), focusId: null, focusIndex: null });
+  },
+
+  async selectIds(ids: SessionId[]) {
+    if (!ids.length) {
+      actions.clearSelection();
+      return;
+    }
+    const first = ids[0];
+    const pos = await api.positionOf(first);
+    set({ selection: new Set(ids), focusId: first, focusIndex: pos, anchorIndex: pos });
+    if (pos != null) grid.scrollToIndex(pos, "center");
+  },
+
+  async selectAll() {
+    const total = get().listTotal;
+    const ids = await api.viewIds(0, total);
+    set({ selection: new Set(ids) });
+  },
+
+  async moveFocus(delta: number | "home" | "end", extend: boolean) {
+    const s = get();
+    const total = s.listTotal;
+    if (!total) return;
+    let i: number;
+    if (delta === "home") i = 0;
+    else if (delta === "end") i = total - 1;
+    else i = Math.max(0, Math.min(total - 1, (s.focusIndex ?? (delta > 0 ? -1 : total)) + delta));
+    await actions.selectIndex(i, extend ? "range" : "single");
+  },
+
+  /** Keep focus/selection stable when the view changes (sort/filter). */
+  async refocus() {
+    const id = get().focusId;
+    if (id == null) return;
+    const pos = await api.positionOf(id);
+    set({ focusIndex: pos });
+    if (pos != null) grid.scrollToIndex(pos, "center");
+  },
+
+  // ------------------------------------------------------------------- view
+  showTab(tab: RightTab) {
+    set({ activeTab: tab });
+  },
+
+  async setSort(sort: Sort) {
+    set({ sort });
+    await api.setSort(sort);
+    setTimeout(() => actions.refocus(), 80);
+  },
+
+  resetColumns() {
+    set((s) => ({ layout: { ...s.layout, columns: DEFAULT_COLUMNS } }));
+    actions.saveLayout();
+  },
+
+  saveLayout() {
+    window.clearTimeout((actions as any)._layoutTimer);
+    (actions as any)._layoutTimer = window.setTimeout(() => {
+      api.saveUiPrefs({ layout: get().layout }).catch(() => {});
+    }, 400);
+  },
+
+  // ---------------------------------------------------------------- editing
+  async removeSelected() {
+    const ids = [...get().selection];
+    if (!ids.length) return;
+    const fi = get().focusIndex;
+    set({ selection: new Set(), focusId: null });
+    await api.remove(ids);
+    // Select the row that took the place of the first removed one (Fiddler behaviour).
+    if (fi != null) setTimeout(() => actions.selectIndex(Math.min(fi, Math.max(0, get().listTotal - 1)), "single"), 60);
+  },
+
+  async removeUnselected() {
+    const ids = [...get().selection];
+    await api.removeExcept(ids);
+  },
+
+  async removeAll() {
+    set({ selection: new Set(), focusId: null, focusIndex: null });
+    rowCache.clear();
+    await api.removeAll();
+    say("All sessions removed");
+  },
+
+  async mark(color: MarkColor | null) {
+    const ids = [...get().selection];
+    if (!ids.length) return;
+    await api.mark(ids, color);
+    set((s) => ({ gridNonce: s.gridNonce + 1 }));
+  },
+
+  comment() {
+    const ids = [...get().selection];
+    if (!ids.length) return;
+    const fid = get().focusId;
+    const r = fid != null ? findCached(fid) : undefined;
+    set({ dialog: { kind: "comment", ids, initial: r?.comment ?? "" } });
+  },
+
+  async setComment(ids: SessionId[], text: string) {
+    await api.comment(ids, text);
+    set((s) => ({ gridNonce: s.gridNonce + 1 }));
+  },
+
+  async copySessions(kind: "url" | "summary" | "headers" | "full" | "curl") {
+    const ids = [...get().selection].sort((a, b) => a - b);
+    if (!ids.length) return;
+    const ds = await details(ids);
+    let text = "";
+    switch (kind) {
+      case "url":
+        text = ds.map((d) => d.request.url).join("\n");
+        break;
+      case "summary":
+        text = ds
+          .map((d) => {
+            const r = d.response;
+            const ct = d.summary.contentType ? ` (${d.summary.contentType})` : "";
+            return `${d.request.method} ${d.request.url}\n${r ? `${r.status} ${r.reason}` : "(no response)"}${ct}`;
+          })
+          .join("\n\n");
+        break;
+      case "headers":
+        text = ds.map((d) => rawRequestText(d, "") + "\n" + (d.response ? rawResponseHead(d) : "")).join("\n------------------------------------------------------------------\n\n");
+        break;
+      case "full": {
+        const parts: string[] = [];
+        for (const d of ds.slice(0, 20)) {
+          const { loadText } = await import("./lib/bodytext");
+          const req = await loadText(d.summary.id, "request", d.requestBody, 1 << 20);
+          const resp = d.response ? await loadText(d.summary.id, "response", d.responseBody, 1 << 20) : "";
+          parts.push(rawRequestText(d, req) + "\n\n" + (d.response ? rawResponseHead(d) + resp : ""));
+        }
+        text = parts.join("\n\n------------------------------------------------------------------\n\n");
+        break;
+      }
+      case "curl": {
+        const { loadText } = await import("./lib/bodytext");
+        const out: string[] = [];
+        for (const d of ds.slice(0, 50)) {
+          const body = d.requestBody.len > 0 && d.requestBody.len < 1 << 20 ? await loadText(d.summary.id, "request", d.requestBody, 1 << 20) : null;
+          out.push(buildCurl(d, body));
+        }
+        text = out.join("\n\n");
+        break;
+      }
+    }
+    await copyText(text);
+    say(`Copied ${ids.length > 1 ? `${fmtInt(ids.length)} sessions` : "session"} (${kind})`);
+  },
+
+  // ---------------------------------------------------------------- capture
+  async toggleCapture() {
+    try {
+      const on = await api.toggleCapture();
+      say(on ? "Capturing" : "Capture stopped");
+    } catch (e) {
+      say(String(e), "error");
+    }
+  },
+
+  // -------------------------------------------------------------- quickexec
+  async quickexec(input: string): Promise<boolean> {
+    const r = await api.quickexec(input);
+    if (r.error) {
+      say(r.error, "error");
+      return false;
+    }
+    if (r.select) await actions.selectIds(r.select);
+    if (r.action === "help") set({ dialog: { kind: "help", topic: "quickexec" } });
+    if (r.action === "dump") await actions.menu("file.save-all");
+    if (r.message && r.action !== "help") say(r.message);
+    if (r.engineCommand && !r.message) say(`'${input}' is not available yet`, "error");
+    return true;
+  },
+
+  // ----------------------------------------------------------------- keyboard
+  /** Keyboard handling while the session list has focus. Returns true if handled. */
+  gridKey(e: KeyboardEvent): boolean {
+    const mod = e.metaKey || e.ctrlKey;
+    const k = e.key;
+    const page = Math.max(1, grid.visibleCount() - 1);
+    switch (k) {
+      case "ArrowDown":
+        actions.moveFocus(1, e.shiftKey);
+        return true;
+      case "ArrowUp":
+        actions.moveFocus(-1, e.shiftKey);
+        return true;
+      case "PageDown":
+        actions.moveFocus(page, e.shiftKey);
+        return true;
+      case "PageUp":
+        actions.moveFocus(-page, e.shiftKey);
+        return true;
+      case "Home":
+        actions.moveFocus("home", e.shiftKey);
+        return true;
+      case "End":
+        actions.moveFocus("end", e.shiftKey);
+        return true;
+      case "Delete":
+      case "Backspace":
+        if (e.shiftKey) actions.removeUnselected();
+        else actions.removeSelected();
+        return true;
+      case "Enter":
+        actions.showTab("inspectors");
+        return true;
+      case "Escape":
+        actions.clearSelection();
+        return true;
+    }
+    if (mod && (k === "a" || k === "A")) {
+      actions.selectAll();
+      return true;
+    }
+    // Ctrl+X on every platform removes all (Cmd+X arrives as a cut event on macOS).
+    if (e.ctrlKey && (k === "x" || k === "X")) {
+      actions.removeAll();
+      return true;
+    }
+    if (mod && k >= "1" && k <= "6") {
+      actions.mark(MARKS[Number(k) - 1]);
+      return true;
+    }
+    if (mod && k === "0") {
+      actions.mark(null);
+      return true;
+    }
+    if (!mod && !e.altKey) {
+      if (k === "m" || k === "M") {
+        actions.comment();
+        return true;
+      }
+      if (k === "r" || k === "R" || k === "u" || k === "U") {
+        import("./replay").then((m) => m.replaySelected({ unconditional: k === "u" || k === "U", repeat: e.shiftKey && (k === "R") }));
+        return true;
+      }
+      if (k === "/" || k === "?") {
+        document.querySelector<HTMLInputElement>(".quickexec input")?.focus();
+        return true;
+      }
+    }
+    return false;
+  },
+
+  // ------------------------------------------------------------------- menu
+  async menu(id: string) {
+    const { handleMenu } = await import("./menuHandlers");
+    await handleMenu(id);
+  },
+};
+
+function findCached(id: SessionId) {
+  const i = get().focusIndex;
+  if (i == null) return undefined;
+  const r = rowCache.get(i);
+  return r && r.id === id ? r : undefined;
+}

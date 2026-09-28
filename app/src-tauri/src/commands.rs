@@ -1,0 +1,334 @@
+//! IPC commands. All commands are `async` so they never run on the main
+//! (UI) thread; blocking work is moved to the blocking pool (R2/R7).
+
+use crate::Core;
+use piper_app_core::dto::*;
+use piper_app_core::settings::Settings;
+use piper_app_core::stats::Statistics;
+use piper_app_core::{JobInfo, logbuf::LogEntry, mock};
+use piper_body::Variant;
+use piper_index::{RowWindow, Sort};
+use piper_model::{MarkColor, SessionId};
+use piper_query::FilterSettings;
+use serde::Serialize;
+use tauri::State;
+
+type R<T> = Result<T, String>;
+
+fn e<E: std::fmt::Display>(e: E) -> String {
+    e.to_string()
+}
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> R<T> + Send + 'static) -> R<T> {
+    tokio::task::spawn_blocking(f).await.map_err(e)?
+}
+
+#[tauri::command]
+async fn status(core: State<'_, Core>) -> R<StatusDto> {
+    Ok(core.status())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppInfo {
+    version: &'static str,
+    data_dir: String,
+    capture_dir: String,
+    platform: &'static str,
+}
+
+#[tauri::command]
+async fn app_info(core: State<'_, Core>) -> R<AppInfo> {
+    Ok(AppInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        data_dir: core.paths.data.display().to_string(),
+        capture_dir: core.capture().dir.display().to_string(),
+        platform: std::env::consts::OS,
+    })
+}
+
+#[tauri::command]
+async fn rows(core: State<'_, Core>, start: usize, count: usize) -> R<RowWindow> {
+    Ok(core.rows(start, count))
+}
+
+#[tauri::command]
+async fn view_ids(core: State<'_, Core>, start: usize, count: usize) -> R<Vec<SessionId>> {
+    Ok(core.view_ids(start, count))
+}
+
+#[tauri::command]
+async fn position_of(core: State<'_, Core>, id: SessionId) -> R<Option<usize>> {
+    Ok(core.position_of(id))
+}
+
+#[tauri::command]
+async fn set_sort(core: State<'_, Core>, sort: Sort) -> R<()> {
+    core.set_sort(sort);
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_filters(core: State<'_, Core>) -> R<FilterSettings> {
+    Ok(core.filters())
+}
+
+#[tauri::command]
+async fn set_filters(core: State<'_, Core>, filters: FilterSettings) -> R<()> {
+    core.set_filters(filters).map_err(e)
+}
+
+#[tauri::command]
+async fn quickexec(core: State<'_, Core>, input: String) -> R<QuickExecResult> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.quickexec(&input))).await
+}
+
+#[tauri::command]
+async fn remove(core: State<'_, Core>, ids: Vec<SessionId>) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || {
+        core.remove(ids);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_all(core: State<'_, Core>) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || {
+        core.remove_all();
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_except(core: State<'_, Core>, ids: Vec<SessionId>) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || {
+        core.remove_except(ids);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_where(core: State<'_, Core>, expr: String) -> R<usize> {
+    let core = core.inner().clone();
+    blocking(move || core.remove_where(&expr).map_err(e)).await
+}
+
+#[tauri::command]
+async fn summaries(core: State<'_, Core>, ids: Vec<SessionId>) -> R<Vec<piper_model::SessionSummary>> {
+    Ok(core.summaries(&ids))
+}
+
+#[tauri::command]
+async fn mark(core: State<'_, Core>, ids: Vec<SessionId>, color: Option<MarkColor>) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || {
+        core.mark(ids, color);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn comment(core: State<'_, Core>, ids: Vec<SessionId>, text: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || {
+        core.comment(ids, text);
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn detail(core: State<'_, Core>, id: SessionId) -> R<Option<DetailDto>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.detail(id))).await
+}
+
+#[tauri::command]
+async fn body_open(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant) -> R<BodyView> {
+    let core = core.inner().clone();
+    blocking(move || core.body_open(id, part, variant).map_err(e)).await
+}
+
+#[tauri::command]
+async fn body_lines(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, start: u64, count: usize) -> R<LinesDto> {
+    let core = core.inner().clone();
+    blocking(move || core.body_lines(id, part, variant, start, count).map_err(e)).await
+}
+
+#[tauri::command]
+async fn body_search(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, needle: String, ignore_case: bool) -> R<u64> {
+    let core = core.inner().clone();
+    blocking(move || core.body_search(id, part, variant, needle, ignore_case).map_err(e)).await
+}
+
+#[tauri::command]
+async fn search_result(core: State<'_, Core>, job: u64) -> R<Option<SearchResult>> {
+    Ok(core.search_result(job))
+}
+
+#[tauri::command]
+async fn save_body(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, path: String) -> R<u64> {
+    let core = core.inner().clone();
+    blocking(move || core.save_body(id, part, variant, path.into()).map_err(e)).await
+}
+
+#[tauri::command]
+async fn find_sessions(core: State<'_, Core>, options: piper_app_core::find::FindOptions) -> R<u64> {
+    let core = core.inner().clone();
+    blocking(move || core.find_sessions(options).map_err(e)).await
+}
+
+#[tauri::command]
+async fn find_result(core: State<'_, Core>, job: u64) -> R<Option<piper_app_core::find::FindResult>> {
+    Ok(core.find_result(job))
+}
+
+#[tauri::command]
+async fn statistics(core: State<'_, Core>, ids: Vec<SessionId>) -> R<Statistics> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.statistics(ids))).await
+}
+
+#[tauri::command]
+async fn jobs(core: State<'_, Core>) -> R<Vec<JobInfo>> {
+    Ok(core.jobs.list())
+}
+
+#[tauri::command]
+async fn cancel_job(core: State<'_, Core>, id: u64) -> R<bool> {
+    Ok(core.cancel_job(id))
+}
+
+#[tauri::command]
+async fn settings_get(core: State<'_, Core>) -> R<Settings> {
+    Ok(core.settings())
+}
+
+#[tauri::command]
+async fn settings_set(core: State<'_, Core>, settings: Settings) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.update_settings(settings).map_err(e)).await
+}
+
+#[tauri::command]
+async fn save_ui_prefs(core: State<'_, Core>, prefs: serde_json::Value) -> R<()> {
+    core.save_ui_prefs(prefs).map_err(e)
+}
+
+#[tauri::command]
+async fn log_since(core: State<'_, Core>, seq: u64) -> R<Vec<LogEntry>> {
+    Ok(core.log.since(seq))
+}
+
+#[tauri::command]
+async fn log_clear(core: State<'_, Core>) -> R<()> {
+    core.log.clear();
+    Ok(())
+}
+
+#[tauri::command]
+async fn mock_start(core: State<'_, Core>, rate: u32, total: u64) -> R<()> {
+    mock::start(core.inner(), rate, total);
+    Ok(())
+}
+
+#[tauri::command]
+async fn mock_stop(core: State<'_, Core>) -> R<()> {
+    mock::stop(core.inner());
+    Ok(())
+}
+
+#[tauri::command]
+async fn mock_big(core: State<'_, Core>, scale: u64) -> R<()> {
+    mock::big_bodies(core.inner(), scale);
+    Ok(())
+}
+
+#[tauri::command]
+async fn toggle_capture(core: State<'_, Core>) -> R<bool> {
+    let core = core.inner().clone();
+    blocking(move || core.toggle_capture().map_err(e)).await
+}
+
+#[tauri::command]
+async fn recoverable(core: State<'_, Core>) -> R<Vec<piper_store_dto::Recoverable>> {
+    Ok(core
+        .recoverable_captures()
+        .into_iter()
+        .map(|c| piper_store_dto::Recoverable { dir: c.dir.display().to_string(), sessions: c.sessions, modified: c.modified })
+        .collect())
+}
+
+#[tauri::command]
+async fn recover(core: State<'_, Core>, dir: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.recover_capture(dir.into()).map_err(e)).await
+}
+
+#[tauri::command]
+async fn discard(core: State<'_, Core>, dir: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.discard_capture(dir.into()).map_err(e)).await
+}
+
+mod piper_store_dto {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Recoverable {
+        pub dir: String,
+        pub sessions: u64,
+        pub modified: Option<i64>,
+    }
+}
+
+pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        status,
+        app_info,
+        rows,
+        view_ids,
+        position_of,
+        set_sort,
+        get_filters,
+        set_filters,
+        quickexec,
+        remove,
+        remove_all,
+        remove_except,
+        remove_where,
+        summaries,
+        mark,
+        comment,
+        detail,
+        body_open,
+        body_lines,
+        body_search,
+        search_result,
+        save_body,
+        statistics,
+        find_sessions,
+        find_result,
+        jobs,
+        cancel_job,
+        settings_get,
+        settings_set,
+        save_ui_prefs,
+        log_since,
+        log_clear,
+        mock_start,
+        mock_stop,
+        mock_big,
+        toggle_capture,
+        recoverable,
+        recover,
+        discard,
+    ]
+}

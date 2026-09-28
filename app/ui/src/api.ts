@@ -1,0 +1,439 @@
+// Typed bindings to the Piper core (Tauri commands + events).
+// Bodies are never transferred through invoke – see bodyUrl().
+import { invoke as tauriInvoke, convertFileSrc } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { perf } from "./lib/perf";
+
+export type SessionId = number;
+export type MarkColor = "red" | "blue" | "gold" | "green" | "orange" | "purple";
+export type SessionKind = "http" | "tunnel" | "webSocket" | "synthetic";
+export type SessionState =
+  | "requestHeaders"
+  | "sendingRequest"
+  | "breakpointRequest"
+  | "awaitingResponse"
+  | "receivingResponse"
+  | "breakpointResponse"
+  | "done"
+  | "aborted";
+
+export const Flags = {
+  REPLAYED: 1 << 0,
+  AUTO_RESPONDED: 1 << 1,
+  BREAKPOINTED: 1 << 2,
+  TAMPERED: 1 << 3,
+  REQUEST_TRUNCATED: 1 << 4,
+  RESPONSE_TRUNCATED: 1 << 5,
+  DECRYPTED: 1 << 6,
+  REMOTE_CLIENT: 1 << 7,
+  IMPORTED: 1 << 8,
+  STREAMED: 1 << 9,
+  CLIENT_ABORTED: 1 << 10,
+  SERVER_ABORTED: 1 << 11,
+  COMPOSED: 1 << 12,
+} as const;
+
+export interface SessionSummary {
+  id: SessionId;
+  kind: SessionKind;
+  state: SessionState;
+  flags: number;
+  color: MarkColor | null;
+  method: string;
+  protocol: string;
+  host: string;
+  url: string;
+  status: number;
+  requestBodyLen: number;
+  responseBodyLen: number;
+  contentType: string;
+  caching: string;
+  process: string;
+  comment: string;
+  custom: string;
+  startedAt: number;
+  durationMs: number | null;
+  clientIp: string;
+}
+
+export type Headers = [string, string][];
+export type HttpVersion = "HTTP/0.9" | "HTTP/1.0" | "HTTP/1.1" | "HTTP/2" | "HTTP/3";
+
+export interface RequestHead {
+  method: string;
+  url: string;
+  version: HttpVersion;
+  headers: Headers;
+}
+export interface ResponseHead {
+  status: number;
+  reason: string;
+  version: HttpVersion;
+  headers: Headers;
+}
+export type Variant = "raw" | "decoded" | "pretty";
+export type Part = "request" | "response";
+
+export interface BodyInfo {
+  bodyId: number;
+  len: number;
+  wireLen: number;
+  complete: boolean;
+  truncated: boolean;
+  contentType: string | null;
+  contentEncoding: string | null;
+  transferEncoding: string | null;
+  isText: boolean;
+  isImage: boolean;
+  variants: Variant[];
+}
+
+export interface Timers {
+  clientConnected?: number | null;
+  clientBeginRequest?: number | null;
+  gotRequestHeaders?: number | null;
+  clientDoneRequest?: number | null;
+  serverConnectStart?: number | null;
+  serverConnected?: number | null;
+  serverBeginRequest?: number | null;
+  serverDoneRequest?: number | null;
+  serverGotFirstByte?: number | null;
+  gotResponseHeaders?: number | null;
+  serverDoneResponse?: number | null;
+  clientBeginResponse?: number | null;
+  clientDoneResponse?: number | null;
+  dnsMs?: number | null;
+  tcpConnectMs?: number | null;
+  tlsHandshakeMs?: number | null;
+  gatewayMs?: number | null;
+}
+
+export interface TlsInfo {
+  version: string;
+  cipher: string;
+  sni: string | null;
+  alpn: string | null;
+  serverChainPem: string[];
+}
+
+export interface ConnectionInfo {
+  clientAddr: string | null;
+  serverAddr: string | null;
+  clientConnId: number | null;
+  serverConnReused: boolean;
+  clientTls: TlsInfo | null;
+  serverTls: TlsInfo | null;
+  gateway: string | null;
+  streamId: number | null;
+}
+
+export interface Detail {
+  summary: SessionSummary;
+  request: RequestHead;
+  response: ResponseHead | null;
+  requestBody: BodyInfo;
+  responseBody: BodyInfo;
+  timers: Timers;
+  connection: ConnectionInfo;
+  process: { pid: number; name: string } | null;
+  error: string | null;
+  extraFlags: [string, string][];
+}
+
+export interface RowWindow {
+  version: number;
+  total: number;
+  start: number;
+  rows: SessionSummary[];
+}
+
+export interface EngineStatus {
+  capturing: boolean;
+  listen: string[];
+  systemProxy: boolean;
+  decrypting: boolean;
+  upstream: string | null;
+  error: string | null;
+  breakpoints: string[];
+  paused: number;
+  autoresponder: boolean;
+}
+
+export interface Status {
+  engine: EngineStatus;
+  sessions: number;
+  visible: number;
+  jobsActive: number;
+  usedBytes: number;
+  freeBytes: number | null;
+  recordingSuspended: boolean;
+  filterActive: boolean;
+  captureDir: string;
+  uptimeS: number;
+  mockRunning: boolean;
+}
+
+export interface JobInfo {
+  id: number;
+  key: string;
+  title: string;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  done: number;
+  total: number;
+  error: string | null;
+  elapsedMs: number | null;
+}
+
+export interface BodyView {
+  len: number;
+  complete: boolean;
+  variant: Variant;
+  job: number | null;
+  lineJob: number | null;
+  lines: number;
+  linesDone: boolean;
+  scanned: number;
+  error: string | null;
+}
+
+export interface LinesDto {
+  start: number;
+  lines: string[];
+  view: BodyView;
+}
+
+export interface SearchResult {
+  hits: { offset: number; line: number }[];
+  done: boolean;
+  truncated: boolean;
+}
+
+export interface QuickExecResult {
+  message: string | null;
+  error: string | null;
+  select: SessionId[] | null;
+  action: string | null;
+  engineCommand: string | null;
+}
+
+export interface LogEntry {
+  seq: number;
+  time: number;
+  level: string;
+  target: string;
+  message: string;
+}
+
+export type Column =
+  | "id"
+  | "result"
+  | "protocol"
+  | "host"
+  | "url"
+  | "body"
+  | "caching"
+  | "contentType"
+  | "process"
+  | "comments"
+  | "custom"
+  | "method"
+  | "duration"
+  | "started";
+
+export interface Sort {
+  column: Column;
+  descending: boolean;
+}
+
+export interface FilterSettings {
+  enabled: boolean;
+  hostMode: "noFilter" | "showOnly" | "hide";
+  hosts: string;
+  processMode: "all" | "browsers" | "nonBrowsers" | "remote";
+  processOnly: string;
+  hideProcesses: string;
+  urlShowOnly: string;
+  urlHide: string;
+  hideConnects: boolean;
+  hideSuccess: boolean;
+  hideNonSuccess: boolean;
+  hideAuth: boolean;
+  hideRedirects: boolean;
+  hideNotModified: boolean;
+  hideImages: boolean;
+  hideCss: boolean;
+  hideScripts: boolean;
+  hideFonts: boolean;
+  contentTypeShowOnly: string;
+  contentTypeHide: string;
+  minSize: number | null;
+  maxSize: number | null;
+  minDurationMs: number | null;
+  expression: string;
+}
+
+export interface Statistics {
+  sessions: number;
+  requestBytes: number;
+  responseBytes: number;
+  firstRequest: number | null;
+  lastResponse: number | null;
+  aggregateMs: number;
+  statusCodes: Record<string, number>;
+  contentTypes: [string, number, number][];
+  hosts: [string, number, number][];
+  processes: [string, number][];
+  aborted: number;
+  inFlight: number;
+}
+
+export interface Settings {
+  proxy: {
+    port: number;
+    allowRemote: boolean;
+    remoteAllowlist: string;
+    actAsSystemProxy: boolean;
+    captureOnStartup: boolean;
+    useSystemUpstream: boolean;
+    manualUpstream: string;
+    upstreamBypass: string;
+  };
+  https: {
+    decrypt: boolean;
+    scope: "all" | "browsers" | "nonBrowsers" | "remote";
+    skipDecryption: string;
+    ignoreCertErrors: boolean;
+    ignoreCertErrorsHosts: string;
+    enableHttp2: boolean;
+    http2DowngradeHosts: string;
+  };
+  bodies: {
+    inlineLimitKb: number;
+    maxRecordedBodyMb: number;
+    quotaGb: number;
+    minFreeSpaceGb: number;
+    maxDerivedGb: number;
+    maxRatio: number;
+  };
+  keepSessions: number;
+  stream: boolean;
+  decode: boolean;
+  headersOnlyHosts: string;
+  headersOnlyTypes: string;
+  losslessRecording: boolean;
+  keepCaptures: boolean;
+  ui: unknown;
+}
+
+export interface FindOptions {
+  text: string;
+  matchCase: boolean;
+  regex: boolean;
+  scope: "all" | "requests" | "responses" | "urls";
+  examine: "all" | "headers" | "bodies";
+  ids: SessionId[];
+  decode: boolean;
+  maxBodyMb: number;
+  mark: MarkColor | null;
+}
+
+export interface FindResult {
+  ids: SessionId[];
+  examined: number;
+  total: number;
+  done: boolean;
+}
+
+export interface Recoverable {
+  dir: string;
+  sessions: number;
+  modified: number | null;
+}
+
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const t0 = performance.now();
+  try {
+    return await tauriInvoke<T>(cmd, args);
+  } finally {
+    perf.ipc(cmd, performance.now() - t0);
+  }
+}
+
+export const api = {
+  status: () => invoke<Status>("status"),
+  appInfo: () => invoke<{ version: string; dataDir: string; captureDir: string; platform: string }>("app_info"),
+  rows: (start: number, count: number) => invoke<RowWindow>("rows", { start, count }),
+  viewIds: (start: number, count: number) => invoke<SessionId[]>("view_ids", { start, count }),
+  positionOf: (id: SessionId) => invoke<number | null>("position_of", { id }),
+  setSort: (sort: Sort) => invoke<void>("set_sort", { sort }),
+  getFilters: () => invoke<FilterSettings>("get_filters"),
+  setFilters: (filters: FilterSettings) => invoke<void>("set_filters", { filters }),
+  quickexec: (input: string) => invoke<QuickExecResult>("quickexec", { input }),
+  remove: (ids: SessionId[]) => invoke<void>("remove", { ids }),
+  removeAll: () => invoke<void>("remove_all"),
+  removeWhere: (expr: string) => invoke<number>("remove_where", { expr }),
+  summaries: (ids: SessionId[]) => invoke<SessionSummary[]>("summaries", { ids }),
+  removeExcept: (ids: SessionId[]) => invoke<void>("remove_except", { ids }),
+  mark: (ids: SessionId[], color: MarkColor | null) => invoke<void>("mark", { ids, color }),
+  comment: (ids: SessionId[], text: string) => invoke<void>("comment", { ids, text }),
+  detail: (id: SessionId) => invoke<Detail | null>("detail", { id }),
+  bodyOpen: (id: SessionId, part: Part, variant: Variant) => invoke<BodyView>("body_open", { id, part, variant }),
+  bodyLines: (id: SessionId, part: Part, variant: Variant, start: number, count: number) =>
+    invoke<LinesDto>("body_lines", { id, part, variant, start, count }),
+  bodySearch: (id: SessionId, part: Part, variant: Variant, needle: string, ignoreCase: boolean) =>
+    invoke<number>("body_search", { id, part, variant, needle, ignoreCase }),
+  searchResult: (job: number) => invoke<SearchResult | null>("search_result", { job }),
+  saveBody: (id: SessionId, part: Part, variant: Variant, path: string) => invoke<number>("save_body", { id, part, variant, path }),
+  findSessions: (options: FindOptions) => invoke<number>("find_sessions", { options }),
+  findResult: (job: number) => invoke<FindResult | null>("find_result", { job }),
+  statistics: (ids: SessionId[]) => invoke<Statistics>("statistics", { ids }),
+  jobs: () => invoke<JobInfo[]>("jobs"),
+  cancelJob: (id: number) => invoke<boolean>("cancel_job", { id }),
+  settingsGet: () => invoke<Settings>("settings_get"),
+  settingsSet: (settings: Settings) => invoke<void>("settings_set", { settings }),
+  saveUiPrefs: (prefs: unknown) => invoke<void>("save_ui_prefs", { prefs }),
+  logSince: (seq: number) => invoke<LogEntry[]>("log_since", { seq }),
+  logClear: () => invoke<void>("log_clear"),
+  mockStart: (rate: number, total: number) => invoke<void>("mock_start", { rate, total }),
+  mockStop: () => invoke<void>("mock_stop"),
+  mockBig: (scale: number) => invoke<void>("mock_big", { scale }),
+  toggleCapture: () => invoke<boolean>("toggle_capture"),
+  recoverable: () => invoke<Recoverable[]>("recoverable"),
+  recover: (dir: string) => invoke<void>("recover", { dir }),
+  discard: (dir: string) => invoke<void>("discard", { dir }),
+};
+
+/** URL of a body variant served by the `piper://` protocol (supports Range). */
+export function bodyUrl(id: SessionId, part: Part, variant: Variant): string {
+  return convertFileSrc(`body/${id}/${part}/${variant}`, "piper");
+}
+
+/** Fetch a byte range of a body. */
+export async function fetchBody(
+  id: SessionId,
+  part: Part,
+  variant: Variant,
+  offset: number,
+  length: number,
+  signal?: AbortSignal,
+): Promise<{ data: Uint8Array; total: number; complete: boolean }> {
+  const t0 = performance.now();
+  const end = offset + Math.max(0, length) - 1;
+  const res = await fetch(bodyUrl(id, part, variant), {
+    headers: { Range: `bytes=${offset}-${end}` },
+    signal,
+  });
+  const buf = new Uint8Array(await res.arrayBuffer());
+  perf.ipc("body-range", performance.now() - t0);
+  return {
+    data: buf,
+    total: Number(res.headers.get("X-Piper-Total") ?? buf.length),
+    complete: res.headers.get("X-Piper-Complete") === "1",
+  };
+}
+
+export function on<T>(event: string, cb: (payload: T) => void): Promise<UnlistenFn> {
+  return listen<T>(event, (e) => cb(e.payload));
+}

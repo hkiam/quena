@@ -1,0 +1,60 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/piper-model",
+    "crates/piper-body",
+    "crates/piper-jobs",
+    "crates/piper-query",
+    "crates/piper-index",
+    "crates/piper-store",
+    "crates/piper-app-core",
+    "app/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Maik Hofmann <maik.hofmann@gmail.com>"]
+repository = "https://github.com/hkiam/piper"
+rust-version = "1.90"
+
+[workspace.dependencies]
+piper-model = { path = "crates/piper-model" }
+piper-body = { path = "crates/piper-body" }
+piper-jobs = { path = "crates/piper-jobs" }
+piper-index = { path = "crates/piper-index" }
+piper-store = { path = "crates/piper-store" }
+piper-query = { path = "crates/piper-query" }
+piper-app-core = { path = "crates/piper-app-core" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+rand = "0.9"
+tempfile = "3"
+rusqlite = { version = "0.40", features = ["bundled"] }
+flate2 = "1"
+brotli = "8"
+zstd = "0.13"
+sha2 = "0.10"
+hex = "0.4"
+regex = "1"
+dirs = "6"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+panic = "unwind"
+
+[profile.dev.package."*"]
+opt-level = 2
