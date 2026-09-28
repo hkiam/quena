@@ -461,6 +461,12 @@ async fn auth_remove_credential(core: State<'_, Core>, host: String) -> R<()> {
     blocking(move || core.auth_remove_credential(host).map_err(e)).await
 }
 
+#[tauri::command]
+async fn ws_frames(core: State<'_, Core>, id: SessionId, start: u64, count: usize) -> R<piper_app_core::ws::WsMessages> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.ws_frames(id, start, count))).await
+}
+
 mod piper_store_dto {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -515,6 +521,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         discard_all,
         auth_set_credential,
         auth_remove_credential,
+        ws_frames,
         ca_info,
         ca_trust,
         ca_remove,

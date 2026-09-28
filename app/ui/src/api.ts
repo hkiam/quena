@@ -430,6 +430,25 @@ export interface Resume {
   status?: number | null;
 }
 
+export interface WsFrame {
+  seq: number;
+  dir: number;
+  opcode: number;
+  opcodeName: string;
+  fin: boolean;
+  time: number;
+  len: number;
+  text: string | null;
+  preview: string | null;
+  offset: number;
+}
+export interface WsMessages {
+  total: number;
+  frames: WsFrame[];
+  complete: boolean;
+  truncated: boolean;
+}
+
 export interface CaInfo {
   exists: boolean;
   trusted: boolean;
@@ -525,6 +544,7 @@ export const api = {
   pluginSetEnabled: (id: string, enabled: boolean) => invoke<void>("plugin_set_enabled", { id, enabled }),
   pluginsRescan: () => invoke<PluginInfo[]>("plugins_rescan"),
   pluginsReveal: () => invoke<void>("plugins_reveal"),
+  wsFrames: (id: SessionId, start: number, count: number) => invoke<WsMessages>("ws_frames", { id, start, count }),
   deviceInfo: () => invoke<DeviceInfo>("device_info"),
   replay: (ids: SessionId[], options: { unconditional?: boolean; count?: number; breakpoint?: boolean; sequential?: boolean }) =>
     invoke<number>("replay", { ids, options }),

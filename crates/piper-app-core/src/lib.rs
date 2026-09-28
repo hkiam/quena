@@ -5,6 +5,7 @@
 pub mod archive;
 pub mod auth;
 pub mod bodies;
+pub mod ws;
 pub mod compose;
 pub mod dto;
 pub mod engine;

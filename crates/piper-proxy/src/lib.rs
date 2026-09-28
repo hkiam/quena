@@ -16,6 +16,7 @@ pub mod hooks;
 mod landing;
 mod recorder;
 mod tunnel;
+pub mod wsframe;
 pub mod util;
 
 pub use body::{BoxError, ProxyBody, empty, full};

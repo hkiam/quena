@@ -13,6 +13,8 @@ import { patchSettings } from "../settingsActions";
 import { TamperBar, TamperEditor, pausedPart, type TamperEdits } from "./Tamper";
 import { SoapView, soapCandidate } from "./Soap";
 import { AtomView, atomCandidate } from "./Atom";
+import { WebSocketView } from "./WebSocketView";
+import { SseView } from "./SseView";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
@@ -33,6 +35,8 @@ const TITLES: Record<string, string> = {
   caching: "Caching",
   soap: "SOAP",
   atom: "Atom/OData",
+  websocket: "WebSocket",
+  sse: "SSE",
 };
 
 /** Load the focused session's detail; refresh while it is in flight. */
@@ -145,13 +149,17 @@ function PluginView({ detail, part, variant, output }: { detail: Detail; part: P
 }
 
 function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tamper?: { edits: TamperEdits; setEdits: (e: TamperEdits) => void } }) {
-  const tab = useStore((s) => (part === "request" ? s.layout.requestTab : s.layout.responseTab));
+  let tab = useStore((s) => (part === "request" ? s.layout.requestTab : s.layout.responseTab));
+  if (part === "response" && detail?.summary.kind === "webSocket" && !["websocket", "headers", "raw"].includes(tab)) tab = "websocket";
   const decode = useStore((s) => s.settings?.decode ?? true);
   const info0 = detail ? (part === "request" ? detail.requestBody : detail.responseBody) : null;
   const pluginTabs = (info0?.plugins ?? []).map((p) => ({ key: `plugin:${p.variant}`, title: p.tab, p }));
   const soap = detail ? soapCandidate(detail, part) : false;
   const atom = detail ? atomCandidate(detail, part) : false;
-  const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...(soap ? ["soap"] : []), ...(atom ? ["atom"] : []), ...pluginTabs.map((t) => t.key)];
+  const isWs = part === "response" && detail?.summary.kind === "webSocket";
+  const isSse = part === "response" && (detail?.responseBody.contentType ?? "").toLowerCase().includes("text/event-stream");
+  const special = [isWs ? "websocket" : "", isSse ? "sse" : "", soap ? "soap" : "", atom ? "atom" : ""].filter(Boolean);
+  const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...special, ...pluginTabs.map((t) => t.key)];
   const setTab = (t: string) => {
     set((s) => ({ layout: { ...s.layout, [part === "request" ? "requestTab" : "responseTab"]: t } }));
     actions.saveLayout();
@@ -206,6 +214,12 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         break;
       case "atom":
         content = atom ? <AtomView detail={detail} part={part} /> : <div className="placeholder">Not an Atom/OData document.</div>;
+        break;
+      case "websocket":
+        content = <WebSocketView detail={detail} />;
+        break;
+      case "sse":
+        content = <SseView detail={detail} />;
         break;
       case "soap":
         content = soap ? <SoapView detail={detail} part={part} /> : <div className="placeholder">Not a SOAP message.</div>;

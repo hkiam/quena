@@ -69,15 +69,38 @@ pub fn websocket(shared: &Arc<Shared>, live: &Arc<LiveSession>, mut resp: Respon
         let (c, s) = tokio::join!(client, server);
         match (c, s) {
             (Ok(c), Ok(s)) => {
-                let mut c = TokioIo::new(c);
-                let mut s = TokioIo::new(s);
-                let (up, down) = tokio::io::copy_bidirectional(&mut c, &mut s).await.unwrap_or((0, 0));
-                live.set_request_body(byte_body(&shared, up));
-                live.set_response_body(byte_body(&shared, down));
-                live.update(|d| {
+                use tokio::io::split;
+                let (cr, cw) = split(TokioIo::new(c));
+                let (sr, sw) = split(TokioIo::new(s));
+                // Frame log: both pumps send records to one writer task (sequential store writes).
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(4096);
+                let store = shared.capture();
+                let live_log = live.clone();
+                let log_task = tokio::spawn(async move {
+                    let mut w = store.bodies.writer_with_limit(u64::MAX);
+                    live_log.set_response_body(w.body().clone());
+                    let mut frames = 0u64;
+                    while let Some(rec) = rx.recv().await {
+                        let _ = tokio::task::block_in_place(|| w.write(&rec));
+                        frames += 1;
+                        if frames % 32 == 0 {
+                            live_log.set_response_body(w.body().clone());
+                        }
+                    }
+                    let b = w.finish();
+                    live_log.set_response_body(b);
+                    frames
+                });
+                let up = crate::wsframe::pump(cr, sw, crate::wsframe::DIR_CLIENT, &tx);
+                let down = crate::wsframe::pump(sr, cw, crate::wsframe::DIR_SERVER, &tx);
+                let (up, down) = tokio::join!(up, down);
+                drop(tx);
+                let frames = log_task.await.unwrap_or(0);
+                live.update(move |d| {
                     d.summary.state = SessionState::Done;
                     d.timers.client_done_response = Some(now_us());
-                    d.summary.custom = format!("WS ↑{up} ↓{down}");
+                    d.summary.flags |= flags::STREAMED;
+                    d.summary.custom = format!("WS {frames} frames ↑{up} ↓{down}");
                 });
             }
             (c, s) => {
