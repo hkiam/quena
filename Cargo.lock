@@ -3199,6 +3199,7 @@ dependencies = [
  "dirs 6.0.0",
  "flate2",
  "parking_lot",
+ "piper-auth",
  "piper-body",
  "piper-formats",
  "piper-index",
@@ -3330,6 +3331,7 @@ dependencies = [
 name = "piper-proxy"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "crossbeam-channel",
  "flate2",
@@ -3339,6 +3341,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "parking_lot",
+ "piper-auth",
  "piper-body",
  "piper-model",
  "piper-platform",

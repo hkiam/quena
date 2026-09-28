@@ -40,6 +40,7 @@ piper-platform = { path = "crates/piper-platform" }
 piper-proxy = { path = "crates/piper-proxy" }
 piper-formats = { path = "crates/piper-formats" }
 piper-plugin-host = { path = "crates/piper-plugin-host" }
+piper-auth = { path = "crates/piper-auth" }
 
 anyhow = "1"
 thiserror = "2"

@@ -50,6 +50,16 @@ export async function handleMenu(id: string) {
       return import("./breakpoints").then((m) => m.setAuto("after"));
     case "rules.bp-off":
       return import("./breakpoints").then((m) => m.setAuto("off"));
+    case "rules.auto-auth": {
+      const st = get().settings;
+      if (st) {
+        const next = { ...st, auth: { ...st.auth, enabled: !st.auth.enabled } };
+        set({ settings: next });
+        await api.settingsSet(next);
+        say(next.auth.enabled ? "Automatic Authentication enabled" : "Automatic Authentication disabled");
+      }
+      return;
+    }
     case "rules.customize":
       return set({ dialog: { kind: "rules" } });
     case "tools.options":

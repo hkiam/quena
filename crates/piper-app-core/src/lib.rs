@@ -3,6 +3,7 @@
 //! future CLI use the same API.
 
 pub mod archive;
+pub mod auth;
 pub mod bodies;
 pub mod compose;
 pub mod dto;

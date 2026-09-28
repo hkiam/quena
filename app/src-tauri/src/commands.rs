@@ -449,6 +449,18 @@ async fn plugins_reveal(core: State<'_, Core>) -> R<()> {
     piper_platform::open(&d.display().to_string()).map_err(e)
 }
 
+#[tauri::command]
+async fn auth_set_credential(core: State<'_, Core>, host: String, user: String, domain: String, password: Option<String>) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.auth_set_credential(host, user, domain, password).map_err(e)).await
+}
+
+#[tauri::command]
+async fn auth_remove_credential(core: State<'_, Core>, host: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.auth_remove_credential(host).map_err(e)).await
+}
+
 mod piper_store_dto {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -501,6 +513,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         recover,
         discard,
         discard_all,
+        auth_set_credential,
+        auth_remove_credential,
         ca_info,
         ca_trust,
         ca_remove,

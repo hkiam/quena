@@ -338,6 +338,7 @@ export interface Settings {
   losslessRecording: boolean;
   keepCaptures: boolean;
   offerRecovery: boolean;
+  auth: AuthSettings;
   ui: unknown;
 }
 
@@ -358,6 +359,22 @@ export interface FindResult {
   examined: number;
   total: number;
   done: boolean;
+}
+
+export interface CredentialRef {
+  host: string;
+  user: string;
+  domain: string;
+  hasPassword: boolean;
+}
+
+export interface AuthSettings {
+  enabled: boolean;
+  hosts: string;
+  upstream: boolean;
+  useCurrentIdentity: boolean;
+  prefer: string;
+  credentials: CredentialRef[];
 }
 
 export interface Recoverable {
@@ -483,6 +500,9 @@ export const api = {
   recover: (dir: string) => invoke<void>("recover", { dir }),
   discard: (dir: string) => invoke<void>("discard", { dir }),
   discardAll: () => invoke<number>("discard_all"),
+  authSetCredential: (host: string, user: string, domain: string, password: string | null) =>
+    invoke<void>("auth_set_credential", { host, user, domain, password }),
+  authRemoveCredential: (host: string) => invoke<void>("auth_remove_credential", { host }),
   caInfo: () => invoke<CaInfo>("ca_info"),
   caTrust: () => invoke<CaInfo>("ca_trust"),
   caRemove: () => invoke<CaInfo>("ca_remove"),

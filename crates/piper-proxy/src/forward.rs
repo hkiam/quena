@@ -56,6 +56,9 @@ pub struct ConnCtx {
     pub client_tls: Option<TlsInfo>,
     pub connected_at: i64,
     pub decrypted: bool,
+    /// Per-connection dedicated upstream clients for authenticated hosts
+    /// (connection pinning – never shared with another client connection).
+    pub auth_clients: parking_lot::Mutex<std::collections::HashMap<(String, u16), Arc<hyper_util::client::legacy::Client<crate::connector::Connector, ProxyBody>>>>,
 }
 
 impl ConnCtx {
@@ -333,13 +336,52 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
 
     // --- upstream
     let upgrade = upgrade_req && client_upgrade.is_some();
-    let resp = match send_upstream(&shared, &live, &head, body, upgrade).await {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = format!("The connection to '{}' failed.\nError: {e}", url_host(&head.url));
-            let resp = error_response(StatusCode::BAD_GATEWAY, &msg);
-            record_synthetic_response(&shared, &live, &resp, msg.clone());
-            return Ok(resp);
+    let host_only = url_host(&head.url);
+    let use_auth = !upgrade && cfg.auto_auth && (cfg.auth_applies(&host_only) || cfg.auto_auth_upstream);
+    let resp = if use_auth {
+        // Buffer the request body so it can be replayed on the authenticated leg.
+        match buffer_body(&shared, body).await {
+            Ok((buffered, _)) => {
+                live.set_request_body(buffered.clone());
+                live.update(|d| d.summary.state = SessionState::AwaitingResponse);
+                let mut legs = 1u16;
+                let sent = now_us();
+                let r = crate::auth::send_with_auth(&shared, &ctx, &head, buffered, &mut |n| legs = legs.max(n as u16)).await;
+                match r {
+                    Ok(resp) => {
+                        record_response_head(&live, &resp, sent, None);
+                        if legs > 1 {
+                            live.update(move |d| {
+                                d.summary.flags |= flags::REPLAYED; // reuse until a dedicated AUTH flag
+                                if d.summary.custom.is_empty() {
+                                    d.summary.custom = format!("auth {legs} legs");
+                                }
+                            });
+                        }
+                        resp
+                    }
+                    Err(e) => {
+                        let msg = format!("The connection to '{host_only}' failed.\nError: {e}");
+                        let resp = error_response(StatusCode::BAD_GATEWAY, &msg);
+                        record_synthetic_response(&shared, &live, &resp, msg.clone());
+                        return Ok(resp);
+                    }
+                }
+            }
+            Err(e) => {
+                finish_error(&live, &format!("reading the request body failed: {e}"));
+                return Ok(error_response(StatusCode::BAD_REQUEST, &e.to_string()));
+            }
+        }
+    } else {
+        match send_upstream(&shared, &live, &head, body, upgrade).await {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("The connection to '{}' failed.\nError: {e}", url_host(&head.url));
+                let resp = error_response(StatusCode::BAD_GATEWAY, &msg);
+                record_synthetic_response(&shared, &live, &resp, msg.clone());
+                return Ok(resp);
+            }
         }
     };
 
@@ -353,6 +395,14 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
 
 fn url_host(url: &str) -> String {
     split_url(url, "GET").0
+}
+
+pub(crate) fn url_host_pub(url: &str) -> String {
+    url_host(url)
+}
+
+pub(crate) fn to_header_map_pub(h: &Headers, skip_hop: bool, keep_upgrade: bool) -> http::HeaderMap {
+    to_header_map(h, skip_hop, keep_upgrade)
 }
 
 /// Send a request upstream and record connection details and the response head.
@@ -394,6 +444,12 @@ pub(crate) async fn send_upstream(
         }
         msg
     })?;
+    record_response_head(live, &resp, sent, info.as_ref());
+    Ok(resp)
+}
+
+/// Record an upstream response head + connection timings into the session.
+pub(crate) fn record_response_head(live: &Arc<LiveSession>, resp: &Response<Incoming>, sent: i64, info: Option<&ConnInfo>) {
     let got = now_us();
     let h1 = is_h1(resp.version());
     let reason = resp
@@ -402,7 +458,8 @@ pub(crate) async fn send_upstream(
         .map(|r| String::from_utf8_lossy(r.as_bytes()).into_owned())
         .unwrap_or_else(|| resp.status().canonical_reason().unwrap_or("").to_string());
     let rh = ResponseHead { status: resp.status().as_u16(), reason, version: version_of(resp.version()), headers: record_headers(resp.headers(), h1) };
-    live.update(|d| {
+    let info = info.cloned();
+    live.update(move |d| {
         if let Some(i) = &info {
             let reused = i.used.swap(true, Ordering::Relaxed);
             d.connection.server_addr = Some(i.server_addr.clone());
@@ -423,7 +480,6 @@ pub(crate) async fn send_upstream(
         d.response = Some(rh);
         d.summary.state = SessionState::ReceivingResponse;
     });
-    Ok(resp)
 }
 
 /// Stream (or buffer) the upstream response to the client while recording it.

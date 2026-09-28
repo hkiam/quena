@@ -161,6 +161,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "rules.hide-connects", "Hide CONNECTs", None)?,
             &item(app, "rules.hide-images", "Hide Image Requests", None)?,
             &item(app, "rules.hide-304", "Hide 304s", None)?,
+            &sep()?,
+            &item(app, "rules.auto-auth", "Enable Automatic Authentication", None)?,
         ],
     )?;
 

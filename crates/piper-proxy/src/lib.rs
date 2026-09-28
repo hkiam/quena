@@ -11,6 +11,7 @@ mod body;
 mod conn;
 mod connector;
 mod forward;
+pub mod auth;
 pub mod hooks;
 mod landing;
 mod recorder;
@@ -20,6 +21,8 @@ pub mod util;
 pub use body::{BoxError, ProxyBody, empty, full};
 pub use forward::{ExecuteOptions, Upstream, execute, execute_with};
 pub use hooks::{Interceptor, NoInterceptor, RequestAction, ResponseAction, SessionView};
+pub use auth::{CredentialResolver, NoCredentials};
+pub use piper_auth::Scheme;
 
 use parking_lot::RwLock;
 use piper_store::Capture;
@@ -70,6 +73,14 @@ pub struct ProxyConfig {
     pub headers_only_hosts: Vec<String>,
     pub headers_only_types: Vec<String>,
     pub lossless: bool,
+    /// Automatic authentication (401/407) with the developer's credentials.
+    pub auto_auth: bool,
+    /// Hosts for which auto-auth runs (empty = all).
+    pub auto_auth_hosts: Vec<String>,
+    /// Also answer 407 from the upstream proxy.
+    pub auto_auth_upstream: bool,
+    /// Preferred scheme order.
+    pub auth_prefer: Vec<piper_auth::Scheme>,
 }
 
 impl Default for ProxyConfig {
@@ -91,6 +102,10 @@ impl Default for ProxyConfig {
             headers_only_hosts: vec![],
             headers_only_types: vec![],
             lossless: false,
+            auto_auth: false,
+            auto_auth_hosts: vec![],
+            auto_auth_upstream: false,
+            auth_prefer: vec![piper_auth::Scheme::Negotiate, piper_auth::Scheme::Ntlm, piper_auth::Scheme::Basic],
         }
     }
 }
@@ -125,6 +140,11 @@ impl ProxyConfig {
         }
         self.upstream.clone()
     }
+    /// Whether auto-auth applies to `host` (server 401 case).
+    pub fn auth_applies(&self, host: &str) -> bool {
+        self.auto_auth && (self.auto_auth_hosts.is_empty() || host_matches(&self.auto_auth_hosts, host))
+    }
+
     pub fn client_allowed(&self, ip: IpAddr) -> bool {
         if ip.is_loopback() || ip.to_canonical().is_loopback() {
             return true;
@@ -149,6 +169,7 @@ pub struct Shared {
     pub recorder: recorder::Recorder,
     pub process: piper_platform::ProcessLookup,
     pub hooks: RwLock<Arc<dyn Interceptor>>,
+    pub creds: RwLock<Arc<dyn CredentialResolver>>,
     pub upstream: RwLock<Arc<Upstream>>,
     pub listen: RwLock<Vec<SocketAddr>>,
     pub conn_ids: std::sync::atomic::AtomicU64,
@@ -166,6 +187,9 @@ impl Shared {
     }
     pub fn hooks(&self) -> Arc<dyn Interceptor> {
         self.hooks.read().clone()
+    }
+    pub fn creds(&self) -> Arc<dyn CredentialResolver> {
+        self.creds.read().clone()
     }
 }
 
@@ -199,6 +223,7 @@ impl Proxy {
             recorder: recorder::Recorder::new(2),
             process: piper_platform::ProcessLookup::new(),
             hooks: RwLock::new(Arc::new(NoInterceptor)),
+            creds: RwLock::new(Arc::new(NoCredentials)),
             upstream: RwLock::new(upstream),
             listen: RwLock::new(vec![]),
             conn_ids: std::sync::atomic::AtomicU64::new(1),
@@ -337,6 +362,10 @@ impl Proxy {
 
     pub fn set_interceptor(&self, i: Arc<dyn Interceptor>) {
         *self.shared.hooks.write() = i;
+    }
+
+    pub fn set_credential_resolver(&self, r: Arc<dyn CredentialResolver>) {
+        *self.shared.creds.write() = r;
     }
 }
 

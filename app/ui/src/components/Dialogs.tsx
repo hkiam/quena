@@ -258,9 +258,90 @@ function JobsDialog() {
   );
 }
 
+function AuthOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => void }) {
+  const [cred, setCred] = useState({ host: "", user: "", domain: "", password: "" });
+  const [saved, setSaved] = useState<string | null>(null);
+  return (
+    <>
+      <label className="f-check strong">
+        <input type="checkbox" checked={s.auth.enabled} onChange={(e) => up((x) => (x.auth.enabled = e.target.checked))} /> Enable Automatic Authentication
+      </label>
+      <p className="muted small">
+        Piper answers 401/407 challenges (Negotiate/Kerberos, NTLM, Basic) with your credentials so you don't log in on every request. An authenticated
+        connection is pinned to one client and never shared. Default off.
+      </p>
+      <div className="f-row">
+        <span>Only for hosts</span>
+        <input placeholder="empty = all; e.g. *.corp.example.com; sharepoint.corp" value={s.auth.hosts} onChange={(e) => up((x) => (x.auth.hosts = e.target.value))} />
+      </div>
+      <label className="f-check">
+        <input type="checkbox" checked={s.auth.upstream} onChange={(e) => up((x) => (x.auth.upstream = e.target.checked))} /> Also authenticate to the upstream proxy (407)
+      </label>
+      <label className="f-check">
+        <input type="checkbox" checked={s.auth.useCurrentIdentity} onChange={(e) => up((x) => (x.auth.useCurrentIdentity = e.target.checked))} /> Use current OS identity for SSO (Kerberos) when available
+      </label>
+      <div className="f-row">
+        <span>Scheme order</span>
+        <input value={s.auth.prefer} onChange={(e) => up((x) => (x.auth.prefer = e.target.value))} />
+      </div>
+      <fieldset className="f-section">
+        <legend>Credentials (passwords stored in the OS keychain)</legend>
+        {s.auth.credentials.length === 0 && <div className="muted small">No credentials configured. Kerberos SSO needs none.</div>}
+        <table className="kv">
+          <tbody>
+            {s.auth.credentials.map((c) => (
+              <tr key={c.host}>
+                <td className="mono">{c.host}</td>
+                <td className="mono">{c.domain ? `${c.domain}\\${c.user}` : c.user}</td>
+                <td>{c.hasPassword ? "password stored" : "SSO / no password"}</td>
+                <td style={{ width: 60 }}>
+                  <button
+                    onClick={async () => {
+                      await api.authRemoveCredential(c.host);
+                      up((x) => (x.auth.credentials = x.auth.credentials.filter((y) => y.host !== c.host)));
+                    }}
+                  >
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="f-grid2">
+          <input placeholder="Host or realm (* = default)" value={cred.host} onChange={(e) => setCred({ ...cred, host: e.target.value })} />
+          <input placeholder="Domain (optional)" value={cred.domain} onChange={(e) => setCred({ ...cred, domain: e.target.value })} />
+          <input placeholder="User" value={cred.user} onChange={(e) => setCred({ ...cred, user: e.target.value })} />
+          <input type="password" placeholder="Password (blank = SSO)" value={cred.password} onChange={(e) => setCred({ ...cred, password: e.target.value })} />
+        </div>
+        <div className="btn-row">
+          <button
+            className="primary"
+            disabled={!cred.host || !cred.user}
+            onClick={async () => {
+              await api.authSetCredential(cred.host, cred.user, cred.domain, cred.password || null);
+              up((x) => {
+                const cref = { host: cred.host, user: cred.user, domain: cred.domain, hasPassword: !!cred.password };
+                const i = x.auth.credentials.findIndex((y) => y.host.toLowerCase() === cred.host.toLowerCase());
+                if (i >= 0) x.auth.credentials[i] = cref;
+                else x.auth.credentials.push(cref);
+              });
+              setSaved(cred.host);
+              setCred({ host: "", user: "", domain: "", password: "" });
+            }}
+          >
+            Add / update
+          </button>
+          {saved && <span className="muted small">Saved for {saved}</span>}
+        </div>
+      </fieldset>
+    </>
+  );
+}
+
 function OptionsDialog() {
   const [s, setS] = useState<Settings | null>(get().settings);
-  const [tab, setTab] = useState<"general" | "connections" | "https" | "bodies">("general");
+  const [tab, setTab] = useState<"general" | "connections" | "https" | "auth" | "bodies">("general");
   if (!s) return null;
   const up = (f: (x: Settings) => void) => {
     const n = structuredClone(s);
@@ -291,9 +372,9 @@ function OptionsDialog() {
       }
     >
       <div className="tabs-row">
-        {(["general", "connections", "https", "bodies"] as const).map((t) => (
+        {(["general", "connections", "https", "auth", "bodies"] as const).map((t) => (
           <div key={t} className={`insp-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {{ general: "General", connections: "Connections", https: "HTTPS", bodies: "Bodies & Storage" }[t]}
+            {{ general: "General", connections: "Connections", https: "HTTPS", auth: "Authentication", bodies: "Bodies & Storage" }[t]}
           </div>
         ))}
       </div>
@@ -383,6 +464,7 @@ function OptionsDialog() {
             </p>
           </>
         )}
+        {tab === "auth" && <AuthOptions s={s} up={up} />}
         {tab === "bodies" && (
           <>
             <div className="f-row">

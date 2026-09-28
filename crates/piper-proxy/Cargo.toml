@@ -12,6 +12,7 @@ piper-store.workspace = true
 piper-tls.workspace = true
 piper-platform.workspace = true
 piper-query.workspace = true
+piper-auth.workspace = true
 hyper = { version = "1", features = ["server", "client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "server", "server-auto", "tokio", "http1", "http2"] }
 http = "1"
@@ -33,4 +34,6 @@ serde_json.workspace = true
 tempfile.workspace = true
 flate2.workspace = true
 hyper-util = { version = "0.1", features = ["server-auto"] }
+base64 = "0.22"
+piper-auth.workspace = true
 http-body-util = { version = "0.1", features = ["channel"] }

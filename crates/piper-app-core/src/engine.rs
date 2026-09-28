@@ -85,7 +85,27 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>) -> ProxyConfi
         headers_only_hosts: split_list(&s.headers_only_hosts),
         headers_only_types: split_list(&s.headers_only_types),
         lossless: s.lossless_recording,
+        auto_auth: s.auth.enabled,
+        auto_auth_hosts: split_list(&s.auth.hosts),
+        auto_auth_upstream: s.auth.upstream,
+        auth_prefer: parse_prefer(&s.auth.prefer),
     }
+}
+
+fn parse_prefer(s: &str) -> Vec<piper_proxy::Scheme> {
+    let mut out = Vec::new();
+    for t in s.split([';', ',', ' ']).map(|t| t.trim().to_ascii_lowercase()) {
+        match t.as_str() {
+            "negotiate" | "kerberos" => out.push(piper_proxy::Scheme::Negotiate),
+            "ntlm" => out.push(piper_proxy::Scheme::Ntlm),
+            "basic" => out.push(piper_proxy::Scheme::Basic),
+            _ => {}
+        }
+    }
+    if out.is_empty() {
+        out = vec![piper_proxy::Scheme::Negotiate, piper_proxy::Scheme::Ntlm, piper_proxy::Scheme::Basic];
+    }
+    out
 }
 
 impl ProxyEngine {
@@ -109,6 +129,7 @@ impl ProxyEngine {
         if let Some(r) = &core.rules {
             proxy.set_interceptor(r.clone());
         }
+        proxy.set_credential_resolver(Arc::new(crate::auth::AppCredentials::new(core.clone())));
         let e = Arc::new(ProxyEngine {
             proxy,
             ca: RwLock::new(ca),

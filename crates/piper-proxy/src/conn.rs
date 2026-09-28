@@ -50,6 +50,7 @@ pub async fn handle_client(shared: Arc<Shared>, stream: TcpStream, peer: SocketA
         client_tls: None,
         connected_at: now_us(),
         decrypted: false,
+        auth_clients: parking_lot::Mutex::new(std::collections::HashMap::new()),
     });
     serve_h1(ctx, stream).await;
 }
@@ -309,6 +310,7 @@ where
         client_tls: Some(tinfo),
         connected_at: ctx.connected_at,
         decrypted: true,
+        auth_clients: parking_lot::Mutex::new(std::collections::HashMap::new()),
     });
     if alpn.as_deref() == Some("h2") {
         let c2 = inner.clone();

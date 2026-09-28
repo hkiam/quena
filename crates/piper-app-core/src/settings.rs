@@ -96,6 +96,7 @@ pub struct Settings {
     pub keep_captures: bool,
     /// Offer to restore captures after a crash.
     pub offer_recovery: bool,
+    pub auth: AuthSettings,
     /// Opaque UI preferences (column layout, splitters …).
     pub ui: serde_json::Value,
 }
@@ -114,6 +115,7 @@ impl Default for Settings {
             lossless_recording: false,
             keep_captures: false,
             offer_recovery: true,
+            auth: AuthSettings::default(),
             ui: serde_json::Value::Null,
         }
     }
@@ -173,5 +175,46 @@ impl Settings {
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(self).expect("settings json"))?;
         std::fs::rename(tmp, path)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AuthSettings {
+    /// Enable Automatic Authentication (Rules menu).
+    pub enabled: bool,
+    /// Hosts for which it runs (";"-separated, wildcards; empty = all).
+    pub hosts: String,
+    /// Also answer 407 from the upstream proxy.
+    pub upstream: bool,
+    /// Prefer the current OS identity (Kerberos/SSPI SSO) before stored credentials.
+    pub use_current_identity: bool,
+    /// Scheme order, "negotiate;ntlm;basic".
+    pub prefer: String,
+    /// Configured accounts (passwords live in the OS secure store).
+    pub credentials: Vec<CredentialRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CredentialRef {
+    /// Host or realm this applies to ("*" = default).
+    pub host: String,
+    pub user: String,
+    pub domain: String,
+    /// Whether a password is stored for it (never the password itself).
+    pub has_password: bool,
+}
+
+impl Default for AuthSettings {
+    fn default() -> Self {
+        AuthSettings {
+            enabled: false,
+            hosts: String::new(),
+            upstream: false,
+            use_current_identity: true,
+            prefer: "negotiate;ntlm;basic".into(),
+            credentials: vec![],
+        }
     }
 }

@@ -15,6 +15,7 @@ piper-store.workspace = true
 piper-proxy.workspace = true
 piper-formats.workspace = true
 piper-plugin-host.workspace = true
+piper-auth.workspace = true
 piper-tls.workspace = true
 piper-platform.workspace = true
 parking_lot.workspace = true
