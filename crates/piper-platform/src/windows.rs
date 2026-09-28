@@ -191,6 +191,59 @@ pub fn local_addresses() -> Vec<(String, String)> {
     res
 }
 
+// -------------------------------------------------------------- secure store
+
+fn target(account: &str) -> Vec<u16> {
+    format!("{}:{}", crate::secure::SERVICE, account).encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+pub fn secure_set(account: &str, secret: &[u8]) -> Result<()> {
+    use windows_sys::Win32::Security::Credentials::{CredWriteW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW};
+    let mut t = target(account);
+    let mut blob = secret.to_vec();
+    let cred = CREDENTIALW {
+        Flags: 0,
+        Type: CRED_TYPE_GENERIC,
+        TargetName: t.as_mut_ptr(),
+        Comment: std::ptr::null_mut(),
+        LastWritten: unsafe { std::mem::zeroed() },
+        CredentialBlobSize: blob.len() as u32,
+        CredentialBlob: blob.as_mut_ptr(),
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+        AttributeCount: 0,
+        Attributes: std::ptr::null_mut(),
+        TargetAlias: std::ptr::null_mut(),
+        UserName: std::ptr::null_mut(),
+    };
+    if unsafe { CredWriteW(&cred, 0) } == 0 {
+        return Err(PlatformError::Command("CredWriteW failed".into()));
+    }
+    Ok(())
+}
+
+pub fn secure_get(account: &str) -> Result<Option<Vec<u8>>> {
+    use windows_sys::Win32::Security::Credentials::{CredFree, CredReadW, CRED_TYPE_GENERIC, CREDENTIALW};
+    let t = target(account);
+    let mut cred: *mut CREDENTIALW = std::ptr::null_mut();
+    if unsafe { CredReadW(t.as_ptr(), CRED_TYPE_GENERIC, 0, &mut cred) } == 0 {
+        return Ok(None);
+    }
+    let out = unsafe {
+        let c = &*cred;
+        let slice = std::slice::from_raw_parts(c.CredentialBlob, c.CredentialBlobSize as usize).to_vec();
+        CredFree(cred as *const _);
+        slice
+    };
+    Ok(Some(out))
+}
+
+pub fn secure_delete(account: &str) -> Result<()> {
+    use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
+    let t = target(account);
+    unsafe { CredDeleteW(t.as_ptr(), CRED_TYPE_GENERIC, 0) };
+    Ok(())
+}
+
 // ---------------------------------------------------------------- process
 
 pub struct ProcessLookup {

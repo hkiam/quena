@@ -100,3 +100,35 @@ pub fn reveal(path: &Path) -> Result<()> {
 pub fn local_addresses() -> Vec<(String, String)> {
     imp::local_addresses()
 }
+
+/// OS secure storage for credentials (Keychain / Credential Manager).
+/// Never stores secrets in plaintext files.
+pub mod secure {
+    use super::Result;
+
+    pub const SERVICE: &str = "io.github.hkiam.piper.auth";
+
+    /// Store a secret for `account` (e.g. "realm|host|user").
+    pub fn set(account: &str, secret: &[u8]) -> Result<()> {
+        super::imp::secure_set(account, secret)
+    }
+    /// Read a secret; `None` if not present.
+    pub fn get(account: &str) -> Result<Option<Vec<u8>>> {
+        super::imp::secure_get(account)
+    }
+    pub fn delete(account: &str) -> Result<()> {
+        super::imp::secure_delete(account)
+    }
+}
+
+#[cfg(test)]
+mod secure_tests {
+    #[test]
+    fn roundtrip() {
+        let acct = format!("piper-test|{}", std::process::id());
+        super::secure::set(&acct, b"s3cr3t-\x00\xff").unwrap();
+        assert_eq!(super::secure::get(&acct).unwrap().as_deref(), Some(&b"s3cr3t-\x00\xff"[..]));
+        super::secure::delete(&acct).unwrap();
+        assert_eq!(super::secure::get(&acct).unwrap(), None);
+    }
+}

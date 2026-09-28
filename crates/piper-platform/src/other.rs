@@ -30,6 +30,25 @@ pub fn local_addresses() -> Vec<(String, String)> {
     vec![]
 }
 
+use std::sync::OnceLock;
+use std::sync::Mutex;
+use std::collections::HashMap;
+fn mem() -> &'static Mutex<HashMap<String, Vec<u8>>> {
+    static M: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+    M.get_or_init(|| Mutex::new(HashMap::new()))
+}
+pub fn secure_set(account: &str, secret: &[u8]) -> Result<()> {
+    mem().lock().unwrap().insert(account.to_string(), secret.to_vec());
+    Ok(())
+}
+pub fn secure_get(account: &str) -> Result<Option<Vec<u8>>> {
+    Ok(mem().lock().unwrap().get(account).cloned())
+}
+pub fn secure_delete(account: &str) -> Result<()> {
+    mem().lock().unwrap().remove(account);
+    Ok(())
+}
+
 #[derive(Default)]
 pub struct ProcessLookup;
 impl ProcessLookup {

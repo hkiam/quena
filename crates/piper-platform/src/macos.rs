@@ -201,6 +201,36 @@ pub fn reveal(path: &Path) -> Result<()> {
     run("/usr/bin/open", &["-R", &path.to_string_lossy()]).map(|_| ())
 }
 
+// -------------------------------------------------------------- secure store
+
+pub fn secure_set(account: &str, secret: &[u8]) -> Result<()> {
+    // Store hex so binary secrets survive; the value lives only in the child's argv
+    // and then in the Keychain (protected by its ACL) – never in a Piper file.
+    let value = format!("hex:{}", secret.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let _ = run("/usr/bin/security", &["delete-generic-password", "-a", account, "-s", crate::secure::SERVICE]);
+    run("/usr/bin/security", &["add-generic-password", "-a", account, "-s", crate::secure::SERVICE, "-U", "-w", &value]).map(|_| ())
+}
+
+pub fn secure_get(account: &str) -> Result<Option<Vec<u8>>> {
+    match run("/usr/bin/security", &["find-generic-password", "-a", account, "-s", crate::secure::SERVICE, "-w"]) {
+        Ok(out) => {
+            let v = out.trim();
+            if let Some(hex) = v.strip_prefix("hex:") {
+                let bytes = (0..hex.len()).step_by(2).filter_map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok()).collect();
+                Ok(Some(bytes))
+            } else {
+                Ok(Some(v.as_bytes().to_vec()))
+            }
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+pub fn secure_delete(account: &str) -> Result<()> {
+    let _ = run("/usr/bin/security", &["delete-generic-password", "-a", account, "-s", crate::secure::SERVICE]);
+    Ok(())
+}
+
 pub fn local_addresses() -> Vec<(String, String)> {
     let Ok(out) = run("/sbin/ifconfig", &[]) else { return vec![] };
     let mut res = Vec::new();
