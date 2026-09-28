@@ -15,6 +15,7 @@ members = [
     "crates/piper-proxy",
     "crates/piper-formats",
     "crates/piper-plugin-host",
+    "crates/piper-auth",
     "app/src-tauri",
 ]
 

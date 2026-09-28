@@ -3223,6 +3223,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "piper-auth"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "piper-body"
 version = "0.1.0"
 dependencies = [
