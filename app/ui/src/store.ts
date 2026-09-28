@@ -82,7 +82,8 @@ export type Dialog =
   | { kind: "https" }
   | { kind: "plugins" }
   | { kind: "rules" }
-  | { kind: "compare"; a: string; b: string; titleA: string; titleB: string };
+  | { kind: "compare"; a: string; b: string; titleA: string; titleB: string }
+  | { kind: "prompt"; title: string; label: string; initial: string; resolve: (v: string | null) => void };
 
 export interface AppState {
   status: Status | null;
@@ -105,6 +106,8 @@ export interface AppState {
   dialog: Dialog | null;
   /** Bumped to force the grid to refetch rows (e.g. after marking). */
   gridNonce: number;
+  /** Request to load a session into the Composer. */
+  composerLoad: { id: SessionId; nonce: number } | null;
 }
 
 export const useStore = create<AppState>(() => ({
@@ -127,6 +130,7 @@ export const useStore = create<AppState>(() => ({
   overlay: false,
   dialog: null,
   gridNonce: 0,
+  composerLoad: null,
 }));
 
 export const set = useStore.setState;
@@ -144,4 +148,9 @@ let prefsTimer: number | undefined;
 export function saveLayoutSoon(save: (layout: Layout) => void) {
   window.clearTimeout(prefsTimer);
   prefsTimer = window.setTimeout(() => save(get().layout), 500);
+}
+
+/** In-app replacement for window.prompt (which blocks the web view). */
+export function promptText(title: string, label: string, initial = ""): Promise<string | null> {
+  return new Promise((resolve) => set({ dialog: { kind: "prompt", title, label, initial, resolve } }));
 }

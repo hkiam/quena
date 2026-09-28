@@ -114,21 +114,47 @@ pub async fn tcp_connect(host: &str, port: u16) -> std::io::Result<(TcpStream, u
         return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("no address for {host}")));
     }
     let t1 = Instant::now();
-    let mut last = None;
-    // Prefer IPv4 first (more robust in corporate networks), then IPv6.
-    let mut ordered: Vec<_> = addrs.iter().filter(|a| a.is_ipv4()).collect();
-    ordered.extend(addrs.iter().filter(|a| a.is_ipv6()));
-    for a in ordered {
-        match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(a)).await {
-            Ok(Ok(s)) => {
-                let _ = s.set_nodelay(true);
-                return Ok((s, dns_ms, t1.elapsed().as_millis() as u32, a.to_string()));
-            }
-            Ok(Err(e)) => last = Some(e),
-            Err(_) => last = Some(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("connect to {a} timed out"))),
+    // Happy Eyeballs (RFC 8305, simplified): alternate families, start the next
+    // attempt after 250 ms if the previous one has not succeeded yet.
+    let v4: Vec<_> = addrs.iter().filter(|a| a.is_ipv4()).copied().collect();
+    let v6: Vec<_> = addrs.iter().filter(|a| a.is_ipv6()).copied().collect();
+    let mut ordered = Vec::new();
+    for i in 0..v4.len().max(v6.len()) {
+        if let Some(a) = v4.get(i) {
+            ordered.push(*a);
+        }
+        if let Some(a) = v6.get(i) {
+            ordered.push(*a);
         }
     }
-    Err(last.unwrap_or_else(|| std::io::Error::other("connect failed")))
+    let mut set = tokio::task::JoinSet::new();
+    let mut errors: Vec<String> = Vec::new();
+    let mut next = 0usize;
+    loop {
+        if next < ordered.len() {
+            let a = ordered[next];
+            next += 1;
+            set.spawn(async move { (a, tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(a)).await) });
+        }
+        if set.is_empty() {
+            break;
+        }
+        let delay = if next < ordered.len() { Duration::from_millis(250) } else { CONNECT_TIMEOUT + Duration::from_secs(1) };
+        tokio::select! {
+            r = set.join_next() => match r {
+                Some(Ok((a, Ok(Ok(s))))) => {
+                    set.abort_all();
+                    let _ = s.set_nodelay(true);
+                    return Ok((s, dns_ms, t1.elapsed().as_millis() as u32, a.to_string()));
+                }
+                Some(Ok((a, Ok(Err(e))))) => errors.push(format!("{a}: {e}")),
+                Some(Ok((a, Err(_)))) => errors.push(format!("{a}: timed out")),
+                Some(Err(_)) | None => {}
+            },
+            _ = tokio::time::sleep(delay) => {}
+        }
+    }
+    Err(std::io::Error::other(format!("connect failed ({})", errors.join("; "))))
 }
 
 /// Establish a CONNECT tunnel through an upstream proxy.

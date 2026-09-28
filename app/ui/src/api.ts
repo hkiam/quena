@@ -350,6 +350,33 @@ export interface Recoverable {
   modified: number | null;
 }
 
+export interface ComposeRequest {
+  method: string;
+  url: string;
+  headers: string;
+  body: string;
+  bodyFromSession?: SessionId | null;
+  bodyFile?: string | null;
+  fixContentLength: boolean;
+  breakpoint?: boolean;
+}
+
+export interface CaInfo {
+  exists: boolean;
+  trusted: boolean;
+  sha256: string;
+  path: string;
+  pem: string;
+}
+
+export interface DeviceInfo {
+  port: number;
+  allowRemote: boolean;
+  listening: boolean;
+  addresses: [string, string][];
+  caSha256: string | null;
+}
+
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -403,6 +430,16 @@ export const api = {
   recoverable: () => invoke<Recoverable[]>("recoverable"),
   recover: (dir: string) => invoke<void>("recover", { dir }),
   discard: (dir: string) => invoke<void>("discard", { dir }),
+  caInfo: () => invoke<CaInfo>("ca_info"),
+  caTrust: () => invoke<CaInfo>("ca_trust"),
+  caRemove: () => invoke<CaInfo>("ca_remove"),
+  caRegenerate: () => invoke<CaInfo>("ca_regenerate"),
+  caExport: (path: string, der: boolean) => invoke<void>("ca_export", { path, der }),
+  deviceInfo: () => invoke<DeviceInfo>("device_info"),
+  replay: (ids: SessionId[], options: { unconditional?: boolean; count?: number; breakpoint?: boolean; sequential?: boolean }) =>
+    invoke<number>("replay", { ids, options }),
+  compose: (request: ComposeRequest) => invoke<SessionId>("compose", { request }),
+  parseRawRequest: (raw: string) => invoke<{ method: string; url: string; version: string; headers: string; body: string }>("parse_raw_request", { raw }),
 };
 
 /** URL of a body variant served by the `piper://` protocol (supports Range). */

@@ -18,7 +18,7 @@ mod tunnel;
 pub mod util;
 
 pub use body::{BoxError, ProxyBody, empty, full};
-pub use forward::{ExecuteOptions, Upstream, execute};
+pub use forward::{ExecuteOptions, Upstream, execute, execute_with};
 pub use hooks::{Interceptor, NoInterceptor, RequestAction, ResponseAction, SessionView};
 
 use parking_lot::RwLock;

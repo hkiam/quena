@@ -2647,6 +2647,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "time",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

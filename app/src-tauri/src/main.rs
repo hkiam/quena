@@ -25,12 +25,20 @@ pub type Core = Arc<AppCore>;
 fn main() {
     let log = piper_app_core::init_tracing();
     let core = AppCore::new(Paths::default_paths(), log).expect("initialise Piper core");
+    let engine = piper_app_core::engine::ProxyEngine::new(&core).expect("initialise capture engine");
+    core.set_proxy_engine(engine.clone());
+    if core.settings().proxy.capture_on_startup {
+        if let Err(e) = core.start_capture() {
+            tracing::error!(target: "piper", "could not start capturing: {e}");
+        }
+    }
     tracing::info!(target: "piper", "Piper {} started, data in {}", env!("CARGO_PKG_VERSION"), core.paths.data.display());
 
     let proto_core = core.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(core.clone())
+        .manage(engine.clone())
         .register_asynchronous_uri_scheme_protocol("piper", move |_ctx, request, responder| {
             let core = proto_core.clone();
             std::thread::spawn(move || responder.respond(protocol::handle(&core, request)));

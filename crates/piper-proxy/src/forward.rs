@@ -619,6 +619,11 @@ pub struct ExecuteOptions {
 
 /// Issue a request from Piper (Composer/Replay) and record it as a new session.
 pub async fn execute(shared: Arc<Shared>, head: RequestHead, body: StoredBody, opts: ExecuteOptions) -> SessionId {
+    execute_with(shared, head, body, opts, |_| {}).await
+}
+
+/// Like [`execute`], calling `started` with the session id as soon as the session exists.
+pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBody, opts: ExecuteOptions, started: impl FnOnce(SessionId) + Send) -> SessionId {
     let capture = shared.capture();
     let now = now_us();
     let live = capture.begin(SessionKind::Http, |d| {
@@ -636,6 +641,7 @@ pub async fn execute(shared: Arc<Shared>, head: RequestHead, body: StoredBody, o
     live.set_request_body(body.clone());
     live.update(|_| {});
     let id = live.id;
+    started(id);
     let view = SessionView { id, live: live.clone(), process: "piper".into(), client_ip: String::new() };
     let hooks = shared.hooks();
     let (head, body) = if opts.hooks {

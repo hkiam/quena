@@ -279,6 +279,61 @@ async fn discard(core: State<'_, Core>, dir: String) -> R<()> {
     blocking(move || core.discard_capture(dir.into()).map_err(e)).await
 }
 
+type Engine = std::sync::Arc<piper_app_core::engine::ProxyEngine>;
+use piper_app_core::engine::{CaInfo, DeviceInfo};
+
+#[tauri::command]
+async fn ca_info(engine: State<'_, Engine>) -> R<CaInfo> {
+    let e = engine.inner().clone();
+    blocking(move || Ok(e.ca_info())).await
+}
+
+#[tauri::command]
+async fn ca_trust(engine: State<'_, Engine>) -> R<CaInfo> {
+    let e = engine.inner().clone();
+    blocking(move || e.ca_trust().map_err(|x| x.to_string())).await
+}
+
+#[tauri::command]
+async fn ca_remove(engine: State<'_, Engine>) -> R<CaInfo> {
+    let e = engine.inner().clone();
+    blocking(move || e.ca_remove().map_err(|x| x.to_string())).await
+}
+
+#[tauri::command]
+async fn ca_regenerate(engine: State<'_, Engine>) -> R<CaInfo> {
+    let e = engine.inner().clone();
+    blocking(move || e.ca_regenerate().map_err(|x| x.to_string())).await
+}
+
+#[tauri::command]
+async fn ca_export(engine: State<'_, Engine>, path: String, der: bool) -> R<()> {
+    let e = engine.inner().clone();
+    blocking(move || e.ca_export(path.into(), der).map_err(|x| x.to_string())).await
+}
+
+#[tauri::command]
+async fn device_info(core: State<'_, Core>, engine: State<'_, Engine>) -> R<DeviceInfo> {
+    Ok(engine.device_info(core.inner()))
+}
+
+#[tauri::command]
+async fn replay(core: State<'_, Core>, ids: Vec<SessionId>, options: piper_app_core::compose::ReplayOptions) -> R<usize> {
+    let core = core.inner().clone();
+    blocking(move || core.replay(ids, options).map_err(e)).await
+}
+
+#[tauri::command]
+async fn compose(core: State<'_, Core>, request: piper_app_core::compose::ComposeRequest) -> R<SessionId> {
+    let core = core.inner().clone();
+    blocking(move || core.compose(request).map_err(e)).await
+}
+
+#[tauri::command]
+async fn parse_raw_request(raw: String) -> R<piper_app_core::compose::ParsedRequest> {
+    piper_app_core::compose::parse_raw_request(&raw).map_err(e)
+}
+
 mod piper_store_dto {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -330,5 +385,14 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         recoverable,
         recover,
         discard,
+        ca_info,
+        ca_trust,
+        ca_remove,
+        ca_regenerate,
+        ca_export,
+        device_info,
+        replay,
+        compose,
+        parse_raw_request,
     ]
 }

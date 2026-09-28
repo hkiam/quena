@@ -3,6 +3,7 @@
 //! future CLI use the same API.
 
 pub mod bodies;
+pub mod compose;
 pub mod dto;
 pub mod engine;
 pub mod find;
@@ -92,6 +93,7 @@ pub struct AppCore {
     pub log: Arc<LogBuffer>,
     sink: RwLock<Option<Arc<dyn EventSink>>>,
     engine: RwLock<Option<Arc<dyn CaptureEngine>>>,
+    pub(crate) proxy_engine: RwLock<Option<Arc<engine::ProxyEngine>>>,
     filters: RwLock<FilterSettings>,
     quick_filter: RwLock<String>,
     pub(crate) mock: Mutex<Option<mock::MockHandle>>,
@@ -114,6 +116,7 @@ impl AppCore {
             log,
             sink: RwLock::new(None),
             engine: RwLock::new(None),
+            proxy_engine: RwLock::new(None),
             filters: RwLock::new(FilterSettings::default()),
             quick_filter: RwLock::new(String::new()),
             mock: Mutex::new(None),

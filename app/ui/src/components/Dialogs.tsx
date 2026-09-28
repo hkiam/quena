@@ -6,6 +6,8 @@ import { get, say, set, useStore } from "../store";
 import { TextWizard } from "./TextWizard";
 import { CompareView } from "./CompareView";
 import { FindDialog } from "./FindDialog";
+import { HttpsPanel } from "./HttpsDialog";
+import { DeviceAssistant } from "./DeviceDialog";
 
 function Modal({ title, children, onClose, wide, footer }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; footer?: React.ReactNode }) {
   return (
@@ -25,6 +27,33 @@ function Modal({ title, children, onClose, wide, footer }: { title: string; chil
 }
 
 const close = () => set({ dialog: null });
+
+function PromptDialog({ title, label, initial, resolve }: { title: string; label: string; initial: string; resolve: (v: string | null) => void }) {
+  const [v, setV] = useState(initial);
+  const done = (x: string | null) => {
+    close();
+    resolve(x);
+  };
+  return (
+    <Modal
+      title={title}
+      onClose={() => done(null)}
+      footer={
+        <>
+          <button onClick={() => done(null)}>Cancel</button>
+          <button className="primary" onClick={() => done(v)}>
+            OK
+          </button>
+        </>
+      }
+    >
+      <div className="f-row">
+        <span>{label}</span>
+        <input autoFocus value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === "Enter" && done(v)} />
+      </div>
+    </Modal>
+  );
+}
 
 function CommentDialog({ ids, initial }: { ids: number[]; initial: string }) {
   const [v, setV] = useState(initial);
@@ -404,6 +433,8 @@ export function Dialogs() {
   }, [d]);
   if (!d) return null;
   switch (d.kind) {
+    case "prompt":
+      return <PromptDialog title={d.title} label={d.label} initial={d.initial} resolve={d.resolve} />;
     case "comment":
       return <CommentDialog ids={d.ids} initial={d.initial} />;
     case "help":
@@ -437,9 +468,17 @@ export function Dialogs() {
         </Modal>
       );
     case "connect-device":
-      return <Pending title="Connect Device" what="The device assistant arrives with milestone M2 (needs the root certificate)." />;
+      return (
+        <Modal title="Connect Device" onClose={close} wide>
+          <DeviceAssistant />
+        </Modal>
+      );
     case "https":
-      return <Pending title="HTTPS / Certificates" what="Certificate management arrives with milestone M2." />;
+      return (
+        <Modal title="HTTPS" onClose={close} wide>
+          <HttpsPanel />
+        </Modal>
+      );
     case "plugins":
       return <Pending title="Plugins" what="The plugin host arrives with milestone M10." />;
     case "rules":
