@@ -308,6 +308,15 @@ impl BodyWriter {
         Ok(())
     }
 
+    /// Account for bytes that passed the wire but could not be recorded.
+    pub fn add_dropped(&mut self, n: u64) {
+        if n > 0 {
+            let mut s = self.body.0.state.write();
+            s.wire_len += n;
+            s.truncated = true;
+        }
+    }
+
     fn spill(&mut self) -> Result<()> {
         let path = &self.body.0.path;
         if let Some(dir) = path.parent() {

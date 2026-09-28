@@ -4,6 +4,7 @@
 
 pub mod bodies;
 pub mod dto;
+pub mod engine;
 pub mod find;
 pub mod logbuf;
 pub mod mock;
@@ -63,6 +64,10 @@ pub trait CaptureEngine: Send + Sync {
     fn reconfigure(&self, _core: &Arc<AppCore>) -> Result<()> {
         Ok(())
     }
+    /// The active capture was replaced (recover, open …).
+    fn capture_changed(&self, _core: &Arc<AppCore>) {}
+    /// Clean shutdown (restore system proxy …).
+    fn shutdown(&self, _core: &Arc<AppCore>) {}
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -435,19 +440,25 @@ impl AppCore {
     /// Clean shutdown.
     pub fn shutdown(self: &Arc<Self>) {
         let _ = self.stop_capture();
+        if let Some(e) = self.engine() {
+            e.shutdown(self);
+        }
         mock::stop(self);
         let keep = self.settings.read().keep_captures;
         self.capture().close(!keep);
     }
 
     /// Replace the current capture (open recovered/other capture).
-    pub fn switch_capture(&self, cap: Arc<Capture>) {
+    pub fn switch_capture(self: &Arc<Self>, cap: Arc<Capture>) {
         let old = std::mem::replace(&mut *self.capture.write(), cap);
         old.close(!self.settings.read().keep_captures);
         let _ = self.apply_filter();
         let cap = self.capture();
         cap.index.tick();
         self.emit("list", ListEvent { version: cap.index.version() + 1, total: cap.index.view_len(), count: cap.index.len() });
+        if let Some(e) = self.engine() {
+            e.capture_changed(self);
+        }
     }
 
     pub fn recoverable_captures(&self) -> Vec<piper_store::RecoverableCapture> {
@@ -455,7 +466,7 @@ impl AppCore {
         piper_store::find_recoverable(&self.paths.captures).into_iter().filter(|c| c.dir != current).collect()
     }
 
-    pub fn recover_capture(&self, dir: PathBuf) -> Result<()> {
+    pub fn recover_capture(self: &Arc<Self>, dir: PathBuf) -> Result<()> {
         let cfg = self.settings.read().bodies.to_config();
         let cap = Capture::open(dir, cfg, true)?;
         self.switch_capture(cap);

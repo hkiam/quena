@@ -1,0 +1,230 @@
+//! Upstream connector: TCP (+DNS timing), optional upstream proxy (CONNECT
+//! for HTTPS, absolute-form for HTTP), TLS with per-host verification/ALPN.
+
+use crate::ProxyConfig;
+use crate::body::BoxError;
+use hyper::Uri;
+use hyper_util::client::legacy::connect::{Connected, Connection};
+use hyper_util::rt::TokioIo;
+use piper_model::TlsInfo;
+use piper_tls::ClientConfigs;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio_rustls::client::TlsStream;
+
+/// Connection metadata attached to pooled connections.
+#[derive(Clone, Debug)]
+pub struct ConnInfo {
+    pub server_addr: String,
+    pub dns_ms: u32,
+    pub tcp_ms: u32,
+    pub tls_ms: u32,
+    pub tls: Option<TlsInfo>,
+    pub gateway: Option<String>,
+    /// Set after the first request used this connection (reuse detection).
+    pub used: Arc<AtomicBool>,
+    pub connect_start: i64,
+    pub connected_at: i64,
+}
+
+pub enum Stream {
+    Plain(TokioIo<TcpStream>),
+    Tls(Box<TokioIo<TlsStream<TcpStream>>>),
+}
+
+pub struct MaybeTls {
+    stream: Stream,
+    proxied: bool,
+    h2: bool,
+    info: ConnInfo,
+}
+
+impl Connection for MaybeTls {
+    fn connected(&self) -> Connected {
+        let mut c = Connected::new().proxy(self.proxied).extra(self.info.clone());
+        if self.h2 {
+            c = c.negotiated_h2();
+        }
+        c
+    }
+}
+
+impl hyper::rt::Read for MaybeTls {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: hyper::rt::ReadBufCursor<'_>) -> Poll<std::io::Result<()>> {
+        match &mut self.get_mut().stream {
+            Stream::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            Stream::Tls(s) => Pin::new(&mut **s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl hyper::rt::Write for MaybeTls {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+        match &mut self.get_mut().stream {
+            Stream::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            Stream::Tls(s) => Pin::new(&mut **s).poll_write(cx, buf),
+        }
+    }
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match &mut self.get_mut().stream {
+            Stream::Plain(s) => Pin::new(s).poll_flush(cx),
+            Stream::Tls(s) => Pin::new(&mut **s).poll_flush(cx),
+        }
+    }
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match &mut self.get_mut().stream {
+            Stream::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            Stream::Tls(s) => Pin::new(&mut **s).poll_shutdown(cx),
+        }
+    }
+    fn poll_write_vectored(self: Pin<&mut Self>, cx: &mut Context<'_>, bufs: &[std::io::IoSlice<'_>]) -> Poll<std::io::Result<usize>> {
+        match &mut self.get_mut().stream {
+            Stream::Plain(s) => Pin::new(s).poll_write_vectored(cx, bufs),
+            Stream::Tls(s) => Pin::new(&mut **s).poll_write_vectored(cx, bufs),
+        }
+    }
+    fn is_write_vectored(&self) -> bool {
+        match &self.stream {
+            Stream::Plain(s) => s.is_write_vectored(),
+            Stream::Tls(s) => s.is_write_vectored(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Connector {
+    pub cfg: Arc<ProxyConfig>,
+    pub tls: Arc<ClientConfigs>,
+}
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Open a TCP connection with DNS/connect timing.
+pub async fn tcp_connect(host: &str, port: u16) -> std::io::Result<(TcpStream, u32, u32, String)> {
+    let t0 = Instant::now();
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.trim_matches(['[', ']']), port)).await?.collect();
+    let dns_ms = t0.elapsed().as_millis() as u32;
+    if addrs.is_empty() {
+        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("no address for {host}")));
+    }
+    let t1 = Instant::now();
+    let mut last = None;
+    // Prefer IPv4 first (more robust in corporate networks), then IPv6.
+    let mut ordered: Vec<_> = addrs.iter().filter(|a| a.is_ipv4()).collect();
+    ordered.extend(addrs.iter().filter(|a| a.is_ipv6()));
+    for a in ordered {
+        match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(a)).await {
+            Ok(Ok(s)) => {
+                let _ = s.set_nodelay(true);
+                return Ok((s, dns_ms, t1.elapsed().as_millis() as u32, a.to_string()));
+            }
+            Ok(Err(e)) => last = Some(e),
+            Err(_) => last = Some(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("connect to {a} timed out"))),
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::Error::other("connect failed")))
+}
+
+/// Establish a CONNECT tunnel through an upstream proxy.
+pub async fn connect_via_proxy(s: &mut TcpStream, host: &str, port: u16) -> std::io::Result<()> {
+    let target = if host.contains(':') { format!("[{host}]:{port}") } else { format!("{host}:{port}") };
+    let req = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Connection: Keep-Alive\r\nUser-Agent: Piper\r\n\r\n");
+    s.write_all(req.as_bytes()).await?;
+    let mut buf = Vec::with_capacity(512);
+    let mut b = [0u8; 1];
+    while !buf.ends_with(b"\r\n\r\n") {
+        if buf.len() > 16 * 1024 {
+            return Err(std::io::Error::other("upstream proxy response too large"));
+        }
+        let n = s.read(&mut b).await?;
+        if n == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "upstream proxy closed the connection"));
+        }
+        buf.push(b[0]);
+    }
+    let head = String::from_utf8_lossy(&buf);
+    let status = head.split_whitespace().nth(1).unwrap_or("");
+    if status != "200" {
+        let line = head.lines().next().unwrap_or("").to_string();
+        return Err(std::io::Error::other(format!("upstream proxy refused CONNECT: {line}")));
+    }
+    Ok(())
+}
+
+pub fn tls_info(conn: &rustls::ClientConnection, sni: &str) -> TlsInfo {
+    TlsInfo {
+        version: conn.protocol_version().map(|v| format!("{v:?}").replace('_', ".").replace("TLSv", "TLS ")).unwrap_or_default(),
+        cipher: conn.negotiated_cipher_suite().map(|c| format!("{:?}", c.suite())).unwrap_or_default(),
+        sni: Some(sni.to_string()),
+        alpn: conn.alpn_protocol().map(|a| String::from_utf8_lossy(a).into_owned()),
+        server_chain_pem: conn.peer_certificates().map(|c| c.iter().map(|d| piper_tls::der_to_pem(d.as_ref())).collect()).unwrap_or_default(),
+    }
+}
+
+impl tower_service::Service<Uri> for Connector {
+    type Response = MaybeTls;
+    type Error = BoxError;
+    type Future = Pin<Box<dyn Future<Output = Result<MaybeTls, BoxError>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), BoxError>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, uri: Uri) -> Self::Future {
+        let cfg = self.cfg.clone();
+        let tls = self.tls.clone();
+        Box::pin(async move {
+            let https = uri.scheme_str() == Some("https") || uri.scheme_str() == Some("wss");
+            let host = uri.host().ok_or("URI without host")?.trim_matches(['[', ']']).to_string();
+            let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
+            let connect_start = piper_model::now_us();
+            let upstream = cfg.upstream_for(&format!("{host}:{port}"));
+            let (mut tcp, dns_ms, tcp_ms, server_addr, gateway) = match &upstream {
+                Some((ph, pp)) => {
+                    let (s, d, t, a) = tcp_connect(ph, *pp).await.map_err(|e| format!("upstream proxy {ph}:{pp}: {e}"))?;
+                    (s, d, t, a, Some(format!("{ph}:{pp}")))
+                }
+                None => {
+                    let (s, d, t, a) = tcp_connect(&host, port).await?;
+                    (s, d, t, a, None)
+                }
+            };
+            let info = |tls_ms, tls: Option<TlsInfo>| ConnInfo {
+                server_addr: server_addr.clone(),
+                dns_ms,
+                tcp_ms,
+                tls_ms,
+                tls,
+                gateway: gateway.clone(),
+                used: Arc::new(AtomicBool::new(false)),
+                connect_start,
+                connected_at: piper_model::now_us(),
+            };
+            if !https {
+                return Ok(MaybeTls { stream: Stream::Plain(TokioIo::new(tcp)), proxied: upstream.is_some(), h2: false, info: info(0, None) });
+            }
+            if upstream.is_some() {
+                connect_via_proxy(&mut tcp, &host, port).await?;
+            }
+            let t = Instant::now();
+            let h2 = cfg.h2_host(&host);
+            let config = tls.for_host(&host, cfg.insecure_host(&host), h2, piper_query::glob_match);
+            let name = piper_tls::server_name(&host)?;
+            let s = tokio::time::timeout(CONNECT_TIMEOUT, tokio_rustls::TlsConnector::from(config).connect(name, tcp))
+                .await
+                .map_err(|_| "TLS handshake timed out")?
+                .map_err(|e| format!("TLS handshake with {host} failed: {e}"))?;
+            let tls_ms = t.elapsed().as_millis() as u32;
+            let (_, conn) = s.get_ref();
+            let negotiated_h2 = conn.alpn_protocol() == Some(b"h2");
+            let ti = tls_info(conn, &host);
+            Ok(MaybeTls { stream: Stream::Tls(Box::new(TokioIo::new(s))), proxied: false, h2: negotiated_h2, info: info(tls_ms, Some(ti)) })
+        })
+    }
+}

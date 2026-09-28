@@ -1,0 +1,679 @@
+//! The forwarding pipeline: record → hooks → upstream → record → client.
+
+use crate::body::{BoxError, ProxyBody, StoredStream, Tee, TeeTimes, empty, full};
+use crate::connector::{ConnInfo, Connector};
+use crate::hooks::{Mode, RequestAction, ResponseAction, SessionView};
+use crate::util::{HOP_BY_HOP, title_case};
+use crate::{ProxyConfig, Shared, host_matches};
+use bytes::Bytes;
+use http::{HeaderName, HeaderValue, Request, Response, StatusCode, Version};
+use http_body_util::BodyExt;
+use hyper::body::Incoming;
+use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::capture_connection;
+use hyper_util::rt::TokioExecutor;
+use piper_body::Body as StoredBody;
+use piper_model::*;
+use piper_store::LiveSession;
+use piper_tls::ClientConfigs;
+use std::convert::Infallible;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+
+/// Pooled upstream client.
+pub struct Upstream {
+    pub client: Client<Connector, ProxyBody>,
+}
+
+impl Upstream {
+    pub fn new(cfg: Arc<ProxyConfig>, tls: Arc<ClientConfigs>) -> Upstream {
+        let client = Client::builder(TokioExecutor::new())
+            .pool_idle_timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(32)
+            .http1_preserve_header_case(true)
+            .http1_title_case_headers(false)
+            .http2_adaptive_window(true)
+            .retry_canceled_requests(true)
+            .set_host(true)
+            .build(Connector { cfg, tls });
+        Upstream { client }
+    }
+}
+
+/// Per client-connection context.
+pub struct ConnCtx {
+    pub shared: Arc<Shared>,
+    pub conn_id: u64,
+    pub client_addr: SocketAddr,
+    pub remote: bool,
+    pub process: tokio::sync::watch::Receiver<Option<Option<ProcessInfo>>>,
+    /// "http" or "https" for origin-form requests on this connection.
+    pub scheme: &'static str,
+    /// CONNECT target for requests inside a decrypted tunnel.
+    pub authority: Option<String>,
+    pub client_tls: Option<TlsInfo>,
+    pub connected_at: i64,
+    pub decrypted: bool,
+}
+
+impl ConnCtx {
+    pub async fn process(&self) -> Option<ProcessInfo> {
+        if self.remote {
+            return Some(ProcessInfo { pid: 0, name: format!("remote:{}", self.client_addr.ip().to_canonical()) });
+        }
+        let mut rx = self.process.clone();
+        if rx.borrow().is_none() {
+            let _ = tokio::time::timeout(Duration::from_millis(60), rx.changed()).await;
+        }
+        rx.borrow().clone().flatten()
+    }
+}
+
+fn is_h1(v: Version) -> bool {
+    v == Version::HTTP_11 || v == Version::HTTP_10 || v == Version::HTTP_09
+}
+
+fn version_of(v: Version) -> HttpVersion {
+    match v {
+        Version::HTTP_09 => HttpVersion::Http09,
+        Version::HTTP_10 => HttpVersion::Http10,
+        Version::HTTP_2 => HttpVersion::Http2,
+        Version::HTTP_3 => HttpVersion::Http3,
+        _ => HttpVersion::Http11,
+    }
+}
+
+pub fn record_headers(h: &http::HeaderMap, h1: bool) -> Headers {
+    let mut out = Headers::new();
+    for (k, v) in h {
+        let name = if h1 { title_case(k.as_str()) } else { k.as_str().to_string() };
+        out.push_bytes(&name, v.as_bytes());
+    }
+    out
+}
+
+fn to_header_map(h: &Headers, skip_hop: bool, keep_upgrade: bool) -> http::HeaderMap {
+    let mut m = http::HeaderMap::with_capacity(h.len());
+    let connection_tokens: Vec<String> = h
+        .get_all("connection")
+        .flat_map(|v| v.split(','))
+        .map(|t| t.trim().to_ascii_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    for (k, v) in h.iter() {
+        let lk = k.to_ascii_lowercase();
+        if lk.starts_with(':') {
+            continue;
+        }
+        if skip_hop {
+            let upgrade_hdr = keep_upgrade && (lk == "upgrade" || lk == "connection");
+            if !upgrade_hdr && (HOP_BY_HOP.contains(&lk.as_str()) || (connection_tokens.contains(&lk) && lk != "upgrade")) {
+                continue;
+            }
+        }
+        let (Ok(name), Ok(val)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_bytes(&string_to_latin1(v))) else {
+            continue;
+        };
+        m.append(name, val);
+    }
+    m
+}
+
+/// Absolute URL of an incoming proxy request.
+fn absolute_url(req: &Request<Incoming>, ctx: &ConnCtx) -> Option<String> {
+    let uri = req.uri();
+    if let (Some(s), Some(a)) = (uri.scheme_str(), uri.authority()) {
+        let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+        return Some(format!("{s}://{a}{pq}"));
+    }
+    let authority = uri
+        .authority()
+        .map(|a| a.to_string())
+        .or_else(|| req.headers().get(http::header::HOST).and_then(|h| h.to_str().ok()).map(|s| s.to_string()))
+        .or_else(|| ctx.authority.clone())?;
+    let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
+    // Strip default ports for readability (like Fiddler).
+    let authority = match (ctx.scheme, authority.strip_suffix(":443"), authority.strip_suffix(":80")) {
+        ("https", Some(a), _) => a.to_string(),
+        ("http", _, Some(a)) => a.to_string(),
+        _ => authority,
+    };
+    Some(format!("{}://{authority}{pq}", ctx.scheme))
+}
+
+fn is_self_target(shared: &Shared, url: &str) -> bool {
+    let Ok(u) = url.parse::<http::Uri>() else { return false };
+    let host = u.host().unwrap_or("").trim_matches(['[', ']']).to_ascii_lowercase();
+    if host == "piper.cert" || host == "piper" || host == "ipv4.piper" {
+        return true;
+    }
+    let port = u.port_u16().unwrap_or(if u.scheme_str() == Some("https") { 443 } else { 80 });
+    let listen = shared.listen.read();
+    listen.iter().any(|a| a.port() == port) && (crate::util::is_loopback_host(&host) || piper_platform::local_addresses().iter().any(|(_, ip)| *ip == host))
+}
+
+fn error_response(status: StatusCode, msg: &str) -> Response<ProxyBody> {
+    let body = format!(
+        "<!doctype html><html><head><title>Piper Error</title></head><body style=\"font-family:system-ui;margin:2em\">\
+         <h2>[Piper] {}</h2><pre style=\"white-space:pre-wrap\">{}</pre></body></html>",
+        status.canonical_reason().unwrap_or(""),
+        html_escape(msg)
+    );
+    let mut r = Response::new(full(body));
+    *r.status_mut() = status;
+    r.headers_mut().insert(http::header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+    r.headers_mut().insert("x-piper-error", HeaderValue::from_static("1"));
+    r.headers_mut().insert(http::header::CACHE_CONTROL, HeaderValue::from_static("no-cache, must-revalidate"));
+    r
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+fn headers_only(cfg: &ProxyConfig, host: &str, ct: Option<&str>) -> bool {
+    host_matches(&cfg.headers_only_hosts, host) || ct.is_some_and(|ct| cfg.headers_only_types.iter().any(|t| ct.to_ascii_lowercase().contains(t.as_str())))
+}
+
+/// Read a body completely into the store (lossless, bypasses the recorder queue).
+pub(crate) async fn buffer_body<B>(shared: &Shared, mut body: B) -> Result<(StoredBody, bool), BoxError>
+where
+    B: http_body::Body<Data = Bytes> + Unpin,
+    B::Error: Into<BoxError>,
+{
+    let cap = shared.capture();
+    let mut w = cap.bodies.writer_with_limit(u64::MAX);
+    let mut aborted = false;
+    loop {
+        match body.frame().await {
+            Some(Ok(f)) => {
+                if let Some(d) = f.data_ref() {
+                    tokio::task::block_in_place(|| w.write(d)).map_err(|e| Box::new(e) as BoxError)?;
+                }
+            }
+            Some(Err(e)) => {
+                let e: BoxError = e.into();
+                tracing::debug!("body read aborted: {e}");
+                aborted = true;
+                break;
+            }
+            None => break,
+        }
+    }
+    Ok((w.finish(), aborted))
+}
+
+/// Entry point for every proxied request.
+pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Response<ProxyBody>, Infallible> {
+    let shared = ctx.shared.clone();
+    let Some(url) = absolute_url(&req, &ctx) else {
+        return Ok(crate::landing::serve(&shared, &req));
+    };
+    if is_self_target(&shared, &url) {
+        return Ok(crate::landing::serve(&shared, &req));
+    }
+    let cfg = shared.cfg();
+    let capture = shared.capture();
+    let now = now_us();
+    let h1 = is_h1(req.version());
+    let head = RequestHead { method: req.method().to_string(), url: url.clone(), version: version_of(req.version()), headers: record_headers(req.headers(), h1) };
+    let process = ctx.process().await;
+    let client_ip = ctx.client_addr.ip().to_canonical().to_string();
+    let live = capture.begin(SessionKind::Http, |d| {
+        d.request = head.clone();
+        d.process = process.clone();
+        d.connection.client_addr = Some(ctx.client_addr.to_string());
+        d.connection.client_conn_id = Some(ctx.conn_id);
+        d.connection.client_tls = ctx.client_tls.clone();
+        d.timers.client_connected = Some(ctx.connected_at);
+        d.timers.client_begin_request = Some(now);
+        d.timers.got_request_headers = Some(now);
+        d.summary.client_ip = client_ip.clone();
+        d.summary.state = SessionState::SendingRequest;
+        if ctx.decrypted {
+            d.summary.flags |= flags::DECRYPTED;
+        }
+        if ctx.remote {
+            d.summary.flags |= flags::REMOTE_CLIENT;
+        }
+    });
+    let view = SessionView { id: live.id, live: live.clone(), process: process.as_ref().map(|p| p.display()).unwrap_or_default(), client_ip };
+    let hooks = shared.hooks();
+    let upgrade_req = req.headers().get(http::header::UPGRADE).is_some() && h1;
+    let client_upgrade = if upgrade_req { Some(hyper::upgrade::on(&mut req)) } else { None };
+    let (_parts, incoming) = req.into_parts();
+
+    // --- request body: stream through the tee, or buffer for the hook
+    let mode = hooks.request_mode(&view, &head);
+    let (req_body_src, buffered_req): (Option<ProxyBody>, Option<StoredBody>) = if mode == Mode::Buffer {
+        live.update(|d| d.summary.state = SessionState::BreakpointRequest);
+        match buffer_body(&shared, incoming).await {
+            Ok((b, _)) => {
+                live.set_request_body(b.clone());
+                live.update(|d| d.timers.client_done_request = Some(now_us()));
+                (None, Some(b))
+            }
+            Err(e) => {
+                finish_error(&live, &format!("reading the request body failed: {e}"));
+                return Ok(error_response(StatusCode::BAD_REQUEST, &e.to_string()));
+            }
+        }
+    } else {
+        let writer = if headers_only(&cfg, &url_host(&url), head.headers.get("content-type")) { capture.bodies.writer_with_limit(0) } else { capture.bodies.writer() };
+        live.set_request_body(writer.body().clone());
+        let times = Arc::new(TeeTimes::default());
+        let l2 = live.clone();
+        let t2 = times.clone();
+        let key = shared.recorder.open(
+            writer,
+            Box::new(move |b, _aborted| {
+                l2.set_request_body(b);
+                let last = t2.last.load(Ordering::Relaxed);
+                l2.update(|d| d.timers.client_done_request = Some(if last > 0 { last } else { now_us() }));
+            }),
+        );
+        (Some(Tee::new(incoming, shared.recorder.clone(), key, times).boxed()), None)
+    };
+
+    // --- request hook
+    let action = hooks.on_request(view.clone(), head.clone(), buffered_req.clone()).await;
+    let (head, body): (RequestHead, ProxyBody) = match action {
+        RequestAction::Abort => {
+            live.update(|d| {
+                d.summary.state = SessionState::Aborted;
+                d.error = Some("aborted by rule".into());
+            });
+            live.finish();
+            // Closing without a response: hyper turns an error into a connection reset.
+            return Ok(error_response(StatusCode::BAD_GATEWAY, "Request aborted by Piper rule"));
+        }
+        RequestAction::Respond { head: rh, body, delay_ms } => {
+            if delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+            // Drain the request body so it gets recorded.
+            if let Some(b) = req_body_src {
+                tokio::spawn(async move {
+                    let mut b = b;
+                    while let Some(Ok(_)) = b.frame().await {}
+                });
+            }
+            return Ok(respond_locally(&shared, &live, &view, rh, body));
+        }
+        RequestAction::Forward { head: new_head, body: new_body, delay_ms } => {
+            if delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+            }
+            let tampered = new_head.is_some() || new_body.is_some();
+            let head = match new_head {
+                Some(h) => {
+                    let h2 = h.clone();
+                    live.update(move |d| d.request = h2);
+                    h
+                }
+                None => head,
+            };
+            let body = match (new_body, buffered_req, req_body_src) {
+                (Some(b), _, _) => {
+                    live.set_request_body(b.clone());
+                    StoredStream::new(b).boxed()
+                }
+                (None, Some(b), _) => StoredStream::new(b).boxed(),
+                (None, None, Some(src)) => src,
+                (None, None, None) => empty(),
+            };
+            if tampered {
+                live.update(|d| d.summary.flags |= flags::TAMPERED);
+            }
+            (head, body)
+        }
+    };
+
+    // --- upstream
+    let upgrade = upgrade_req && client_upgrade.is_some();
+    let resp = match send_upstream(&shared, &live, &head, body, upgrade).await {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = format!("The connection to '{}' failed.\nError: {e}", url_host(&head.url));
+            let resp = error_response(StatusCode::BAD_GATEWAY, &msg);
+            record_synthetic_response(&shared, &live, &resp, msg.clone());
+            return Ok(resp);
+        }
+    };
+
+    if resp.status() == StatusCode::SWITCHING_PROTOCOLS {
+        if let Some(cu) = client_upgrade {
+            return Ok(crate::tunnel::websocket(&shared, &live, resp, cu));
+        }
+    }
+    Ok(deliver_response(&shared, &live, &view, &head, resp).await)
+}
+
+fn url_host(url: &str) -> String {
+    split_url(url, "GET").0
+}
+
+/// Send a request upstream and record connection details and the response head.
+pub(crate) async fn send_upstream(
+    shared: &Arc<Shared>,
+    live: &Arc<LiveSession>,
+    head: &RequestHead,
+    body: ProxyBody,
+    upgrade: bool,
+) -> Result<Response<Incoming>, String> {
+    let uri: http::Uri = head.url.parse().map_err(|e| format!("invalid URL {}: {e}", head.url))?;
+    let mut req = Request::builder()
+        .method(http::Method::from_bytes(head.method.as_bytes()).map_err(|e| e.to_string())?)
+        .uri(uri)
+        .version(Version::HTTP_11)
+        .body(body)
+        .map_err(|e| e.to_string())?;
+    *req.headers_mut() = to_header_map(&head.headers, true, upgrade);
+    let captured = capture_connection(&mut req);
+    live.update(|d| {
+        d.timers.server_connect_start = Some(now_us());
+        d.summary.state = SessionState::AwaitingResponse;
+    });
+    let up = shared.upstream();
+    let sent = now_us();
+    let result = up.client.request(req).await;
+    // Connection metadata (also available on errors after connecting).
+    let mut ext = http::Extensions::new();
+    if let Some(c) = captured.connection_metadata().as_ref() {
+        c.get_extras(&mut ext);
+    }
+    let info = ext.get::<ConnInfo>().cloned();
+    let resp = result.map_err(|e| {
+        let mut msg = e.to_string();
+        let mut src = std::error::Error::source(&e);
+        while let Some(s) = src {
+            msg.push_str(&format!(": {s}"));
+            src = s.source();
+        }
+        msg
+    })?;
+    let got = now_us();
+    let h1 = is_h1(resp.version());
+    let reason = resp
+        .extensions()
+        .get::<hyper::ext::ReasonPhrase>()
+        .map(|r| String::from_utf8_lossy(r.as_bytes()).into_owned())
+        .unwrap_or_else(|| resp.status().canonical_reason().unwrap_or("").to_string());
+    let rh = ResponseHead { status: resp.status().as_u16(), reason, version: version_of(resp.version()), headers: record_headers(resp.headers(), h1) };
+    live.update(|d| {
+        if let Some(i) = &info {
+            let reused = i.used.swap(true, Ordering::Relaxed);
+            d.connection.server_addr = Some(i.server_addr.clone());
+            d.connection.server_conn_reused = reused;
+            d.connection.gateway = i.gateway.clone();
+            d.connection.server_tls = i.tls.clone();
+            if !reused {
+                d.timers.dns_ms = Some(i.dns_ms);
+                d.timers.tcp_connect_ms = Some(i.tcp_ms);
+                d.timers.tls_handshake_ms = if i.tls.is_some() { Some(i.tls_ms) } else { None };
+                d.timers.server_connect_start = Some(i.connect_start);
+                d.timers.server_connected = Some(i.connected_at);
+            }
+        }
+        d.timers.server_begin_request = Some(sent);
+        d.timers.server_got_first_byte = Some(got);
+        d.timers.got_response_headers = Some(got);
+        d.response = Some(rh);
+        d.summary.state = SessionState::ReceivingResponse;
+    });
+    Ok(resp)
+}
+
+/// Stream (or buffer) the upstream response to the client while recording it.
+async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &SessionView, req_head: &RequestHead, resp: Response<Incoming>) -> Response<ProxyBody> {
+    let cfg = shared.cfg();
+    let hooks = shared.hooks();
+    let (parts, incoming) = resp.into_parts();
+    let resp_head = live.detail().response.unwrap_or_default();
+    let mode = hooks.response_mode(view, req_head, &resp_head);
+    if mode == Mode::Buffer || !cfg.stream {
+        if mode == Mode::Buffer {
+            live.update(|d| d.summary.state = SessionState::BreakpointResponse);
+        }
+        let (body, aborted) = match buffer_body(shared, incoming).await {
+            Ok(v) => v,
+            Err(e) => {
+                finish_error(live, &e.to_string());
+                return error_response(StatusCode::BAD_GATEWAY, &e.to_string());
+            }
+        };
+        live.set_response_body(body.clone());
+        live.update(|d| d.timers.server_done_response = Some(now_us()));
+        let (head, body) = if mode == Mode::Buffer {
+            match hooks.on_response(view.clone(), resp_head.clone(), body.clone()).await {
+                ResponseAction::Continue => (resp_head, body),
+                ResponseAction::Replace { head, body: nb } => {
+                    let b = nb.unwrap_or(body);
+                    live.set_response_body(b.clone());
+                    let h2 = head.clone();
+                    live.update(move |d| {
+                        d.response = Some(h2);
+                        d.summary.flags |= flags::TAMPERED;
+                    });
+                    (head, b)
+                }
+                ResponseAction::Abort => {
+                    finish_error(live, "aborted at breakpoint");
+                    return error_response(StatusCode::BAD_GATEWAY, "Response aborted in Piper");
+                }
+            }
+        } else {
+            (resp_head, body)
+        };
+        let len = body.len();
+        let out = build_client_response(&head, StoredStream::new(body).boxed(), Some(len));
+        live.update(|d| {
+            d.summary.state = if aborted { SessionState::Aborted } else { SessionState::Done };
+            d.timers.client_begin_response = Some(now_us());
+            d.timers.client_done_response = Some(now_us());
+        });
+        live.finish();
+        hooks.on_complete(view);
+        return out;
+    }
+    // Streaming.
+    let capture = shared.capture();
+    let ct = resp_head.headers.get("content-type").map(|s| s.to_string());
+    let writer = if headers_only(&cfg, &url_host(&req_head.url), ct.as_deref()) { capture.bodies.writer_with_limit(0) } else { capture.bodies.writer() };
+    live.set_response_body(writer.body().clone());
+    let times = Arc::new(TeeTimes::default());
+    let l2 = live.clone();
+    let t2 = times.clone();
+    let hooks2 = hooks.clone();
+    let view2 = view.clone();
+    let expected = parts.headers.get(http::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
+    let key = shared.recorder.open(
+        writer,
+        Box::new(move |b, aborted| {
+            let wire = b.wire_len();
+            l2.set_response_body(b);
+            let last = t2.last.load(Ordering::Relaxed);
+            let end = if last > 0 { last } else { now_us() };
+            let incomplete = expected.is_some_and(|e| wire < e);
+            l2.update(|d| {
+                d.timers.server_done_response = Some(end);
+                d.timers.client_done_response = Some(end);
+                if aborted || incomplete {
+                    d.summary.state = SessionState::Aborted;
+                    d.summary.flags |= flags::CLIENT_ABORTED;
+                    if d.error.is_none() {
+                        d.error = Some(match expected {
+                            Some(e) => format!("connection closed after {wire} of {e} bytes"),
+                            None => format!("connection closed after {wire} bytes"),
+                        });
+                    }
+                } else {
+                    d.summary.state = SessionState::Done;
+                }
+            });
+            l2.finish();
+            hooks2.on_complete(&view2);
+        }),
+    );
+    live.update(|d| d.timers.client_begin_response = Some(now_us()));
+    let body = Tee::new(incoming, shared.recorder.clone(), key, times).boxed();
+    let mut out = Response::from_parts(parts, body);
+    strip_hop_by_hop(out.headers_mut());
+    out
+}
+
+fn strip_hop_by_hop(h: &mut http::HeaderMap) {
+    let tokens: Vec<String> = h
+        .get_all(http::header::CONNECTION)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .map(|t| t.trim().to_ascii_lowercase())
+        .collect();
+    for t in tokens {
+        if let Ok(n) = HeaderName::from_bytes(t.as_bytes()) {
+            h.remove(n);
+        }
+    }
+    for n in HOP_BY_HOP {
+        h.remove(*n);
+    }
+}
+
+pub(crate) fn build_client_response(head: &ResponseHead, body: ProxyBody, len: Option<u64>) -> Response<ProxyBody> {
+    let mut r = Response::new(body);
+    *r.status_mut() = StatusCode::from_u16(head.status).unwrap_or(StatusCode::OK);
+    *r.headers_mut() = to_header_map(&head.headers, true, false);
+    if let Some(len) = len {
+        if !(head.status == 204 || head.status == 304 || (100..200).contains(&head.status)) {
+            r.headers_mut().insert(http::header::CONTENT_LENGTH, HeaderValue::from(len));
+        }
+    }
+    if !head.reason.is_empty() && Some(head.reason.as_str()) != r.status().canonical_reason() {
+        if let Ok(rp) = hyper::ext::ReasonPhrase::try_from(head.reason.clone().into_bytes()) {
+            r.extensions_mut().insert(rp);
+        }
+    }
+    r
+}
+
+fn respond_locally(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &SessionView, head: ResponseHead, body: StoredBody) -> Response<ProxyBody> {
+    let len = body.len();
+    live.set_response_body(body.clone());
+    let h2 = head.clone();
+    live.update(move |d| {
+        let now = now_us();
+        d.response = Some(h2);
+        d.summary.flags |= flags::AUTO_RESPONDED;
+        d.summary.state = SessionState::Done;
+        d.timers.got_response_headers = Some(now);
+        d.timers.client_begin_response = Some(now);
+        d.timers.client_done_response = Some(now);
+    });
+    live.finish();
+    shared.hooks().on_complete(view);
+    build_client_response(&head, StoredStream::new(body).boxed(), Some(len))
+}
+
+fn record_synthetic_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, resp: &Response<ProxyBody>, error: String) {
+    let head = ResponseHead {
+        status: resp.status().as_u16(),
+        reason: resp.status().canonical_reason().unwrap_or("").into(),
+        version: HttpVersion::Http11,
+        headers: record_headers(resp.headers(), true),
+    };
+    let body = shared.capture().bodies.store_bytes(error.as_bytes());
+    live.set_response_body(body);
+    live.update(|d| {
+        let now = now_us();
+        d.response = Some(head);
+        d.error = Some(error.lines().last().unwrap_or("").to_string());
+        d.summary.state = SessionState::Done;
+        d.summary.flags |= flags::SERVER_ABORTED;
+        d.timers.client_done_response = Some(now);
+    });
+    live.finish();
+}
+
+fn finish_error(live: &Arc<LiveSession>, msg: &str) {
+    live.update(|d| {
+        d.summary.state = SessionState::Aborted;
+        d.error = Some(msg.to_string());
+        d.timers.client_done_response = Some(now_us());
+    });
+    live.finish();
+}
+
+// ----------------------------------------------------------------- execute
+
+/// Options for requests issued by Piper itself (Composer, Replay).
+#[derive(Debug, Clone, Default)]
+pub struct ExecuteOptions {
+    pub flags: u32,
+    pub comment: Option<String>,
+    /// Run the request through the interceptor (breakpoints, AutoResponder).
+    pub hooks: bool,
+}
+
+/// Issue a request from Piper (Composer/Replay) and record it as a new session.
+pub async fn execute(shared: Arc<Shared>, head: RequestHead, body: StoredBody, opts: ExecuteOptions) -> SessionId {
+    let capture = shared.capture();
+    let now = now_us();
+    let live = capture.begin(SessionKind::Http, |d| {
+        d.request = head.clone();
+        d.process = Some(ProcessInfo { pid: std::process::id(), name: "piper".into() });
+        d.timers.client_begin_request = Some(now);
+        d.timers.got_request_headers = Some(now);
+        d.timers.client_done_request = Some(now);
+        d.summary.flags |= opts.flags;
+        d.summary.state = SessionState::SendingRequest;
+        if let Some(c) = &opts.comment {
+            d.summary.comment = c.clone();
+        }
+    });
+    live.set_request_body(body.clone());
+    live.update(|_| {});
+    let id = live.id;
+    let view = SessionView { id, live: live.clone(), process: "piper".into(), client_ip: String::new() };
+    let hooks = shared.hooks();
+    let (head, body) = if opts.hooks {
+        match hooks.on_request(view.clone(), head.clone(), Some(body.clone())).await {
+            RequestAction::Abort => {
+                finish_error(&live, "aborted by rule");
+                return id;
+            }
+            RequestAction::Respond { head: rh, body, .. } => {
+                let _ = respond_locally(&shared, &live, &view, rh, body);
+                return id;
+            }
+            RequestAction::Forward { head: h, body: b, delay_ms } => {
+                if delay_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                }
+                (h.unwrap_or(head), b.unwrap_or(body))
+            }
+        }
+    } else {
+        (head, body)
+    };
+    match send_upstream(&shared, &live, &head, StoredStream::new(body).boxed(), false).await {
+        Ok(resp) => {
+            let r = deliver_response(&shared, &live, &view, &head, resp).await;
+            // Consume the body so it gets recorded.
+            let mut b = r.into_body();
+            while let Some(f) = b.frame().await {
+                if f.is_err() {
+                    break;
+                }
+            }
+        }
+        Err(e) => {
+            let msg = format!("The connection to '{}' failed.\nError: {e}", url_host(&head.url));
+            let resp = error_response(StatusCode::BAD_GATEWAY, &msg);
+            record_synthetic_response(&shared, &live, &resp, msg);
+        }
+    }
+    id
+}
