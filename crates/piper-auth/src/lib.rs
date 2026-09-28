@@ -8,6 +8,8 @@ pub mod crypto;
 mod ntlm;
 #[cfg(target_os = "macos")]
 mod negotiate_macos;
+#[cfg(windows)]
+mod sspi_windows;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
@@ -140,6 +142,8 @@ pub enum Handshake {
     Ntlm { creds: Credentials, stage: NtlmStage },
     #[cfg(target_os = "macos")]
     Negotiate(negotiate_macos::NegotiateCtx),
+    #[cfg(windows)]
+    Sspi { ctx: sspi_windows::SspiCtx, scheme: Scheme, started: bool },
 }
 
 pub enum NtlmStage {
@@ -176,12 +180,28 @@ impl Handshake {
                 Ok(Handshake::Basic { header: format!("Basic {}", B64.encode(up)), done: false })
             }
             Scheme::Ntlm => {
-                let c = creds.ok_or(AuthError::NoCredentials)?;
-                Ok(Handshake::Ntlm { creds: c.clone(), stage: NtlmStage::Type1 })
+                #[cfg(windows)]
+                {
+                    // SSPI: SSO with the current user (no creds) or explicit creds.
+                    let c = creds.cloned().unwrap_or_default();
+                    let ctx = sspi_windows::SspiCtx::new("NTLM", host, &c.user, &c.domain, &c.password)?;
+                    return Ok(Handshake::Sspi { ctx, scheme: Scheme::Ntlm, started: false });
+                }
+                #[cfg(not(windows))]
+                {
+                    let c = creds.ok_or(AuthError::NoCredentials)?;
+                    Ok(Handshake::Ntlm { creds: c.clone(), stage: NtlmStage::Type1 })
+                }
             }
             #[cfg(target_os = "macos")]
             Scheme::Negotiate => Ok(Handshake::Negotiate(negotiate_macos::NegotiateCtx::new(host)?)),
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(windows)]
+            Scheme::Negotiate => {
+                let c = creds.cloned().unwrap_or_default();
+                let ctx = sspi_windows::SspiCtx::new("Negotiate", host, &c.user, &c.domain, &c.password)?;
+                Ok(Handshake::Sspi { ctx, scheme: Scheme::Negotiate, started: false })
+            }
+            #[cfg(not(any(target_os = "macos", windows)))]
             Scheme::Negotiate => {
                 let _ = host;
                 Err(AuthError::Unsupported)
@@ -195,6 +215,8 @@ impl Handshake {
             Handshake::Ntlm { .. } => Scheme::Ntlm,
             #[cfg(target_os = "macos")]
             Handshake::Negotiate(_) => Scheme::Negotiate,
+            #[cfg(windows)]
+            Handshake::Sspi { scheme, .. } => *scheme,
         }
     }
 
@@ -228,22 +250,25 @@ impl Handshake {
                 let out = ctx.step(challenge_token)?;
                 Ok(format!("Negotiate {}", B64.encode(out)))
             }
+            #[cfg(windows)]
+            Handshake::Sspi { ctx, scheme, started } => {
+                let token = ctx.step(if *started { challenge_token } else { None })?;
+                *started = true;
+                Ok(format!("{} {}", scheme.header_name(), B64.encode(token)))
+            }
         }
     }
 
     /// Whether the scheme expects at least one more leg after the last header.
     pub fn is_multi_leg(&self) -> bool {
-        matches!(self, Handshake::Ntlm { .. })
-            || {
-                #[cfg(target_os = "macos")]
-                {
-                    matches!(self, Handshake::Negotiate(_))
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    false
-                }
-            }
+        match self {
+            Handshake::Ntlm { .. } => true,
+            #[cfg(target_os = "macos")]
+            Handshake::Negotiate(_) => true,
+            #[cfg(windows)]
+            Handshake::Sspi { .. } => true,
+            _ => false,
+        }
     }
 }
 

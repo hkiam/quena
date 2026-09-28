@@ -207,9 +207,9 @@ fn multi_more(hs: &Handshake) -> bool {
     // schemes send at least Type1(no body)+Type3(body). The final (body) leg is Type3.
     match hs {
         Handshake::Ntlm { stage, .. } => matches!(stage, piper_auth::NtlmStage::Type1),
-        #[cfg(target_os = "macos")]
-        Handshake::Negotiate(_) => false,
-        Handshake::Basic { .. } => false,
+        // SSPI/Negotiate: the connector reuses one connection; treat each produced
+        // header as possibly-final (body sent on the last successful leg).
+        _ => false,
     }
 }
 
