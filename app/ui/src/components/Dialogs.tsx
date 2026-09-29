@@ -382,6 +382,7 @@ function OptionsDialog() {
       <div className="opt-body">
         {tab === "general" && (
           <>
+            <LayoutChoice />
             <label className="f-check">
               <input type="checkbox" checked={s.proxy.captureOnStartup} onChange={(e) => up((x) => (x.proxy.captureOnStartup = e.target.checked))} /> Capture traffic on startup
             </label>
@@ -550,6 +551,44 @@ function TextDialog({ title, text }: { title: string; text: string }) {
   );
 }
 
+/** Layout preset picker (Settings → General and the first-run dialog). Applies immediately. */
+function LayoutChoice() {
+  const preset = useStore((st) => st.layout.preset);
+  return (
+    <div className="f-row layout-choice">
+      <span>Layout</span>
+      <label className="f-check">
+        <input type="radio" name="layout-preset" checked={preset === "piper"} onChange={() => actions.applyLayoutPreset("piper")} /> Piper — list left, request and response side by side
+      </label>
+      <label className="f-check">
+        <input type="radio" name="layout-preset" checked={preset === "classic"} onChange={() => actions.applyLayoutPreset("classic")} /> Classic — dense list, request above response, more columns
+      </label>
+    </div>
+  );
+}
+
+function ChooseLayoutDialog() {
+  const pick = (p: "piper" | "classic") => {
+    actions.applyLayoutPreset(p);
+    close();
+  };
+  return (
+    <Modal title="Choose a layout" onClose={() => pick(get().layout.preset)}>
+      <p className="muted">You can change this any time in Settings → General or with View → Stacked / Wide.</p>
+      <div className="layout-cards">
+        <button className="layout-card" onClick={() => pick("piper")}>
+          <b>Piper</b>
+          <span>Session list on the left, request and response side by side. Rows coloured by outcome.</span>
+        </button>
+        <button className="layout-card" onClick={() => pick("classic")}>
+          <b>Classic</b>
+          <span>Dense session list with more columns, request above response. For long-time proxy users.</span>
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export function Dialogs() {
   const d = useStore((s) => s.dialog);
   const prevFocus = useRef<Element | null>(null);
@@ -611,6 +650,8 @@ export function Dialogs() {
           <PluginsPanel />
         </Modal>
       );
+    case "choose-layout":
+      return <ChooseLayoutDialog />;
     case "rules":
       return (
         <Modal title="Rules Script" onClose={close} wide>

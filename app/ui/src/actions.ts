@@ -2,7 +2,7 @@
 // and QuickExec. Every action returns immediately (optimistic UI, R11); the
 // core confirms asynchronously.
 import { api, type Detail, type MarkColor, type SessionId, type Sort } from "./api";
-import { get, say, set, DEFAULT_COLUMNS, type RightTab } from "./store";
+import { get, say, set, PRESETS, type LayoutPreset, type RightTab } from "./store";
 import { grid, idAtIndex, rowCache } from "./grid/SessionGrid";
 import { buildCurl, rawRequestText, rawResponseHead } from "./lib/http";
 import { fmtInt } from "./lib/format";
@@ -106,7 +106,15 @@ export const actions = {
   },
 
   resetColumns() {
-    set((s) => ({ layout: { ...s.layout, columns: DEFAULT_COLUMNS } }));
+    set((s) => ({ layout: { ...s.layout, columns: PRESETS[s.layout.preset].columns } }));
+    actions.saveLayout();
+  },
+
+  /** Switch the arrangement (list/inspector split, stacking, columns) to a preset. */
+  applyLayoutPreset(preset: LayoutPreset) {
+    set((s) => ({ layout: { ...s.layout, ...PRESETS[preset], columns: [...PRESETS[preset].columns], preset, presetChosen: true } }));
+    rowCache.clear();
+    set((s) => ({ gridNonce: s.gridNonce + 1 }));
     actions.saveLayout();
   },
 

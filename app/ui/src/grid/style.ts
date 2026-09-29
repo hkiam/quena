@@ -11,6 +11,7 @@ export interface Palette {
   green: string;
   purple: string;
   gray: string;
+  amber: string;
   selBg: string;
   selFg: string;
   selInactiveBg: string;
@@ -33,6 +34,7 @@ export function readPalette(el: HTMLElement): Palette {
     green: v("--row-green"),
     purple: v("--row-purple"),
     gray: v("--row-gray"),
+    amber: v("--row-amber"),
     selBg: v("--sel-bg"),
     selFg: v("--sel-fg"),
     selInactiveBg: v("--sel-inactive-bg"),
@@ -65,21 +67,17 @@ export interface RowStyle {
 }
 
 export function rowStyle(r: SessionSummary, p: Palette): RowStyle {
-  const ct = r.contentType.toLowerCase();
   let fg = p.fg;
   let bold = false;
   let italic = false;
   if (r.state === "breakpointRequest" || r.state === "breakpointResponse") {
     return { fg: p.red, bold: true, bg: p.marks.red, italic: false };
   }
-  if (r.kind === "tunnel") fg = p.gray;
-  else if (r.state === "aborted") fg = p.red;
-  else if (r.status >= 400) fg = p.red;
-  else if (r.status === 304) fg = p.gray;
-  else if (ct.includes("html")) fg = p.blue;
-  else if (ct.includes("javascript") || ct.includes("ecmascript")) fg = p.green;
-  else if (ct.includes("css")) fg = p.purple;
-  else if (ct.startsWith("image/")) fg = p.gray;
+  // Colour follows the outcome, not the content type (that is shown by the icon):
+  // server errors / aborts red, client errors amber, redirects and tunnels muted.
+  if (r.state === "aborted" || r.status >= 500) fg = p.red;
+  else if (r.status >= 400) fg = p.amber;
+  else if (r.kind === "tunnel" || (r.status >= 300 && r.status < 400)) fg = p.gray;
   if (r.state !== "done" && r.state !== "aborted") italic = true;
   let bg: string | null = null;
   if (r.color) {
@@ -115,16 +113,17 @@ export function rowIcon(r: SessionSummary, p: Palette): Icon {
   if (r.kind === "tunnel") return { glyph: "🔒︎", color: p.gray };
   if (r.kind === "webSocket") return { glyph: "⇅", color: p.purple };
   if (r.flags & Flags.AUTO_RESPONDED) return { glyph: "⚡", color: p.purple };
-  if (r.status >= 400) return { glyph: "⚠", color: p.red };
+  if (r.status >= 500) return { glyph: "⚠", color: p.red };
+  if (r.status >= 400) return { glyph: "⚠", color: p.amber };
   if (r.status === 304) return { glyph: "↻", color: p.gray };
   if (r.status >= 300 && r.status < 400) return { glyph: "↪", color: p.muted };
-  if (ct.includes("html")) return { glyph: "◧", color: p.blue };
-  if (ct.includes("json")) return { glyph: "{}", color: p.fg };
-  if (ct.includes("xml") || ct.includes("soap")) return { glyph: "‹›", color: p.purple };
-  if (ct.includes("javascript")) return { glyph: "ʃ", color: p.green };
-  if (ct.includes("css")) return { glyph: "#", color: p.purple };
-  if (ct.startsWith("image/")) return { glyph: "▣", color: p.gray };
-  if (ct.startsWith("font/") || ct.includes("woff")) return { glyph: "A", color: p.gray };
+  if (ct.includes("html")) return { glyph: "◧", color: p.muted };
+  if (ct.includes("json")) return { glyph: "{}", color: p.muted };
+  if (ct.includes("xml") || ct.includes("soap")) return { glyph: "‹›", color: p.muted };
+  if (ct.includes("javascript")) return { glyph: "ʃ", color: p.muted };
+  if (ct.includes("css")) return { glyph: "#", color: p.muted };
+  if (ct.startsWith("image/")) return { glyph: "▣", color: p.muted };
+  if (ct.startsWith("font/") || ct.includes("woff")) return { glyph: "A", color: p.muted };
   if (r.status === 0) return { glyph: "·", color: p.muted };
   return { glyph: "◇", color: p.muted };
 }

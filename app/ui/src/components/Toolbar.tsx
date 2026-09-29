@@ -24,7 +24,6 @@ export function Toolbar() {
     <div className="toolbar">
       <Btn icon={capturing ? "●" : "○"} label={capturing ? "Capturing" : "Capture"} active={capturing} title="Capture Traffic (F12)" onClick={() => actions.toggleCapture()} />
       <div className="tb-sep" />
-      <Btn icon="✎" label="Comment" onClick={() => actions.comment()} title="Comment (M)" />
       <Btn
         icon="↻"
         label="Replay"
@@ -41,6 +40,7 @@ export function Toolbar() {
       />
       <Btn
         icon="✕"
+        label="Remove"
         menu
         title="Remove sessions"
         onClick={(e) =>
@@ -56,11 +56,12 @@ export function Toolbar() {
           ])
         }
       />
-      <Btn icon="▶" label="Go" disabled={!paused} title="Resume all paused sessions (G)" onClick={() => import("../breakpoints").then((m) => m.goAll())} />
+      <Btn icon="▶" label="Resume" disabled={!paused} title="Resume all paused sessions (G)" onClick={() => import("../breakpoints").then((m) => m.goAll())} />
+      <div className="tb-sep" />
       <Btn icon="⇶" label="Stream" active={settings?.stream ?? true} title="Stream responses to the client instead of buffering" onClick={() => patchSettings((s) => (s.stream = !s.stream))} />
       <Btn icon="⧉" label="Decode" active={settings?.decode ?? true} title="Show bodies decoded (gzip/br/zstd/deflate)" onClick={() => patchSettings((s) => (s.decode = !s.decode))} />
       <div className="tb-keep">
-        <span>Keep:</span>
+        <span>Keep</span>
         <select value={keep} onChange={(e) => patchSettings((s) => (s.keepSessions = Number(e.target.value)))}>
           <option value={0}>All sessions</option>
           <option value={100}>100 sessions</option>
@@ -74,7 +75,7 @@ export function Toolbar() {
       <div className="tb-sep" />
       <Btn icon="🔍︎" label="Find" title="Find Sessions (⌘F)" onClick={() => set({ dialog: { kind: "find" } })} />
       <Btn icon="💾︎" label="Save" title="Save all sessions (⌘S)" onClick={() => actions.menu("file.save-all")} />
-      <div className="tb-sep" />
+      <Btn icon="✎" label="Comment" onClick={() => actions.comment()} title="Comment (M)" />
       <Btn icon="✦" label="Text Tools" title="Text Tools (⌘E)" onClick={() => set({ dialog: { kind: "textwizard" } })} />
       <div className="tb-spacer" />
       <Btn icon="⚙︎" title="Settings" onClick={() => set({ dialog: { kind: "options" } })} />

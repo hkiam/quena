@@ -10,13 +10,13 @@ const AutoResponderPanel = lazy(() => import("./AutoResponder"));
 const ComposerPanel = lazy(() => import("./Composer"));
 
 const TABS: [RightTab, string, string][] = [
-  ["statistics", "Statistics", "📊︎"],
   ["inspectors", "Inspect", "🔎︎"],
-  ["autoresponder", "Mock Rules", "⚡"],
   ["composer", "Composer", "✎"],
+  ["autoresponder", "Mock Rules", "⚡"],
   ["filters", "Filters", "⛛"],
-  ["log", "Log", "☰"],
   ["timeline", "Timeline", "▤"],
+  ["statistics", "Statistics", "📊︎"],
+  ["log", "Log", "☰"],
 ];
 
 export function RightPane() {

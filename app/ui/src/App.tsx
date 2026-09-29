@@ -9,7 +9,7 @@ import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { SessionGrid } from "./grid/SessionGrid";
 import { RightPane } from "./panels/RightPane";
-import { DEFAULT_LAYOUT, get, set, useStore, type Layout } from "./store";
+import { get, restoreLayout, set, useStore, type Layout } from "./store";
 import { installGlobalKeys } from "./keys";
 
 function useBoot() {
@@ -40,17 +40,20 @@ function useBoot() {
     (async () => {
       const settings = await api.settingsGet();
       const ui = (settings.ui ?? {}) as { layout?: Partial<Layout> };
-      const layout = { ...DEFAULT_LAYOUT, ...(ui.layout ?? {}) };
-      // Columns added in newer versions are appended.
-      const known = new Set(layout.columns.map((c) => c.key));
-      layout.columns = [...layout.columns, ...DEFAULT_LAYOUT.columns.filter((c) => !known.has(c.key))];
+      const layout = restoreLayout(ui.layout);
       set({ settings, layout, filters: await api.getFilters(), status: await api.status(), log: await api.logSince(0) });
       // Load any script-registered menu commands (if scripting was left enabled).
       void actions.refreshScriptMenus();
+      let recovering = false;
       if (settings.offerRecovery !== false) {
         const rec = await api.recoverable();
-        if (rec.length) set({ dialog: { kind: "recover" } });
+        if (rec.length) {
+          set({ dialog: { kind: "recover" } });
+          recovering = true;
+        }
       }
+      // First run: let the user pick the layout once (the recovery dialog wins; ask next time).
+      if (!recovering && !layout.presetChosen) set({ dialog: { kind: "choose-layout" } });
       const w = await api.rows(0, 0);
       set({ listVersion: w.version, listTotal: w.total });
     })();

@@ -18,6 +18,7 @@
   --row-green: #007a00;
   --row-purple: #7a2a9e;
   --row-gray: #7f7f7f;
+  --row-amber: #a35a00;
   --sel-bg: #1f6fe5;
   --sel-fg: #ffffff;
   --sel-inactive-bg: #d6e2f5;
@@ -63,6 +64,7 @@
     --row-green: #6fd26f;
     --row-purple: #c792ea;
     --row-gray: #8c8c8c;
+    --row-amber: #f0a64a;
     --sel-bg: #2d5fb8;
     --sel-fg: #ffffff;
     --sel-inactive-bg: #34405a;
@@ -1676,4 +1678,45 @@ pre {
 }
 .cc-row .cc-del {
   color: var(--muted);
+}
+
+/* Layout preset choice (Settings → General, first-run dialog) */
+.layout-choice {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 12px;
+}
+.layout-choice > span {
+  min-width: 60px;
+  padding-top: 2px;
+}
+.layout-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+.layout-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--fg);
+  cursor: pointer;
+  white-space: normal;
+  height: auto;
+}
+.layout-card:hover,
+.layout-card:focus-visible {
+  border-color: var(--accent);
+}
+.layout-card span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }

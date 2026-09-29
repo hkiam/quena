@@ -27,22 +27,69 @@ export interface ColumnConf {
   align?: "left" | "right";
 }
 
+/** Column titles come from the key (not the saved layout), so renames apply everywhere. */
+export const COLUMN_TITLES: Record<ColumnKey, string> = {
+  id: "#",
+  result: "Status",
+  protocol: "Protocol",
+  host: "Host",
+  url: "Path",
+  body: "Size",
+  caching: "Caching",
+  contentType: "Type",
+  process: "Process",
+  comments: "Comments",
+  custom: "Custom",
+  method: "Method",
+  duration: "Duration",
+  started: "Started",
+};
+
+const col = (key: ColumnKey, width: number, visible: boolean, align?: "left" | "right"): ColumnConf => ({
+  key,
+  title: COLUMN_TITLES[key],
+  width,
+  visible,
+  ...(align ? { align } : {}),
+});
+
+/** Piper's default columns: what, where, outcome, size, time. */
 export const DEFAULT_COLUMNS: ColumnConf[] = [
-  { key: "id", title: "#", width: 74, visible: true, align: "left" },
-  { key: "result", title: "Result", width: 52, visible: true, align: "right" },
-  { key: "protocol", title: "Protocol", width: 62, visible: true },
-  { key: "host", title: "Host", width: 170, visible: true },
-  { key: "url", title: "URL", width: 300, visible: true },
-  { key: "body", title: "Body", width: 80, visible: true, align: "right" },
-  { key: "caching", title: "Caching", width: 90, visible: true },
-  { key: "contentType", title: "Content-Type", width: 130, visible: true },
-  { key: "process", title: "Process", width: 90, visible: true },
-  { key: "comments", title: "Comments", width: 120, visible: true },
-  { key: "custom", title: "Custom", width: 80, visible: true },
-  { key: "method", title: "Method", width: 60, visible: false },
-  { key: "duration", title: "Duration", width: 70, visible: false, align: "right" },
-  { key: "started", title: "Started", width: 90, visible: false },
+  col("id", 56, true, "left"),
+  col("method", 64, true),
+  col("result", 56, true, "right"),
+  col("host", 160, true),
+  col("url", 250, true),
+  col("contentType", 120, true),
+  col("body", 76, true, "right"),
+  col("duration", 76, true, "right"),
+  col("process", 90, true),
+  col("protocol", 70, false),
+  col("comments", 120, false),
+  col("custom", 90, false),
+  col("caching", 90, false),
+  col("started", 90, false),
 ];
+
+/** Classic: a dense list with more columns, for long-time proxy users. */
+export const CLASSIC_COLUMNS: ColumnConf[] = [
+  col("id", 74, true, "left"),
+  col("result", 52, true, "right"),
+  col("protocol", 62, true),
+  col("host", 170, true),
+  col("url", 300, true),
+  col("body", 80, true, "right"),
+  col("caching", 90, true),
+  col("contentType", 130, true),
+  col("process", 90, true),
+  col("comments", 120, true),
+  col("custom", 80, true),
+  col("method", 60, false),
+  col("duration", 70, false, "right"),
+  col("started", 90, false),
+];
+
+export type LayoutPreset = "piper" | "classic";
 
 export interface Layout {
   leftWidth: number; // fraction of window width
@@ -51,16 +98,43 @@ export interface Layout {
   columns: ColumnConf[];
   requestTab: string;
   responseTab: string;
+  /** Arrangement preset the layout started from. */
+  preset: LayoutPreset;
+  /** The user picked a preset (first-run choice done). */
+  presetChosen: boolean;
 }
 
+type PresetParts = Pick<Layout, "leftWidth" | "inspectorSplit" | "stacked" | "columns">;
+
+export const PRESETS: Record<LayoutPreset, PresetParts> = {
+  // List left, request and response side by side.
+  piper: { leftWidth: 0.42, inspectorSplit: 0.5, stacked: false, columns: DEFAULT_COLUMNS },
+  // Dense list, request above response.
+  classic: { leftWidth: 0.52, inspectorSplit: 0.42, stacked: true, columns: CLASSIC_COLUMNS },
+};
+
 export const DEFAULT_LAYOUT: Layout = {
-  leftWidth: 0.52,
-  inspectorSplit: 0.42,
-  stacked: true,
-  columns: DEFAULT_COLUMNS,
+  ...PRESETS.piper,
   requestTab: "headers",
   responseTab: "headers",
+  preset: "piper",
+  presetChosen: false,
 };
+
+/** Merge a saved layout (possibly from an older version) with the current defaults. */
+export function restoreLayout(saved: Partial<Layout> | undefined): Layout {
+  if (!saved) return { ...DEFAULT_LAYOUT, columns: [...DEFAULT_COLUMNS] };
+  // Layouts saved before presets existed: stacked inspectors meant the classic arrangement.
+  const preset: LayoutPreset = saved.preset ?? (saved.stacked === false ? "piper" : "classic");
+  const base = PRESETS[preset];
+  const layout: Layout = { ...DEFAULT_LAYOUT, ...base, ...saved, preset, presetChosen: saved.presetChosen ?? false };
+  // Titles from the key; columns added in newer versions are appended (hidden if unknown to the preset).
+  const known = new Set(layout.columns.map((c) => c.key));
+  layout.columns = [...layout.columns, ...base.columns.filter((c) => !known.has(c.key))]
+    .filter((c) => c.key in COLUMN_TITLES)
+    .map((c) => ({ ...c, title: COLUMN_TITLES[c.key] }));
+  return layout;
+}
 
 export interface Message {
   text: string;
@@ -82,6 +156,7 @@ export type Dialog =
   | { kind: "https" }
   | { kind: "plugins" }
   | { kind: "rules" }
+  | { kind: "choose-layout" }
   | { kind: "compare"; a: string; b: string; titleA: string; titleB: string }
   | { kind: "prompt"; title: string; label: string; initial: string; resolve: (v: string | null) => void };
 
