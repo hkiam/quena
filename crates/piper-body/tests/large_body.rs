@@ -64,5 +64,5 @@ fn huge_body_constant_memory_and_random_access() {
     eprintln!("[perf] random {WIN}-byte window read: {read_us:.0} µs avg over {} probes", probes.len());
 
     // A window read is a pread, so it must be fast and independent of total size.
-    assert!(read_us < 50_000.0, "range read too slow ({read_us} µs) — not O(1) in body size?");
+    assert!(read_us < 50_000.0 * std::env::var("PIPER_PERF_SLACK").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0), "range read too slow ({read_us} µs) — not O(1) in body size?");
 }

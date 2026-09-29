@@ -14,6 +14,8 @@ env:
   # macOS (rust-lld: libLLVM.dylib not found). Keep in sync with local stable.
   RUST_TOOLCHAIN: "1.96.0"
   PIPER_WASM_TOOLCHAIN: "1.96.0"
+  # Debug-build perf guards run on slow shared VMs: widen their time thresholds.
+  PIPER_PERF_SLACK: "3"
 
 jobs:
   build:

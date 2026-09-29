@@ -41,12 +41,19 @@ pub struct Sort {
     pub descending: bool,
 }
 
+/// Case-insensitive order without allocating (hosts are ASCII / punycode). The sort
+/// comparator runs O(n log n) times — two `to_lowercase()` Strings per call made a
+/// 500k-row Host sort several seconds slow on Windows.
+fn cmp_ignore_ascii_case(a: &str, b: &str) -> Ordering {
+    a.bytes().map(|c| c.to_ascii_lowercase()).cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
+}
+
 fn compare(a: &SessionSummary, b: &SessionSummary, c: Column) -> Ordering {
     let o = match c {
         Column::Id => Ordering::Equal,
         Column::Result => a.status.cmp(&b.status),
         Column::Protocol => a.protocol.cmp(&b.protocol),
-        Column::Host => a.host.to_lowercase().cmp(&b.host.to_lowercase()),
+        Column::Host => cmp_ignore_ascii_case(&a.host, &b.host),
         Column::Url => a.url.cmp(&b.url),
         Column::Body => a.response_body_len.cmp(&b.response_body_len),
         Column::Caching => a.caching.cmp(&b.caching),
@@ -91,7 +98,22 @@ impl Inner {
     fn full_rebuild(&mut self) {
         let filter = self.filter.clone();
         let mut view: Vec<u32> = (0..self.rows.len() as u32).filter(|&p| filter.matches(&self.rows[p as usize])).collect();
-        if !(self.is_default_sort() && !self.sort.descending) {
+        if self.sort.column == Column::Host {
+            // Lower-case each host once (O(n)) instead of inside the comparator
+            // (O(n log n) allocations); same order as `cmp_ignore_ascii_case`.
+            let mut keyed: Vec<(String, SessionId, u32)> = view
+                .iter()
+                .map(|&p| {
+                    let r = &self.rows[p as usize];
+                    (r.host.to_ascii_lowercase(), r.id, p)
+                })
+                .collect();
+            keyed.sort_unstable();
+            if self.sort.descending {
+                keyed.reverse();
+            }
+            view = keyed.into_iter().map(|(_, _, p)| p).collect();
+        } else if !(self.is_default_sort() && !self.sort.descending) {
             view.sort_unstable_by(|&a, &b| self.cmp_pos(a, b));
         } else {
             view.sort_unstable_by_key(|&p| self.rows[p as usize].id);
@@ -437,6 +459,32 @@ mod tests {
         idx.tick();
         let full = idx.view_ids(0, 5000);
         assert_eq!(inc, full);
+    }
+
+    /// Host sort: the keyed full rebuild and the incremental comparator must agree,
+    /// including mixed case and ties (broken by id), ascending and descending.
+    #[test]
+    fn host_sort_incremental_matches_rebuild() {
+        use rand::Rng;
+        let hosts = ["b.example", "A.example", "a.example", "B.Example", "c.test", "api.GitHub.com", "api.github.com"];
+        for descending in [false, true] {
+            let idx = SessionIndex::new();
+            idx.set_sort(Sort { column: Column::Host, descending });
+            idx.tick();
+            let mut rng = rand::rng();
+            for id in 1..=1500u64 {
+                idx.upsert(row(id, 200, hosts[rng.random_range(0..hosts.len())]));
+                if id % 11 == 0 {
+                    idx.tick(); // small batches → incremental insert path
+                }
+            }
+            idx.tick();
+            let inc = idx.view_ids(0, 5000);
+            idx.set_sort(Sort { column: Column::Host, descending });
+            idx.tick(); // full keyed rebuild
+            let full = idx.view_ids(0, 5000);
+            assert_eq!(inc, full, "descending = {descending}");
+        }
     }
 
     #[test]

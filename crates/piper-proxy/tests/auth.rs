@@ -52,8 +52,6 @@ fn auth_hdr(headers: &[(String, String)], name: &str) -> Option<String> {
     headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone())
 }
 
-/// NTLM server: 401 with NTLM; validates Type1 → sends Type2; validates Type3 → 200.
-/// Keeps the connection alive across the handshake (connection-oriented).
 /// A well-formed NTLM CHALLENGE_MESSAGE (MS-NLMP 2.2.1.2): flags, target name,
 /// version and AV pairs — accepted by SSPI on Windows as well as by the
 /// pure-Rust implementation.
@@ -96,6 +94,8 @@ fn realistic_type2() -> Vec<u8> {
     m
 }
 
+/// NTLM server: 401 with NTLM; validates Type1 → sends Type2; validates Type3 → 200.
+/// Keeps the connection alive across the handshake (connection-oriented).
 fn ntlm_server() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
@@ -216,5 +216,40 @@ fn basic_auto_auth() {
     let (proxy, _c, _d, addr) = setup(ProxyConfig { port: 0, auto_auth: true, ..Default::default() });
     let (_c, out) = curl(&addr, &[&format!("http://127.0.0.1:{port}/x")]);
     assert_eq!(out, "OK");
+    proxy.stop();
+}
+
+/// A server that advertises NTLM and Basic but rejects NTLM (it answers the Type 1
+/// with a fresh challenge and no continuation token): Piper must fall back to the
+/// next offered scheme instead of giving up. Deterministic on every platform.
+#[test]
+fn rejected_scheme_falls_back_to_next() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in l.incoming().flatten() {
+            std::thread::spawn(move || {
+                let mut r = BufReader::new(&stream);
+                let mut s = &stream;
+                while let Some((_first, headers, body)) = read_request(&mut r) {
+                    // Credentials carry a domain, so Basic sends DOMAIN\\user (as Fiddler does).
+                    let ok = B64.encode("Domain\\User:Password");
+                    match auth_hdr(&headers, "authorization") {
+                        Some(v) if v == format!("Basic {ok}") => {
+                            let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n", body.len());
+                            let _ = s.write_all(&body);
+                        }
+                        _ => {
+                            let _ = s.write_all(b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM\r\nWWW-Authenticate: Basic realm=\"x\"\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n");
+                        }
+                    }
+                }
+            });
+        }
+    });
+    let cfg = ProxyConfig { port: 0, auto_auth: true, ..Default::default() }; // prefers NTLM over Basic
+    let (proxy, _cap, _d, addr) = setup(cfg);
+    let (_c, out) = curl(&addr, &["-X", "POST", "--data-binary", "fallback-body", &format!("http://127.0.0.1:{port}/x")]);
+    assert_eq!(out, "fallback-body", "NTLM was rejected, so Piper must retry with Basic and replay the body");
     proxy.stop();
 }

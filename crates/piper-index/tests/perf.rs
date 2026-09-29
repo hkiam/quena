@@ -12,6 +12,13 @@ use std::time::Instant;
 
 const N: u64 = 500_000;
 
+/// Multiplier for the time thresholds (`PIPER_PERF_SLACK`, default 1). CI runs these
+/// debug-build guards on slow shared VMs and sets a larger value; an accidental
+/// O(n²) at 500k rows would still take minutes and fail.
+fn slack() -> f64 {
+    std::env::var("PIPER_PERF_SLACK").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0)
+}
+
 fn row(id: u64) -> SessionSummary {
     let status = match id % 7 {
         0 => 500,
@@ -56,7 +63,7 @@ fn viewport_query_is_fast_on_500k() {
     }
     let per = t.elapsed().as_micros() as f64 / iters as f64;
     eprintln!("[perf] window(100) over 500k: {per:.1} µs/query ({sink} rows total)");
-    assert!(per < 2000.0, "viewport query too slow: {per} µs (budget frame is 16 ms)");
+    assert!(per < 2000.0 * slack(), "viewport query too slow: {per} µs (budget frame is 16 ms)");
 }
 
 #[test]
@@ -85,7 +92,7 @@ fn per_frame_inserts_stay_incremental_and_fast() {
     eprintln!("[perf] worst per-frame tick (200 sorted inserts): {worst_ms:.2} ms");
     assert_eq!(idx.len(), (next - 1) as usize);
     // Must stay well inside a 16 ms frame so scrolling never stutters under load.
-    assert!(worst_ms < 16.0, "per-frame insert tick too slow: {worst_ms} ms");
+    assert!(worst_ms < 16.0 * slack(), "per-frame insert tick too slow: {worst_ms} ms");
 }
 
 #[test]
@@ -115,7 +122,7 @@ fn large_burst_is_throttled_then_rebuilds() {
     eprintln!("[perf] rebuild tick after throttle window (5000 inserts): {ms:.1} ms");
     assert!(changed);
     assert_eq!(idx.len(), (N + 5000) as usize);
-    assert!(ms < 1500.0, "throttled rebuild too slow: {ms} ms");
+    assert!(ms < 1500.0 * slack(), "throttled rebuild too slow: {ms} ms");
 }
 
 #[test]
@@ -145,6 +152,6 @@ fn filter_and_sort_switch_on_500k() {
     }
     // A full re-sort/rebuild of 500k is a background-ish operation but must stay well
     // under a second so the "latest wins" switch feels immediate.
-    assert!(filter_ms < 1500.0, "filter switch too slow: {filter_ms} ms");
-    assert!(sort_ms < 1500.0, "sort switch too slow: {sort_ms} ms");
+    assert!(filter_ms < 1500.0 * slack(), "filter switch too slow: {filter_ms} ms");
+    assert!(sort_ms < 1500.0 * slack(), "sort switch too slow: {sort_ms} ms");
 }

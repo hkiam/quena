@@ -16,6 +16,17 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// `curl` for the tests. On Windows, curl uses Schannel, which insists on revocation
+/// information (CRL/OCSP) that locally generated interception certificates don't
+/// carry — like Fiddler's; browsers don't hard-fail on that, so skip the check.
+fn curl_cmd() -> Command {
+    let mut c = Command::new("curl");
+    if cfg!(windows) {
+        c.arg("--ssl-no-revoke");
+    }
+    c
+}
+
 type TBody = http_body_util::combinators::BoxBody<Bytes, Infallible>;
 
 async fn app(req: Request<hyper::body::Incoming>) -> Result<Response<TBody>, Infallible> {
@@ -110,7 +121,7 @@ fn setup() -> Env {
 }
 
 fn curl(env: &Env, args: &[&str]) -> (String, String) {
-    let out = Command::new("curl")
+    let out = curl_cmd()
         .args(["-sS", "--max-time", "30", "-x", &format!("http://{}", env.proxy_addr), "--cacert", env.piper_ca.to_str().unwrap()])
         .args(args)
         .output()
@@ -180,7 +191,7 @@ fn http_https_h2_and_big_bodies() {
 
     // --- 64 MiB streamed through the proxy
     let t = std::time::Instant::now();
-    let out = Command::new("curl")
+    let out = curl_cmd()
         .args(["-sS", "-o", "/dev/null", "-w", "%{size_download}", "-x", &format!("http://{}", env.proxy_addr), &format!("http://{}/big", env.http)])
         .output()
         .unwrap();

@@ -133,72 +133,69 @@ pub async fn send_with_auth(
     }
     drain(resp).await; // free the connection for the next leg (connection-oriented auth)
 
-    let mut hs = None;
-    let mut challenge_token: Option<Vec<u8>> = None;
-    let mut first_header = None;
+    // Try each candidate scheme in preference order. A scheme that cannot produce a
+    // first header (e.g. Negotiate without a Kerberos ticket) or that the server
+    // rejects (a fresh challenge without a continuation token) falls through to the
+    // next one — e.g. a server that advertises Negotiate but only really does NTLM.
     for cand in &candidates {
-        match Handshake::start(cand.scheme, creds.as_ref(), &host) {
-            Ok(mut h) => match h.next_header(cand.token.as_deref()) {
-                Ok(v) => {
-                    challenge_token = cand.token.clone();
-                    first_header = Some(v);
-                    hs = Some(h);
+        let mut hs = match Handshake::start(cand.scheme, creds.as_ref(), &host) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::debug!(target: "piper::auth", "{} start failed for {host}: {e}", cand.scheme.header_name());
+                continue;
+            }
+        };
+        let first_header = match hs.next_header(cand.token.as_deref()) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::debug!(target: "piper::auth", "{} unavailable for {host}: {e}", cand.scheme.header_name());
+                continue;
+            }
+        };
+        let mut challenge_token = cand.token.clone();
+        let mut pending_header = Some(first_header);
+        let mut rejected = false;
+        for leg in 0..6u8 {
+            let header_value = match pending_header.take() {
+                Some(v) => v,
+                None => match hs.next_header(challenge_token.as_deref()) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::debug!(target: "piper::auth", "{} continuation failed for {host}: {e}", hs.scheme().header_name());
+                        rejected = true;
+                        break;
+                    }
+                },
+            };
+            on_leg((leg as u16) + 2);
+            let final_leg = !hs.is_multi_leg() || !multi_more(&hs);
+            // Send body only on the final leg; negotiate legs carry an empty body.
+            let leg_body = if final_leg { stream(&body) } else { empty() };
+            let req = build_req(head, Some((auth_header, header_value)), leg_body, !final_leg)?;
+            let resp = client.request(req).await.map_err(err_chain)?;
+            let again_proxy = resp.status() == http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
+            let again_server = resp.status() == http::StatusCode::UNAUTHORIZED;
+            if (again_proxy && is_proxy_challenge) || (again_server && is_server_challenge) {
+                // Need another leg: pick the continuation token for this scheme.
+                let vals = challenge_values(&resp, is_proxy_challenge);
+                challenge_token = piper_auth::parse_challenges(&vals).into_iter().find(|o| o.scheme == hs.scheme()).and_then(|o| o.token);
+                drain(resp).await;
+                if challenge_token.is_none() && final_leg {
+                    tracing::debug!(target: "piper::auth", "{} rejected by {host}", hs.scheme().header_name());
+                    rejected = true;
                     break;
                 }
-                Err(e) => {
-                    tracing::debug!(target: "piper::auth", "{} unavailable for {host}: {e}", cand.scheme.header_name());
-                }
-            },
-            Err(e) => tracing::debug!(target: "piper::auth", "{} start failed for {host}: {e}", cand.scheme.header_name()),
-        }
-    }
-    let (Some(mut hs), Some(first_header)) = (hs, first_header) else {
-        // Nothing worked → re-send the original request so the caller sees the 401/407.
-        let req = build_req(head, None, stream(&body), false)?;
-        return client.request(req).await.map_err(err_chain);
-    };
-
-    let mut last: Option<Response<Incoming>> = None;
-    let mut pending_header = Some(first_header);
-    for leg in 0..6u8 {
-        let header_value = match pending_header.take() {
-            Some(v) => v,
-            None => match hs.next_header(challenge_token.as_deref()) {
-                Ok(v) => v,
-                Err(_) => break,
-            },
-        };
-        on_leg((leg as u16) + 2);
-        let final_leg = !hs.is_multi_leg() || !multi_more(&hs);
-        // Send body only on the final leg; negotiate legs carry an empty body.
-        let leg_body = if final_leg { stream(&body) } else { empty() };
-        let req = build_req(head, Some((auth_header, header_value)), leg_body, !final_leg)?;
-        let resp = client.request(req).await.map_err(err_chain)?;
-        let again_proxy = resp.status() == http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
-        let again_server = resp.status() == http::StatusCode::UNAUTHORIZED;
-        if (again_proxy && is_proxy_challenge) || (again_server && is_server_challenge) {
-            // Need another leg: pick the continuation token.
-            let vals = challenge_values(&resp, is_proxy_challenge);
-            let cont = piper_auth::parse_challenges(&vals).into_iter().find(|o| o.scheme == hs.scheme()).and_then(|o| o.token);
-            challenge_token = cont;
-            drain(resp).await;
-            if challenge_token.is_none() && final_leg {
-                // Auth rejected.
-                last = None;
-                break;
+                continue;
             }
-            continue;
+            return Ok(resp);
         }
-        return Ok(resp);
-    }
-    // Fall back: re-send once plainly so the caller has a response.
-    match last {
-        Some(r) => Ok(r),
-        None => {
-            let req = build_req(head, None, stream(&body), false)?;
-            client.request(req).await.map_err(err_chain)
+        if !rejected {
+            break; // ran out of legs; don't loop forever over schemes
         }
     }
+    // Nothing worked → re-send the original request so the caller sees the 401/407.
+    let req = build_req(head, None, stream(&body), false)?;
+    client.request(req).await.map_err(err_chain)
 }
 
 /// Whether the handshake still expects a continuation after the next header.
