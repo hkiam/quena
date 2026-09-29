@@ -9,7 +9,11 @@ use piper_store::Capture;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+
+/// Largest body the NTLM test server saw on a Type 1 (negotiate) leg.
+static TYPE1_BODY: AtomicUsize = AtomicUsize::new(0);
 
 struct Creds;
 impl CredentialResolver for Creds {
@@ -108,6 +112,7 @@ fn ntlm_server() -> u16 {
                 loop {
                     let Some((first, headers, body)) = read_request(&mut r) else { break };
                     let ntlm = auth_hdr(&headers, "authorization");
+                    eprintln!("[ntlm-server] {} auth={:?} body={}B stage={stage}", first.trim_end(), ntlm.as_deref().map(|v| v.split(' ').next().unwrap_or("").to_string()), body.len());
                     match ntlm.as_deref() {
                         None => {
                             let _ = s.write_all(b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM\r\nWWW-Authenticate: Negotiate\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n");
@@ -116,7 +121,9 @@ fn ntlm_server() -> u16 {
                         Some(v) if v.starts_with("NTLM ") => {
                             let msg = B64.decode(v.trim_start_matches("NTLM ")).unwrap_or_default();
                             let mtype = if msg.len() >= 12 { u32::from_le_bytes(msg[8..12].try_into().unwrap()) } else { 0 };
+                            eprintln!("[ntlm-server] NTLM message type {mtype} ({} bytes)", msg.len());
                             if mtype == 1 {
+                                TYPE1_BODY.fetch_max(body.len(), Ordering::Relaxed);
                                 // Send a well-formed Type 2 challenge (SSPI on Windows rejects minimal ones).
                                 let b = B64.encode(realistic_type2());
                                 let _ = write!(s, "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM {b}\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n");
@@ -160,8 +167,14 @@ fn curl(proxy: &std::net::SocketAddr, args: &[&str]) -> (i32, String) {
     (o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
+/// Proxy auth decisions in the test output (visible when a test fails, e.g. on CI).
+fn init_logs() {
+    let _ = tracing_subscriber::fmt().with_env_filter("piper::auth=debug").with_test_writer().try_init();
+}
+
 #[test]
 fn ntlm_auto_auth_with_body_replay() {
+    init_logs();
     let server = ntlm_server();
     let mut cfg = ProxyConfig { port: 0, auto_auth: true, ..Default::default() };
     cfg.auto_auth_hosts = vec![];
@@ -170,6 +183,7 @@ fn ntlm_auto_auth_with_body_replay() {
     // POST with a body: the server echoes the body only on the authenticated (Type 3) leg.
     let (_c, out) = curl(&addr, &["-X", "POST", "--data-binary", "hello-ntlm-body", &format!("http://127.0.0.1:{server}/secure")]);
     assert_eq!(out, "hello-ntlm-body", "body must be replayed on the authenticated leg");
+    assert_eq!(TYPE1_BODY.load(Ordering::Relaxed), 0, "the Type 1 leg must not carry the body (no double upload)");
 
     // Session shows the final 200 and the handshake leg count.
     let t = Instant::now();

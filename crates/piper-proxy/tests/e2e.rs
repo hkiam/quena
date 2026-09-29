@@ -19,6 +19,10 @@ use std::time::Duration;
 /// `curl` for the tests. On Windows, curl uses Schannel, which insists on revocation
 /// information (CRL/OCSP) that locally generated interception certificates don't
 /// carry — like Fiddler's; browsers don't hard-fail on that, so skip the check.
+fn curl_supports_http2() -> bool {
+    Command::new("curl").arg("-V").output().map(|o| String::from_utf8_lossy(&o.stdout).contains("HTTP2")).unwrap_or(false)
+}
+
 fn curl_cmd() -> Command {
     let mut c = Command::new("curl");
     if cfg!(windows) {
@@ -173,14 +177,19 @@ fn http_https_h2_and_big_bodies() {
     let t = wait_done(&env, |s| s.kind == SessionKind::Tunnel);
     assert_eq!(t.status, 200);
 
-    // --- HTTPS with HTTP/2 on both sides
-    let url = format!("https://localhost:{}/version", env.https.port());
-    let (out, err) = curl(&env, &["--http2", &url]);
-    assert_eq!(out, "HTTP/2.0", "upstream should see h2: {err}");
-    let s = wait_done(&env, |s| s.url == "/version" && s.protocol == "HTTP/2");
-    let d = env.capture.detail(s.id).unwrap();
-    assert_eq!(d.request.version, piper_model::HttpVersion::Http2);
-    assert_eq!(d.connection.client_tls.as_ref().and_then(|t| t.alpn.clone()).as_deref(), Some("h2"));
+    // --- HTTPS with HTTP/2 on both sides (needs a curl built with HTTP/2; the curl.exe
+    // that ships with Windows is not, so the h2 leg is skipped there).
+    if curl_supports_http2() {
+        let url = format!("https://localhost:{}/version", env.https.port());
+        let (out, err) = curl(&env, &["--http2", &url]);
+        assert_eq!(out, "HTTP/2.0", "upstream should see h2: {err}");
+        let s = wait_done(&env, |s| s.url == "/version" && s.protocol == "HTTP/2");
+        let d = env.capture.detail(s.id).unwrap();
+        assert_eq!(d.request.version, piper_model::HttpVersion::Http2);
+        assert_eq!(d.connection.client_tls.as_ref().and_then(|t| t.alpn.clone()).as_deref(), Some("h2"));
+    } else {
+        eprintln!("curl has no HTTP/2 support - skipping the h2 leg");
+    }
 
     // --- gzip recorded raw
     let (out, _) = curl(&env, &["--compressed", &format!("http://{}/gzip", env.http)]);

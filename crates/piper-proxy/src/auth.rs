@@ -168,7 +168,7 @@ pub async fn send_with_auth(
                 },
             };
             on_leg((leg as u16) + 2);
-            let final_leg = !hs.is_multi_leg() || !multi_more(&hs);
+            let final_leg = !hs.is_multi_leg() || !expects_more_legs(&hs, leg);
             // Send body only on the final leg; negotiate legs carry an empty body.
             let leg_body = if final_leg { stream(&body) } else { empty() };
             let req = build_req(head, Some((auth_header, header_value)), leg_body, !final_leg)?;
@@ -198,16 +198,12 @@ pub async fn send_with_auth(
     client.request(req).await.map_err(err_chain)
 }
 
-/// Whether the handshake still expects a continuation after the next header.
-fn multi_more(hs: &Handshake) -> bool {
-    // NTLM: after Type1 there is Type3; after Type3 done. We approximate: multi-leg
-    // schemes send at least Type1(no body)+Type3(body). The final (body) leg is Type3.
-    match hs {
-        Handshake::Ntlm { stage, .. } => matches!(stage, piper_auth::NtlmStage::Type1),
-        // SSPI/Negotiate: the connector reuses one connection; treat each produced
-        // header as possibly-final (body sent on the last successful leg).
-        _ => false,
-    }
+/// Whether another leg is certain to follow the one being sent. Only then is the
+/// (possibly huge) body withheld from this leg. NTLM always starts with a Type 1
+/// negotiate leg — pure Rust or SSPI alike. Negotiate/Kerberos may complete in a
+/// single leg, so its legs always carry the body (withholding it would lose data).
+fn expects_more_legs(hs: &Handshake, leg: u8) -> bool {
+    hs.scheme() == Scheme::Ntlm && leg == 0
 }
 
 fn err_chain(e: hyper_util::client::legacy::Error) -> String {
