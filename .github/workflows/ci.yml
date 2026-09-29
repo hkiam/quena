@@ -16,6 +16,9 @@ env:
   QUENA_WASM_TOOLCHAIN: "1.96.0"
   # Debug-build perf guards run on slow shared VMs: widen their time thresholds.
   QUENA_PERF_SLACK: "3"
+  # Full optimization (LTO, one codegen unit) only for release tags; pushes build test
+  # installers with the faster `ci` profile.
+  BUILD_PROFILE: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || 'ci' }}
 
 jobs:
   build:
@@ -35,6 +38,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf rpm \
             libnss3-tools libsecret-tools libgssapi-krb5-2 dbus dbus-x11 gsettings-desktop-schemas dconf-cli
+      - name: Windows Defender exclusions (build dirs)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # Real-time scanning of every object file and rlib slows Rust builds considerably.
+        run: Add-MpPreference -ExclusionPath "$env:GITHUB_WORKSPACE", "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup", "$env:RUNNER_TEMP"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
@@ -101,16 +109,22 @@ jobs:
         env:
           # AppImage tools run without FUSE on the runner.
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: npm exec --prefix app/ui -- tauri build
+        shell: bash
+        run: |
+          if [ "$BUILD_PROFILE" = release ]; then
+            npm exec --prefix app/ui -- tauri build
+          else
+            npm exec --prefix app/ui -- tauri build -- --profile "$BUILD_PROFILE"
+          fi
       - name: Portable ZIP (Windows, xcopy deployment)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $conf = Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          $out = "target/release/bundle/portable"
+          $out = "target/$env:BUILD_PROFILE/bundle/portable"
           $dir = "$out/Quena"
           New-Item -ItemType Directory -Force $dir | Out-Null
-          Copy-Item target/release/quena.exe "$dir/Quena.exe"
+          Copy-Item "target/$env:BUILD_PROFILE/quena.exe" "$dir/Quena.exe"
           # Same resources as the installers (bundled plugins).
           foreach ($r in $conf.bundle.resources.PSObject.Properties) {
             $src = Join-Path app/src-tauri $r.Name
@@ -129,13 +143,13 @@ jobs:
           name: quena-${{ runner.os }}
           if-no-files-found: error
           path: |
-            target/release/bundle/dmg/*.dmg
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/msi/*.msi
-            target/release/bundle/portable/*.zip
-            target/release/bundle/deb/*.deb
-            target/release/bundle/rpm/*.rpm
-            target/release/bundle/appimage/*.AppImage
+            target/${{ env.BUILD_PROFILE }}/bundle/dmg/*.dmg
+            target/${{ env.BUILD_PROFILE }}/bundle/nsis/*.exe
+            target/${{ env.BUILD_PROFILE }}/bundle/msi/*.msi
+            target/${{ env.BUILD_PROFILE }}/bundle/portable/*.zip
+            target/${{ env.BUILD_PROFILE }}/bundle/deb/*.deb
+            target/${{ env.BUILD_PROFILE }}/bundle/rpm/*.rpm
+            target/${{ env.BUILD_PROFILE }}/bundle/appimage/*.AppImage
 
   release:
     name: draft release

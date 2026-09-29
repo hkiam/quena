@@ -8,6 +8,12 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Changed
+- Faster start: the window no longer waits for the capture to start (setting the system proxy,
+  loading a PAC file), for plugins to compile or for the OS root certificates to load. Plugins
+  are compiled once and cached (`plugin-cache` in the data folder); the UI's startup bundle is
+  60 % smaller (editors, diff view and the QR code load on first use).
+- Starting and stopping the capture on macOS changes all network services at once instead of
+  one after another (several times faster on Macs with many network services).
 - Portable mode (a `portable` file or `quena-data` folder beside the executable, on every
   platform) now keeps the web view's cache and storage in `quena-data` as well, and bundled
   plugins are found in a `plugins` folder next to the executable.

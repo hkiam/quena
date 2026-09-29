@@ -89,5 +89,15 @@ lto = false
 codegen-units = 16
 incremental = true
 
+# CI builds of ordinary pushes (test installers): release optimizations without the
+# single-threaded whole-program pass, which dominated CI time. Release tags use `release`.
+[profile.ci]
+inherits = "release"
+lto = false
+codegen-units = 16
+
+[profile.ci.build-override]
+strip = false
+
 [profile.dev.package."*"]
 opt-level = 2
