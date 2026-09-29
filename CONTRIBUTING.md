@@ -18,9 +18,10 @@ platform work are all very welcome.
 npm ci --prefix app/ui
 rustup target add wasm32-wasip2 && ./plugins/build.sh   # bundled plugins
 npm exec --prefix app/ui -- tauri dev                     # run the app
+npm exec --prefix app/ui -- tauri build -- --profile local  # optimized exe without the slow release LTO
 ```
 
-Requirements: Rust 1.90+, Node.js 20+ and the
+Requirements: Rust 1.95+, Node.js 20.19+ (or 22.12+) and the
 [Tauri 2 prerequisites](https://tauri.app/start/prerequisites/) for your platform.
 
 On Linux (Debian/Ubuntu) the system packages are:

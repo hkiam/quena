@@ -187,7 +187,7 @@ Until the first release, build from source.
 
 ### Build from source
 
-Requirements: [Rust](https://rustup.rs) **1.90+**, [Node.js](https://nodejs.org) **20+**, and the
+Requirements: [Rust](https://rustup.rs) **1.95+**, [Node.js](https://nodejs.org) **20.19+** (or 22.12+), and the
 [Tauri 2 prerequisites](https://tauri.app/start/prerequisites/) for your platform.
 
 ```bash
