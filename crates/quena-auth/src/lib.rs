@@ -6,8 +6,8 @@
 
 pub mod crypto;
 mod ntlm;
-#[cfg(target_os = "macos")]
-mod negotiate_macos;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod negotiate_gss;
 #[cfg(windows)]
 mod sspi_windows;
 
@@ -169,8 +169,8 @@ pub struct Credentials {
 pub enum Handshake {
     Basic { header: String, done: bool },
     Ntlm { creds: Credentials, stage: NtlmStage },
-    #[cfg(target_os = "macos")]
-    Negotiate(negotiate_macos::NegotiateCtx),
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    Negotiate(negotiate_gss::NegotiateCtx),
     #[cfg(windows)]
     Sspi { ctx: sspi_windows::SspiCtx, scheme: Scheme, started: bool },
 }
@@ -222,15 +222,15 @@ impl Handshake {
                     Ok(Handshake::Ntlm { creds: c.clone(), stage: NtlmStage::Type1 })
                 }
             }
-            #[cfg(target_os = "macos")]
-            Scheme::Negotiate => Ok(Handshake::Negotiate(negotiate_macos::NegotiateCtx::new(host)?)),
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            Scheme::Negotiate => Ok(Handshake::Negotiate(negotiate_gss::NegotiateCtx::new(host)?)),
             #[cfg(windows)]
             Scheme::Negotiate => {
                 let c = creds.cloned().unwrap_or_default();
                 let ctx = sspi_windows::SspiCtx::new("Negotiate", host, &c.user, &c.domain, &c.password)?;
                 Ok(Handshake::Sspi { ctx, scheme: Scheme::Negotiate, started: false })
             }
-            #[cfg(not(any(target_os = "macos", windows)))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
             Scheme::Negotiate => {
                 let _ = host;
                 Err(AuthError::Unsupported)
@@ -242,7 +242,7 @@ impl Handshake {
         match self {
             Handshake::Basic { .. } => Scheme::Basic,
             Handshake::Ntlm { .. } => Scheme::Ntlm,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             Handshake::Negotiate(_) => Scheme::Negotiate,
             #[cfg(windows)]
             Handshake::Sspi { scheme, .. } => *scheme,
@@ -274,7 +274,7 @@ impl Handshake {
                 }
                 NtlmStage::Done => Err(AuthError::Protocol("NTLM handshake already complete".into())),
             },
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             Handshake::Negotiate(ctx) => {
                 let out = ctx.step(challenge_token)?;
                 Ok(format!("Negotiate {}", B64.encode(out)))
@@ -292,7 +292,7 @@ impl Handshake {
     pub fn is_multi_leg(&self) -> bool {
         match self {
             Handshake::Ntlm { .. } => true,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             Handshake::Negotiate(_) => true,
             #[cfg(windows)]
             Handshake::Sspi { .. } => true,
@@ -305,7 +305,7 @@ impl Handshake {
 pub fn choose<'a>(offers: &'a [Offer], prefer: &[Scheme], have_creds: bool) -> Option<&'a Offer> {
     let supported = |s: Scheme| match s {
         Scheme::Basic | Scheme::Ntlm => have_creds,
-        Scheme::Negotiate => cfg!(target_os = "macos") || cfg!(windows),
+        Scheme::Negotiate => cfg!(target_os = "macos") || cfg!(target_os = "linux") || cfg!(windows),
     };
     offers
         .iter()
@@ -365,6 +365,17 @@ mod tests {
         // NTLM before Basic
         let offers2 = parse_challenges(&["NTLM".into(), "Basic realm=x".into()]);
         assert_eq!(choose(&offers2, &prefer, true).unwrap().scheme, Scheme::Ntlm);
+    }
+
+    /// Linux without a Kerberos ticket (or without libgssapi): Negotiate must fail at
+    /// start or on the first leg so the proxy falls back to NTLM.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn negotiate_without_ticket_fails() {
+        // SAFETY: tests touching KRB5CCNAME all set this same value.
+        unsafe { std::env::set_var("KRB5CCNAME", "FILE:/nonexistent/quena-test-no-ccache") };
+        let r = Handshake::start(Scheme::Negotiate, None, "example.com").and_then(|mut h| h.next_header(None));
+        assert!(matches!(r, Err(AuthError::NoCredentials | AuthError::Unsupported)), "{:?}", r.err());
     }
 
     #[test]

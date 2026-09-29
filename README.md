@@ -10,7 +10,7 @@ Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Li
 
 [![CI](https://github.com/hkiam/quena/actions/workflows/ci.yml/badge.svg)](https://github.com/hkiam/quena/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20(experimental)-lightgrey)
+![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Rust](https://img.shields.io/badge/core-Rust-orange?logo=rust)
 ![Tauri 2](https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB?logo=tauri)
 ![Status](https://img.shields.io/badge/status-early%20preview-yellow)
@@ -72,7 +72,7 @@ Quena is an independent, open-source take on this kind of tool, with its own des
 ### Capture
 - HTTP/1.1, **HTTP/2**, HTTPS (on-the-fly certificates), CONNECT tunnels
 - **WebSocket** frames and **Server-Sent Events**, live
-- System proxy on macOS and Windows — restored on quit *and* after a crash
+- System proxy on macOS, Windows and Linux (GNOME, KDE) — restored on quit *and* after a crash
 - Upstream proxy chaining, bypass list, **PAC** (proxy auto-config)
 - Remote devices: allow-list, landing page `http://quena.cert`,
   **QR-code device assistant** for iOS and Android
@@ -105,7 +105,7 @@ Quena is an independent, open-source take on this kind of tool, with its own des
 
 ### Enterprise-ready
 - **Automatic authentication**: NTLM, Negotiate/Kerberos, Basic —
-  single sign-on via Windows SSPI and macOS Kerberos tickets
+  single sign-on via Windows SSPI and Kerberos tickets on macOS and Linux
 - **Client certificates (mTLS)** per host
 - **Bandwidth & latency simulation**
 - Import/export **SAZ** (compatible with Fiddler Classic), **HAR 1.2**, copy as cURL
@@ -181,8 +181,9 @@ Quena listens on **port 8866** by default. Layout: Quena's own arrangement by de
 
 ### Install
 
-Pre-built, signed installers for macOS (`.dmg`) and Windows (`.exe`, NSIS) will be published on the
-[Releases](https://github.com/hkiam/quena/releases) page. Until the first release, build from source.
+Pre-built installers for macOS (`.dmg`), Windows (`.exe`, NSIS / `.msi`) and Linux (`.deb`,
+`.rpm`, AppImage) will be published on the [Releases](https://github.com/hkiam/quena/releases) page.
+Until the first release, build from source.
 
 ### Build from source
 
@@ -278,18 +279,24 @@ are safe to run on untrusted, huge payloads. The bundled
 
 ## Platform support
 
-|                           | macOS            | Windows                      | Linux                  |
-|---------------------------|------------------|------------------------------|------------------------|
-| Capture, inspect, tamper  | ✅               | ✅                           | 🧪 manual proxy only   |
-| System proxy integration  | ✅               | ✅                           | —                      |
-| Trust root certificate    | ✅ Keychain      | ✅ user certificate store     | manual                 |
-| Process attribution       | ✅               | ✅                           | —                      |
-| Single sign-on auth       | ✅ Kerberos      | ✅ NTLM + Kerberos (SSPI)     | —                      |
-| Credentials storage       | ✅ Keychain      | ✅ Credential Manager         | —                      |
-| Continuous integration    | ✅               | ✅                           | planned                |
+|                           | macOS            | Windows                      | Linux                                   |
+|---------------------------|------------------|------------------------------|-----------------------------------------|
+| Capture, inspect, tamper  | ✅               | ✅                           | ✅                                      |
+| System proxy integration  | ✅               | ✅                           | ✅ GNOME, KDE Plasma                     |
+| Trust root certificate    | ✅ Keychain      | ✅ user certificate store     | ✅ Chrome/Firefox (NSS), system store¹   |
+| Process attribution       | ✅               | ✅                           | ✅ own processes (`/proc`)               |
+| Single sign-on auth       | ✅ Kerberos      | ✅ NTLM + Kerberos (SSPI)     | ✅ Kerberos (GSSAPI, `kinit`)²           |
+| Credentials storage       | ✅ Keychain      | ✅ Credential Manager         | ✅ Secret Service (GNOME Keyring, KWallet)³ |
+| Packages                  | `.dmg`           | NSIS `.exe`, `.msi`          | `.deb`, `.rpm`, AppImage                |
+| Continuous integration    | ✅               | ✅                           | ✅ Ubuntu 22.04                          |
 
-macOS is the primary development platform. Windows is built and tested in CI.
-Linux builds are experimental — help is very welcome.
+On Linux, Quena uses these optional tools when they are installed (the `.deb`/`.rpm` recommend them):
+`certutil` (libnss3-tools / nss-tools) for browser trust, `pkexec` for the system trust store
+(curl, wget and most CLI tools), `secret-tool` (libsecret-tools) for the keyring, and the
+Kerberos library (libgssapi-krb5). ¹ Updating the system store asks for your password.
+² Without the Kerberos library Quena falls back to NTLM. ³ Without a keyring, saved passwords
+last until Quena quits. Command-line tools don't follow desktop proxy settings: point
+`HTTP_PROXY`/`HTTPS_PROXY` at `http://127.0.0.1:8866` for them.
 
 ---
 
@@ -349,7 +356,6 @@ Please report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 ## Roadmap
 
 - Signed and notarized releases for macOS and Windows
-- Linux system integration (proxy, certificate trust, process attribution)
 - Capture without a system proxy (macOS Network Extension), HAR live import, remote capture
 - "Any Process" window picker for process filters
 - HTTP/3 (QUIC)

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Recoverable, type Settings } from "../api";
 import { actions } from "../actions";
-import { fmtBytes, fmtDateTime, fmtInt, modKey } from "../lib/format";
+import { fmtBytes, fmtDateTime, fmtInt, modKey, osNames } from "../lib/format";
 import { get, say, set, useStore, type Dialog } from "../store";
 import { TextWizard } from "./TextWizard";
 import { CompareView } from "./CompareView";
@@ -289,7 +289,7 @@ function AuthOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) =>
         <input value={s.auth.prefer} onChange={(e) => up((x) => (x.auth.prefer = e.target.value))} />
       </div>
       <fieldset className="f-section">
-        <legend>Credentials (passwords stored in the OS keychain)</legend>
+        <legend>Credentials (passwords stored in {osNames.secrets})</legend>
         {s.auth.credentials.length === 0 && <div className="muted small">No credentials configured. Kerberos SSO needs none.</div>}
         <table className="kv">
           <tbody>

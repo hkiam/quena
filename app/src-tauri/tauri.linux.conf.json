@@ -1,0 +1,54 @@
+{
+  "bundle": {
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "linux": {
+      "deb": {
+        "section": "devel",
+        "recommends": [
+          "libnss3-tools",
+          "libsecret-tools",
+          "libgssapi-krb5-2",
+          "pkexec | policykit-1"
+        ],
+        "desktopTemplate": "linux/quena.desktop",
+        "files": {
+          "/usr/share/mime/packages/quena.xml": "linux/quena-mime.xml"
+        }
+      },
+      "rpm": {
+        "recommends": [
+          "nss-tools",
+          "libsecret",
+          "krb5-libs",
+          "polkit"
+        ],
+        "desktopTemplate": "linux/quena.desktop",
+        "files": {
+          "/usr/share/mime/packages/quena.xml": "linux/quena-mime.xml"
+        }
+      }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "har"
+        ],
+        "mimeType": "application/har+json",
+        "name": "HTTP Archive",
+        "description": "HTTP Archive",
+        "role": "Viewer"
+      }
+    ]
+  }
+}

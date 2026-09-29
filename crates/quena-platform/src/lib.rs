@@ -18,9 +18,14 @@ mod windows;
 #[cfg(windows)]
 use windows as imp;
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as imp;
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 mod other;
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 use other as imp;
 
 pub use imp::ProcessLookup;
@@ -96,7 +101,6 @@ pub fn reveal(path: &Path) -> Result<()> {
     imp::reveal(path)
 }
 
-/// Local IPv4 addresses of active interfaces (for the device assistant).
 /// Write a small state file so a crash mid-write never leaves a truncated file behind.
 pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
@@ -134,11 +138,12 @@ pub fn raise_fd_limit(_want: u64) -> Option<u64> {
     None
 }
 
+/// Local IPv4 addresses of active interfaces (for the device assistant).
 pub fn local_addresses() -> Vec<(String, String)> {
     imp::local_addresses()
 }
 
-/// OS secure storage for credentials (Keychain / Credential Manager).
+/// OS secure storage for credentials (Keychain / Credential Manager / Secret Service).
 /// Never stores secrets in plaintext files.
 pub mod secure {
     use super::Result;

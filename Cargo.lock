@@ -3362,6 +3362,7 @@ name = "quena-app"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "parking_lot",
  "percent-encoding",
  "quena-app-core",
  "quena-body",
@@ -3421,6 +3422,7 @@ name = "quena-auth"
 version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
+ "libloading 0.8.9",
  "thiserror 2.0.21",
  "tracing",
 ]

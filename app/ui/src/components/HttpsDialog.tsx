@@ -4,6 +4,7 @@ import { save, open } from "@tauri-apps/plugin-dialog";
 import { api, type CaInfo } from "../api";
 import { say, set, useStore } from "../store";
 import { patchSettings } from "../settingsActions";
+import { osNames } from "../lib/format";
 
 export function HttpsPanel() {
   const settings = useStore((s) => s.settings);
@@ -100,7 +101,7 @@ export function HttpsPanel() {
           <>
             <div>
               Status:{" "}
-              {ca.trusted ? <b className="ok">trusted by macOS</b> : <b className="err">not trusted – browsers will show certificate errors</b>}
+              {ca.trusted ? <b className="ok">trusted by {osNames.os}</b> : <b className="err">not trusted – browsers will show certificate errors</b>}
             </div>
             <div className="mono small muted" style={{ wordBreak: "break-all" }}>
               SHA-256 {ca.sha256}
@@ -113,7 +114,7 @@ export function HttpsPanel() {
             className="primary"
             disabled={busy}
             onClick={() => run(api.caTrust, "Root certificate trusted")}
-            title="Adds the certificate to your login keychain as trusted root. macOS asks for your password."
+            title={`Adds the certificate to ${osNames.trustStore} as trusted root. ${osNames.prompt}`}
           >
             {ca?.trusted ? "Re-trust" : "Trust root certificate…"}
           </button>
@@ -145,7 +146,7 @@ export function HttpsPanel() {
           </button>
         </div>
         <p className="small muted">
-          The private key never leaves this Mac (stored with owner-only permissions). Only trust it on machines you use for debugging; remove it afterwards.
+          The private key never leaves {osNames.machine} (stored with owner-only permissions). Only trust it on machines you use for debugging; remove it afterwards.
         </p>
       </fieldset>
       <p>

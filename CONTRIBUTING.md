@@ -23,6 +23,24 @@ npm exec --prefix app/ui -- tauri dev                     # run the app
 Requirements: Rust 1.90+, Node.js 20+ and the
 [Tauri 2 prerequisites](https://tauri.app/start/prerequisites/) for your platform.
 
+On Linux (Debian/Ubuntu) the system packages are:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+  libxdo-dev patchelf libnss3-tools libsecret-tools
+```
+
+`tools/linux/Dockerfile` builds the same environment as the CI job, e.g. to test Linux from a Mac:
+
+```bash
+docker build -t quena-linux tools/linux
+docker run --rm -v "$PWD":/src -v quena-target:/src/target -w /src quena-linux \
+  cargo test --workspace --exclude quena-app
+# Desktop integration (GNOME proxy settings, NSS trust) against a real session bus:
+docker run --rm -e HOME=/tmp/h -v "$PWD":/src -v quena-target:/src/target -w /src quena-linux \
+  dbus-run-session -- cargo test -p quena-platform -- --ignored
+```
+
 > **Tip:** while developing, point Quena at a throw-away data directory and keep it off the
 > system proxy, so a rebuild never changes your machine's network settings:
 >

@@ -582,6 +582,16 @@ async fn script_run_menu(core: State<'_, Core>, index: usize, ids: Vec<SessionId
     rules(core.inner())?.run_script_menu(index, &ids).await.map_err(e)
 }
 
+/// Archives passed to the app (file association, command line, macOS "Open With") that
+/// the UI has not loaded yet.
+pub struct OpenFiles(pub parking_lot::Mutex<Vec<String>>);
+
+/// Hand pending archives to the UI once (it imports them after booting).
+#[tauri::command]
+fn take_open_files(files: State<'_, OpenFiles>) -> Vec<String> {
+    std::mem::take(&mut *files.0.lock())
+}
+
 pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         status,
@@ -642,6 +652,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         parse_curl,
         export_archive,
         import_archive,
+        take_open_files,
         write_text_file,
         ar_get,
         ar_set,

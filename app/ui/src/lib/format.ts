@@ -52,4 +52,19 @@ export function latin1ToUtf8(s: string): string {
 }
 
 export const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
+export const isWindows = typeof navigator !== "undefined" && /Win/.test(navigator.platform);
+export const isLinux = !isMac && !isWindows;
+
+/** Where the OS keeps trusted roots and secrets, in the words users know. */
+export const osNames = isMac
+  ? { os: "macOS", trustStore: "your login keychain", prompt: "macOS asks for your password.", machine: "this Mac", secrets: "the macOS keychain" }
+  : isWindows
+    ? { os: "Windows", trustStore: "your Windows certificate store", prompt: "Windows asks for confirmation.", machine: "this PC", secrets: "the Windows Credential Manager" }
+    : {
+        os: "this system",
+        trustStore: "the browsers' certificate databases (Chrome, Firefox) and the system trust store",
+        prompt: "Updating the system store asks for your password.",
+        machine: "this computer",
+        secrets: "the desktop keyring",
+      };
 export const modKey = isMac ? "⌘" : "Ctrl+";

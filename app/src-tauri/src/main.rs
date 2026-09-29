@@ -47,11 +47,14 @@ fn main() {
     tracing::info!(target: "quena", "Quena {} started, data in {}", env!("CARGO_PKG_VERSION"), core.paths.data.display());
 
     install_signal_handlers(core.clone());
+    // Archives given on the command line (Windows/Linux file associations use argv).
+    let initial_files: Vec<String> = std::env::args_os().skip(1).filter_map(|a| archive_path(std::path::Path::new(&a))).collect();
     let exit_core = core.clone();
     let proto_core = core.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(core.clone())
+        .manage(commands::OpenFiles(parking_lot::Mutex::new(initial_files)))
         .manage(engine.clone())
         .register_asynchronous_uri_scheme_protocol("quena", move |_ctx, request, responder| {
             let core = proto_core.clone();
@@ -104,10 +107,20 @@ fn main() {
         .invoke_handler(commands::handler())
         .build(tauri::generate_context!())
         .expect("error while building Quena")
-        .run(move |_app, event| {
+        .run(move |app, event| match event {
             // Cmd+Q, dock "Quit", logout: always shut down cleanly (restores the system proxy).
-            if let tauri::RunEvent::Exit = event {
-                exit_core.shutdown();
+            tauri::RunEvent::Exit => exit_core.shutdown(),
+            // macOS delivers "Open With" / double-clicked archives as an event.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Opened { urls } => {
+                let files: Vec<String> = urls.iter().filter_map(|u| u.to_file_path().ok()).filter_map(|p| archive_path(&p)).collect();
+                if !files.is_empty() {
+                    app.state::<commands::OpenFiles>().0.lock().extend(files);
+                    let _ = app.emit("open-files", ());
+                }
+            }
+            _ => {
+                let _ = app;
             }
         });
 }
@@ -133,6 +146,16 @@ fn disable_browser_accelerators(w: &tauri::WebviewWindow) {
     });
     if let Err(e) = res {
         tracing::warn!(target: "quena", "webview not available: {e}");
+    }
+}
+
+/// A session archive Quena can import (`.saz`, `.har`) as an absolute path string.
+fn archive_path(p: &std::path::Path) -> Option<String> {
+    let ext = p.extension()?.to_string_lossy().to_ascii_lowercase();
+    if (ext == "saz" || ext == "har") && p.is_file() {
+        Some(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().into_owned())
+    } else {
+        None
     }
 }
 

@@ -7,6 +7,15 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Added
+- Linux support on par with macOS and Windows: system proxy for GNOME and KDE Plasma (restored
+  on quit and after a crash), root certificate trust for Chrome/Firefox (NSS) and the system
+  store (via `pkexec`), process attribution via `/proc`, credentials in the Secret Service
+  keyring, Kerberos single sign-on via GSSAPI (loaded at runtime), `xdg-open`/file manager
+  integration. Packages: `.deb`, `.rpm`, AppImage; built and tested in CI on Ubuntu 22.04.
+- Double-clicked or "Open With" `.har`/`.saz` files are loaded (all platforms).
+- `tools/linux/Dockerfile`: the Linux build and test environment.
+
 ### Changed
 - Own default layout: session list left, request and response side by side, rows coloured by
   outcome (5xx red, 4xx amber, redirects muted). The dense stacked arrangement is available as

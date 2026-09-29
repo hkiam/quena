@@ -29,6 +29,7 @@ tracing.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 percent-encoding = "2"
+parking_lot.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

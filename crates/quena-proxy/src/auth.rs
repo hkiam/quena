@@ -154,7 +154,7 @@ pub async fn send_with_auth(
         .iter()
         .filter(|o| match o.scheme {
             Scheme::Basic | Scheme::Ntlm => creds.is_some(),
-            Scheme::Negotiate => cfg!(target_os = "macos") || cfg!(windows),
+            Scheme::Negotiate => cfg!(target_os = "macos") || cfg!(target_os = "linux") || cfg!(windows),
         })
         .collect();
     candidates.sort_by_key(|o| std::cmp::Reverse(cfg.auth_prefer.iter().rev().position(|p| *p == o.scheme).map(|i| i as i32).unwrap_or(-1)));

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Lets the desktop recognise .har files so the Quena file association applies. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/har+json">
+    <comment>HTTP Archive</comment>
+    <sub-class-of type="application/json"/>
+    <glob pattern="*.har"/>
+  </mime-type>
+</mime-info>

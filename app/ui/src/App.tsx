@@ -8,8 +8,19 @@ import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { SessionGrid } from "./grid/SessionGrid";
 import { RightPane } from "./panels/RightPane";
-import { get, restoreLayout, set, useStore, type Layout } from "./store";
+import { get, restoreLayout, say, set, useStore, type Layout } from "./store";
 import { installGlobalKeys } from "./keys";
+
+async function importOpenFiles() {
+  for (const path of await api.takeOpenFiles()) {
+    try {
+      await api.importArchive(path);
+      say(`Loading ${path}`);
+    } catch (e) {
+      say(String(e), "error");
+    }
+  }
+}
 
 function useBoot() {
   useEffect(() => {
@@ -29,6 +40,8 @@ function useBoot() {
       }),
     );
     unlisten.push(on<string>("menu", (id) => actions.menu(id)));
+    // Archives opened from the file manager / "Open With" while running.
+    unlisten.push(on("open-files", () => void importOpenFiles()));
     unlisten.push(
       on<{ id: number; phase: string; url: string }>("breakpoint", (b) => {
         // Jump to the paused session.
@@ -55,6 +68,8 @@ function useBoot() {
       if (!recovering && !layout.presetChosen) set({ dialog: { kind: "choose-layout" } });
       const w = await api.rows(0, 0);
       set({ listVersion: w.version, listTotal: w.total });
+      // Archives Quena was started with (double-click, command line).
+      void importOpenFiles();
     })();
     const uninstall = installGlobalKeys();
     return () => {

@@ -579,6 +579,7 @@ export const api = {
   caExport: (path: string, der: boolean) => invoke<void>("ca_export", { path, der }),
   exportArchive: (ids: SessionId[], path: string) => invoke<number>("export_archive", { ids, path }),
   importArchive: (path: string) => invoke<number>("import_archive", { path }),
+  takeOpenFiles: () => invoke<string[]>("take_open_files"),
   writeTextFile: (path: string, text: string) => invoke<void>("write_text_file", { path, text }),
   arGet: () => invoke<ArState>("ar_get"),
   arSet: (state: ArState) => invoke<void>("ar_set", { state }),
