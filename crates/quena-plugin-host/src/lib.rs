@@ -292,11 +292,15 @@ impl PluginHost {
         self.engine.precompile_compatibility_hash().hash(&mut h);
         let key = format!("{}-{:016x}", hex::encode(&sha2::Sha256::digest(&bytes)[..16]), h.finish());
         let cached = self.cache_dir.join(format!("{key}.cwasm"));
-        if cached.is_file() {
-            // SAFETY: the file was produced by `serialize` of this engine configuration (the
-            // key covers the wasm and the engine's compatibility hash) and lives in Quena's
-            // own data directory, which is as trusted as the plugin directories themselves.
-            match unsafe { Component::deserialize_file(&self.engine, &cached) } {
+        // Read into memory rather than `deserialize_file`: a memory-mapped cache file is
+        // locked on Windows (updates and pruning fail) and overwriting it on Unix while
+        // mapped crashes the process (SIGBUS).
+        if let Ok(ser) = std::fs::read(&cached) {
+            // SAFETY: the bytes were produced by `serialize` of this engine configuration (the
+            // key covers the wasm and the engine's compatibility hash) and live in Quena's own
+            // data directory, which is as trusted as the plugin directories themselves;
+            // wasmtime still rejects data that is not a compatible serialized component.
+            match unsafe { Component::deserialize(&self.engine, &ser) } {
                 Ok(c) => return Ok(c),
                 Err(e) => tracing::debug!(target: "quena::plugins", "stale compile cache {}: {e}", cached.display()),
             }
