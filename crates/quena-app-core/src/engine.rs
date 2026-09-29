@@ -147,9 +147,10 @@ impl ProxyEngine {
             None
         };
         let detected = detect_upstream(s.proxy.port);
+        // The PAC file (possibly a download) is loaded by the first `apply`, i.e. when
+        // capturing starts on its background thread, not while the app is starting up.
         let pac_slot: Mutex<Option<Arc<crate::pac::PacResolver>>> = Mutex::new(None);
-        let pac = resolve_pac(&pac_slot, &s, detected.1.as_deref());
-        let proxy = Proxy::new(core.capture(), proxy_config(&s, detected.0.clone(), pac), ca.clone()).map_err(|e| anyhow!("{e}"))?;
+        let proxy = Proxy::new(core.capture(), proxy_config(&s, detected.0.clone(), None), ca.clone()).map_err(|e| anyhow!("{e}"))?;
         proxy.shared.recorder.set_lossless(s.lossless_recording);
         if let Some(r) = &core.rules {
             proxy.set_interceptor(r.clone());

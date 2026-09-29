@@ -39,11 +39,6 @@ fn main() {
     quena_app_core::engine::install_panic_hook(&core.paths.data);
     let engine = quena_app_core::engine::ProxyEngine::new(&core).expect("initialise capture engine");
     core.set_proxy_engine(engine.clone());
-    if core.settings().proxy.capture_on_startup {
-        if let Err(e) = core.start_capture() {
-            tracing::error!(target: "quena", "could not start capturing: {e}");
-        }
-    }
     tracing::info!(target: "quena", "Quena {} started, data in {}", env!("CARGO_PKG_VERSION"), core.paths.data.display());
 
     install_signal_handlers(core.clone());
@@ -62,20 +57,6 @@ fn main() {
         })
         .setup(move |app| {
             let handle = app.handle().clone();
-            // Bundled plugins live in the app resources, or next to the executable in a
-            // portable folder; dev builds use plugins/dist.
-            let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
-            let bundled = app
-                .path()
-                .resource_dir()
-                .ok()
-                .map(|d| d.join("plugins"))
-                .filter(|d| d.exists())
-                .or_else(|| exe_dir.map(|d| d.join("plugins")).filter(|d| d.exists()))
-                .or_else(|| Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist")).filter(|d| d.exists()));
-            if let Err(e) = core.init_plugins(bundled) {
-                tracing::error!(target: "quena", "plugin host: {e:#}");
-            }
             core.set_sink(Arc::new(TauriSink(handle.clone())));
             core.start_ticker();
             // Load the rules script if scripting was left enabled.
@@ -104,6 +85,41 @@ fn main() {
             let _w = builder.build()?;
             #[cfg(windows)]
             disable_browser_accelerators(&_w);
+            // Bundled plugins live in the app resources, or next to the executable in a
+            // portable folder; dev builds use plugins/dist.
+            let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
+            let bundled = app
+                .path()
+                .resource_dir()
+                .ok()
+                .map(|d| d.join("plugins"))
+                .filter(|d| d.exists())
+                .or_else(|| exe_dir.map(|d| d.join("plugins")).filter(|d| d.exists()))
+                .or_else(|| Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist")).filter(|d| d.exists()));
+            // Start capturing once the window is up: setting the system proxy (dozens of
+            // `networksetup` calls on a Mac with many network services) and loading a PAC
+            // file can take seconds, and the UI shows the progress through status events.
+            if core.settings().proxy.capture_on_startup {
+                let ccore = core.clone();
+                std::thread::Builder::new()
+                    .name("quena-capture-start".into())
+                    .spawn(move || {
+                        if let Err(e) = ccore.start_capture() {
+                            tracing::error!(target: "quena", "could not start capturing: {e}");
+                        }
+                    })
+                    .ok();
+            }
+            // Compiling plugins takes a moment on a cold cache: never make the window wait.
+            let pcore = core.clone();
+            std::thread::Builder::new()
+                .name("quena-plugins".into())
+                .spawn(move || {
+                    if let Err(e) = pcore.init_plugins(bundled) {
+                        tracing::error!(target: "quena", "plugin host: {e:#}");
+                    }
+                })
+                .ok();
             Ok(())
         })
         .on_window_event(|window, event| {

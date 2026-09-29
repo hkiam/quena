@@ -200,6 +200,9 @@ pub struct PluginHost {
     dirs: Vec<PathBuf>,
     limits: Limits,
     disabled_file: PathBuf,
+    /// Compiled components (`<sha256 of wasm + engine>.cwasm`), so a plugin is compiled
+    /// once instead of at every start.
+    cache_dir: PathBuf,
 }
 
 /// Ticks per call deadline (the ticker increments the epoch every 10 ms).
@@ -240,6 +243,7 @@ impl PluginHost {
             dirs,
             limits: Limits::default(),
             disabled_file: state_dir.join("plugins-disabled.json"),
+            cache_dir: state_dir.join("plugin-cache"),
         });
         host.discover();
         Ok(host)
@@ -271,7 +275,60 @@ impl PluginHost {
                 }
             }
         }
+        let wasm: Vec<PathBuf> = found
+            .iter()
+            .flat_map(|l| std::fs::read_dir(&l.dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wasm")))
+            .collect();
+        self.prune_cache(&wasm);
         *self.plugins.write() = found;
+    }
+
+    /// Compile `wasm`, or load the machine code compiled at an earlier start.
+    fn compile_cached(&self, wasm: &Path) -> Result<Component> {
+        use sha2::Digest;
+        use std::hash::{Hash, Hasher};
+        let bytes = std::fs::read(wasm).with_context(|| format!("{}", wasm.display()))?;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.engine.precompile_compatibility_hash().hash(&mut h);
+        let key = format!("{}-{:016x}", hex::encode(&sha2::Sha256::digest(&bytes)[..16]), h.finish());
+        let cached = self.cache_dir.join(format!("{key}.cwasm"));
+        if cached.is_file() {
+            // SAFETY: the file was produced by `serialize` of this engine configuration (the
+            // key covers the wasm and the engine's compatibility hash) and lives in Quena's
+            // own data directory, which is as trusted as the plugin directories themselves.
+            match unsafe { Component::deserialize_file(&self.engine, &cached) } {
+                Ok(c) => return Ok(c),
+                Err(e) => tracing::debug!(target: "quena::plugins", "stale compile cache {}: {e}", cached.display()),
+            }
+        }
+        let component = Component::new(&self.engine, &bytes).map_err(|e| anyhow!("{e:#}"))?;
+        if let Ok(ser) = component.serialize() {
+            let _ = std::fs::create_dir_all(&self.cache_dir);
+            let tmp = cached.with_extension("tmp");
+            if std::fs::write(&tmp, &ser).is_ok() {
+                let _ = std::fs::rename(&tmp, &cached);
+            }
+        }
+        Ok(component)
+    }
+
+    /// Drop compiled components no loaded plugin uses any more (updated or removed plugins).
+    fn prune_cache(&self, keep: &[PathBuf]) {
+        let Ok(rd) = std::fs::read_dir(&self.cache_dir) else { return };
+        let used: Vec<String> = keep
+            .iter()
+            .filter_map(|w| std::fs::read(w).ok())
+            .map(|b| {
+                use sha2::Digest;
+                hex::encode(&sha2::Sha256::digest(&b)[..16])
+            })
+            .collect();
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !used.iter().any(|u| name.starts_with(u.as_str())) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
     }
 
     fn load(&self, dir: &Path) -> Result<Loaded> {
@@ -291,7 +348,7 @@ impl PluginHost {
                 .ok_or_else(|| anyhow!("no .wasm file"))?,
         };
         let r = (|| -> Result<()> {
-            let component = Component::from_file(&self.engine, &wasm).map_err(|e| anyhow!("{e:#}"))?;
+            let component = self.compile_cached(&wasm)?;
             let pre = self.linker.instantiate_pre(&component).map_err(|e| anyhow!("{e:#}"))?;
             match kind {
                 PluginKind::Decoder => {

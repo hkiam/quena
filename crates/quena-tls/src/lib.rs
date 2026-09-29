@@ -359,13 +359,35 @@ impl ResolvesServerCert for Fixed {
 
 /// Upstream TLS client configurations.
 pub struct ClientConfigs {
-    verified_h2: Arc<ClientConfig>,
-    verified_h1: Arc<ClientConfig>,
+    /// Configurations that verify against the OS trust store. Loading the native roots takes
+    /// ~100 ms (more on Windows), so it happens on a background thread at startup and only
+    /// the first verified connection would wait for it.
+    verified: Arc<std::sync::OnceLock<Verified>>,
     insecure_h2: Arc<ClientConfig>,
     insecure_h1: Arc<ClientConfig>,
     /// Client certificates (mTLS) per host: host pattern -> (chain, key PEM path).
     client_certs: Mutex<Vec<(String, Arc<ClientConfig>, Arc<ClientConfig>)>>,
+}
+
+struct Verified {
+    h2: Arc<ClientConfig>,
+    h1: Arc<ClientConfig>,
     roots: Arc<rustls::RootCertStore>,
+}
+
+impl Verified {
+    fn build() -> Verified {
+        let roots = Arc::new(root_store());
+        let mk = |h2| {
+            let c = ClientConfig::builder_with_provider(provider())
+                .with_safe_default_protocol_versions()
+                .expect("default TLS versions")
+                .with_root_certificates(roots.clone())
+                .with_no_client_auth();
+            with_alpn(c, h2)
+        };
+        Verified { h2: mk(true), h1: mk(false), roots }
+    }
 }
 
 fn root_store() -> rustls::RootCertStore {
@@ -391,25 +413,29 @@ fn with_alpn(mut c: ClientConfig, h2: bool) -> Arc<ClientConfig> {
 impl ClientConfigs {
     pub fn new() -> Result<ClientConfigs> {
         init();
-        let roots = Arc::new(root_store());
-        let verified = || {
-            ClientConfig::builder_with_provider(provider())
-                .with_safe_default_protocol_versions()
-                .map(|b| b.with_root_certificates(roots.clone()).with_no_client_auth())
-        };
+        let verified: Arc<std::sync::OnceLock<Verified>> = Arc::new(std::sync::OnceLock::new());
+        let v2 = verified.clone();
+        std::thread::Builder::new()
+            .name("quena-tls-roots".into())
+            .spawn(move || {
+                v2.get_or_init(Verified::build);
+            })
+            .ok();
         let insecure = || {
             ClientConfig::builder_with_provider(provider())
                 .with_safe_default_protocol_versions()
                 .map(|b| b.dangerous().with_custom_certificate_verifier(Arc::new(NoVerify(provider()))).with_no_client_auth())
         };
         Ok(ClientConfigs {
-            verified_h2: with_alpn(verified()?, true),
-            verified_h1: with_alpn(verified()?, false),
+            verified,
             insecure_h2: with_alpn(insecure()?, true),
             insecure_h1: with_alpn(insecure()?, false),
             client_certs: Mutex::new(Vec::new()),
-            roots,
         })
+    }
+
+    fn verified(&self) -> &Verified {
+        self.verified.get_or_init(Verified::build)
     }
 
     /// Configure a client certificate (PEM chain + PEM key) for hosts matching `pattern`.
@@ -419,7 +445,7 @@ impl ClientConfigs {
         let mk = |h2| -> Result<Arc<ClientConfig>> {
             let c = ClientConfig::builder_with_provider(provider())
                 .with_safe_default_protocol_versions()?
-                .with_root_certificates(self.roots.clone())
+                .with_root_certificates(self.verified().roots.clone())
                 .with_client_auth_cert(chain.clone(), key.clone_key())?;
             Ok(with_alpn(c, h2))
         };
@@ -439,8 +465,8 @@ impl ClientConfigs {
             return if h2 { a.clone() } else { b.clone() };
         }
         match (insecure, h2) {
-            (false, true) => self.verified_h2.clone(),
-            (false, false) => self.verified_h1.clone(),
+            (false, true) => self.verified().h2.clone(),
+            (false, false) => self.verified().h1.clone(),
             (true, true) => self.insecure_h2.clone(),
             (true, false) => self.insecure_h1.clone(),
         }

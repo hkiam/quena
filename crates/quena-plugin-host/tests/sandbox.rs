@@ -94,3 +94,33 @@ fn header_inspector_decodes_auth_tokens() {
     h.set_enabled("io.github.hkiam.auth-tokens", false).unwrap();
     assert!(h.inspect_header("Authorization", "NTLM TlRMTVNTUAABAAAAl4II4gAAAAAAAAAAAAAAAAAAAAAKAPRlAAAADw==").is_empty());
 }
+
+/// The second start loads compiled machine code instead of compiling again, and a
+/// damaged cache file is ignored (recompiled).
+#[test]
+fn compiled_plugins_are_cached() {
+    let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist");
+    if !dist.join("rot13-test").exists() {
+        return;
+    }
+    let state = tempfile::tempdir().unwrap();
+    let t = Instant::now();
+    drop(PluginHost::new(vec![dist.clone()], state.path()).unwrap());
+    let cold = t.elapsed();
+    let cache: Vec<_> = std::fs::read_dir(state.path().join("plugin-cache")).unwrap().flatten().map(|e| e.path()).collect();
+    assert!(!cache.is_empty(), "no compile cache written");
+    let t = Instant::now();
+    let h = PluginHost::new(vec![dist.clone()], state.path()).unwrap();
+    let warm = t.elapsed();
+    eprintln!("plugin load cold {cold:?}, warm {warm:?}");
+    assert!(h.list().iter().all(|p| p.error.is_none()));
+    // Damaged cache: still works.
+    for f in &cache {
+        std::fs::write(f, b"garbage").unwrap();
+    }
+    let h = PluginHost::new(vec![dist], state.path()).unwrap();
+    let idx = h.list().into_iter().find(|p| p.id == "io.github.hkiam.rot13-test").unwrap().index;
+    let mut out = Vec::new();
+    h.decode(idx, Some("text/x-rot13"), &mut &b"Uryyb"[..], &mut out, &|| false).unwrap();
+    assert_eq!(out, b"Hello");
+}
