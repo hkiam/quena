@@ -1639,3 +1639,11 @@ pre {
 .rules-log-body .log-error {
   color: var(--err-fg, #e66);
 }
+
+.cmp-raw-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}

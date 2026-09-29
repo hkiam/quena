@@ -350,6 +350,11 @@ async fn parse_raw_request(raw: String) -> R<piper_app_core::compose::ParsedRequ
 }
 
 #[tauri::command]
+async fn parse_curl(cmd: String) -> R<piper_app_core::compose::ParsedRequest> {
+    piper_app_core::compose::parse_curl(&cmd).map_err(e)
+}
+
+#[tauri::command]
 async fn export_archive(core: State<'_, Core>, ids: Vec<SessionId>, path: String) -> R<u64> {
     let core = core.inner().clone();
     blocking(move || core.export_archive(ids, path.into(), None).map_err(e)).await
@@ -634,6 +639,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         replay,
         compose,
         parse_raw_request,
+        parse_curl,
         export_archive,
         import_archive,
         write_text_file,

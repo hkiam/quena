@@ -232,6 +232,24 @@ export default function ComposerPanel() {
       )}
       {tab === "raw" && (
         <div className="cmp-raw">
+          <div className="cmp-raw-bar">
+            <span className="muted small">Paste a raw HTTP request, or a cURL command and import it.</span>
+            <span className="tp-spacer" />
+            <button
+              onClick={async () => {
+                try {
+                  const p = await api.parseCurl(raw);
+                  setD((x) => ({ ...x, method: p.method, url: p.url, headers: p.headers, body: p.body, bodyFromSession: null, bodyFile: null }));
+                  setTab("parsed");
+                  say("Imported cURL command");
+                } catch (err) {
+                  say(`Not a valid cURL command: ${err}`, "error");
+                }
+              }}
+            >
+              Import as cURL
+            </button>
+          </div>
           <CodeView text={raw} editable onChange={setRaw} />
         </div>
       )}

@@ -601,6 +601,7 @@ export const api = {
     invoke<number>("replay", { ids, options }),
   compose: (request: ComposeRequest) => invoke<SessionId>("compose", { request }),
   parseRawRequest: (raw: string) => invoke<{ method: string; url: string; version: string; headers: string; body: string }>("parse_raw_request", { raw }),
+  parseCurl: (cmd: string) => invoke<{ method: string; url: string; version: string; headers: string; body: string }>("parse_curl", { cmd }),
   scriptGet: () => invoke<ScriptState>("script_get"),
   scriptSet: (source: string) => invoke<ScriptState>("script_set", { source }),
   scriptSetEnabled: (enabled: boolean) => invoke<ScriptState>("script_set_enabled", { enabled }),

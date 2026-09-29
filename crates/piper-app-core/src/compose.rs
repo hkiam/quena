@@ -82,6 +82,13 @@ pub fn parse_raw_request(raw: &str) -> Result<ParsedRequest> {
     Ok(ParsedRequest { method, url, version, headers: headers.join("\n"), body: body.to_string() })
 }
 
+/// Parse a `curl` command line into a Composer-ready request.
+pub fn parse_curl(cmd: &str) -> Result<ParsedRequest> {
+    let c = piper_formats::curl::parse(cmd).map_err(|e| anyhow!("{e}"))?;
+    let headers = c.headers.iter().map(|(n, v)| format!("{n}: {v}")).collect::<Vec<_>>().join("\n");
+    Ok(ParsedRequest { method: c.method, url: c.url, version: "HTTP/1.1".into(), headers, body: c.body })
+}
+
 fn parse_header_lines(s: &str) -> Headers {
     let mut h = Headers::new();
     for line in s.lines() {
