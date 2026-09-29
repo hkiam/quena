@@ -49,6 +49,9 @@ jobs:
           targets: wasm32-wasip2
       - uses: Swatinem/rust-cache@v2
         with:
+          # One cache per build profile: tag builds (release) and pushes (ci) compile the
+          # dependencies differently, and the cache is only saved when its key is new.
+          key: ${{ env.BUILD_PROFILE }}
           cache-on-failure: true
           workspaces: |
             .
