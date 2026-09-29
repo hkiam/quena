@@ -1,4 +1,4 @@
-// Fiddler TextWizard: quick encoders/decoders.
+// Text Tools: quick encoders/decoders.
 import { useMemo, useState } from "react";
 import { b64decode } from "../lib/http";
 

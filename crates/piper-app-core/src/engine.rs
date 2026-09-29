@@ -267,7 +267,7 @@ impl ProxyEngine {
 /// Read the current system proxy (before Piper overrides it).
 /// Decide the effective PAC source and (re)build the resolver, caching it so the
 /// engine is only recompiled when the source URL/path changes. A manual upstream
-/// proxy disables PAC (the static upstream wins, as in Fiddler).
+/// proxy disables PAC (the static upstream wins).
 fn resolve_pac(
     slot: &Mutex<Option<Arc<crate::pac::PacResolver>>>,
     s: &Settings,

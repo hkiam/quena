@@ -1,4 +1,4 @@
-//! Native menu (Fiddler Classic layout). Menu clicks are forwarded to the UI
+//! Native menu. Menu clicks are forwarded to the UI
 //! as `menu` events carrying the item id.
 //!
 //! Shortcuts that collide with text editing (Ctrl/Cmd+X, Del, R, M …) are
@@ -65,7 +65,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 app,
                 "Import Sessions",
                 true,
-                &[&item(app, "file.import-har", "HTTP Archive (HAR)…", None)?, &item(app, "file.import-saz", "Fiddler Archive (SAZ)…", None)?],
+                &[&item(app, "file.import-har", "HTTP Archive (HAR)…", None)?, &item(app, "file.import-saz", "SAZ Archive…", None)?],
             )?,
             &Submenu::with_items(
                 app,
@@ -73,7 +73,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 true,
                 &[
                     &item(app, "file.export-har", "HTTP Archive (HAR)…", None)?,
-                    &item(app, "file.export-saz", "Fiddler Archive (SAZ)…", None)?,
+                    &item(app, "file.export-saz", "SAZ Archive…", None)?,
                     &item(app, "file.export-curl", "cURL Script…", None)?,
                 ],
             )?,
@@ -156,9 +156,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 ],
             )?,
             &sep()?,
-            &item(app, "rules.customize", "Customize Rules…", Some("CmdOrCtrl+R"))?,
+            &item(app, "rules.customize", "Rules Script…", Some("CmdOrCtrl+R"))?,
             &sep()?,
-            &item(app, "rules.hide-connects", "Hide CONNECTs", None)?,
+            &item(app, "rules.hide-connects", "Hide Tunnels (CONNECT)", None)?,
             &item(app, "rules.hide-images", "Hide Image Requests", None)?,
             &item(app, "rules.hide-304", "Hide 304s", None)?,
             &sep()?,
@@ -176,7 +176,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "tools.https", "HTTPS Settings…", None)?,
             &item(app, "tools.connect-device", "Connect Device…", None)?,
             &sep()?,
-            &item(app, "tools.textwizard", "TextWizard…", Some("CmdOrCtrl+E"))?,
+            &item(app, "tools.textwizard", "Text Tools…", Some("CmdOrCtrl+E"))?,
             &item(app, "tools.composer", "Composer", Some("F9"))?,
             &sep()?,
             &item(app, "tools.plugins", "Plugins…", None)?,
@@ -189,8 +189,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         true,
         &[
             &item(app, "view.statistics", "Statistics", Some("F7"))?,
-            &item(app, "view.inspectors", "Inspectors", Some("F8"))?,
-            &item(app, "view.autoresponder", "AutoResponder", None)?,
+            &item(app, "view.inspectors", "Inspect", Some("F8"))?,
+            &item(app, "view.autoresponder", "Mock Rules", None)?,
             &item(app, "view.composer", "Composer", None)?,
             &item(app, "view.filters", "Filters", None)?,
             &item(app, "view.log", "Log", None)?,
@@ -200,7 +200,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "view.wide", "Wide Layout", None)?,
             &item(app, "view.tearoff", "Tear off Inspectors", None)?,
             &sep()?,
-            &item(app, "view.minimize-to-quickexec", "Focus QuickExec", Some("Alt+Q"))?,
+            &item(app, "view.minimize-to-quickexec", "Focus Command Bar", Some("Alt+Q"))?,
             &item(app, "view.jobs", "Jobs", None)?,
             &sep()?,
             &Submenu::with_items(
@@ -229,7 +229,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         "Help",
         true,
         &[
-            &item(app, "help.quickexec", "QuickExec Commands", None)?,
+            &item(app, "help.quickexec", "Command Bar Commands", None)?,
             &item(app, "help.shortcuts", "Keyboard Shortcuts", None)?,
             #[cfg(not(target_os = "macos"))]
             &about,

@@ -1,4 +1,4 @@
-// Filters tab (Fiddler Classic layout). Changes apply live (debounced).
+// Filters tab. Changes apply live (debounced).
 import { useEffect, useRef, useState } from "react";
 import { api, type FilterSettings } from "../api";
 import { say, set, useStore } from "../store";

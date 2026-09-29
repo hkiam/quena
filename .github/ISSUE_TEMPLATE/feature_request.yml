@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an idea or a Fiddler feature you miss
+description: Suggest an idea or a feature you miss
 labels: [enhancement]
 body:
   - type: textarea
@@ -12,7 +12,7 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: How should it look and behave? If Fiddler has it, how does it work there?
+      description: How should it look and behave? If another tool has it, how does it work there?
   - type: textarea
     id: alternatives
     attributes:

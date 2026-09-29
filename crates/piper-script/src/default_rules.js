@@ -1,5 +1,5 @@
-// Piper rules — a FiddlerScript-style script that runs on every session.
-// Enable it under Rules → Customize Rules… (Ctrl+R). Reloads on save.
+// Piper rules — a JavaScript script that runs on every session.
+// Enable it under Rules → Rules Script… (Ctrl/Cmd+R). Reloads on save.
 // See the type hints (Piper.d.ts) for the full API.
 
 // Called once when the script loads.

@@ -7,7 +7,7 @@ import { loadText } from "./lib/bodytext";
 
 const ARCHIVES = [
   { name: "Session Archive", extensions: ["saz", "har"] },
-  { name: "Fiddler Archive (SAZ)", extensions: ["saz"] },
+  { name: "SAZ Session Archive", extensions: ["saz"] },
   { name: "HTTP Archive (HAR)", extensions: ["har"] },
 ];
 

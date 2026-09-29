@@ -1,0 +1,14 @@
+{
+  "bundle": {
+    "fileAssociations": [
+      {
+        "ext": [
+          "har"
+        ],
+        "name": "HTTP Archive",
+        "description": "HTTP Archive",
+        "role": "Viewer"
+      }
+    ]
+  }
+}

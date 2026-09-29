@@ -13,7 +13,7 @@ export async function replaySelected(o: ReplayOptions) {
   if (!ids.length) return;
   let count = 1;
   if (o.repeat) {
-    const v = await promptText("Reissue Sequentially", "Repeat count", "5");
+    const v = await promptText("Replay Sequentially", "Repeat count", "5");
     if (!v) return;
     count = Math.max(1, Math.min(10000, Number(v) || 1));
   }

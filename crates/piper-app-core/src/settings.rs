@@ -105,9 +105,9 @@ pub struct Settings {
     pub bodies: BodyConfigDto,
     /// "Keep: N sessions" (0 = all).
     pub keep_sessions: usize,
-    /// Fiddler "Stream" toggle: stream responses to the client (default) or buffer them.
+    /// "Stream" toggle: stream responses to the client (default) or buffer them.
     pub stream: bool,
-    /// Fiddler "Decode" toggle: show decoded bodies by default.
+    /// "Decode" toggle: show decoded bodies by default.
     pub decode: bool,
     /// Record only headers for these hosts/content types (`;` separated).
     pub headers_only_hosts: String,

@@ -59,8 +59,8 @@ Changes are reviewed against the two core principles described in the README and
 
 Also keep in mind:
 
-- **Fiddler familiarity matters.** Layout, wording and shortcuts follow Fiddler Classic where
-  that makes sense.
+- **Familiar workflows matter.** Shortcuts, file formats and workflows stay familiar for people
+  coming from other debugging proxies; visual design and wording are Piper's own.
 - **Secure defaults.** Decryption, remote access and automatic authentication stay opt-in;
   secrets go to the OS secure store, never into settings or logs.
 - **Permissive licenses only.** New dependencies must be MIT, Apache-2.0, BSD, ISC, Zlib or

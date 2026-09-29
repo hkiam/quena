@@ -610,7 +610,7 @@ impl Rules {
         let core = self.core()?;
         let mut h = Headers::new();
         h.push("Date", httpdate_now());
-        h.push("Server", "Piper AutoResponder");
+        h.push("Server", "Piper Mock Rules");
         if !content_type.is_empty() {
             h.push("Content-Type", content_type);
         }
@@ -628,7 +628,7 @@ impl Rules {
         let p = std::path::Path::new(path);
         let file = std::fs::File::open(p).ok();
         let Some(file) = file else {
-            return self.synthetic(404, "text/plain; charset=utf-8", format!("[Piper] AutoResponder: file not found: {path}").as_bytes(), &[]);
+            return self.synthetic(404, "text/plain; charset=utf-8", format!("[Piper] Mock Rules: file not found: {path}").as_bytes(), &[]);
         };
         let mut br = std::io::BufReader::new(file);
         use std::io::{BufRead, Read};
@@ -662,7 +662,7 @@ impl Rules {
         let body = w.finish();
         let mut h = Headers::new();
         h.push("Date", httpdate_now());
-        h.push("Server", "Piper AutoResponder");
+        h.push("Server", "Piper Mock Rules");
         h.push("Content-Type", guess_type(p));
         h.push("Content-Length", body.len().to_string());
         h.push("Cache-Control", "no-cache");
@@ -690,7 +690,7 @@ impl Rules {
         let respond = |x: Option<(ResponseHead, Body)>| x.map(|(h, b)| RequestAction::Respond { head: h, body: b, delay_ms: latency });
         if let Some(rest) = lower.strip_prefix('*') {
             if let Ok(code) = rest.parse::<u16>() {
-                return respond(self.synthetic(code, "text/plain; charset=utf-8", format!("[Piper] AutoResponder: {code}").as_bytes(), &[]));
+                return respond(self.synthetic(code, "text/plain; charset=utf-8", format!("[Piper] Mock Rules: {code}").as_bytes(), &[]));
             }
             if let Some(ms) = rest.strip_prefix("delay:") {
                 let d: u64 = ms.trim().parse().unwrap_or(0);
@@ -839,13 +839,13 @@ impl Interceptor for Rules {
                 } else if let Some(action) = this.apply_action(&rule, head.clone()) {
                     s.live.update(|d| {
                         if d.summary.comment.is_empty() {
-                            d.summary.comment = format!("AutoResponder: {}", rule.match_);
+                            d.summary.comment = format!("Mock rule: {}", rule.match_);
                         }
                     });
                     return action;
                 }
             } else if this.ar.read().enabled && !this.ar.read().unmatched_passthrough {
-                if let Some((h, b)) = this.synthetic(404, "text/plain; charset=utf-8", b"[Piper] AutoResponder: no rule matched and unmatched requests are not passed through", &[]) {
+                if let Some((h, b)) = this.synthetic(404, "text/plain; charset=utf-8", b"[Piper] Mock Rules: no rule matched and unmatched requests are not passed through", &[]) {
                     return RequestAction::Respond { head: h, body: b, delay_ms: 0 };
                 }
             }

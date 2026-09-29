@@ -1,4 +1,4 @@
-// Customize Rules (M14): a CodeMirror JS editor for the rules script, with a
+// Rules Script (M14): a CodeMirror JS editor for the rules script, with a
 // live enable toggle, hot reload on save, a compile-error banner and the
 // script's console output.
 import { useEffect, useRef, useState } from "react";

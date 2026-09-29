@@ -113,16 +113,16 @@ const SHORTCUTS: [string, string][] = [
   [`${modKey}F`, "Find sessions"],
   [`${modKey}S`, "Save all sessions"],
   [`${modKey}R`, "Customize rules"],
-  [`${modKey}E`, "TextWizard"],
+  [`${modKey}E`, "Text Tools"],
   ["F7 / F8 / F9", "Statistics / Inspectors / Composer"],
   ["F11 / Alt+F11 / Shift+F11", "Break before requests / after responses / off"],
-  ["Alt+Q or /", "Focus QuickExec"],
+  ["Alt+Q or /", "Focus Command Bar"],
   [`${modKey}⇧P`, "Performance overlay"],
 ];
 
 function HelpDialog({ topic }: { topic: "quickexec" | "shortcuts" }) {
   return (
-    <Modal title={topic === "quickexec" ? "QuickExec commands" : "Keyboard shortcuts"} onClose={close} wide>
+    <Modal title={topic === "quickexec" ? "Command Bar commands" : "Keyboard shortcuts"} onClose={close} wide>
       {topic === "quickexec" ? (
         <pre className="help-pre">{QUICKEXEC_HELP}</pre>
       ) : (
@@ -534,7 +534,7 @@ function AboutDialog() {
   return (
     <Modal title="About Piper" onClose={close}>
       <p>
-        <b>Piper</b> {info?.version} – HTTP(S) traffic workbench inspired by Fiddler Classic.
+        <b>Piper</b> {info?.version} – easy-to-use, fast HTTP(S) debugging proxy.
       </p>
       <p className="muted small">Data: {info?.dataDir}</p>
       <p className="muted small">Capture: {info?.captureDir}</p>
@@ -583,7 +583,7 @@ export function Dialogs() {
       );
     case "textwizard":
       return (
-        <Modal title="TextWizard" onClose={close} wide>
+        <Modal title="Text Tools" onClose={close} wide>
           <TextWizard initial={d.text} />
         </Modal>
       );
@@ -613,7 +613,7 @@ export function Dialogs() {
       );
     case "rules":
       return (
-        <Modal title="Customize Rules" onClose={close} wide>
+        <Modal title="Rules Script" onClose={close} wide>
           <RulesEditor />
         </Modal>
       );

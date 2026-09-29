@@ -32,10 +32,10 @@ export function Toolbar() {
         title="Replay (R)"
         onClick={(e) =>
           showContextMenu(e.clientX, e.clientY + 8, [
-            { label: "Reissue Requests", shortcut: "R", action: () => import("../replay").then((m) => m.replaySelected({})) },
-            { label: "Reissue Unconditionally", shortcut: "U", action: () => import("../replay").then((m) => m.replaySelected({ unconditional: true })) },
-            { label: "Reissue and Edit", action: () => import("../replay").then((m) => m.replaySelected({ breakpoint: true })) },
-            { label: "Reissue from Composer", action: () => import("../replay").then((m) => m.toComposer()) },
+            { label: "Replay Requests", shortcut: "R", action: () => import("../replay").then((m) => m.replaySelected({})) },
+            { label: "Replay Unconditionally", shortcut: "U", action: () => import("../replay").then((m) => m.replaySelected({ unconditional: true })) },
+            { label: "Replay and Edit", action: () => import("../replay").then((m) => m.replaySelected({ breakpoint: true })) },
+            { label: "Replay from Composer", action: () => import("../replay").then((m) => m.toComposer()) },
           ])
         }
       />
@@ -70,12 +70,12 @@ export function Toolbar() {
           <option value={10000}>10000 sessions</option>
         </select>
       </div>
-      <Btn icon="⊕" label="Any Process" title="Filter by process (drag onto a window – coming later; use Filters tab)" onClick={() => actions.showTab("filters")} />
+      <Btn icon="⊕" label="Process Filter" title="Filter by process (drag onto a window – coming later; use Filters tab)" onClick={() => actions.showTab("filters")} />
       <div className="tb-sep" />
       <Btn icon="🔍︎" label="Find" title="Find Sessions (⌘F)" onClick={() => set({ dialog: { kind: "find" } })} />
       <Btn icon="💾︎" label="Save" title="Save all sessions (⌘S)" onClick={() => actions.menu("file.save-all")} />
       <div className="tb-sep" />
-      <Btn icon="✦" label="TextWizard" title="TextWizard (⌘E)" onClick={() => set({ dialog: { kind: "textwizard" } })} />
+      <Btn icon="✦" label="Text Tools" title="Text Tools (⌘E)" onClick={() => set({ dialog: { kind: "textwizard" } })} />
       <div className="tb-spacer" />
       <Btn icon="⚙︎" title="Settings" onClick={() => set({ dialog: { kind: "options" } })} />
     </div>

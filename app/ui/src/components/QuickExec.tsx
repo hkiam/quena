@@ -35,7 +35,7 @@ export function QuickExec() {
       <input
         value={value}
         spellCheck={false}
-        placeholder="QuickExec: ?text  =404  @host  >10k  bpu /login  cls  help   (Alt+Q)"
+        placeholder="Command: ?text  =404  @host  >10k  bpu /login  cls  help   (Alt+Q)"
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") run();

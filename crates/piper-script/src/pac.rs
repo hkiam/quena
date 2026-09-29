@@ -104,7 +104,7 @@ impl PacEngine {
         }
     }
 
-    /// The upstream HTTP proxy for `host`, mirroring Fiddler: the first `PROXY`
+    /// The upstream HTTP proxy for `host`, like browsers do: the first `PROXY`
     /// directive, or `None` for DIRECT (or a SOCKS-only result we can't use).
     pub fn upstream_for(&self, host_port: &str) -> Option<(String, u16)> {
         let host = host_without_port(host_port);

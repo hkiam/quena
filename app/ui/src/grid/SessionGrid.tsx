@@ -1,4 +1,4 @@
-// Canvas session list (Fiddler Classic look & feel). Rendering happens
+// Canvas session list. Rendering happens
 // outside React: the controller draws only the visible rows from a page
 // cache; React only renders the header.
 import { useEffect, useRef, useState } from "react";

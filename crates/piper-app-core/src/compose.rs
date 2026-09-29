@@ -11,7 +11,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ReplayOptions {
-    /// Remove conditional headers (Fiddler "Reissue Unconditionally").
+    /// Remove conditional headers ("Replay Unconditionally").
     pub unconditional: bool,
     /// Number of times to replay each request.
     pub count: u32,

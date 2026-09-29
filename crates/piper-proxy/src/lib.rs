@@ -76,9 +76,9 @@ pub struct ProxyConfig {
     pub upstream: Option<(String, u16)>,
     pub upstream_bypass: Vec<String>,
     /// Proxy auto-config resolver. When set it decides the upstream per host
-    /// (Fiddler's PAC support); `upstream` is the static fallback.
+    /// (PAC support); `upstream` is the static fallback.
     pub pac: Option<Arc<dyn UpstreamResolver>>,
-    /// Stream responses (true) or buffer them completely first (Fiddler "Stream" off).
+    /// Stream responses (true) or buffer them completely first ("Stream" off).
     pub stream: bool,
     pub headers_only_hosts: Vec<String>,
     pub headers_only_types: Vec<String>,

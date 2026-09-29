@@ -124,7 +124,7 @@ export const actions = {
     const fi = get().focusIndex;
     set({ selection: new Set(), focusId: null });
     await api.remove(ids);
-    // Select the row that took the place of the first removed one (Fiddler behaviour).
+    // Select the row that took the place of the first removed one.
     if (fi != null) setTimeout(() => actions.selectIndex(Math.min(fi, Math.max(0, get().listTotal - 1)), "single"), 60);
   },
 

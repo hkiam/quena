@@ -32,7 +32,7 @@ function useBoot() {
     unlisten.push(on<string>("menu", (id) => actions.menu(id)));
     unlisten.push(
       on<{ id: number; phase: string; url: string }>("breakpoint", (b) => {
-        // Fiddler behaviour: jump to the paused session.
+        // Jump to the paused session.
         actions.selectIds([b.id]);
         actions.showTab("inspectors");
       }),

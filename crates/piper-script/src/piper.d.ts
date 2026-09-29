@@ -90,7 +90,7 @@ interface PiperMenuAction {
   custom?: string;
 }
 
-/** Script-extensibility namespace (Fiddler's registerMenu/registerColumn). */
+/** Script-extensibility namespace: custom menu commands and a custom column. */
 declare const Piper: {
   /**
    * Add a command to the session context menu (Scripts submenu). The handler

@@ -137,7 +137,7 @@ fn absolute_url(req: &Request<Incoming>, ctx: &ConnCtx) -> Option<String> {
         .or_else(|| req.headers().get(http::header::HOST).and_then(|h| h.to_str().ok()).map(|s| s.to_string()))
         .or_else(|| ctx.authority.clone())?;
     let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
-    // Strip default ports for readability (like Fiddler).
+    // Strip default ports for readability.
     let authority = match (ctx.scheme, authority.strip_suffix(":443"), authority.strip_suffix(":80")) {
         ("https", Some(a), _) => a.to_string(),
         ("http", _, Some(a)) => a.to_string(),

@@ -76,7 +76,7 @@ fn autoresponder_and_breakpoints() {
         )
         .unwrap();
     let out = curl(&proxy, &format!("http://127.0.0.1:{port}/blocked")).join().unwrap();
-    assert!(out.contains("AutoResponder: 404"), "{out}");
+    assert!(out.contains("Mock Rules: 404"), "{out}");
     let out = curl(&proxy, &format!("http://127.0.0.1:{port}/api/users")).join().unwrap();
     assert_eq!(out, r#"{"mocked":true}"#);
     let o = Command::new("curl").args(["-sS", "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}", "-x", &proxy, &format!("http://127.0.0.1:{port}/redirect")]).output().unwrap();

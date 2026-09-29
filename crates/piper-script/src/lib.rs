@@ -1,4 +1,4 @@
-//! Piper scripting (M14) — a QuickJS-based replacement for FiddlerScript, plus
+//! Piper scripting (M14) — JavaScript rules on QuickJS, plus
 //! PAC (proxy auto-config) evaluation on the same engine.
 //!
 //! The engine runs on a dedicated OS thread that owns the QuickJS runtime (the

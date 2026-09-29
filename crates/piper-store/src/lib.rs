@@ -244,7 +244,7 @@ impl Capture {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Reset numbering (Fiddler restarts at 1 after clearing).
+    /// Reset numbering (restarts at 1 after clearing).
     pub fn reset_numbering(&self) {
         self.next_id.store(1, Ordering::Relaxed);
     }

@@ -42,7 +42,7 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "HTTP(S) traffic workbench",
-    "longDescription": "Piper is an HTTP(S) debugging proxy inspired by Fiddler Classic.",
+    "longDescription": "Piper is an easy-to-use, fast HTTP(S) debugging proxy for macOS, Windows and Linux.",
     "copyright": "\u00a9 2026 Maik Hofmann",
     "icon": [
       "icons/32x32.png",
@@ -78,9 +78,10 @@
         "ext": [
           "saz"
         ],
-        "name": "Fiddler Session Archive",
-        "description": "Session archive",
-        "role": "Editor"
+        "name": "SAZ Session Archive",
+        "description": "SAZ session archive",
+        "role": "Viewer",
+        "rank": "Alternate"
       },
       {
         "ext": [
@@ -88,7 +89,8 @@
         ],
         "name": "HTTP Archive",
         "description": "HTTP Archive",
-        "role": "Editor"
+        "role": "Viewer",
+        "rank": "Alternate"
       }
     ]
   }

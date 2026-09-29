@@ -1,4 +1,4 @@
-// AutoResponder tab (Fiddler Classic): rules, rule editor, .farx import/export.
+// Mock Rules tab: rules, rule editor, .farx import/export.
 import { useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api, type ArRule, type ArState } from "../api";
@@ -103,7 +103,7 @@ export default function AutoResponderPanel() {
         </button>
         <button
           onClick={async () => {
-            const p = await open({ multiple: false, filters: [{ name: "AutoResponder rules", extensions: ["farx", "xml"] }] });
+            const p = await open({ multiple: false, filters: [{ name: "Mock rules (.farx)", extensions: ["farx", "xml"] }] });
             if (typeof p !== "string") return;
             try {
               setSt(await api.arImportFarx(p));
@@ -117,7 +117,7 @@ export default function AutoResponderPanel() {
         </button>
         <button
           onClick={async () => {
-            const p = await save({ defaultPath: "piper-rules.farx", filters: [{ name: "AutoResponder rules", extensions: ["farx"] }] });
+            const p = await save({ defaultPath: "piper-rules.farx", filters: [{ name: "Mock rules (.farx)", extensions: ["farx"] }] });
             if (!p) return;
             await api.arExportFarx(p);
             say(`Rules exported to ${p}`);

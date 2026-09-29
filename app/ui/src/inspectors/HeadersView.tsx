@@ -1,4 +1,4 @@
-// Fiddler-style headers inspector: request/status line, headers grouped by category.
+// Headers inspector: request/status line, headers grouped by category.
 import { useState } from "react";
 import type { Detail, Part } from "../api";
 import { latin1ToUtf8 } from "../lib/format";

@@ -47,7 +47,7 @@ export const DEFAULT_COLUMNS: ColumnConf[] = [
 export interface Layout {
   leftWidth: number; // fraction of window width
   inspectorSplit: number; // fraction of inspector height for the request
-  stacked: boolean; // request/response left/right (false) or top/bottom (true = Fiddler default)
+  stacked: boolean; // request/response left/right (false) or top/bottom (true = stacked)
   columns: ColumnConf[];
   requestTab: string;
   responseTab: string;

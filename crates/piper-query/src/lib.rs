@@ -1,7 +1,7 @@
 //! One filter engine, three front ends (PLAN.md §1.4):
 //! * [`FilterSettings`] – the Filters tab,
 //! * [`expr`] – the expression language (`host ~= "*.x.de" and status >= 400`),
-//! * [`quickexec`] – Fiddler QuickExec commands (`?text`, `=404`, `@host`, `bpu` …).
+//! * [`quickexec`] – Command Bar commands (`?text`, `=404`, `@host`, `bpu` …).
 
 pub mod expr;
 pub mod quickexec;

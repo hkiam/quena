@@ -13,7 +13,7 @@ export function installGlobalKeys(): () => void {
       return;
     }
     if (typing) return;
-    // Alt+Q focuses QuickExec (Fiddler).
+    // Alt+Q focuses the Command Bar.
     if (e.altKey && (e.key === "q" || e.key === "Q" || e.code === "KeyQ")) {
       document.querySelector<HTMLInputElement>(".quickexec input")?.focus();
       e.preventDefault();

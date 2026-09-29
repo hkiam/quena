@@ -21,7 +21,7 @@ pub enum ProcessMode {
     Remote,
 }
 
-/// State of the Filters tab (Fiddler Classic layout).
+/// State of the Filters tab.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FilterSettings {

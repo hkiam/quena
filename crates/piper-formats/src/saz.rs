@@ -177,7 +177,7 @@ pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, p: &dyn Progre
             raw::write_response_head(&mut zip, r)?;
             write_body(&mut zip, &r.headers, &resp_body, p)?;
         } else {
-            zip.write_all(b"HTTP/1.1 504 Fiddler - Receive Failure\r\nContent-Length: 0\r\n\r\n")?;
+            zip.write_all(b"HTTP/1.1 504 Receive Failure\r\nContent-Length: 0\r\n\r\n")?;
         }
         zip.start_file(format!("raw/{num}_m.xml"), deflate)?;
         zip.write_all(metadata(i + 1, &d).as_bytes())?;

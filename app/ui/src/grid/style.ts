@@ -1,4 +1,4 @@
-// Fiddler Classic row colouring and icons.
+// Row colouring and icons.
 import { Flags, type SessionSummary } from "../api";
 
 export interface Palette {

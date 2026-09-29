@@ -11,8 +11,8 @@ const ComposerPanel = lazy(() => import("./Composer"));
 
 const TABS: [RightTab, string, string][] = [
   ["statistics", "Statistics", "📊︎"],
-  ["inspectors", "Inspectors", "🔎︎"],
-  ["autoresponder", "AutoResponder", "⚡"],
+  ["inspectors", "Inspect", "🔎︎"],
+  ["autoresponder", "Mock Rules", "⚡"],
   ["composer", "Composer", "✎"],
   ["filters", "Filters", "⛛"],
   ["log", "Log", "☰"],

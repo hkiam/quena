@@ -20,7 +20,7 @@ export function sessionMenu(): MenuItem[] {
   return [
     ...scriptItems,
     {
-      label: "AutoResponder",
+      label: "Mock Rules",
       submenu: [
         { label: "Add Rule", action: () => import("./panels/autoresponderActions").then((m) => m.addRulesFromSelection()) },
         { label: "Add Rule (Exact URL)", action: () => import("./panels/autoresponderActions").then((m) => m.addRulesFromSelection(true)) },
@@ -80,11 +80,11 @@ export function sessionMenu(): MenuItem[] {
     {
       label: "Replay",
       submenu: [
-        { label: "Reissue Requests", shortcut: "R", action: () => import("./replay").then((m) => m.replaySelected({})) },
-        { label: "Reissue Unconditionally", shortcut: "U", action: () => import("./replay").then((m) => m.replaySelected({ unconditional: true })) },
-        { label: "Reissue Sequentially…", shortcut: "Shift+R", action: () => import("./replay").then((m) => m.replaySelected({ repeat: true })) },
-        { label: "Reissue and Edit", action: () => import("./replay").then((m) => m.replaySelected({ breakpoint: true })) },
-        { label: "Reissue from Composer", disabled: !one, action: () => import("./replay").then((m) => m.toComposer()) },
+        { label: "Replay Requests", shortcut: "R", action: () => import("./replay").then((m) => m.replaySelected({})) },
+        { label: "Replay Unconditionally", shortcut: "U", action: () => import("./replay").then((m) => m.replaySelected({ unconditional: true })) },
+        { label: "Replay Sequentially…", shortcut: "Shift+R", action: () => import("./replay").then((m) => m.replaySelected({ repeat: true })) },
+        { label: "Replay and Edit", action: () => import("./replay").then((m) => m.replaySelected({ breakpoint: true })) },
+        { label: "Replay from Composer", disabled: !one, action: () => import("./replay").then((m) => m.toComposer()) },
       ],
     },
     {

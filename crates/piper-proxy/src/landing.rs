@@ -17,7 +17,7 @@ pub fn serve<B>(shared: &Shared, req: &Request<B>) -> Response<ProxyBody> {
     let ca = shared.ca.read().clone();
     let path = req.uri().path();
     match (path, &ca) {
-        ("/piper-root-ca.crt" | "/piper-root-ca.pem" | "/FiddlerRoot.cer", Some(ca)) => {
+        ("/piper-root-ca.crt" | "/piper-root-ca.pem", Some(ca)) => {
             let mut r = resp(StatusCode::OK, "application/x-x509-ca-cert", ca.cert_pem().to_string());
             r.headers_mut().insert(http::header::CONTENT_DISPOSITION, HeaderValue::from_static("attachment; filename=\"piper-root-ca.crt\""));
             r

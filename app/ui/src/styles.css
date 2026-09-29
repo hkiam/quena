@@ -1,4 +1,4 @@
-/* Piper – compact Fiddler Classic inspired theme (light/dark). */
+/* Piper – compact theme (light/dark). */
 :root {
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -1532,7 +1532,7 @@ pre {
   color: var(--fg);
 }
 
-/* Customize Rules editor (M14) */
+/* Rules Script editor (M14) */
 .rules-editor {
   display: flex;
   flex-direction: column;

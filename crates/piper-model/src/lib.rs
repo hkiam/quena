@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod headers;
 pub use headers::{Headers, latin1_to_string, string_to_latin1};
 
-/// Sequential session number, shown as `#` in the session list (like Fiddler).
+/// Sequential session number, shown as `#` in the session list.
 pub type SessionId = u64;
 
 /// Microseconds since the Unix epoch.

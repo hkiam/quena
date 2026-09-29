@@ -1,4 +1,4 @@
-// Inspectors tab: request on top, response below (Fiddler Classic).
+// Inspect tab: request and response inspectors (side by side or stacked).
 import { useEffect, useRef, useState } from "react";
 import { api, type Detail, type Part, type Variant } from "../api";
 import { fmtBytes, fmtInt } from "../lib/format";
@@ -22,18 +22,18 @@ const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview"
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
 const TITLES: Record<string, string> = {
   headers: "Headers",
-  textview: "TextView",
-  syntaxview: "SyntaxView",
-  webforms: "WebForms",
-  hexview: "HexView",
+  textview: "Text",
+  syntaxview: "Pretty",
+  webforms: "Form Data",
+  hexview: "Hex",
   auth: "Auth",
   cookies: "Cookies",
   raw: "Raw",
   json: "JSON",
   xml: "XML",
-  transformer: "Transformer",
-  imageview: "ImageView",
-  webview: "WebView",
+  transformer: "Encoding",
+  imageview: "Image",
+  webview: "Preview",
   caching: "Caching",
   soap: "SOAP",
   atom: "Atom/OData",

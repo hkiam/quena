@@ -1,4 +1,4 @@
-// Composer (Fiddler F9): build a request from scratch or from a session.
+// Composer (F9): build a request from scratch or from a session.
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, type ComposeRequest } from "../api";

@@ -1,4 +1,4 @@
-//! Find Sessions (Fiddler Ctrl+F): search URLs, headers and bodies as a job.
+//! Find Sessions (Ctrl/Cmd+F): search URLs, headers and bodies as a job.
 
 use crate::AppCore;
 use crate::bodies::CtxProgress;

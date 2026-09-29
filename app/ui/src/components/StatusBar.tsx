@@ -63,7 +63,7 @@ export function StatusBar() {
       </div>
       {!!eng?.breakpoints.length && <div className="sb-cell sb-bp">⏸ {eng.breakpoints.join(", ")}</div>}
       {!!eng?.paused && <div className="sb-cell sb-bp">{eng.paused} paused</div>}
-      {eng?.autoresponder && <div className="sb-cell sb-ar">⚡ AutoResponder</div>}
+      {eng?.autoresponder && <div className="sb-cell sb-ar">⚡ Mock Rules</div>}
       {status?.recordingSuspended && <div className="sb-cell sb-warn">Recording suspended (disk)</div>}
       {status?.mockRunning && <div className="sb-cell sb-warn">Mock traffic</div>}
       <div className="sb-msg">

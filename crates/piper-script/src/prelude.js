@@ -54,7 +54,7 @@
   Headers.prototype.toArray = function () { return this._.map(function (p) { return [p[0], p[1]]; }); };
   g.Headers = Headers;
 
-  // Script extensibility (Fiddler's registerMenu/registerColumn).
+  // Script extensibility: custom menu commands and a custom column.
   g.Piper = {
     _menus: [],
     _column: null,
