@@ -1,7 +1,7 @@
 //! TLS for Quena: a local root CA, on-the-fly leaf certificates for HTTPS
 //! interception and client configurations for upstream connections.
 //!
-//! Security (PLAN.md §9): the CA private key is stored with 0600
+//! Security: the CA private key is stored with 0600
 //! permissions in the data directory and never exported; the CA can be
 //! removed and regenerated at any time.
 

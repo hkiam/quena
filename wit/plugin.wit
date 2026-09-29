@@ -1,4 +1,4 @@
-// Quena plugin API, version 1 (PLAN.md §12–§15).
+// Quena plugin API, version 1.
 //
 // Decoders are streaming from the start (§2.12.3): the host pushes the body
 // in chunks and collects output chunks, so a plugin never has to hold a

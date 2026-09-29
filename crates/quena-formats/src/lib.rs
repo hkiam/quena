@@ -1,5 +1,5 @@
 //! Archive formats. All readers and writers stream bodies – archives with
-//! multi-GB bodies neither need the RAM nor a temporary copy (PLAN.md §2.12.5).
+//! multi-GB bodies neither need the RAM nor a temporary copy.
 
 pub mod curl;
 pub mod har;

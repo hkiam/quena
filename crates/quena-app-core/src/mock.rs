@@ -298,7 +298,7 @@ pub fn stop(core: &AppCore) {
 }
 
 /// Generate sessions with very large bodies (runs as background jobs).
-/// `scale` 1 = development sizes, 10 = PLAN.md test sizes (10 GB+).
+/// `scale` 1 = development sizes, 10 = large test sizes (10 GB+).
 pub fn big_bodies(core: &Arc<AppCore>, scale: u64) {
     let scale = scale.max(1);
     let specs: Vec<(&str, &str, Option<&str>, u64)> = vec![

@@ -1,5 +1,5 @@
 //! Recorder: writes body chunks to the store on dedicated threads so that
-//! disk I/O never runs on the forwarding runtime (PLAN.md §2.1). Queues are
+//! disk I/O never runs on the forwarding runtime. Queues are
 //! bounded; when a queue is full the chunk is counted but not stored and the
 //! body is marked truncated ("Traffic forwarding > Recording").
 

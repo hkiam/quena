@@ -1,4 +1,4 @@
-//! Job manager (PLAN.md §2.13, rule R3/R7).
+//! Job manager.
 //!
 //! Everything that may take longer than a few milliseconds runs as a job on a
 //! dedicated worker pool – never on the proxy runtime and never on the UI

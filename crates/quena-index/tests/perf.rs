@@ -1,4 +1,4 @@
-//! Reactive session-index performance (PLAN.md §2.13.1). These are regression
+//! Reactive session-index performance. These are regression
 //! guards, not micro-benchmarks: they build a 500k-row index and assert the hot
 //! operations (viewport query, coalesced delta tick, filter/sort switch) stay far
 //! inside the interaction budgets. Thresholds are deliberately generous so slow CI

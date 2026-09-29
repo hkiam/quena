@@ -1,4 +1,4 @@
-//! Body views for the inspectors (PLAN.md §2.12.4).
+//! Body views for the inspectors.
 
 use crate::AppCore;
 use crate::dto::*;

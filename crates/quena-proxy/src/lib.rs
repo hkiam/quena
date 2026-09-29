@@ -1,4 +1,4 @@
-//! Quena capture engine (PLAN.md §8/§9, §2.1).
+//! Quena capture engine.
 //!
 //! * explicit forward proxy (HTTP/1.1, CONNECT) on 127.0.0.1:8866
 //! * HTTPS interception with on-the-fly certificates (ALPN h2/http1.1)

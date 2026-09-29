@@ -1,4 +1,4 @@
-//! Automatic authentication (PLAN.md §2.14, docs/m8a-automatic-authentication.md).
+//! Automatic authentication (docs/m8a-automatic-authentication.md).
 //!
 //! Scheme-agnostic: parse `WWW-Authenticate`/`Proxy-Authenticate`, run the chosen
 //! scheme's handshake, produce the `Authorization`/`Proxy-Authorization` token.

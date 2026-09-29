@@ -1,4 +1,4 @@
-//! Application facade (PLAN.md §3): everything the UI can do goes through
+//! Application facade: everything the UI can do goes through
 //! [`AppCore`]. The Tauri shell is a thin binding on top; headless tests and a
 //! future CLI use the same API.
 
@@ -61,7 +61,7 @@ impl Paths {
         Paths::at(data)
     }
 
-    /// Portable mode (PLAN.md §31): a `quena-data` folder (or `portable` marker file)
+    /// Portable mode: a `quena-data` folder (or `portable` marker file)
     /// next to the executable keeps all data beside the app (USB stick, Windows portable zip).
     fn portable_dir() -> Option<PathBuf> {
         let exe = std::env::current_exe().ok()?;

@@ -1,4 +1,4 @@
-// Virtualised text viewer for bodies of any size (PLAN.md §2.12.4). Lines
+// Virtualised text viewer for bodies of any size. Lines
 // come from the core's sampled line index in windows; only visible lines
 // exist in the DOM. Scroll position is scaled for > 500k lines.
 import { useCallback, useEffect, useRef, useState } from "react";

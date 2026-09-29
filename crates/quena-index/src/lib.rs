@@ -1,4 +1,4 @@
-//! Session index (PLAN.md §2.13.3, rule R1).
+//! Session index.
 //!
 //! The core owns the session list. Producers call [`SessionIndex::upsert`]
 //! at any rate; the UI ticker calls [`SessionIndex::tick`] (≤ 60 Hz) which

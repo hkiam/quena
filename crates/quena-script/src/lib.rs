@@ -7,7 +7,7 @@
 //! clock budget (interrupt handler) and a memory limit, and have no access to
 //! the filesystem, network or environment — only the host APIs we expose.
 //!
-//! Per Quena's large-body invariant (PLAN.md §2.12), scripts operate on heads
+//! Per Quena's large-body invariant, scripts operate on heads
 //! and metadata only; bodies never pass through the JS engine. Body tampering
 //! stays in the streaming Breakpoints/Tamper path.
 

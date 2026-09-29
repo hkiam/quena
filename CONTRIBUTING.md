@@ -69,8 +69,7 @@ npm test --prefix app/ui               # UI unit tests (Vitest)
 
 ## Design principles
 
-Changes are reviewed against the two core principles described in the README and
-[`PLAN.md`](PLAN.md):
+Changes are reviewed against the two core principles described in the README:
 
 1. **Bodies can be huge.** Never read a whole body into memory, IPC, React state or the DOM.
    Use streaming or windowed (`offset`, `len`) access and keep memory O(1) in body size.

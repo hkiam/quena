@@ -1,4 +1,4 @@
-//! Interception hook points (PLAN.md §2.1).
+//! Interception hook points.
 //!
 //! The forwarding pipeline calls the installed [`Interceptor`] at two points.
 //! For each point the interceptor first says whether it needs the complete
@@ -52,7 +52,7 @@ pub enum ResponseAction {
 
 /// Head-only response decision. Runs in both streaming and buffering modes, so
 /// a script can rewrite response headers without the body being materialised
-/// (Quena's large-body invariant, PLAN.md §2.12).
+/// (Quena's large-body invariant).
 pub enum ResponseHeadAction {
     Continue,
     Replace(ResponseHead),

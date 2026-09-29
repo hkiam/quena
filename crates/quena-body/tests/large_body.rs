@@ -1,4 +1,4 @@
-//! Large-body invariant (PLAN.md §2.12): a body of arbitrary size is written and
+//! Large-body invariant: a body of arbitrary size is written and
 //! read back with a **constant, small** memory footprint. Nothing here ever holds
 //! more than a fixed-size buffer, whatever the total size — that is the whole
 //! point. The default size is modest so CI stays fast; set `QUENA_BIGBODY_MB` to

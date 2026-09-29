@@ -1,5 +1,5 @@
-// Lightweight performance probes for the dev overlay and budget checks
-// (PLAN.md §2.13.1): frame time, IPC latency, long frames.
+// Lightweight performance probes for the dev overlay and budget checks:
+// frame time, IPC latency, long frames.
 
 type Sample = { t: number; v: number };
 
@@ -28,7 +28,7 @@ class Perf {
     };
     requestAnimationFrame(loop);
 
-    // Precise main-thread blocking (budget: no task > 50 ms, PLAN.md §2.13.1).
+    // Precise main-thread blocking (budget: no task > 50 ms).
     // 'longtask' isn't supported in every webview, so guard it.
     if (!this.observer && typeof PerformanceObserver !== "undefined") {
       try {

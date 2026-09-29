@@ -1,6 +1,6 @@
 //! Body storage for Quena.
 //!
-//! Invariants (see PLAN.md §2.12):
+//! Invariants:
 //! * memory per body is O(1) in body size – bodies above the inline limit
 //!   are written to append-only blob files from the first spilled byte on;
 //! * all reads are range reads (`read_at`);

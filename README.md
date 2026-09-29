@@ -343,8 +343,6 @@ Two principles shape every component:
    take time is a cancellable job, and list updates are coalesced with back-pressure.
    See the performance guards in [`crates/quena-index/tests/perf.rs`](crates/quena-index/tests/perf.rs).
 
-The full design and roadmap live in [`PLAN.md`](PLAN.md) (German).
-
 ---
 
 ## Security & privacy

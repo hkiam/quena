@@ -1,5 +1,5 @@
 //! AutoResponder (M7) and Breakpoints/Tamper (M8) – the interceptor chain
-//! installed into the proxy (PLAN.md §1.7, §1.8, §2.1).
+//! installed into the proxy.
 
 use crate::AppCore;
 use anyhow::{Result, anyhow};

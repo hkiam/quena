@@ -1,4 +1,4 @@
-//! ROT13 decoder – the smallest possible Quena plugin (PLAN.md M7/M10).
+//! ROT13 decoder – the smallest possible Quena plugin.
 wit_bindgen::generate!({ path: "../../wit/plugin.wit", world: "plugin" });
 
 use exports::quena::plugin::decoder::{Guest, GuestSession, Info, Representation};

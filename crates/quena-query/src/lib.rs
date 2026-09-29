@@ -1,4 +1,4 @@
-//! One filter engine, three front ends (PLAN.md §1.4):
+//! One filter engine, three front ends:
 //! * [`FilterSettings`] – the Filters tab,
 //! * [`expr`] – the expression language (`host ~= "*.x.de" and status >= 400`),
 //! * [`quickexec`] – command field commands (`?text`, `=404`, `@host`, `bpu` …).

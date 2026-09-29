@@ -1,4 +1,4 @@
-//! Platform services (PLAN.md §29, rule 4). No OS calls outside this crate.
+//! Platform services. No OS calls outside this crate.
 //!
 //! * system proxy: read the current configuration, point it to Quena,
 //!   restore it (also after a crash via a backup file);

@@ -1,6 +1,6 @@
 //! `quena://localhost/body/{session}/{part}/{variant}` – body bytes with
 //! HTTP Range support (inspectors, hex view, image/media preview). Bodies
-//! never travel through the JSON IPC (PLAN.md §2.13 R6).
+//! never travel through the JSON IPC.
 
 use quena_app_core::AppCore;
 use quena_app_core::dto::Part;

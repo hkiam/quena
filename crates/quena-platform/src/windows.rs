@@ -1,4 +1,4 @@
-//! Windows platform services (PLAN.md M13).
+//! Windows platform services.
 //!
 //! * system proxy: WinINet settings in `HKCU\\…\\Internet Settings`, followed by
 //!   `InternetSetOption(SETTINGS_CHANGED/REFRESH)` so running apps pick it up

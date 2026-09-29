@@ -16,7 +16,7 @@ design: a JavaScript rules script (the FiddlerScript replacement) and PAC
 - The hook queue is bounded (256). A request waits at most **2 s** for its hook
   (queueing included); after that it passes through unchanged and the stale hook is
   skipped, so a slow script never stalls traffic.
-- Per Quena's large-body invariant (PLAN.md §2.12), scripts see **heads and
+- Per Quena's large-body invariant, scripts see **heads and
   metadata only**; bodies never enter the JS engine. Response headers are rewritten
   through a head-only hook (`on_response_head`) that runs in the streaming path, so
   huge responses are never buffered just because a script is enabled.

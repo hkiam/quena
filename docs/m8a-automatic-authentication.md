@@ -1,6 +1,6 @@
 # M8a – Automatic Authentication (Umsetzungsplan)
 
-> Detailplan zu `PLAN.md` §2.14. Fiddler-Feature „Enable Automatic Authentication“:
+> Detailplan. Fiddler-Feature „Enable Automatic Authentication“:
 > Quena beantwortet `401`/`407`-Challenges selbst mit den Zugangsdaten des Entwicklers,
 > damit man beim Debuggen nicht bei jedem Request manuell einloggen muss.
 > Standardmäßig **aus**, opt-in pro Host empfohlen.

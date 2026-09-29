@@ -1,4 +1,4 @@
-//! WASM component plugin host (PLAN.md §12–§15).
+//! WASM component plugin host.
 //!
 //! * discovery: `<dir>/<plugin>/plugin.toml` + component `.wasm`
 //! * API: `wit/plugin.wit`, versioned: body decoders (world `plugin`, streaming
