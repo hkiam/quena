@@ -72,5 +72,12 @@ codegen-units = 1
 strip = "debuginfo"
 panic = "unwind"
 
+# Build scripts and proc-macros are not stripped: stripping their dylibs with the
+# Xcode 27 toolchain on macOS 27 yields unloadable libraries ("mis-aligned
+# LINKEDIT string pool", then E0463 can't find crate). The shipped binary is
+# still stripped by the profile above.
+[profile.release.build-override]
+strip = false
+
 [profile.dev.package."*"]
 opt-level = 2
