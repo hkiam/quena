@@ -160,6 +160,29 @@ export const actions = {
     set((s) => ({ gridNonce: s.gridNonce + 1 }));
   },
 
+  /** Run a script-registered menu command over the current selection. */
+  async runScriptMenu(index: number) {
+    const ids = [...get().selection];
+    if (!ids.length) return;
+    try {
+      const n = await api.scriptRunMenu(index, ids);
+      rowCache.clear();
+      set((s) => ({ gridNonce: s.gridNonce + 1 }));
+      if (n > 0) say(`Script updated ${n} session${n > 1 ? "s" : ""}`);
+    } catch (err) {
+      say(`Script command failed: ${err}`, "error");
+    }
+  },
+
+  /** Refresh the cached list of script-registered menu commands. */
+  async refreshScriptMenus() {
+    try {
+      set({ scriptMenus: await api.scriptMenus() });
+    } catch {
+      set({ scriptMenus: [] });
+    }
+  },
+
   async copySessions(kind: "url" | "summary" | "headers" | "full" | "curl") {
     const ids = [...get().selection].sort((a, b) => a - b);
     if (!ids.length) return;

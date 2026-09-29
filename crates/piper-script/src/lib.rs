@@ -56,18 +56,30 @@ pub struct ResponseInfo {
     pub headers: Vec<(String, String)>,
 }
 
-/// Session metadata a script may attach at any hook (comment/color/flags).
+/// Session metadata a script may attach at any hook (comment/color/custom/flags).
 #[derive(Debug, Clone, Default)]
 pub struct SessionMeta {
     pub comment: Option<String>,
     pub color: Option<String>,
+    /// Value for the script-defined Custom column.
+    pub custom: Option<String>,
     pub flags: Vec<(String, String)>,
 }
 
 impl SessionMeta {
     pub fn is_empty(&self) -> bool {
-        self.comment.is_none() && self.color.is_none() && self.flags.is_empty()
+        self.comment.is_none() && self.color.is_none() && self.custom.is_none() && self.flags.is_empty()
     }
+}
+
+/// A per-session update a `registerMenu` handler asks the host to apply.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MenuAction {
+    pub id: u64,
+    pub comment: Option<String>,
+    pub color: Option<String>,
+    pub custom: Option<String>,
 }
 
 /// The script's decision for a request.

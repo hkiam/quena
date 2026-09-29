@@ -514,6 +514,8 @@ struct ScriptState {
     loaded: bool,
     error: Option<String>,
     types: String,
+    menus: Vec<String>,
+    column_title: Option<String>,
 }
 
 fn script_state(r: &std::sync::Arc<piper_app_core::rules::Rules>) -> ScriptState {
@@ -524,6 +526,8 @@ fn script_state(r: &std::sync::Arc<piper_app_core::rules::Rules>) -> ScriptState
         loaded: eng.is_loaded(),
         error: eng.last_error(),
         types: piper_script::TYPES_DTS.to_string(),
+        menus: r.script_menus(),
+        column_title: r.script_column_title(),
     }
 }
 
@@ -561,6 +565,16 @@ async fn script_logs(core: State<'_, Core>) -> R<Vec<piper_script::LogLine>> {
 async fn script_clear_logs(core: State<'_, Core>) -> R<()> {
     rules(core.inner())?.script_engine().clear_logs();
     Ok(())
+}
+
+#[tauri::command]
+async fn script_menus(core: State<'_, Core>) -> R<Vec<String>> {
+    Ok(rules(core.inner())?.script_menus())
+}
+
+#[tauri::command]
+async fn script_run_menu(core: State<'_, Core>, index: usize, ids: Vec<SessionId>) -> R<usize> {
+    rules(core.inner())?.run_script_menu(index, &ids).await.map_err(e)
 }
 
 pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
@@ -642,5 +656,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         script_set_enabled,
         script_logs,
         script_clear_logs,
+        script_menus,
+        script_run_menu,
     ]
 }

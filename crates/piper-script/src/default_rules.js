@@ -5,6 +5,15 @@
 // Called once when the script loads.
 function onBoot() {
     console.log('Piper rules loaded');
+
+    // Add a command to the session right-click menu (Scripts submenu):
+    // Piper.registerMenu('Tag as reviewed', function (sessions) {
+    //     return sessions.map(function (s) { return { id: s.id, comment: 'reviewed', color: 'green' }; });
+    // });
+
+    // Define a Custom column; fill it per session in onBeforeResponse via s.custom(),
+    // or compute it here with a function:
+    // Piper.registerColumn('Server', function (s) { return s.responseHeaders.get('Server') || ''; });
 }
 
 // Called before each request is forwarded. Mutate the session in place.

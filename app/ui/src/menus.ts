@@ -6,7 +6,19 @@ import { modKey } from "./lib/format";
 export function sessionMenu(): MenuItem[] {
   const n = get().selection.size;
   const one = n === 1;
+  const scriptMenus = get().scriptMenus;
+  const scriptItems: MenuItem[] =
+    scriptMenus.length > 0
+      ? [
+          {
+            label: "Scripts",
+            submenu: scriptMenus.map((label, i) => ({ label, action: () => actions.runScriptMenu(i) })),
+          },
+          { separator: true },
+        ]
+      : [];
   return [
+    ...scriptItems,
     {
       label: "AutoResponder",
       submenu: [

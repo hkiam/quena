@@ -40,8 +40,10 @@ interface PiperSession {
 
   /** Attach a comment (shown in the Comments column). */
   comment(text: string): PiperSession;
-  /** Colour the row (e.g. 'red', 'green', '#ffcc00'). */
+  /** Colour the row. One of: red, blue, gold, green, orange, purple. */
   color(color: string): PiperSession;
+  /** Set the value shown in the script's Custom column (see Piper.registerColumn). */
+  custom(value: string): PiperSession;
   /** Attach an arbitrary flag to the session. */
   flag(key: string, value: string): PiperSession;
 
@@ -66,6 +68,41 @@ declare const console: {
   warn(...args: any[]): void;
   error(...args: any[]): void;
   debug(...args: any[]): void;
+};
+
+/** A session as passed to a registerMenu handler. */
+interface PiperMenuSession {
+  id: number;
+  method: string;
+  url: string;
+  status: number;
+  host: string;
+  process: string;
+  comment: string;
+  contentType: string;
+}
+
+/** A per-session update a registerMenu handler may return to apply. */
+interface PiperMenuAction {
+  id: number;
+  comment?: string;
+  color?: string;
+  custom?: string;
+}
+
+/** Script-extensibility namespace (Fiddler's registerMenu/registerColumn). */
+declare const Piper: {
+  /**
+   * Add a command to the session context menu (Scripts submenu). The handler
+   * receives the selected sessions and may return an array of updates to apply.
+   */
+  registerMenu(label: string, handler: (sessions: PiperMenuSession[]) => PiperMenuAction[] | void): void;
+  /**
+   * Define the Custom column. Its value is set per session via session.custom(),
+   * or computed by the optional fn(session) at response time.
+   */
+  registerColumn(title: string, fn?: (session: PiperSession) => string): void;
+  log(...args: any[]): void;
 };
 
 declare function onBoot(): void;

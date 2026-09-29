@@ -110,6 +110,8 @@ export interface AppState {
   composerLoad: { id: SessionId; nonce: number } | null;
   /** Bumped when AutoResponder rules change outside the panel. */
   arNonce: number;
+  /** Menu commands the active rules script registered (Piper.registerMenu). */
+  scriptMenus: string[];
 }
 
 export const useStore = create<AppState>(() => ({
@@ -134,6 +136,7 @@ export const useStore = create<AppState>(() => ({
   gridNonce: 0,
   composerLoad: null,
   arNonce: 0,
+  scriptMenus: [],
 }));
 
 export const set = useStore.setState;

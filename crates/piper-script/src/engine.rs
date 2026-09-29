@@ -26,15 +26,24 @@ fn now_us() -> u64 {
 }
 
 enum Cmd {
-    Load { source: String, reply: oneshot::Sender<Result<Hooks, String>> },
+    Load { source: String, reply: oneshot::Sender<Result<LoadInfo, String>> },
     Request { input: String, reply: oneshot::Sender<Result<String, String>> },
     Response { input: String, reply: oneshot::Sender<Result<String, String>> },
     Complete { input: String },
+    Menu { index: usize, input: String, reply: oneshot::Sender<Result<String, String>> },
     Shutdown,
 }
 
-/// Which hooks a loaded script defines: (onBeforeRequest, onBeforeResponse, onSessionComplete).
-type Hooks = (bool, bool, bool);
+/// What a successful load reports about the script: which hooks it defines, the
+/// menu commands it registered, and the Custom-column title (if any).
+#[derive(Debug, Clone, Default)]
+pub struct LoadInfo {
+    pub has_request: bool,
+    pub has_response: bool,
+    pub has_complete: bool,
+    pub menus: Vec<String>,
+    pub column: Option<String>,
+}
 
 /// A running rules script. Cheap to clone (shares the worker).
 #[derive(Clone)]
@@ -51,6 +60,10 @@ pub struct ScriptEngine {
     /// False once the worker thread has exited/panicked. Prevents hooks from
     /// dispatching to a dead worker (whose reply would never arrive).
     alive: Arc<AtomicBool>,
+    /// Menu commands the script registered via `Piper.registerMenu`.
+    menus: Arc<Mutex<Vec<String>>>,
+    /// Title for the script's Custom column via `Piper.registerColumn`.
+    column: Arc<Mutex<Option<String>>>,
 }
 
 impl ScriptEngine {
@@ -77,7 +90,32 @@ impl ScriptEngine {
             has_response: Arc::new(AtomicBool::new(false)),
             has_complete: Arc::new(AtomicBool::new(false)),
             alive,
+            menus: Arc::new(Mutex::new(Vec::new())),
+            column: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Menu commands the current script registered (empty if none).
+    pub fn menus(&self) -> Vec<String> {
+        self.menus.lock().clone()
+    }
+
+    /// Title of the script's Custom column, if it registered one.
+    pub fn column_title(&self) -> Option<String> {
+        self.column.lock().clone()
+    }
+
+    /// Run a registered menu command over the given sessions (JSON array). Returns
+    /// the handler's returned actions as JSON (`[]` if none / on error).
+    pub async fn run_menu(&self, index: usize, sessions_json: String) -> Result<String, String> {
+        if !self.is_loaded() {
+            return Err("no script loaded".into());
+        }
+        let (reply, rx) = oneshot::channel();
+        if self.tx.try_send(Cmd::Menu { index, input: sessions_json, reply }).is_err() {
+            return Err("script worker is busy".into());
+        }
+        rx.await.unwrap_or_else(|_| Err("script worker did not reply".into()))
     }
 
     /// Whether the current script defines `onBeforeRequest`.
@@ -120,11 +158,13 @@ impl ScriptEngine {
         }
         let res = rx.await.unwrap_or_else(|_| Err("script worker did not reply".into()));
         match &res {
-            Ok((req, resp, complete)) => {
+            Ok(info) => {
                 self.loaded.store(true, Ordering::Relaxed);
-                self.has_request.store(*req, Ordering::Relaxed);
-                self.has_response.store(*resp, Ordering::Relaxed);
-                self.has_complete.store(*complete, Ordering::Relaxed);
+                self.has_request.store(info.has_request, Ordering::Relaxed);
+                self.has_response.store(info.has_response, Ordering::Relaxed);
+                self.has_complete.store(info.has_complete, Ordering::Relaxed);
+                *self.menus.lock() = info.menus.clone();
+                *self.column.lock() = info.column.clone();
                 *self.last_error.lock() = None;
             }
             Err(e) => {
@@ -132,6 +172,8 @@ impl ScriptEngine {
                 self.has_request.store(false, Ordering::Relaxed);
                 self.has_response.store(false, Ordering::Relaxed);
                 self.has_complete.store(false, Ordering::Relaxed);
+                self.menus.lock().clear();
+                *self.column.lock() = None;
                 *self.last_error.lock() = Some(e.clone());
             }
         }
@@ -235,9 +277,9 @@ fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>, alive: Arc<Ato
             Cmd::Load { source, reply } => {
                 match rebuild_and_load(&rt, &logs, &source, &deadline, base) {
                     Ok(c) => {
-                        let hooks = probe_hooks(&c);
+                        let info = probe_load(&c);
                         ctx = Some(c);
-                        let _ = reply.send(Ok(hooks));
+                        let _ = reply.send(Ok(info));
                     }
                     Err(e) => {
                         ctx = None;
@@ -256,18 +298,39 @@ fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>, alive: Arc<Ato
             Cmd::Complete { input } => {
                 let _ = dispatch(&ctx, &deadline, base, "__dispatchComplete", &input);
             }
+            Cmd::Menu { index, input, reply } => {
+                let out = dispatch_menu(&ctx, &deadline, base, index, &input);
+                let _ = reply.send(out);
+            }
             Cmd::Shutdown => break,
         }
     }
 }
 
-/// Check which of the optional hook functions the loaded script defines.
-fn probe_hooks(ctx: &rquickjs::Context) -> Hooks {
+/// Probe which hooks, menus and Custom column the loaded script registered.
+fn probe_load(ctx: &rquickjs::Context) -> LoadInfo {
     ctx.with(|cx| {
-        let is_fn = |name: &str| -> bool {
-            cx.globals().get::<_, rquickjs::Function>(name).is_ok()
-        };
-        (is_fn("onBeforeRequest"), is_fn("onBeforeResponse"), is_fn("onSessionComplete"))
+        let is_fn = |name: &str| cx.globals().get::<_, rquickjs::Function>(name).is_ok();
+        let menus: Vec<String> = cx
+            .globals()
+            .get::<_, rquickjs::Function>("__menus")
+            .ok()
+            .and_then(|f| f.call::<_, String>(()).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        let column: Option<String> = cx
+            .globals()
+            .get::<_, rquickjs::Function>("__columnTitle")
+            .ok()
+            .and_then(|f| f.call::<_, Option<String>>(()).ok())
+            .flatten();
+        LoadInfo {
+            has_request: is_fn("onBeforeRequest"),
+            has_response: is_fn("onBeforeResponse"),
+            has_complete: is_fn("onSessionComplete"),
+            menus,
+            column,
+        }
     })
 }
 
@@ -299,6 +362,18 @@ fn dispatch(ctx: &Option<rquickjs::Context>, deadline: &Arc<AtomicU64>, base: In
     let out = c.with(|cx| -> Result<String, String> {
         let f: rquickjs::Function = cx.globals().get(func).map_err(|e| e.to_string())?;
         let s: String = f.call((input.to_string(),)).map_err(|e| js_err(&cx, e))?;
+        Ok(s)
+    });
+    deadline.store(NO_DEADLINE, Ordering::Relaxed);
+    out
+}
+
+fn dispatch_menu(ctx: &Option<rquickjs::Context>, deadline: &Arc<AtomicU64>, base: Instant, index: usize, input: &str) -> Result<String, String> {
+    let Some(c) = ctx else { return Err("no script loaded".into()) };
+    deadline.store(base.elapsed().as_micros() as u64 + HOOK_BUDGET_US, Ordering::Relaxed);
+    let out = c.with(|cx| -> Result<String, String> {
+        let f: rquickjs::Function = cx.globals().get("__runMenu").map_err(|e| e.to_string())?;
+        let s: String = f.call((index as u32, input.to_string())).map_err(|e| js_err(&cx, e))?;
         Ok(s)
     });
     deadline.store(NO_DEADLINE, Ordering::Relaxed);
@@ -388,6 +463,8 @@ struct ReqResult {
     comment: Option<String>,
     color: Option<String>,
     #[serde(default)]
+    custom: Option<String>,
+    #[serde(default)]
     flags: Vec<(String, String)>,
     #[serde(default)]
     method: Option<String>,
@@ -410,6 +487,8 @@ struct RespResult {
     comment: Option<String>,
     color: Option<String>,
     #[serde(default)]
+    custom: Option<String>,
+    #[serde(default)]
     flags: Vec<(String, String)>,
     #[serde(default)]
     status: Option<u16>,
@@ -417,13 +496,13 @@ struct RespResult {
     headers: Option<Vec<(String, String)>>,
 }
 
-fn meta_of(comment: Option<String>, color: Option<String>, flags: Vec<(String, String)>) -> SessionMeta {
-    SessionMeta { comment, color, flags }
+fn meta_of(comment: Option<String>, color: Option<String>, custom: Option<String>, flags: Vec<(String, String)>) -> SessionMeta {
+    SessionMeta { comment, color, custom, flags }
 }
 
 fn parse_req_result(json: &str) -> RequestDecision {
     let r: ReqResult = serde_json::from_str(json).unwrap_or_default();
-    let meta = meta_of(r.comment, r.color, r.flags);
+    let meta = meta_of(r.comment, r.color, r.custom, r.flags);
     match r.action.as_str() {
         "abort" => RequestDecision::Abort { meta },
         "respond" => RequestDecision::Respond {
@@ -438,7 +517,7 @@ fn parse_req_result(json: &str) -> RequestDecision {
 
 fn parse_resp_result(json: &str) -> ResponseDecision {
     let r: RespResult = serde_json::from_str(json).unwrap_or_default();
-    let meta = meta_of(r.comment, r.color, r.flags);
+    let meta = meta_of(r.comment, r.color, r.custom, r.flags);
     match r.action.as_str() {
         "abort" => ResponseDecision::Abort { meta },
         _ => ResponseDecision::Continue { status: r.status, headers: r.headers, meta },
@@ -563,6 +642,54 @@ mod tests {
             assert!(r.is_err());
             assert!(!e.is_loaded());
             assert!(e.last_error().is_some());
+        });
+    }
+
+    #[test]
+    fn register_menu_and_column() {
+        rt().block_on(async {
+            let e = ScriptEngine::new();
+            e.load(
+                r#"
+                function onBoot() {
+                    Piper.registerColumn('Server', function (s) { return s.responseHeaders.get('Server') || ''; });
+                    Piper.registerMenu('Tag', function (sessions) {
+                        return sessions.map(function (s) { return { id: s.id, comment: 'tagged', color: 'green' }; });
+                    });
+                }
+                function onBeforeResponse(s) {}
+                "#
+                .into(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(e.menus(), vec!["Tag".to_string()]);
+            assert_eq!(e.column_title().as_deref(), Some("Server"));
+
+            // Run the menu over two sessions; the handler returns updates.
+            let ctx = serde_json::json!([
+                {"id": 1, "method": "GET", "url": "http://a/", "status": 200, "host": "a"},
+                {"id": 2, "method": "GET", "url": "http://b/", "status": 200, "host": "b"}
+            ])
+            .to_string();
+            let out = e.run_menu(0, ctx).await.unwrap();
+            let actions: Vec<crate::MenuAction> = serde_json::from_str(&out).unwrap();
+            assert_eq!(actions.len(), 2);
+            assert_eq!(actions[0].id, 1);
+            assert_eq!(actions[0].comment.as_deref(), Some("tagged"));
+            assert_eq!(actions[1].color.as_deref(), Some("green"));
+
+            // registerColumn fn fills the Custom column at response time.
+            let info = ResponseInfo {
+                id: 1,
+                status: 200,
+                headers: vec![("Server".into(), "nginx".into())],
+                ..Default::default()
+            };
+            match e.on_response(&info).await {
+                ResponseDecision::Continue { meta, .. } => assert_eq!(meta.custom.as_deref(), Some("nginx")),
+                other => panic!("expected continue, got {other:?}"),
+            }
         });
     }
 

@@ -364,6 +364,62 @@ impl Rules {
         Ok(())
     }
 
+    /// Menu commands the script registered via `Piper.registerMenu` (empty when off).
+    pub fn script_menus(&self) -> Vec<String> {
+        if self.script_active() { self.script.menus() } else { Vec::new() }
+    }
+
+    /// Title of the script's Custom column, if any (only when scripting is active).
+    pub fn script_column_title(&self) -> Option<String> {
+        if self.script_active() { self.script.column_title() } else { None }
+    }
+
+    /// Run a registered menu command over the given sessions, applying any
+    /// comment/color/custom updates the handler returns. Returns how many
+    /// sessions were updated.
+    pub async fn run_script_menu(&self, index: usize, ids: &[SessionId]) -> std::result::Result<usize, String> {
+        let core = self.core().ok_or_else(|| "core unavailable".to_string())?;
+        let cap = core.capture();
+        let sessions: Vec<serde_json::Value> = ids
+            .iter()
+            .filter_map(|id| {
+                cap.detail(*id).map(|d| {
+                    serde_json::json!({
+                        "id": id,
+                        "method": d.summary.method,
+                        "url": d.summary.full_url(),
+                        "status": d.summary.status,
+                        "host": d.summary.host,
+                        "process": d.summary.process,
+                        "comment": d.summary.comment,
+                        "contentType": d.summary.content_type,
+                    })
+                })
+            })
+            .collect();
+        let ctx = serde_json::to_string(&sessions).map_err(|e| e.to_string())?;
+        let out = self.script.run_menu(index, ctx).await?;
+        let actions: Vec<piper_script::MenuAction> = serde_json::from_str(&out).unwrap_or_default();
+        let mut n = 0;
+        for a in actions {
+            cap.update_summary(a.id, |s| {
+                if let Some(c) = &a.comment {
+                    s.comment = c.clone();
+                }
+                if let Some(c) = &a.color {
+                    if let Some(mc) = MarkColor::parse(c) {
+                        s.color = Some(mc);
+                    }
+                }
+                if let Some(c) = &a.custom {
+                    s.custom = c.clone();
+                }
+            });
+            n += 1;
+        }
+        Ok(n)
+    }
+
     /// Apply a script's session metadata (comment/color/flags) to the live row.
     fn apply_meta(&self, s: &SessionView, meta: &SessionMeta) {
         if meta.is_empty() {
@@ -379,6 +435,9 @@ impl Rules {
                 if let Some(mc) = MarkColor::parse(c) {
                     d.summary.color = Some(mc);
                 }
+            }
+            if let Some(c) = &meta.custom {
+                d.summary.custom = c.clone();
             }
             for (k, v) in &meta.flags {
                 if let Some(e) = d.extra_flags.iter_mut().find(|(ek, _)| ek == k) {

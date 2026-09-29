@@ -54,6 +54,19 @@
   Headers.prototype.toArray = function () { return this._.map(function (p) { return [p[0], p[1]]; }); };
   g.Headers = Headers;
 
+  // Script extensibility (Fiddler's registerMenu/registerColumn).
+  g.Piper = {
+    _menus: [],
+    _column: null,
+    registerMenu: function (label, handler) {
+      if (typeof handler === 'function') g.Piper._menus.push({ label: String(label), handler: handler });
+    },
+    registerColumn: function (title, fn) {
+      g.Piper._column = { title: String(title), fn: typeof fn === 'function' ? fn : null };
+    },
+    log: function () { log.apply(null, ['log'].concat(Array.prototype.slice.call(arguments))); },
+  };
+
   function Session(raw, phase) {
     this.id = raw.id; this.process = raw.process || ''; this.clientIp = raw.clientIp || '';
     this.phase = phase;
@@ -65,11 +78,12 @@
       this.status = raw.status; this.reason = raw.reason;
       this.responseHeaders = new Headers(raw.headers);
     }
-    this._comment = null; this._color = null; this._flags = [];
+    this._comment = null; this._color = null; this._custom = null; this._flags = [];
     this._action = 'continue';
     this._respStatus = 200; this._respHeaders = []; this._respBody = '';
   }
   Session.prototype.comment = function (t) { this._comment = String(t); return this; };
+  Session.prototype.custom = function (v) { this._custom = v == null ? null : String(v); return this; };
   Session.prototype.color = function (c) { this._color = String(c); return this; };
   Session.prototype.flag = function (k, v) { this._flags.push([String(k), String(v)]); return this; };
   Session.prototype.abort = function () { this._action = 'abort'; };
@@ -82,7 +96,7 @@
     if (headers) for (var k in headers) if (Object.prototype.hasOwnProperty.call(headers, k)) this._respHeaders.push([k, String(headers[k])]);
   };
 
-  function meta(s, out) { out.comment = s._comment; out.color = s._color; out.flags = s._flags; }
+  function meta(s, out) { out.comment = s._comment; out.color = s._color; out.custom = s._custom; out.flags = s._flags; }
 
   g.__dispatchRequest = function (json) {
     var raw = JSON.parse(json), s = new Session(raw, 'request'), out = { action: 'continue' };
@@ -99,6 +113,11 @@
   g.__dispatchResponse = function (json) {
     var raw = JSON.parse(json), s = new Session(raw, 'response'), out = { action: 'continue' };
     if (typeof g.onBeforeResponse === 'function') g.onBeforeResponse(s);
+    // A registerColumn(title, fn) function fills the Custom column at response time,
+    // unless the script already set a custom value explicitly.
+    if (s._action === 'continue' && s._custom == null && g.Piper._column && g.Piper._column.fn) {
+      try { var v = g.Piper._column.fn(s); s._custom = v == null ? null : String(v); } catch (e) { __log('error', 'registerColumn fn: ' + (e && e.stack || e)); }
+    }
     out.action = s._action; meta(s, out);
     if (s._action === 'continue') {
       out.status = s.status;
@@ -109,6 +128,22 @@
 
   g.__dispatchComplete = function (json) {
     if (typeof g.onSessionComplete === 'function') g.onSessionComplete(JSON.parse(json));
+  };
+
+  // Script extensibility entry points called by the host.
+  g.__menus = function () { return JSON.stringify(g.Piper._menus.map(function (m) { return m.label; })); };
+  g.__columnTitle = function () { return g.Piper._column ? g.Piper._column.title : null; };
+  g.__runMenu = function (index, ctxJson) {
+    var m = g.Piper._menus[index];
+    if (!m) return '[]';
+    var sessions;
+    try { sessions = JSON.parse(ctxJson); } catch (e) { sessions = []; }
+    var res = [];
+    try {
+      var r = m.handler(sessions);
+      if (Array.isArray(r)) res = r;
+    } catch (e) { __log('error', 'menu "' + m.label + '": ' + (e && e.stack || e)); }
+    return JSON.stringify(res);
   };
 
   g.__boot = function () {

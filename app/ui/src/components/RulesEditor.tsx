@@ -10,6 +10,7 @@ import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { javascript } from "@codemirror/lang-javascript";
 import { api, type ScriptState, type ScriptLog } from "../api";
 import { say } from "../store";
+import { actions } from "../actions";
 import { modKey } from "../lib/format";
 
 const editorTheme = EditorView.theme({
@@ -41,6 +42,7 @@ export function RulesEditor() {
       setState(s);
       setDirty(false);
       setLogs(await api.scriptLogs());
+      void actions.refreshScriptMenus();
       if (s.error) say("Rules script has errors — see the editor", "error");
       else say("Rules script saved and reloaded");
     } catch (err) {
@@ -98,6 +100,7 @@ export function RulesEditor() {
   const toggleEnabled = async () => {
     const s = await api.scriptSetEnabled(!(state?.enabled ?? false));
     setState(s);
+    void actions.refreshScriptMenus();
     if (s.enabled && s.error) say("Script enabled but has errors", "error");
   };
 

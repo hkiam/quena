@@ -606,6 +606,8 @@ export const api = {
   scriptSetEnabled: (enabled: boolean) => invoke<ScriptState>("script_set_enabled", { enabled }),
   scriptLogs: () => invoke<ScriptLog[]>("script_logs"),
   scriptClearLogs: () => invoke<void>("script_clear_logs"),
+  scriptMenus: () => invoke<string[]>("script_menus"),
+  scriptRunMenu: (index: number, ids: SessionId[]) => invoke<number>("script_run_menu", { index, ids }),
 };
 
 export interface ScriptState {
@@ -614,6 +616,8 @@ export interface ScriptState {
   loaded: boolean;
   error: string | null;
   types: string;
+  menus: string[];
+  columnTitle: string | null;
 }
 
 export interface ScriptLog {

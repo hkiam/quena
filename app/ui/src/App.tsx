@@ -45,6 +45,8 @@ function useBoot() {
       const known = new Set(layout.columns.map((c) => c.key));
       layout.columns = [...layout.columns, ...DEFAULT_LAYOUT.columns.filter((c) => !known.has(c.key))];
       set({ settings, layout, filters: await api.getFilters(), status: await api.status(), log: await api.logSince(0) });
+      // Load any script-registered menu commands (if scripting was left enabled).
+      void actions.refreshScriptMenus();
       if (settings.offerRecovery !== false) {
         const rec = await api.recoverable();
         if (rec.length) set({ dialog: { kind: "recover" } });
