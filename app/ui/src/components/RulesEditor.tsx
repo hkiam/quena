@@ -36,12 +36,16 @@ export function RulesEditor() {
     const v = view.current;
     if (!v) return;
     const src = v.state.doc.toString();
-    const s = await api.scriptSet(src);
-    setState(s);
-    setDirty(false);
-    setLogs(await api.scriptLogs());
-    if (s.error) say("Rules script has errors — see the editor", "error");
-    else say("Rules script saved and reloaded");
+    try {
+      const s = await api.scriptSet(src);
+      setState(s);
+      setDirty(false);
+      setLogs(await api.scriptLogs());
+      if (s.error) say("Rules script has errors — see the editor", "error");
+      else say("Rules script saved and reloaded");
+    } catch (err) {
+      say(`Could not save rules script: ${err}`, "error");
+    }
   };
   saveRef.current = save;
 

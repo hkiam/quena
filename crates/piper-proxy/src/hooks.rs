@@ -68,8 +68,15 @@ pub trait Interceptor: Send + Sync {
     fn on_request(&self, _s: SessionView, _head: RequestHead, _body: Option<Body>) -> BoxFuture<RequestAction> {
         Box::pin(async { RequestAction::forward() })
     }
-    /// Head-only response hook, always called (streaming and buffering). Lets a
-    /// script rewrite response headers or abort without buffering the body.
+    /// Cheap sync check: does [`Interceptor::on_response_head`] need to run for
+    /// this session? Lets the hot path skip the clones + boxed future when no
+    /// script is active (the common case).
+    fn wants_response_head(&self, _s: &SessionView) -> bool {
+        false
+    }
+    /// Head-only response hook, called when [`Interceptor::wants_response_head`]
+    /// is true (streaming and buffering). Lets a script rewrite response headers
+    /// or abort without buffering the body.
     fn on_response_head(&self, _s: SessionView, _resp: ResponseHead) -> BoxFuture<ResponseHeadAction> {
         Box::pin(async { ResponseHeadAction::Continue })
     }

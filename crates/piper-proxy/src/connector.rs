@@ -210,7 +210,7 @@ impl tower_service::Service<Uri> for Connector {
             let host = uri.host().ok_or("URI without host")?.trim_matches(['[', ']']).to_string();
             let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
             let connect_start = piper_model::now_us();
-            let upstream = cfg.upstream_for(&format!("{host}:{port}"));
+            let upstream = crate::resolve_upstream(&cfg, format!("{host}:{port}")).await;
             let (mut tcp, dns_ms, tcp_ms, server_addr, gateway) = match &upstream {
                 Some((ph, pp)) => {
                     let (s, d, t, a) = tcp_connect(ph, *pp).await.map_err(|e| format!("upstream proxy {ph}:{pp}: {e}"))?;

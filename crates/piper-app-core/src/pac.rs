@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use piper_proxy::UpstreamResolver;
 use piper_script::PacEngine;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -64,7 +64,12 @@ fn http_get(url: &str) -> Result<String> {
         Some((h, p)) => (h.to_string(), p.parse().unwrap_or(80)),
         None => (authority.to_string(), 80u16),
     };
-    let mut stream = TcpStream::connect((host.as_str(), port))?;
+    // Connect with a bound so a black-holed PAC host can't hang the load.
+    let addr = (host.as_str(), port)
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| anyhow!("cannot resolve PAC host {host}"))?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     stream.set_write_timeout(Some(Duration::from_secs(10)))?;
     let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: Piper\r\n\r\n");

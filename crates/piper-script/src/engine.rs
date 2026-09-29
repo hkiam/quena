@@ -5,8 +5,9 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::oneshot;
 
 const PRELUDE: &str = include_str!("prelude.js");
@@ -15,6 +16,7 @@ const HOOK_BUDGET_US: u64 = 250_000; // 250 ms per hook
 const LOAD_BUDGET_US: u64 = 2_000_000; // 2 s for top-level script + onBoot
 const NO_DEADLINE: u64 = u64::MAX;
 const MAX_LOG_LINES: usize = 2000;
+const QUEUE_BOUND: usize = 256;
 
 fn now_us() -> u64 {
     std::time::SystemTime::now()
@@ -24,39 +26,76 @@ fn now_us() -> u64 {
 }
 
 enum Cmd {
-    Load { source: String, reply: oneshot::Sender<Result<(), String>> },
+    Load { source: String, reply: oneshot::Sender<Result<Hooks, String>> },
     Request { input: String, reply: oneshot::Sender<Result<String, String>> },
     Response { input: String, reply: oneshot::Sender<Result<String, String>> },
     Complete { input: String },
     Shutdown,
 }
 
+/// Which hooks a loaded script defines: (onBeforeRequest, onBeforeResponse, onSessionComplete).
+type Hooks = (bool, bool, bool);
+
 /// A running rules script. Cheap to clone (shares the worker).
 #[derive(Clone)]
 pub struct ScriptEngine {
-    tx: Sender<Cmd>,
+    tx: SyncSender<Cmd>,
     logs: Arc<Mutex<VecDeque<LogLine>>>,
     loaded: Arc<AtomicBool>,
     last_error: Arc<Mutex<Option<String>>>,
+    /// Which hooks the current script actually defines, so callers can skip the
+    /// marshalling + dispatch for hooks that aren't there.
+    has_request: Arc<AtomicBool>,
+    has_response: Arc<AtomicBool>,
+    has_complete: Arc<AtomicBool>,
+    /// False once the worker thread has exited/panicked. Prevents hooks from
+    /// dispatching to a dead worker (whose reply would never arrive).
+    alive: Arc<AtomicBool>,
 }
 
 impl ScriptEngine {
     /// Spawn the worker thread. The engine starts empty (no hooks) until
     /// [`ScriptEngine::load`] is called.
     pub fn new() -> ScriptEngine {
-        let (tx, rx) = std::sync::mpsc::channel::<Cmd>();
+        // Bounded queue: under a flood, request/response hooks fall back to the
+        // default decision (pass-through) instead of queuing without bound.
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Cmd>(QUEUE_BOUND);
         let logs: Arc<Mutex<VecDeque<LogLine>>> = Arc::new(Mutex::new(VecDeque::new()));
         let worker_logs = logs.clone();
+        let alive = Arc::new(AtomicBool::new(true));
+        let worker_alive = alive.clone();
         std::thread::Builder::new()
             .name("piper-script".into())
-            .spawn(move || worker(rx, worker_logs))
+            .spawn(move || worker(rx, worker_logs, worker_alive))
             .expect("spawn script worker");
-        ScriptEngine { tx, logs, loaded: Arc::new(AtomicBool::new(false)), last_error: Arc::new(Mutex::new(None)) }
+        ScriptEngine {
+            tx,
+            logs,
+            loaded: Arc::new(AtomicBool::new(false)),
+            last_error: Arc::new(Mutex::new(None)),
+            has_request: Arc::new(AtomicBool::new(false)),
+            has_response: Arc::new(AtomicBool::new(false)),
+            has_complete: Arc::new(AtomicBool::new(false)),
+            alive,
+        }
     }
 
-    /// Whether a script is currently loaded and error-free.
+    /// Whether the current script defines `onBeforeRequest`.
+    pub fn has_request_hook(&self) -> bool {
+        self.has_request.load(Ordering::Relaxed)
+    }
+    /// Whether the current script defines `onBeforeResponse`.
+    pub fn has_response_hook(&self) -> bool {
+        self.has_response.load(Ordering::Relaxed)
+    }
+    /// Whether the current script defines `onSessionComplete`.
+    pub fn has_complete_hook(&self) -> bool {
+        self.has_complete.load(Ordering::Relaxed)
+    }
+
+    /// Whether a script is currently loaded and error-free (and the worker is alive).
     pub fn is_loaded(&self) -> bool {
-        self.loaded.load(Ordering::Relaxed)
+        self.loaded.load(Ordering::Relaxed) && self.alive.load(Ordering::Relaxed)
     }
 
     /// The last load error, if the current script failed to compile/boot.
@@ -81,26 +120,33 @@ impl ScriptEngine {
         }
         let res = rx.await.unwrap_or_else(|_| Err("script worker did not reply".into()));
         match &res {
-            Ok(()) => {
+            Ok((req, resp, complete)) => {
                 self.loaded.store(true, Ordering::Relaxed);
+                self.has_request.store(*req, Ordering::Relaxed);
+                self.has_response.store(*resp, Ordering::Relaxed);
+                self.has_complete.store(*complete, Ordering::Relaxed);
                 *self.last_error.lock() = None;
             }
             Err(e) => {
                 self.loaded.store(false, Ordering::Relaxed);
+                self.has_request.store(false, Ordering::Relaxed);
+                self.has_response.store(false, Ordering::Relaxed);
+                self.has_complete.store(false, Ordering::Relaxed);
                 *self.last_error.lock() = Some(e.clone());
             }
         }
-        res
+        res.map(|_| ())
     }
 
     /// Run `onBeforeRequest`. Returns the default decision if no script/hook.
     pub async fn on_request(&self, info: &RequestInfo) -> RequestDecision {
-        if !self.is_loaded() {
+        if !self.is_loaded() || !self.has_request_hook() {
             return RequestDecision::default();
         }
         let input = serde_json::to_string(&ReqInput::from(info)).unwrap_or_default();
         let (reply, rx) = oneshot::channel();
-        if self.tx.send(Cmd::Request { input, reply }).is_err() {
+        if self.tx.try_send(Cmd::Request { input, reply }).is_err() {
+            // Queue full or worker gone: don't block forwarding, pass through.
             return RequestDecision::default();
         }
         match rx.await {
@@ -111,12 +157,12 @@ impl ScriptEngine {
 
     /// Run `onBeforeResponse`. Returns the default decision if no script/hook.
     pub async fn on_response(&self, info: &ResponseInfo) -> ResponseDecision {
-        if !self.is_loaded() {
+        if !self.is_loaded() || !self.has_response_hook() {
             return ResponseDecision::default();
         }
         let input = serde_json::to_string(&RespInput::from(info)).unwrap_or_default();
         let (reply, rx) = oneshot::channel();
-        if self.tx.send(Cmd::Response { input, reply }).is_err() {
+        if self.tx.try_send(Cmd::Response { input, reply }).is_err() {
             return ResponseDecision::default();
         }
         match rx.await {
@@ -127,11 +173,11 @@ impl ScriptEngine {
 
     /// Fire `onSessionComplete` (best effort, no reply).
     pub fn on_complete(&self, summary: serde_json::Value) {
-        if !self.is_loaded() {
+        if !self.is_loaded() || !self.has_complete_hook() {
             return;
         }
         let input = summary.to_string();
-        let _ = self.tx.send(Cmd::Complete { input });
+        let _ = self.tx.try_send(Cmd::Complete { input });
     }
 }
 
@@ -145,14 +191,24 @@ impl Drop for ScriptEngine {
     fn drop(&mut self) {
         // Only the last handle shutting down matters; a failed send is fine.
         if Arc::strong_count(&self.loaded) == 1 {
-            let _ = self.tx.send(Cmd::Shutdown);
+            let _ = self.tx.try_send(Cmd::Shutdown);
         }
     }
 }
 
 // ------------------------------------------------------------ worker thread
 
-fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>) {
+fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>, alive: Arc<AtomicBool>) {
+    // Clear `alive` on any exit — clean return or panic unwind — so hooks stop
+    // dispatching to a worker that can no longer reply.
+    struct AliveGuard(Arc<AtomicBool>);
+    impl Drop for AliveGuard {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Relaxed);
+        }
+    }
+    let _alive = AliveGuard(alive);
+
     use rquickjs::Runtime;
     let rt = match Runtime::new() {
         Ok(rt) => rt,
@@ -162,10 +218,13 @@ fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>) {
         }
     };
     rt.set_memory_limit(MEMORY_LIMIT);
+    // Deadlines are monotonic (µs since `base`), so an NTP/clock adjustment can
+    // neither let a script run past its budget nor interrupt it early.
+    let base = Instant::now();
     let deadline = Arc::new(AtomicU64::new(NO_DEADLINE));
     {
         let deadline = deadline.clone();
-        rt.set_interrupt_handler(Some(Box::new(move || now_us() > deadline.load(Ordering::Relaxed))));
+        rt.set_interrupt_handler(Some(Box::new(move || base.elapsed().as_micros() as u64 > deadline.load(Ordering::Relaxed))));
     }
 
     // The context is rebuilt on each Load so hot reload starts from a clean slate.
@@ -174,10 +233,11 @@ fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>) {
     for cmd in rx {
         match cmd {
             Cmd::Load { source, reply } => {
-                match rebuild_and_load(&rt, &logs, &source, &deadline) {
+                match rebuild_and_load(&rt, &logs, &source, &deadline, base) {
                     Ok(c) => {
+                        let hooks = probe_hooks(&c);
                         ctx = Some(c);
-                        let _ = reply.send(Ok(()));
+                        let _ = reply.send(Ok(hooks));
                     }
                     Err(e) => {
                         ctx = None;
@@ -186,19 +246,29 @@ fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>) {
                 }
             }
             Cmd::Request { input, reply } => {
-                let out = dispatch(&ctx, &deadline, "__dispatchRequest", &input);
+                let out = dispatch(&ctx, &deadline, base, "__dispatchRequest", &input);
                 let _ = reply.send(out);
             }
             Cmd::Response { input, reply } => {
-                let out = dispatch(&ctx, &deadline, "__dispatchResponse", &input);
+                let out = dispatch(&ctx, &deadline, base, "__dispatchResponse", &input);
                 let _ = reply.send(out);
             }
             Cmd::Complete { input } => {
-                let _ = dispatch(&ctx, &deadline, "__dispatchComplete", &input);
+                let _ = dispatch(&ctx, &deadline, base, "__dispatchComplete", &input);
             }
             Cmd::Shutdown => break,
         }
     }
+}
+
+/// Check which of the optional hook functions the loaded script defines.
+fn probe_hooks(ctx: &rquickjs::Context) -> Hooks {
+    ctx.with(|cx| {
+        let is_fn = |name: &str| -> bool {
+            cx.globals().get::<_, rquickjs::Function>(name).is_ok()
+        };
+        (is_fn("onBeforeRequest"), is_fn("onBeforeResponse"), is_fn("onSessionComplete"))
+    })
 }
 
 /// Build a fresh context, install host + prelude + user source + boot it.
@@ -207,10 +277,11 @@ fn rebuild_and_load(
     logs: &Arc<Mutex<VecDeque<LogLine>>>,
     source: &str,
     deadline: &Arc<AtomicU64>,
+    base: Instant,
 ) -> Result<rquickjs::Context, String> {
     let c = rquickjs::Context::full(rt).map_err(|e| format!("context: {e}"))?;
     install_host(&c, logs)?;
-    deadline.store(now_us() + LOAD_BUDGET_US, Ordering::Relaxed);
+    deadline.store(base.elapsed().as_micros() as u64 + LOAD_BUDGET_US, Ordering::Relaxed);
     let r = c.with(|cx| -> Result<(), String> {
         cx.eval::<(), _>(PRELUDE).map_err(|e| js_err(&cx, e))?;
         cx.eval::<(), _>(source.as_bytes()).map_err(|e| js_err(&cx, e))?;
@@ -222,9 +293,9 @@ fn rebuild_and_load(
     r.map(|_| c)
 }
 
-fn dispatch(ctx: &Option<rquickjs::Context>, deadline: &Arc<AtomicU64>, func: &str, input: &str) -> Result<String, String> {
+fn dispatch(ctx: &Option<rquickjs::Context>, deadline: &Arc<AtomicU64>, base: Instant, func: &str, input: &str) -> Result<String, String> {
     let Some(c) = ctx else { return Err("no script loaded".into()) };
-    deadline.store(now_us() + HOOK_BUDGET_US, Ordering::Relaxed);
+    deadline.store(base.elapsed().as_micros() as u64 + HOOK_BUDGET_US, Ordering::Relaxed);
     let out = c.with(|cx| -> Result<String, String> {
         let f: rquickjs::Function = cx.globals().get(func).map_err(|e| e.to_string())?;
         let s: String = f.call((input.to_string(),)).map_err(|e| js_err(&cx, e))?;
@@ -492,6 +563,24 @@ mod tests {
             assert!(r.is_err());
             assert!(!e.is_loaded());
             assert!(e.last_error().is_some());
+        });
+    }
+
+    #[test]
+    fn hook_presence_is_detected() {
+        rt().block_on(async {
+            let e = ScriptEngine::new();
+            e.load("function onBeforeResponse(s){}".into()).await.unwrap();
+            assert!(e.is_loaded());
+            assert!(!e.has_request_hook());
+            assert!(e.has_response_hook());
+            assert!(!e.has_complete_hook());
+            // A script with no hooks still loads (e.g. only helper defs / onBoot).
+            e.load("function onBoot(){}".into()).await.unwrap();
+            assert!(!e.has_request_hook() && !e.has_response_hook() && !e.has_complete_hook());
+            // on_request short-circuits to the default when there is no request hook.
+            let info = RequestInfo { method: "GET".into(), ..Default::default() };
+            assert!(matches!(e.on_request(&info).await, RequestDecision::Continue { method: None, url: None, headers: None, .. }));
         });
     }
 

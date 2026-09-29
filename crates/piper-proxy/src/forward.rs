@@ -488,8 +488,13 @@ async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &
     let hooks = shared.hooks();
     let (mut parts, incoming) = resp.into_parts();
     let mut resp_head = live.detail().response.unwrap_or_default();
-    // Head-only script hook — runs in both streaming and buffering modes.
-    match hooks.on_response_head(view.clone(), resp_head.clone()).await {
+    // Head-only script hook — runs in both streaming and buffering modes, but only
+    // when a script is actually active (avoids per-response clones otherwise).
+    match if hooks.wants_response_head(view) {
+        hooks.on_response_head(view.clone(), resp_head.clone()).await
+    } else {
+        ResponseHeadAction::Continue
+    } {
         ResponseHeadAction::Continue => {}
         ResponseHeadAction::Replace(h) => {
             // Apply to the outgoing http parts too, since the streaming path

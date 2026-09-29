@@ -9,6 +9,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::{Duration, Instant};
 
 const PAC_PRELUDE: &str = include_str!("pac_prelude.js");
 const MEMORY_LIMIT: usize = 32 * 1024 * 1024;
@@ -28,10 +29,18 @@ enum Cmd {
     Shutdown,
 }
 
+/// How long a per-host PAC result stays cached. A short TTL bounds the damage
+/// from a transient DNS failure (which could otherwise pin a host to DIRECT and
+/// bypass the corporate proxy) and picks up network changes automatically.
+const CACHE_TTL: Duration = Duration::from_secs(300);
+/// Upper bound on a single `FindProxyForURL` evaluation, so a slow/hung script
+/// or DNS lookup can never block the caller indefinitely.
+const EVAL_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// A compiled PAC script. Evaluation is cached per host.
 pub struct PacEngine {
     tx: Sender<Cmd>,
-    cache: Mutex<HashMap<String, Vec<ProxyEntry>>>,
+    cache: Mutex<HashMap<String, (Vec<ProxyEntry>, Instant)>>,
     source_error: Option<String>,
 }
 
@@ -60,26 +69,39 @@ impl PacEngine {
     }
 
     /// All directives `FindProxyForURL(url, host)` returns for this host.
+    ///
+    /// Results are cached per host with a TTL. Evaluation failures (script error,
+    /// timeout, dead worker) fall back to DIRECT but are **not** cached, so a
+    /// transient failure never sticks a host on DIRECT until restart.
     pub fn find(&self, url: &str, host: &str) -> Vec<ProxyEntry> {
         let key = host.to_ascii_lowercase();
-        if let Some(v) = self.cache.lock().get(&key) {
-            return v.clone();
-        }
-        let entries = if self.source_error.is_some() {
-            vec![ProxyEntry::Direct]
-        } else {
-            let (reply, rx) = std::sync::mpsc::channel();
-            if self.tx.send(Cmd::Eval { url: url.to_string(), host: host.to_string(), reply }).is_err() {
-                vec![ProxyEntry::Direct]
-            } else {
-                match rx.recv() {
-                    Ok(Ok(s)) => parse_pac_result(&s),
-                    _ => vec![ProxyEntry::Direct],
-                }
+        if let Some((v, at)) = self.cache.lock().get(&key) {
+            if at.elapsed() < CACHE_TTL {
+                return v.clone();
             }
-        };
-        self.cache.lock().insert(key, entries.clone());
-        entries
+        }
+        if self.source_error.is_some() {
+            return vec![ProxyEntry::Direct];
+        }
+        let (reply, rx) = std::sync::mpsc::channel();
+        if self.tx.send(Cmd::Eval { url: url.to_string(), host: host.to_string(), reply }).is_err() {
+            return vec![ProxyEntry::Direct];
+        }
+        match rx.recv_timeout(EVAL_TIMEOUT) {
+            Ok(Ok(s)) => {
+                let entries = parse_pac_result(&s);
+                self.cache.lock().insert(key, (entries.clone(), Instant::now()));
+                entries
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(target: "piper", "PAC evaluation for {host} failed: {e}; using DIRECT (not cached)");
+                vec![ProxyEntry::Direct]
+            }
+            Err(_) => {
+                tracing::warn!(target: "piper", "PAC evaluation for {host} timed out; using DIRECT (not cached)");
+                vec![ProxyEntry::Direct]
+            }
+        }
     }
 
     /// The upstream HTTP proxy for `host`, mirroring Fiddler: the first `PROXY`
@@ -110,14 +132,18 @@ impl Drop for PacEngine {
 }
 
 fn host_without_port(host_port: &str) -> &str {
-    let hp = host_port.trim_matches(['[', ']']);
-    // Only strip a trailing :port (not part of an IPv6 literal without brackets).
-    if let Some(idx) = hp.rfind(':') {
-        if hp[idx + 1..].chars().all(|c| c.is_ascii_digit()) && !hp[..idx].contains(':') {
-            return &hp[..idx];
+    let s = host_port.trim();
+    // Bracketed IPv6 literal: `[::1]` or `[::1]:8080`.
+    if let Some(rest) = s.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    // Otherwise strip a trailing :port, unless the remainder is an unbracketed IPv6.
+    if let Some(idx) = s.rfind(':') {
+        if s[idx + 1..].chars().all(|c| c.is_ascii_digit()) && !s[..idx].contains(':') {
+            return &s[..idx];
         }
     }
-    hp
+    s
 }
 
 fn parse_pac_result(s: &str) -> Vec<ProxyEntry> {
@@ -233,13 +259,18 @@ fn install_dns(cx: &rquickjs::Ctx) -> Result<(), String> {
 }
 
 fn dns_resolve(host: &str) -> Option<String> {
+    // `getaddrinfo` can't be cancelled, so run it on a throwaway thread and give
+    // up after a bound — a hung resolver must not wedge the PAC worker (and, via
+    // the eval timeout, the caller). The abandoned thread finishes on its own.
+    let host = host.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let addrs = (host.as_str(), 0u16).to_socket_addrs().ok().map(|it| it.map(|s| s.ip()).collect::<Vec<IpAddr>>());
+        let _ = tx.send(addrs);
+    });
+    let addrs = rx.recv_timeout(Duration::from_secs(3)).ok().flatten()?;
     // Prefer IPv4 to match classic PAC helpers (isInNet is IPv4).
-    let addrs: Vec<IpAddr> = (host, 0u16).to_socket_addrs().ok()?.map(|s| s.ip()).collect();
-    addrs
-        .iter()
-        .find(|a| a.is_ipv4())
-        .or_else(|| addrs.first())
-        .map(|a| a.to_string())
+    addrs.iter().find(|a| a.is_ipv4()).or_else(|| addrs.first()).map(|a| a.to_string())
 }
 
 fn my_ip_address() -> String {

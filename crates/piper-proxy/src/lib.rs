@@ -121,6 +121,18 @@ impl Default for ProxyConfig {
     }
 }
 
+/// Resolve the upstream proxy for `host_port` from an async context. When a PAC
+/// script is in play the (possibly blocking) evaluation is moved to the blocking
+/// pool so it never stalls a proxy worker thread; the static/no-PAC case stays
+/// inline and cheap.
+pub(crate) async fn resolve_upstream(cfg: &Arc<ProxyConfig>, host_port: String) -> Option<(String, u16)> {
+    if !cfg.uses_pac() {
+        return cfg.upstream_for(&host_port);
+    }
+    let cfg = cfg.clone();
+    tokio::task::spawn_blocking(move || cfg.upstream_for(&host_port)).await.unwrap_or(None)
+}
+
 pub fn host_matches(list: &[String], host: &str) -> bool {
     let h = piper_query::host_without_port(host).trim_matches(['[', ']']).to_ascii_lowercase();
     list.iter().any(|p| piper_query::glob_match(p, &h) || (p.starts_with("*.") && h == p[2..]))
@@ -153,6 +165,12 @@ impl ProxyConfig {
             return pac.upstream_for(host);
         }
         self.upstream.clone()
+    }
+    /// True when a PAC script decides the upstream (evaluation may block briefly
+    /// on the first request per host, so callers on the async runtime should use
+    /// [`resolve_upstream`] instead of calling [`upstream_for`] directly).
+    pub fn uses_pac(&self) -> bool {
+        self.pac.is_some()
     }
     /// Whether auto-auth applies to `host` (server 401 case).
     pub fn auth_applies(&self, host: &str) -> bool {

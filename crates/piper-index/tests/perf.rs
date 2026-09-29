@@ -100,9 +100,12 @@ fn large_burst_is_throttled_then_rebuilds() {
     for id in (N + 1)..=(N + 5000) {
         idx.upsert(row(id));
     }
-    // Immediately after a full sort, the >256-change burst is throttled.
+    // Immediately after a full sort, the >256-change burst is throttled (coalesced):
+    // the tick reports no change and defers the rebuild rather than rebuilding now.
     let immediate = idx.tick();
-    eprintln!("[perf] burst tick immediately after sort: changed={immediate} (throttled when false)");
+    eprintln!("[perf] burst tick immediately after sort: changed={immediate} (expected false = throttled)");
+    assert!(!immediate, "large burst should be throttled right after a full sort, not rebuilt every tick");
+    assert_eq!(idx.view_len(), N as usize, "throttled tick must not yet apply the burst to the view");
 
     // After the throttle window, a tick applies the burst in one rebuild.
     std::thread::sleep(std::time::Duration::from_millis(550));

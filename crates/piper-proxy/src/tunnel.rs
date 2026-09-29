@@ -22,7 +22,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     let cfg = shared.cfg();
-    let upstream = cfg.upstream_for(&format!("{host}:{port}"));
+    let upstream = crate::resolve_upstream(&cfg, format!("{host}:{port}")).await;
     let connected = match &upstream {
         Some((ph, pp)) => match tcp_connect(ph, *pp).await {
             Ok((mut s, ..)) => connect_via_proxy(&mut s, host, port).await.map(|_| s),

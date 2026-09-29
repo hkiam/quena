@@ -264,14 +264,30 @@ fn parse_head_text(text: &str) -> (String, Headers) {
 /// Split a request URL into (host, path+query). Handles absolute URLs and the
 /// `host:port` form used for CONNECT tunnels.
 fn split_url_host_path(url: &str) -> (String, String) {
-    if let Some((_, rest)) = url.split_once("://") {
-        match rest.split_once('/') {
-            Some((host, path)) => (piper_query::host_without_port(host).to_string(), format!("/{path}")),
-            None => (piper_query::host_without_port(rest).to_string(), "/".to_string()),
-        }
+    let after_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    // The authority ends at the first '/', '?' or '#'.
+    let auth_end = after_scheme.find(['/', '?', '#']).unwrap_or(after_scheme.len());
+    let (authority, rest) = after_scheme.split_at(auth_end);
+    // Drop any userinfo so it never leaks into the host field handed to scripts.
+    let host_port = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let host = piper_query::host_without_port(host_port).to_string();
+    let path = if rest.is_empty() {
+        "/".to_string()
+    } else if rest.starts_with('/') {
+        rest.to_string()
     } else {
-        (piper_query::host_without_port(url).to_string(), String::new())
-    }
+        format!("/{rest}")
+    };
+    (host, path)
+}
+
+/// The host[:port] authority of a request URL (for syncing the `Host` header on redirect).
+fn authority_of(url: &str) -> Option<String> {
+    let after_scheme = url.split_once("://").map(|(_, r)| r)?;
+    let auth_end = after_scheme.find(['/', '?', '#']).unwrap_or(after_scheme.len());
+    let authority = &after_scheme[..auth_end];
+    let host_port = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    (!host_port.is_empty()).then(|| host_port.to_string())
 }
 
 fn headers_to_pairs(h: &Headers) -> Vec<(String, String)> {
@@ -358,7 +374,11 @@ impl Rules {
                 d.summary.comment = c.clone();
             }
             if let Some(c) = &meta.color {
-                d.summary.color = MarkColor::parse(c);
+                // Only recolour on a recognised name; an unknown value must not
+                // wipe an existing colour.
+                if let Some(mc) = MarkColor::parse(c) {
+                    d.summary.color = Some(mc);
+                }
             }
             for (k, v) in &meta.flags {
                 if let Some(e) = d.extra_flags.iter_mut().find(|(ek, _)| ek == k) {
@@ -771,7 +791,7 @@ impl Interceptor for Rules {
                 }
             }
             // 1b. Script onBeforeRequest (heads/metadata only; bodies keep streaming).
-            if this.script_active() {
+            if this.script_active() && this.script.has_request_hook() {
                 let (host, path) = split_url_host_path(&head.url);
                 let info = RequestInfo {
                     id: s.id,
@@ -791,11 +811,29 @@ impl Interceptor for Rules {
                             script_edited = true;
                         }
                         if let Some(u) = url {
+                            // Keep the Host header in step with a redirect so vhosts resolve.
+                            let old_auth = authority_of(&head.url);
+                            let new_auth = authority_of(&u);
                             head.url = u;
+                            if headers.is_none() && new_auth.is_some() && new_auth != old_auth {
+                                if let Some(a) = new_auth {
+                                    head.headers.set("Host", a);
+                                }
+                            }
                             script_edited = true;
                         }
                         if let Some(hs) = headers {
+                            // The request body streams unchanged, so the framing headers
+                            // must still describe it — restore them if the script dropped
+                            // or altered them (M5: no truncation/hang from a bad length).
+                            let orig_cl = head.headers.get("content-length").map(|s| s.to_string());
+                            let orig_te = head.headers.get("transfer-encoding").map(|s| s.to_string());
                             head.headers = pairs_to_headers(hs);
+                            match (orig_cl, orig_te) {
+                                (Some(cl), _) => head.headers.set("Content-Length", cl),
+                                (None, Some(te)) => head.headers.set("Transfer-Encoding", te),
+                                (None, None) => head.headers.remove("content-length"),
+                            }
                             script_edited = true;
                         }
                     }
@@ -866,11 +904,15 @@ impl Interceptor for Rules {
         })
     }
 
+    fn wants_response_head(&self, _s: &SessionView) -> bool {
+        self.script_active() && self.script.has_response_hook()
+    }
+
     fn on_response_head(&self, s: SessionView, resp: ResponseHead) -> BoxFuture<piper_proxy::ResponseHeadAction> {
         use piper_proxy::ResponseHeadAction;
         let this = self.core().and_then(|c| c.rules.clone());
         let Some(this) = this else { return Box::pin(async { ResponseHeadAction::Continue }) };
-        if !this.script_active() {
+        if !this.script_active() || !this.script.has_response_hook() {
             return Box::pin(async { ResponseHeadAction::Continue });
         }
         Box::pin(async move {
@@ -893,7 +935,16 @@ impl Interceptor for Rules {
                         h.reason = crate::mock::reason(st).to_string();
                     }
                     if let Some(hs) = headers {
+                        // The response body streams unchanged, so keep the framing
+                        // headers consistent (M5).
+                        let orig_cl = h.headers.get("content-length").map(|s| s.to_string());
+                        let orig_te = h.headers.get("transfer-encoding").map(|s| s.to_string());
                         h.headers = pairs_to_headers(hs);
+                        match (orig_cl, orig_te) {
+                            (Some(cl), _) => h.headers.set("Content-Length", cl),
+                            (None, Some(te)) => h.headers.set("Transfer-Encoding", te),
+                            (None, None) => h.headers.remove("content-length"),
+                        }
                     }
                     ResponseHeadAction::Replace(h)
                 }
@@ -942,7 +993,7 @@ impl Interceptor for Rules {
 
     fn on_complete(&self, s: &SessionView) {
         self.break_response.lock().remove(&s.id);
-        if self.script_active() {
+        if self.script_active() && self.script.has_complete_hook() {
             let d = s.live.detail();
             self.script.on_complete(serde_json::json!({
                 "id": s.id,
@@ -1052,5 +1103,28 @@ mod tests {
         assert_eq!(back.rules[0].match_, s.rules[0].match_);
         assert!(!back.unmatched_passthrough);
         assert_eq!(back.rules[0].latency_ms, 20);
+    }
+
+    #[test]
+    fn split_url_host_path_edges() {
+        assert_eq!(split_url_host_path("http://example.com/a/b?q=1"), ("example.com".into(), "/a/b?q=1".into()));
+        // userinfo must not leak into the host field
+        assert_eq!(split_url_host_path("http://user:pass@example.com/x"), ("example.com".into(), "/x".into()));
+        // query with no path
+        assert_eq!(split_url_host_path("http://example.com?q=1"), ("example.com".into(), "/?q=1".into()));
+        // port is stripped from host
+        assert_eq!(split_url_host_path("https://example.com:8443/p"), ("example.com".into(), "/p".into()));
+        // bracketed IPv6 with port (brackets kept, consistent with the rest of the app)
+        assert_eq!(split_url_host_path("http://[::1]:8080/p"), ("[::1]".into(), "/p".into()));
+        // CONNECT-style host:port
+        assert_eq!(split_url_host_path("example.com:443").0, "example.com");
+    }
+
+    #[test]
+    fn authority_of_edges() {
+        assert_eq!(authority_of("http://example.com/x"), Some("example.com".into()));
+        assert_eq!(authority_of("http://example.com:8080/x"), Some("example.com:8080".into()));
+        assert_eq!(authority_of("http://user@example.com/x"), Some("example.com".into()));
+        assert_eq!(authority_of("example.com:443"), None); // no scheme
     }
 }
