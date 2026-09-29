@@ -54,6 +54,48 @@ fn auth_hdr(headers: &[(String, String)], name: &str) -> Option<String> {
 
 /// NTLM server: 401 with NTLM; validates Type1 → sends Type2; validates Type3 → 200.
 /// Keeps the connection alive across the handshake (connection-oriented).
+/// A well-formed NTLM CHALLENGE_MESSAGE (MS-NLMP 2.2.1.2): flags, target name,
+/// version and AV pairs — accepted by SSPI on Windows as well as by the
+/// pure-Rust implementation.
+fn realistic_type2() -> Vec<u8> {
+    fn utf16(s: &str) -> Vec<u8> {
+        s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
+    }
+    fn av(id: u16, v: &[u8], out: &mut Vec<u8>) {
+        out.extend_from_slice(&id.to_le_bytes());
+        out.extend_from_slice(&(v.len() as u16).to_le_bytes());
+        out.extend_from_slice(v);
+    }
+    let target = utf16("DOMAIN");
+    let mut info = Vec::new();
+    av(2, &utf16("DOMAIN"), &mut info); // MsvAvNbDomainName
+    av(1, &utf16("SERVER"), &mut info); // MsvAvNbComputerName
+    av(4, &utf16("domain.example"), &mut info); // MsvAvDnsDomainName
+    av(3, &utf16("server.domain.example"), &mut info); // MsvAvDnsComputerName
+    av(7, &133_000_000_000_000_000u64.to_le_bytes(), &mut info); // MsvAvTimestamp
+    av(0, &[], &mut info); // MsvAvEOL
+    // UNICODE | REQUEST_TARGET | NTLM | ALWAYS_SIGN | TARGET_TYPE_DOMAIN |
+    // EXTENDED_SESSIONSECURITY | TARGET_INFO | VERSION | 128 | KEY_EXCH | 56
+    let flags: u32 = 0xE289_8205;
+    let payload = 56u32;
+    let mut m = Vec::new();
+    m.extend_from_slice(b"NTLMSSP\0");
+    m.extend_from_slice(&2u32.to_le_bytes());
+    m.extend_from_slice(&(target.len() as u16).to_le_bytes());
+    m.extend_from_slice(&(target.len() as u16).to_le_bytes());
+    m.extend_from_slice(&payload.to_le_bytes());
+    m.extend_from_slice(&flags.to_le_bytes());
+    m.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]); // server challenge
+    m.extend_from_slice(&[0; 8]); // reserved
+    m.extend_from_slice(&(info.len() as u16).to_le_bytes());
+    m.extend_from_slice(&(info.len() as u16).to_le_bytes());
+    m.extend_from_slice(&(payload + target.len() as u32).to_le_bytes());
+    m.extend_from_slice(&[10, 0, 0x61, 0x4a, 0, 0, 0, 15]); // version 10.0.19041, NTLM rev 15
+    m.extend_from_slice(&target);
+    m.extend_from_slice(&info);
+    m
+}
+
 fn ntlm_server() -> u16 {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
@@ -75,13 +117,8 @@ fn ntlm_server() -> u16 {
                             let msg = B64.decode(v.trim_start_matches("NTLM ")).unwrap_or_default();
                             let mtype = if msg.len() >= 12 { u32::from_le_bytes(msg[8..12].try_into().unwrap()) } else { 0 };
                             if mtype == 1 {
-                                // Send Type 2 challenge (fixed server challenge, minimal target info).
-                                let mut t2 = vec![0u8; 48];
-                                t2[..8].copy_from_slice(b"NTLMSSP\0");
-                                t2[8..12].copy_from_slice(&2u32.to_le_bytes());
-                                t2[24..32].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
-                                // no target info
-                                let b = B64.encode(&t2);
+                                // Send a well-formed Type 2 challenge (SSPI on Windows rejects minimal ones).
+                                let b = B64.encode(realistic_type2());
                                 let _ = write!(s, "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM {b}\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n");
                                 stage = 1;
                             } else if mtype == 3 && stage == 1 {

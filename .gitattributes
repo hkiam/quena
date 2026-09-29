@@ -1,0 +1,11 @@
+# Identical checkouts on every platform: LF for all text files (Windows runners
+# would otherwise convert to CRLF and break shell scripts and byte-exact fixtures).
+* text=auto eol=lf
+
+# Binary test data and assets.
+*.fi     binary
+*.saz    binary
+*.png    binary
+*.icns   binary
+*.ico    binary
+*.wasm   binary

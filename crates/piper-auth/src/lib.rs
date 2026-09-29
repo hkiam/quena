@@ -330,18 +330,69 @@ mod tests {
         assert_eq!(h.next_header(None).unwrap(), "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
     }
 
+    /// First leg on every platform: the pure-Rust Type 1 on macOS/Linux, SSPI on Windows.
+    #[test]
+    fn ntlm_first_leg() {
+        let creds = Credentials { user: "User".into(), domain: "Domain".into(), password: "Password".into() };
+        let mut h = Handshake::start(Scheme::Ntlm, Some(&creds), "server").unwrap();
+        let t1 = h.next_header(None).unwrap();
+        let raw = B64.decode(t1.trim_start_matches("NTLM ")).unwrap();
+        assert!(t1.starts_with("NTLM "));
+        assert_eq!(&raw[..8], b"NTLMSSP\0");
+        assert_eq!(u32::from_le_bytes(raw[8..12].try_into().unwrap()), 1, "Type 1 message");
+    }
+
+
+    /// A well-formed NTLM CHALLENGE_MESSAGE (MS-NLMP 2.2.1.2): flags, target name,
+    /// version and AV pairs — accepted by SSPI on Windows as well as by the
+    /// pure-Rust implementation.
+    fn realistic_type2() -> Vec<u8> {
+        fn utf16(s: &str) -> Vec<u8> {
+            s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
+        }
+        fn av(id: u16, v: &[u8], out: &mut Vec<u8>) {
+            out.extend_from_slice(&id.to_le_bytes());
+            out.extend_from_slice(&(v.len() as u16).to_le_bytes());
+            out.extend_from_slice(v);
+        }
+        let target = utf16("DOMAIN");
+        let mut info = Vec::new();
+        av(2, &utf16("DOMAIN"), &mut info); // MsvAvNbDomainName
+        av(1, &utf16("SERVER"), &mut info); // MsvAvNbComputerName
+        av(4, &utf16("domain.example"), &mut info); // MsvAvDnsDomainName
+        av(3, &utf16("server.domain.example"), &mut info); // MsvAvDnsComputerName
+        av(7, &133_000_000_000_000_000u64.to_le_bytes(), &mut info); // MsvAvTimestamp
+        av(0, &[], &mut info); // MsvAvEOL
+        // UNICODE | REQUEST_TARGET | NTLM | ALWAYS_SIGN | TARGET_TYPE_DOMAIN |
+        // EXTENDED_SESSIONSECURITY | TARGET_INFO | VERSION | 128 | KEY_EXCH | 56
+        let flags: u32 = 0xE289_8205;
+        let payload = 56u32;
+        let mut m = Vec::new();
+        m.extend_from_slice(b"NTLMSSP\0");
+        m.extend_from_slice(&2u32.to_le_bytes());
+        m.extend_from_slice(&(target.len() as u16).to_le_bytes());
+        m.extend_from_slice(&(target.len() as u16).to_le_bytes());
+        m.extend_from_slice(&payload.to_le_bytes());
+        m.extend_from_slice(&flags.to_le_bytes());
+        m.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]); // server challenge
+        m.extend_from_slice(&[0; 8]); // reserved
+        m.extend_from_slice(&(info.len() as u16).to_le_bytes());
+        m.extend_from_slice(&(info.len() as u16).to_le_bytes());
+        m.extend_from_slice(&(payload + target.len() as u32).to_le_bytes());
+        m.extend_from_slice(&[10, 0, 0x61, 0x4a, 0, 0, 0, 15]); // version 10.0.19041, NTLM rev 15
+        m.extend_from_slice(&target);
+        m.extend_from_slice(&info);
+        m
+    }
+
+    /// Both legs on every platform (SSPI on Windows, pure Rust elsewhere).
     #[test]
     fn ntlm_two_legs() {
         let creds = Credentials { user: "User".into(), domain: "Domain".into(), password: "Password".into() };
         let mut h = Handshake::start(Scheme::Ntlm, Some(&creds), "server").unwrap();
         let t1 = h.next_header(None).unwrap();
         assert!(t1.starts_with("NTLM "));
-        // Feed a minimal Type 2.
-        let mut m = vec![0u8; 48];
-        m[..8].copy_from_slice(b"NTLMSSP\0");
-        m[8..12].copy_from_slice(&2u32.to_le_bytes());
-        m[24..32].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
-        let t3 = h.next_header(Some(&m)).unwrap();
+        let t3 = h.next_header(Some(&realistic_type2())).unwrap();
         assert!(t3.starts_with("NTLM "));
         assert!(B64.decode(t3.trim_start_matches("NTLM ")).unwrap().len() > 88);
     }

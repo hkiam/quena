@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+env:
+  # Pinned: the runners' preinstalled 1.98.1 cannot link wasm32 components on
+  # macOS (rust-lld: libLLVM.dylib not found). Keep in sync with local stable.
+  RUST_TOOLCHAIN: "1.96.0"
+  PIPER_WASM_TOOLCHAIN: "1.96.0"
+
 jobs:
   build:
     name: build (${{ matrix.os }})
@@ -19,8 +25,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-wasip2
       - uses: Swatinem/rust-cache@v2
         with:
@@ -52,7 +59,7 @@ jobs:
         shell: bash
         run: ./plugins/build.sh
       - name: Rust tests
-        run: cargo test --workspace --exclude piper-app
+        run: cargo test --workspace --exclude piper-app --no-fail-fast
 
       # Platform-independent checks: run once.
       - uses: actions/setup-java@v4
