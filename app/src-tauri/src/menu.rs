@@ -231,6 +231,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         &[
             &item(app, "help.quickexec", "Command Bar Commands", None)?,
             &item(app, "help.shortcuts", "Keyboard Shortcuts", None)?,
+            &item(app, "help.coming-from", "Coming from Fiddler Classic…", None)?,
             #[cfg(not(target_os = "macos"))]
             &about,
         ],

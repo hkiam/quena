@@ -118,6 +118,8 @@ export async function handleMenu(id: string) {
       return location.reload();
     case "help.quickexec":
       return set({ dialog: { kind: "help", topic: "quickexec" } });
+    case "help.coming-from":
+      return set({ dialog: { kind: "text", title: "Coming from Fiddler Classic", text: COMING_FROM } });
     case "help.shortcuts":
       return set({ dialog: { kind: "help", topic: "shortcuts" } });
     case "toolbar.decode":
@@ -129,3 +131,30 @@ export async function handleMenu(id: string) {
     }
   }
 }
+
+/** Name mapping for people switching over (descriptive use; see docs/coming-from-fiddler.md). */
+const COMING_FROM = `Piper is an independent project, not affiliated with Progress Software.
+Your files, Command Bar syntax and shortcuts carry over; some features have other names.
+
+Files
+  .saz session archives     File → Import / Export Sessions → SAZ Archive…
+  .farx AutoResponder rules Mock Rules tab → Import… / Export…
+
+Names
+  QuickExec                 Command Bar (Alt+Q)
+  AutoResponder             Mock Rules
+  Inspectors                Inspect
+  TextView / SyntaxView     Text / Pretty
+  WebForms / HexView        Form Data / Hex
+  ImageView / WebView       Image / Preview
+  Transformer               Encoding
+  TextWizard                Text Tools (Ctrl/Cmd+E)
+  FiddlerScript             Rules Script, JavaScript (Ctrl/Cmd+R)
+  Reissue …                 Replay …
+  Any Process               Process Filter
+  Hide CONNECTs             Hide Tunnels (CONNECT)
+  Result / Body columns     Status / Size columns
+
+Layout
+  Prefer a dense list with the request above the response?
+  Settings → General → Layout: Classic.`;

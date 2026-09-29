@@ -6,7 +6,7 @@
 
 **The easy, intuitive — yet seriously powerful — HTTP(S) debugging proxy. On every desktop.**
 
-If you know Fiddler Classic on Windows, you already know Piper.
+Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Linux.
 
 [![CI](https://github.com/hkiam/piper/actions/workflows/ci.yml/badge.svg)](https://github.com/hkiam/piper/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -33,19 +33,21 @@ If you know Fiddler Classic on Windows, you already know Piper.
 
 ## Why Piper?
 
-For many developers, **Fiddler Classic** is *the* HTTP debugger: a dense session list, inspectors
-right next to it, keyboard-driven, and powerful enough to break, tamper, replay or script any
-request — without ever getting in the way. It is also **Windows-only** and built on a platform
-that is no longer evolving.
+On Windows, tools such as Fiddler Classic showed how productive an HTTP debugging proxy can be:
+a dense session list, inspectors right next to it, keyboard-driven, and powerful enough to break,
+tamper, replay or script any request — without getting in the way. Developers on macOS and Linux,
+and teams working across platforms, have had few free tools of that kind.
 
-Piper exists to bring exactly that experience to **every desktop platform**:
+Piper is an independent, open-source take on this kind of tool, with its own design, for
+**every desktop platform**:
 
 - **Easy to use.** Start Piper, and traffic appears. HTTPS decryption is one checkbox and one
   "Trust" click. No accounts, no cloud, no setup wizard marathon.
-- **Intuitive — especially if you know Fiddler.** Same layout, same mental model, same
-  shortcuts (`F12`, `F11`, `Ctrl/⌘ R`, `Alt Q` …), QuickExec, AutoResponder, Composer,
-  and SAZ files you can exchange with colleagues who still use Fiddler.
-- **Powerful.** Breakpoints and tampering, auto-responders, replay, JavaScript rules,
+- **Intuitive.** A dense, keyboard-driven workspace with a Command Bar, Mock Rules, a
+  Composer and inspectors that pick the right view for the content. Coming from Fiddler
+  Classic? Your `.saz` sessions and `.farx` rules import directly, and the Command Bar and
+  shortcuts will feel familiar — see [Coming from Fiddler Classic](docs/coming-from-fiddler.md).
+- **Powerful.** Breakpoints and tampering, mock rules, replay, JavaScript rules,
   WASM plugins, enterprise authentication (NTLM/Kerberos), PAC, mTLS, bandwidth simulation,
   and inspectors for WebSocket, SSE, gRPC, SOAP, OData and MTOM.
 - **Fast, even when traffic is not friendly.** Hundreds of thousands of sessions and
@@ -77,8 +79,8 @@ Piper exists to bring exactly that experience to **every desktop platform**:
 - Process attribution (which app sent the request)
 
 ### Inspect
-- Headers, TextView, SyntaxView, WebForms, HexView, Auth, Cookies,
-  Raw, JSON, XML, Caching, ImageView, WebView, Transformer
+- Headers, Text, Pretty, Form Data, Hex, Auth, Cookies,
+  Raw, JSON, XML, Caching, Image, Preview, Encoding
 - Auto-detected inspectors: **WebSocket**, **SSE**, **gRPC / Protobuf**
   (schemaless), **Multipart / MTOM**, **SOAP**, **Atom / OData**
 - **Fast Infoset** (SOAP, OData, EDMX) via bundled plugin
@@ -89,16 +91,16 @@ Piper exists to bring exactly that experience to **every desktop platform**:
 <td valign="top" width="50%">
 
 ### Change & replay
-- **AutoResponder** with Fiddler `.farx` import/export
+- **Mock Rules** with `.farx` import/export
 - **Breakpoints & tamper** before request / after response
 - **Composer** (parsed, raw, history) with **cURL import**
-- Replay: reissue, unconditionally, *n* times, sequentially, with edit
-- **JavaScript rules** (FiddlerScript replacement) with hot reload,
+- Replay: again, unconditionally, *n* times, sequentially, with edit
+- **JavaScript rules** with hot reload,
   custom menu commands and a custom column
 
 ### Analyze
-- **QuickExec** command line (`?text`, `@host`, `=404`, `>10k`, `bpu`, `g` …)
-- Filters, Find, Statistics, Timeline, Compare, TextWizard
+- **Command Bar** (`?text`, `@host`, `=404`, `>10k`, `bpu`, `g` …)
+- Filters, Find, Statistics, Timeline, Compare, Text Tools
 - Comments, color marks, custom column
 
 ### Enterprise-ready
@@ -106,7 +108,7 @@ Piper exists to bring exactly that experience to **every desktop platform**:
   single sign-on via Windows SSPI and macOS Kerberos tickets
 - **Client certificates (mTLS)** per host
 - **Bandwidth & latency simulation**
-- Import/export **SAZ** (Fiddler-compatible), **HAR 1.2**, copy as cURL
+- Import/export **SAZ** (compatible with Fiddler Classic), **HAR 1.2**, copy as cURL
 
 </td>
 </tr>
@@ -129,7 +131,7 @@ Piper exists to bring exactly that experience to **every desktop platform**:
 </tr>
 <tr>
 <td width="50%">
-<img src="docs/screenshots/scripting.png" alt="Customize Rules editor with a JavaScript rules script and its console output">
+<img src="docs/screenshots/scripting.png" alt="Rules Script editor with a JavaScript rules script and its console output">
 <p align="center"><sub><b>JavaScript rules</b> — hooks, custom menu and column, live console</sub></p>
 </td>
 <td width="50%">
@@ -141,22 +143,22 @@ Piper exists to bring exactly that experience to **every desktop platform**:
 
 ---
 
-## Feels like Fiddler
+## Keyboard & Command Bar
 
 | Action | Piper | |
 |---|---|---|
 | Start / stop capturing | `F12` | |
 | Break before requests / after responses / off | `F11` / `Alt F11` / `Shift F11` | |
-| Resume all paused sessions | QuickExec `g` | |
-| Customize rules (scripting) | `Ctrl/⌘ R` | |
-| Focus QuickExec | `Alt Q` | |
-| Statistics / Inspectors | `F7` / `F8` | |
+| Resume all paused sessions | Command Bar `g` | |
+| Rules Script (scripting) | `Ctrl/⌘ R` | |
+| Focus Command Bar | `Alt Q` | |
+| Statistics / Inspect | `F7` / `F8` | |
 | Composer | `F9` | |
-| TextWizard | `Ctrl/⌘ E` | |
+| Text Tools | `Ctrl/⌘ E` | |
 | Find sessions | `Ctrl/⌘ F` | |
 | Mark session red … purple / unmark | `Ctrl/⌘ 1` … `6` / `Ctrl/⌘ 0` | |
 
-QuickExec examples:
+Command Bar examples:
 
 ```text
 ?login        select sessions whose URL contains "login"
@@ -170,7 +172,7 @@ tail 1000     keep the 1000 most recent sessions
 dump          save everything as a .saz archive
 ```
 
-Piper listens on **port 8866** by default, so it can run next to Fiddler (8888).
+Piper listens on **port 8866** by default. Layout: Piper's own arrangement by default, or **Classic** (dense list, request above response) in *Settings → General*.
 
 ---
 
@@ -230,8 +232,8 @@ It leads to `http://piper.cert`, which serves the certificate (`.crt` for Androi
 
 ## Scripting
 
-Piper embeds a sandboxed JavaScript engine (QuickJS) as a modern replacement for FiddlerScript.
-Open **Rules → Customize Rules…** (`Ctrl/⌘ R`), edit, and press `Ctrl/⌘ S` — the script reloads
+Piper embeds a sandboxed JavaScript engine (QuickJS) for rules scripts.
+Open **Rules → Rules Script…** (`Ctrl/⌘ R`), edit, and press `Ctrl/⌘ S` — the script reloads
 instantly and errors appear inline.
 
 ```js
@@ -377,5 +379,4 @@ Piper stands on the shoulders of great open-source projects, among them
 [rcgen](https://github.com/rustls/rcgen), [Tokio](https://tokio.rs),
 [Wasmtime](https://wasmtime.dev), [QuickJS](https://bellard.org/quickjs/) via
 [rquickjs](https://github.com/DelSkayn/rquickjs), [SQLite](https://sqlite.org) and
-[CodeMirror](https://codemirror.net) — and it is inspired by the workflow that Fiddler Classic
-made so many developers love.
+[CodeMirror](https://codemirror.net).
