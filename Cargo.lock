@@ -3379,6 +3379,8 @@ dependencies = [
  "tauri-plugin-dialog",
  "tokio",
  "tracing",
+ "webview2-com",
+ "windows-core",
 ]
 
 [[package]]

@@ -70,6 +70,10 @@ fn main() {
                     });
                 }
             }
+            #[cfg(windows)]
+            if let Some(w) = app.get_webview_window("main") {
+                disable_browser_accelerators(&w);
+            }
             let m = menu::build(&handle)?;
             app.set_menu(m)?;
             app.on_menu_event(|app, ev| {
@@ -94,6 +98,30 @@ fn main() {
                 exit_core.shutdown();
             }
         });
+}
+
+/// WebView2 handles browser shortcuts itself (Ctrl+F opens its page search, Ctrl+R/F5
+/// reload, Ctrl+P print) before the app sees them. Turn them off so Quena's own shortcuts
+/// work; editing keys (copy, paste, undo) are not affected.
+#[cfg(windows)]
+fn disable_browser_accelerators(w: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows_core::Interface;
+    let res = w.with_webview(|pw| {
+        let r = unsafe {
+            pw.controller()
+                .CoreWebView2()
+                .and_then(|wv| wv.Settings())
+                .and_then(|s| s.cast::<ICoreWebView2Settings3>())
+                .and_then(|s3| s3.SetAreBrowserAcceleratorKeysEnabled(false))
+        };
+        if let Err(e) = r {
+            tracing::warn!(target: "quena", "could not disable WebView2 browser shortcuts: {e}");
+        }
+    });
+    if let Err(e) = res {
+        tracing::warn!(target: "quena", "webview not available: {e}");
+    }
 }
 
 /// SIGTERM/SIGINT/SIGHUP (e.g. `kill`, system shutdown, dev-mode restarts): shut down

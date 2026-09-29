@@ -12,6 +12,13 @@ export function installGlobalKeys(): () => void {
       e.preventDefault();
       return;
     }
+    // Ctrl/Cmd+F: Find Sessions (the native menu shortcut does not reach the app on every
+    // platform while the web view has focus). Editors keep their own search.
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "f" || e.key === "F") && !t?.closest(".cm-editor")) {
+      set({ dialog: { kind: "find" } });
+      e.preventDefault();
+      return;
+    }
     if (typing) return;
     // Alt+Q focuses the command field.
     if (e.altKey && (e.key === "q" || e.key === "Q" || e.code === "KeyQ")) {
