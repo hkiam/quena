@@ -173,6 +173,7 @@ pub async fn send_with_auth(
             let leg_body = if final_leg { stream(&body) } else { empty() };
             let req = build_req(head, Some((auth_header, header_value)), leg_body, !final_leg)?;
             let resp = client.request(req).await.map_err(err_chain)?;
+            tracing::debug!(target: "piper::auth", "{} leg {} to {host}: {} (body sent: {})", hs.scheme().header_name(), leg + 1, resp.status(), final_leg);
             let again_proxy = resp.status() == http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
             let again_server = resp.status() == http::StatusCode::UNAUTHORIZED;
             if (again_proxy && is_proxy_challenge) || (again_server && is_server_challenge) {

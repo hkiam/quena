@@ -19,6 +19,9 @@ use std::time::Duration;
 /// `curl` for the tests. On Windows, curl uses Schannel, which insists on revocation
 /// information (CRL/OCSP) that locally generated interception certificates don't
 /// carry — like Fiddler's; browsers don't hard-fail on that, so skip the check.
+/// Where curl discards output (`-o`): Windows has no /dev/null.
+const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+
 fn curl_supports_http2() -> bool {
     Command::new("curl").arg("-V").output().map(|o| String::from_utf8_lossy(&o.stdout).contains("HTTP2")).unwrap_or(false)
 }
@@ -201,7 +204,7 @@ fn http_https_h2_and_big_bodies() {
     // --- 64 MiB streamed through the proxy
     let t = std::time::Instant::now();
     let out = curl_cmd()
-        .args(["-sS", "-o", "/dev/null", "-w", "%{size_download}", "-x", &format!("http://{}", env.proxy_addr), &format!("http://{}/big", env.http)])
+        .args(["-sS", "-o", NULL_DEVICE, "-w", "%{size_download}", "-x", &format!("http://{}", env.proxy_addr), &format!("http://{}/big", env.http)])
         .output()
         .unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout), (64u64 << 20).to_string());

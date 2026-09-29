@@ -79,7 +79,7 @@ fn autoresponder_and_breakpoints() {
     assert!(out.contains("Mock Rules: 404"), "{out}");
     let out = curl(&proxy, &format!("http://127.0.0.1:{port}/api/users")).join().unwrap();
     assert_eq!(out, r#"{"mocked":true}"#);
-    let o = Command::new("curl").args(["-sS", "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}", "-x", &proxy, &format!("http://127.0.0.1:{port}/redirect")]).output().unwrap();
+    let o = Command::new("curl").args(["-sS", "-o", if cfg!(windows) { "NUL" } else { "/dev/null" }, "-w", "%{http_code} %{redirect_url}", "-x", &proxy, &format!("http://127.0.0.1:{port}/redirect")]).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&o.stdout), "307 http://example.invalid/new");
     let out = curl(&proxy, &format!("http://127.0.0.1:{port}/passthrough")).join().unwrap();
     assert!(out.starts_with("GET /passthrough HTTP/1.1"), "{out}");

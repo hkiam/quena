@@ -169,7 +169,8 @@ fn curl(proxy: &std::net::SocketAddr, args: &[&str]) -> (i32, String) {
 
 /// Proxy auth decisions in the test output (visible when a test fails, e.g. on CI).
 fn init_logs() {
-    let _ = tracing_subscriber::fmt().with_env_filter("piper::auth=debug").with_test_writer().try_init();
+    // Straight to stderr: the proxy logs from its own threads, which the test harness doesn't capture.
+    let _ = tracing_subscriber::fmt().with_env_filter("piper::auth=debug").with_writer(std::io::stderr).try_init();
 }
 
 #[test]
@@ -182,6 +183,13 @@ fn ntlm_auto_auth_with_body_replay() {
 
     // POST with a body: the server echoes the body only on the authenticated (Type 3) leg.
     let (_c, out) = curl(&addr, &["-X", "POST", "--data-binary", "hello-ntlm-body", &format!("http://127.0.0.1:{server}/secure")]);
+    if out != "hello-ntlm-body" {
+        cap.index.tick();
+        for id in cap.index.find_all(|s| s.url == "/secure") {
+            let d = cap.detail(id).unwrap();
+            eprintln!("[diag] session {id}: status {} custom {:?} error {:?}", d.summary.status, d.summary.custom, d.error);
+        }
+    }
     assert_eq!(out, "hello-ntlm-body", "body must be replayed on the authenticated leg");
     assert_eq!(TYPE1_BODY.load(Ordering::Relaxed), 0, "the Type 1 leg must not carry the body (no double upload)");
 
