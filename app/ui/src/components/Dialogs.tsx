@@ -10,6 +10,7 @@ import { HttpsPanel } from "./HttpsDialog";
 import { DeviceAssistant } from "./DeviceDialog";
 import { PluginsPanel } from "./PluginsDialog";
 import { RulesEditor } from "./RulesEditor";
+import { CommandPalette } from "./CommandPalette";
 
 function Modal({ title, children, onClose, wide, footer }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; footer?: React.ReactNode }) {
   return (
@@ -116,13 +117,14 @@ const SHORTCUTS: [string, string][] = [
   [`${modKey}E`, "Text Tools"],
   ["F7 / F8 / F9", "Statistics / Inspectors / Composer"],
   ["F11 / Alt+F11 / Shift+F11", "Break before requests / after responses / off"],
-  ["Alt+Q or /", "Focus Command Bar"],
+  ["Alt+Q or /", "Focus the command field"],
+  [`${modKey}K`, "Command palette"],
   [`${modKey}⇧P`, "Performance overlay"],
 ];
 
 function HelpDialog({ topic }: { topic: "quickexec" | "shortcuts" }) {
   return (
-    <Modal title={topic === "quickexec" ? "Command Bar commands" : "Keyboard shortcuts"} onClose={close} wide>
+    <Modal title={topic === "quickexec" ? "Filter and command syntax" : "Keyboard shortcuts"} onClose={close} wide>
       {topic === "quickexec" ? (
         <pre className="help-pre">{QUICKEXEC_HELP}</pre>
       ) : (
@@ -574,7 +576,7 @@ function ChooseLayoutDialog() {
   };
   return (
     <Modal title="Choose a layout" onClose={() => pick(get().layout.preset)}>
-      <p className="muted">You can change this any time in Settings → General or with View → Stacked / Wide.</p>
+      <p className="muted">You can change this any time in Settings → General or with View → Request Above / Beside Response.</p>
       <div className="layout-cards">
         <button className="layout-card" onClick={() => pick("quena")}>
           <b>Quena</b>
@@ -652,6 +654,8 @@ export function Dialogs() {
       );
     case "choose-layout":
       return <ChooseLayoutDialog />;
+    case "palette":
+      return <CommandPalette />;
     case "rules":
       return (
         <Modal title="Rules Script" onClose={close} wide>

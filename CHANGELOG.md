@@ -11,8 +11,17 @@ contain breaking changes (settings, file formats, plugin API).
 - Own default layout: session list left, request and response side by side, rows coloured by
   outcome (5xx red, 4xx amber, redirects muted). The dense stacked arrangement is available as
   the **Classic** layout (first start, *Settings → General*).
-- Own names: Command Bar, Mock Rules, Text Tools, Inspect; inspector tabs Text, Pretty,
-  Form Data, Hex, Image, Preview, Encoding; *Rules Script…*; *Replay …*. Command Bar syntax
+- Own look: SVG icons (Lucide), a capture switch, method and status badges in the session list,
+  a state bar for in-flight/paused/mocked sessions, tunnels shown by target host with a badge.
+- Command field in the toolbar (`Alt+Q`) replaces the bar below the list; new command palette
+  (`Ctrl/⌘ K`) with every menu command.
+- Inspectors: request and response cards with segmented tabs (Headers, Body, Cookies, Raw and
+  content-specific views), the rest under *More*; headers as a filterable table in wire order
+  with topic tags and optional A–Z sorting.
+- Menus: *File, Edit, Capture, View, Tools, Help*; breakpoints, mock rules, rules script and
+  authentication are under *Capture*, the *Hide …* items under *View → Hide in List*.
+- Own names: Mock Rules, Text Tools, Inspect; inspector tabs Plain Text, Body,
+  Form Data, Hex, Image, Preview, Encoding; *Rules Script…*; *Replay …*. Filter/command syntax
   and shortcuts are unchanged. *Help → Coming from Fiddler Classic…* maps the names.
 - `.saz` is registered as a viewer (macOS rank "Alternate") and not at all on Windows, so Quena
   never takes over another application's file association.

@@ -10,3 +10,6 @@ respective owner and is used only to describe familiarity and compatibility.
 Third-party components are used under their own permissive licenses
 (MIT, Apache-2.0, BSD, ISC, Zlib and similar); see Cargo.lock and
 app/ui/package-lock.json for the full dependency list.
+
+The user interface icons are from Lucide (https://lucide.dev), ISC License,
+Copyright (c) Lucide Contributors.

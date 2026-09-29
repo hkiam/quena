@@ -17,13 +17,18 @@ import { WebSocketView } from "./WebSocketView";
 import { SseView } from "./SseView";
 import { MultipartView, multipartCandidate } from "./MultipartView";
 import { GrpcView, grpcCandidate } from "./GrpcView";
+import { ChevronDown } from "lucide-react";
+import { showContextMenu } from "../components/ContextMenu";
+import { methodPill, statusPill } from "../grid/style";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
+/** Always-visible segments; everything else sits in the "More" menu. */
+const PRIMARY = new Set(["headers", "syntaxview", "imageview", "webview", "cookies", "raw", "websocket", "sse", "grpc", "multipart", "soap"]);
 const TITLES: Record<string, string> = {
   headers: "Headers",
-  textview: "Text",
-  syntaxview: "Pretty",
+  textview: "Plain Text",
+  syntaxview: "Body",
   webforms: "Form Data",
   hexview: "Hex",
   auth: "Auth",
@@ -124,7 +129,7 @@ function TextPane({ detail, part, syntax }: { detail: Detail; part: Part; syntax
           <BodyText id={detail.summary.id} part={part} info={info} variant={v} highlight={syntax} wrap={wrap} />
         ) : (
           <div className="placeholder">
-            Binary content ({info.contentType ?? "unknown type"}, {fmtBytes(info.len)}). Use HexView{info.isImage ? " or ImageView" : ""}.
+            Binary content ({info.contentType ?? "unknown type"}, {fmtBytes(info.len)}). Open {info.isImage ? "Image or " : ""}Hex from the view menu.
           </div>
         )}
       </div>
@@ -250,15 +255,50 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
       }
     }
   }
+  const isImage = !!detail?.responseBody.isImage;
+  const isHtml = (detail?.responseBody.contentType ?? "").toLowerCase().includes("html");
+  const primary = tabs.filter(
+    (t) => (PRIMARY.has(t) && (t !== "imageview" || isImage) && (t !== "webview" || isHtml)) || t === tab,
+  );
+  // Content-specific views (SOAP, gRPC, WebSocket …) come right after Headers.
+  const rank = (t: string) => (t === "headers" ? 0 : special.includes(t) ? 1 : 2);
+  primary.sort((a, b) => rank(a) - rank(b));
+  const more = tabs.filter((t) => !primary.includes(t));
+  const title = (t: string) => TITLES[t] ?? pluginTabs.find((p) => p.key === t)?.title ?? t;
+  const pill = part === "response" && detail ? statusPill(detail.summary) : null;
+  const segRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    segRef.current?.querySelector(".seg.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [tab, primary.length]);
   return (
     <div className="insp-pane">
-      <div className="insp-tabs">
-        {tabs.map((t) => (
-          <div key={t} className={`insp-tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {TITLES[t] ?? pluginTabs.find((p) => p.key === t)?.title ?? t}
-          </div>
-        ))}
-      </div>
+      <div className="insp-head">
+        <span className="insp-part">{part === "request" ? "Request" : "Response"}</span>
+        {pill && <span className={`pill pill-${pill.tone}`}>{pill.text}</span>}
+        <div className="segmented" ref={segRef}>
+          {primary.map((t) => (
+            <button key={t} className={`seg ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
+              {title(t)}
+            </button>
+          ))}
+        </div>
+        {more.length > 0 && (
+          <button
+            className="seg seg-more"
+            title="More views"
+            onClick={(e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              showContextMenu(
+                r.left,
+                r.bottom + 2,
+                more.map((t) => ({ label: title(t), action: () => setTab(t) })),
+              );
+            }}
+          >
+            More <ChevronDown size={11} />
+          </button>
+        )}
+    </div>
       <div className="insp-content">{content}</div>
     </div>
   );
@@ -266,12 +306,18 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
 
 function SessionHeader({ detail }: { detail: Detail }) {
   const s = detail.summary;
+  const method = methodPill(s);
   return (
     <div className="insp-summary">
-      <b>#{s.id}</b> {detail.request.method} <span className="muted">{s.host}</span>
-      {s.status ? <span className={s.status >= 400 ? "err" : ""}> · {s.status}</span> : null}
-      {s.durationMs != null && <span className="muted"> · {fmtInt(s.durationMs)} ms</span>}
-      {s.process && <span className="muted"> · {s.process}</span>}
+      {method && <span className={`pill pill-${method.tone}`}>{method.text}</span>}
+      <span className="insp-url" title={detail.request.url}>
+        {detail.request.url}
+      </span>
+      <span className="insp-meta">
+        #{s.id}
+        {s.durationMs != null && ` · ${fmtInt(s.durationMs)} ms`}
+        {s.process && ` · ${s.process}`}
+      </span>
       {detail.error && <span className="err"> · {detail.error}</span>}
     </div>
   );

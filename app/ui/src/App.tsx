@@ -4,7 +4,6 @@ import { actions } from "./actions";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { Dialogs } from "./components/Dialogs";
 import { PerfOverlay } from "./components/PerfOverlay";
-import { QuickExec } from "./components/QuickExec";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { SessionGrid } from "./grid/SessionGrid";
@@ -98,10 +97,9 @@ export function App() {
   return (
     <div className="app">
       <Toolbar />
-      <div className="main" style={{ gridTemplateColumns: `${leftWidth * 100}% 5px 1fr` }}>
+      <div className="main" style={{ gridTemplateColumns: `${leftWidth * 100}% 8px 1fr` }}>
         <div className="left">
           <SessionGrid />
-          <QuickExec />
         </div>
         <Splitter onDrag={(f) => set((s) => ({ layout: { ...s.layout, leftWidth: f } }))} />
         <RightPane />

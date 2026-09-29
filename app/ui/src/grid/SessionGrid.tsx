@@ -6,16 +6,19 @@ import { api, type SessionSummary } from "../api";
 import { fmtInt, fmtMs, fmtTime } from "../lib/format";
 import { get, set, useStore, type ColumnConf, type ColumnKey } from "../store";
 import { RowCache } from "./rowCache";
-import { readPalette, rowIcon, rowStyle, type Palette } from "./style";
+import { methodPill, readPalette, rowStyle, stateMark, statusPill, type Palette, type Pill } from "./style";
 import { actions } from "../actions";
 import { showContextMenu } from "../components/ContextMenu";
 import { sessionMenu } from "../menus";
 
-export const ROW_H = 18;
+/** Row height: roomy in the Quena layout, dense in Classic. */
+let ROW_H = 24;
+const rowHeightFor = (preset: string) => (preset === "classic" ? 20 : 24);
 const MAX_SCROLL_PX = 8_000_000;
 const FONT = "12px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
 const FONT_BOLD = "600 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
 const FONT_ITALIC = "italic 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
+const FONT_PILL = "600 10.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
 
 export const rowCache = new RowCache();
 
@@ -133,12 +136,17 @@ export class GridController {
           rowCache.clear();
           this.schedule();
         }
-        if (s.selection !== prev.selection || s.focusIndex !== prev.focusIndex || s.layout.columns !== prev.layout.columns) {
+        if (s.layout.preset !== prev.layout.preset) {
+          ROW_H = rowHeightFor(s.layout.preset);
+          this.updateSpacer();
+        }
+        if (s.selection !== prev.selection || s.focusIndex !== prev.focusIndex || s.layout.columns !== prev.layout.columns || s.layout.preset !== prev.layout.preset) {
           this.updateSpacer();
           this.schedule();
         }
       }),
     );
+    ROW_H = rowHeightFor(get().layout.preset);
     this.resize();
   }
 
@@ -225,6 +233,24 @@ export class GridController {
     this.schedule();
   }
 
+  /** A rounded badge, left-aligned in the cell and clipped to its width. */
+  private pill(pill: Pill, x: number, y: number, maxW: number) {
+    const ctx = this.ctx;
+    const tone = this.pal.tones[pill.tone];
+    ctx.font = FONT_PILL;
+    const text = this.ell.fit(ctx, pill.text, maxW - 10, FONT_PILL);
+    if (!text) return;
+    const w = Math.min(maxW, ctx.measureText(text).width + 10);
+    const h = Math.min(16, ROW_H - 6);
+    const top = y + (ROW_H - h) / 2;
+    ctx.fillStyle = tone.bg;
+    ctx.beginPath();
+    ctx.roundRect(x, top, w, h, 4);
+    ctx.fill();
+    ctx.fillStyle = tone.fg;
+    ctx.fillText(text, x + 5, y + ROW_H / 2 + 0.5);
+  }
+
   schedule() {
     if (this.raf) return;
     this.raf = requestAnimationFrame(() => {
@@ -279,16 +305,21 @@ export class GridController {
         }
         if (x > this.vw) break;
         const fg = selected && this.hasFocus ? p.selFg : st.fg;
+        const sel = selected && this.hasFocus;
         if (c.key === "id") {
-          const icon = rowIcon(r, p);
-          ctx.fillStyle = selected && this.hasFocus ? p.selFg : icon.color;
-          ctx.font = FONT_BOLD;
-          ctx.textAlign = "center";
-          ctx.fillText(icon.glyph, x + 9, y + ROW_H / 2);
+          ctx.fillStyle = sel ? p.selFg : p.muted;
+          ctx.fillText(this.ell.fit(ctx, String(r.id), c.width - 12, font), x + 8, y + ROW_H / 2 + 0.5);
+        } else if (c.key === "method" || c.key === "result") {
+          const pill = c.key === "method" ? methodPill(r) : statusPill(r);
+          if (pill) this.pill(pill, x + 4, y, c.width - 8);
+          else if (c.key === "result" && r.state !== "done") {
+            ctx.fillStyle = sel ? p.selFg : p.muted;
+            ctx.fillText("…", x + 6, y + ROW_H / 2 + 0.5);
+          }
           ctx.font = font;
-          ctx.textAlign = "left";
-          ctx.fillStyle = fg;
-          ctx.fillText(this.ell.fit(ctx, String(r.id), c.width - 24, font), x + 20, y + ROW_H / 2 + 0.5);
+        } else if (c.key === "url" && r.kind === "tunnel" && !r.url) {
+          this.pill({ text: "TUNNEL", tone: "muted" }, x + 4, y, c.width - 8);
+          ctx.font = font;
         } else {
           const t = this.ell.fit(ctx, cellText(r, c.key), c.width - 8, font);
           ctx.fillStyle = fg;
@@ -302,22 +333,34 @@ export class GridController {
         }
         x += c.width;
       }
+      const mark = stateMark(r, p);
+      if (mark) {
+        ctx.fillStyle = mark;
+        ctx.fillRect(0, y + 3, 3, ROW_H - 6);
+      }
       if (focusIndex === i && this.hasFocus) {
         ctx.strokeStyle = p.focus;
-        ctx.setLineDash([2, 2]);
         ctx.strokeRect(0.5, y + 0.5, this.vw - 1, ROW_H - 1);
-        ctx.setLineDash([]);
       }
     }
-    // Column separators (subtle)
+    // Soft row separators (the Classic layout keeps column lines instead).
     ctx.strokeStyle = p.grid;
     ctx.beginPath();
-    let x = -sx;
-    for (const c of cols) {
-      x += c.width;
-      if (x > 0 && x < this.vw) {
-        ctx.moveTo(Math.floor(x) + 0.5, 0);
-        ctx.lineTo(Math.floor(x) + 0.5, this.vh);
+    if (get().layout.preset === "classic") {
+      let x = -sx;
+      for (const c of cols) {
+        x += c.width;
+        if (x > 0 && x < this.vw) {
+          ctx.moveTo(Math.floor(x) + 0.5, 0);
+          ctx.lineTo(Math.floor(x) + 0.5, this.vh);
+        }
+      }
+    } else {
+      for (let k = 1; k <= n; k++) {
+        const ly = Math.floor(offY + k * ROW_H) - 0.5;
+        if (first + k > listTotal) break;
+        ctx.moveTo(0, ly);
+        ctx.lineTo(this.vw, ly);
       }
     }
     ctx.stroke();

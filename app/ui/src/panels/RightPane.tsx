@@ -1,4 +1,6 @@
 import { lazy, Suspense } from "react";
+import type { LucideIcon } from "lucide-react";
+import { ChartColumn, ChartGantt, Filter, ScanSearch, ScrollText, Send, Zap } from "lucide-react";
 import { set, useStore, type RightTab } from "../store";
 import { Inspectors } from "../inspectors/Inspectors";
 import { StatisticsPanel } from "./Statistics";
@@ -9,14 +11,14 @@ import { TimelinePanel } from "./Timeline";
 const AutoResponderPanel = lazy(() => import("./AutoResponder"));
 const ComposerPanel = lazy(() => import("./Composer"));
 
-const TABS: [RightTab, string, string][] = [
-  ["inspectors", "Inspect", "🔎︎"],
-  ["composer", "Composer", "✎"],
-  ["autoresponder", "Mock Rules", "⚡"],
-  ["filters", "Filters", "⛛"],
-  ["timeline", "Timeline", "▤"],
-  ["statistics", "Statistics", "📊︎"],
-  ["log", "Log", "☰"],
+const TABS: [RightTab, string, LucideIcon][] = [
+  ["inspectors", "Inspect", ScanSearch],
+  ["composer", "Composer", Send],
+  ["autoresponder", "Mock Rules", Zap],
+  ["filters", "Filters", Filter],
+  ["timeline", "Timeline", ChartGantt],
+  ["statistics", "Statistics", ChartColumn],
+  ["log", "Log", ScrollText],
 ];
 
 export function RightPane() {
@@ -26,9 +28,9 @@ export function RightPane() {
   return (
     <div className="rpane">
       <div className="rp-tabs">
-        {TABS.map(([k, title, icon]) => (
+        {TABS.map(([k, title, Icon]) => (
           <div key={k} className={`rp-tab ${tab === k ? "active" : ""}`} onClick={() => set({ activeTab: k })}>
-            <span className="rp-icon">{icon}</span>
+            <Icon size={14} strokeWidth={1.8} className="rp-icon" />
             {title}
             {k === "filters" && filtersOn && <span className="rp-dot" />}
             {k === "autoresponder" && arOn && <span className="rp-dot" />}

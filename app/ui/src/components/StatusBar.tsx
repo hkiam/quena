@@ -25,14 +25,15 @@ export function StatusBar() {
   const running = jobs.filter((j) => j.status === "running" || j.status === "queued");
   const eng = status?.engine;
   const procMode = filters?.enabled ? filters.processMode : "all";
-  const procLabel = { all: "All Processes", browsers: "Web Browsers", nonBrowsers: "Non-Browser", remote: "Remote Clients" }[procMode];
+  const procLabel = { all: "All processes", browsers: "Browsers only", nonBrowsers: "Non-browsers", remote: "Remote clients" }[procMode];
 
   return (
     <div className="statusbar">
       <div className={`sb-cell sb-capture ${eng?.capturing ? "on" : ""}`} onClick={() => actions.toggleCapture()} title={eng?.listen.join(", ") || "Not capturing"}>
-        {eng?.capturing ? "● Capturing" : "○ Not capturing"}
-        {eng?.systemProxy && <span className="sb-tag">System Proxy</span>}
-        {eng?.decrypting && <span className="sb-tag">HTTPS</span>}
+        <span className="sb-dot" />
+        {eng?.capturing ? `Proxy ${eng.listen[0] ?? ""}` : "Not capturing"}
+        {eng?.systemProxy && <span className="sb-tag">system proxy</span>}
+        {eng?.decrypting && <span className="sb-tag">HTTPS decrypt</span>}
       </div>
       <div
         className="sb-cell sb-click"
@@ -41,7 +42,7 @@ export function StatusBar() {
             e.clientX,
             e.clientY - 120,
             (["all", "browsers", "nonBrowsers", "remote"] as const).map((m) => ({
-              label: { all: "All Processes", browsers: "Web Browsers", nonBrowsers: "Non-Browser", remote: "Remote Clients" }[m],
+              label: { all: "All processes", browsers: "Browsers only", nonBrowsers: "Non-browsers", remote: "Remote clients" }[m],
               checked: procMode === m,
               action: async () => {
                 const f = await api.getFilters();
@@ -58,8 +59,8 @@ export function StatusBar() {
       <div className="sb-cell" title="visible / total sessions">
         {selection.size > 1 ? `${fmtInt(selection.size)} selected · ` : ""}
         {fmtInt(total)}
-        {count !== total ? ` / ${fmtInt(count)}` : ""}
-        {status?.filterActive ? " (filtered)" : ""}
+        {count !== total ? ` of ${fmtInt(count)}` : ""} sessions
+        {status?.filterActive ? <span className="sb-tag">filtered</span> : null}
       </div>
       {!!eng?.breakpoints.length && <div className="sb-cell sb-bp">⏸ {eng.breakpoints.join(", ")}</div>}
       {!!eng?.paused && <div className="sb-cell sb-bp">{eng.paused} paused</div>}

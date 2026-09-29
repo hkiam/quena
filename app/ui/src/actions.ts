@@ -1,5 +1,5 @@
 // Central command dispatcher shared by menu, toolbar, keyboard, context menu
-// and QuickExec. Every action returns immediately (optimistic UI, R11); the
+// and the command field. Every action returns immediately (optimistic UI, R11); the
 // core confirms asynchronously.
 import { api, type Detail, type MarkColor, type SessionId, type Sort } from "./api";
 import { get, say, set, PRESETS, type LayoutPreset, type RightTab } from "./store";
@@ -327,7 +327,7 @@ export const actions = {
         return true;
       }
       if (k === "/" || k === "?") {
-        document.querySelector<HTMLInputElement>(".quickexec input")?.focus();
+        document.querySelector<HTMLInputElement>(".cmdfield input")?.focus();
         return true;
       }
     }

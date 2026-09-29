@@ -1,4 +1,4 @@
-// Row colouring and icons.
+// Row colouring, method/status badges and the state bar.
 import { Flags, type SessionSummary } from "../api";
 
 export interface Palette {
@@ -19,6 +19,7 @@ export interface Palette {
   grid: string;
   marks: Record<string, string>;
   markFg: Record<string, string>;
+  tones: Record<Tone, { fg: string; bg: string }>;
 }
 
 export function readPalette(el: HTMLElement): Palette {
@@ -56,6 +57,9 @@ export function readPalette(el: HTMLElement): Palette {
       orange: v("--markfg-orange"),
       purple: v("--markfg-purple"),
     },
+    tones: Object.fromEntries(
+      (["ok", "info", "warn", "err", "muted", "violet"] as const).map((t) => [t, { fg: v(`--pill-${t}-fg`), bg: v(`--pill-${t}-bg`) }]),
+    ) as Record<Tone, { fg: string; bg: string }>,
   };
 }
 
@@ -73,11 +77,9 @@ export function rowStyle(r: SessionSummary, p: Palette): RowStyle {
   if (r.state === "breakpointRequest" || r.state === "breakpointResponse") {
     return { fg: p.red, bold: true, bg: p.marks.red, italic: false };
   }
-  // Colour follows the outcome, not the content type (that is shown by the icon):
-  // server errors / aborts red, client errors amber, redirects and tunnels muted.
-  if (r.state === "aborted" || r.status >= 500) fg = p.red;
-  else if (r.status >= 400) fg = p.amber;
-  else if (r.kind === "tunnel" || (r.status >= 300 && r.status < 400)) fg = p.gray;
+  // The outcome is shown by the status badge; only aborted sessions and tunnels tint the row.
+  if (r.state === "aborted") fg = p.red;
+  else if (r.kind === "tunnel") fg = p.gray;
   if (r.state !== "done" && r.state !== "aborted") italic = true;
   let bg: string | null = null;
   if (r.color) {
@@ -88,42 +90,63 @@ export function rowStyle(r: SessionSummary, p: Palette): RowStyle {
   return { fg, bold, bg, italic };
 }
 
-export interface Icon {
-  glyph: string;
-  color: string;
+export type Tone = "ok" | "info" | "warn" | "err" | "muted" | "violet";
+
+export interface Pill {
+  text: string;
+  tone: Tone;
 }
 
-export function rowIcon(r: SessionSummary, p: Palette): Icon {
-  const ct = r.contentType.toLowerCase();
+/** Method badge: the verb's colour tells reads, writes and deletes apart at a glance. */
+export function methodPill(r: SessionSummary): Pill | null {
+  const m = r.method.toUpperCase();
+  if (!m) return null;
+  switch (m) {
+    case "GET":
+      return { text: m, tone: "info" };
+    case "POST":
+      return { text: m, tone: "ok" };
+    case "PUT":
+    case "PATCH":
+      return { text: m, tone: "warn" };
+    case "DELETE":
+      return { text: m, tone: "err" };
+    case "CONNECT":
+    case "HEAD":
+    case "OPTIONS":
+      return { text: m, tone: "muted" };
+    default:
+      return { text: m, tone: "violet" };
+  }
+}
+
+/** Status badge; null while no status is known yet. */
+export function statusPill(r: SessionSummary): Pill | null {
+  if (r.state === "aborted" && !r.status) return { text: "ERR", tone: "err" };
+  const s = r.status;
+  if (!s) return null;
+  const text = String(s);
+  if (s >= 500) return { text, tone: "err" };
+  if (s >= 400) return { text, tone: "warn" };
+  if (s >= 300) return { text, tone: "muted" };
+  if (s >= 200) return { text, tone: "ok" };
+  return { text, tone: "info" };
+}
+
+/** Colour of the thin state bar at the row's left edge, or null for a finished session. */
+export function stateMark(r: SessionSummary, p: Palette): string | null {
   switch (r.state) {
     case "breakpointRequest":
-      return { glyph: "⏸", color: p.red };
     case "breakpointResponse":
-      return { glyph: "⏸", color: p.red };
+    case "aborted":
+      return p.red;
     case "requestHeaders":
     case "sendingRequest":
-      return { glyph: "↑", color: p.blue };
     case "awaitingResponse":
-      return { glyph: "⋯", color: p.blue };
     case "receivingResponse":
-      return { glyph: "↓", color: p.green };
-    case "aborted":
-      return { glyph: "✕", color: p.red };
+      return p.focus;
   }
-  if (r.kind === "tunnel") return { glyph: "🔒︎", color: p.gray };
-  if (r.kind === "webSocket") return { glyph: "⇅", color: p.purple };
-  if (r.flags & Flags.AUTO_RESPONDED) return { glyph: "⚡", color: p.purple };
-  if (r.status >= 500) return { glyph: "⚠", color: p.red };
-  if (r.status >= 400) return { glyph: "⚠", color: p.amber };
-  if (r.status === 304) return { glyph: "↻", color: p.gray };
-  if (r.status >= 300 && r.status < 400) return { glyph: "↪", color: p.muted };
-  if (ct.includes("html")) return { glyph: "◧", color: p.muted };
-  if (ct.includes("json")) return { glyph: "{}", color: p.muted };
-  if (ct.includes("xml") || ct.includes("soap")) return { glyph: "‹›", color: p.muted };
-  if (ct.includes("javascript")) return { glyph: "ʃ", color: p.muted };
-  if (ct.includes("css")) return { glyph: "#", color: p.muted };
-  if (ct.startsWith("image/")) return { glyph: "▣", color: p.muted };
-  if (ct.startsWith("font/") || ct.includes("woff")) return { glyph: "A", color: p.muted };
-  if (r.status === 0) return { glyph: "·", color: p.muted };
-  return { glyph: "◇", color: p.muted };
+  if (r.flags & Flags.AUTO_RESPONDED) return p.purple;
+  if (r.kind === "webSocket") return p.blue;
+  return null;
 }

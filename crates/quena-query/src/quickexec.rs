@@ -1,4 +1,4 @@
-//! Command Bar parser (QuickExec-compatible syntax).
+//! Command-field parser (QuickExec-compatible syntax).
 
 use crate::expr::{Expr, Field, Op, Value};
 use crate::{ParseError, parse_size};

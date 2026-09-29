@@ -43,9 +43,9 @@ Quena is an independent, open-source take on this kind of tool, with its own des
 
 - **Easy to use.** Start Quena, and traffic appears. HTTPS decryption is one checkbox and one
   "Trust" click. No accounts, no cloud, no setup wizard marathon.
-- **Intuitive.** A dense, keyboard-driven workspace with a Command Bar, Mock Rules, a
+- **Intuitive.** A keyboard-driven workspace with a command field and palette, Mock Rules, a
   Composer and inspectors that pick the right view for the content. Coming from Fiddler
-  Classic? Your `.saz` sessions and `.farx` rules import directly, and the Command Bar and
+  Classic? Your `.saz` sessions and `.farx` rules import directly, and the filter syntax and
   shortcuts will feel familiar — see [Coming from Fiddler Classic](docs/coming-from-fiddler.md).
 - **Powerful.** Breakpoints and tampering, mock rules, replay, JavaScript rules,
   WASM plugins, enterprise authentication (NTLM/Kerberos), PAC, mTLS, bandwidth simulation,
@@ -99,7 +99,7 @@ Quena is an independent, open-source take on this kind of tool, with its own des
   custom menu commands and a custom column
 
 ### Analyze
-- **Command Bar** (`?text`, `@host`, `=404`, `>10k`, `bpu`, `g` …)
+- **Command field** (`?text`, `@host`, `=404`, `>10k`, `bpu`, `g` …) and **command palette** (`Ctrl/⌘ K`)
 - Filters, Find, Statistics, Timeline, Compare, Text Tools
 - Comments, color marks, custom column
 
@@ -121,7 +121,7 @@ Quena is an independent, open-source take on this kind of tool, with its own des
 <table>
 <tr>
 <td width="50%">
-<img src="docs/screenshots/soap-inspector.png" alt="SOAP request with syntax-highlighted XML response and auto-detected SOAP inspector">
+<img src="docs/screenshots/soap-inspector.png" alt="SOAP request: header table with topic tags and the SOAP inspector showing the parsed response">
 <p align="center"><sub><b>SOAP & XML</b> — pretty-printed, with auto-detected SOAP and Atom/OData inspectors</sub></p>
 </td>
 <td width="50%">
@@ -143,22 +143,23 @@ Quena is an independent, open-source take on this kind of tool, with its own des
 
 ---
 
-## Keyboard & Command Bar
+## Keyboard & command field
 
 | Action | Quena | |
 |---|---|---|
 | Start / stop capturing | `F12` | |
 | Break before requests / after responses / off | `F11` / `Alt F11` / `Shift F11` | |
-| Resume all paused sessions | Command Bar `g` | |
+| Resume all paused sessions | command `g` | |
 | Rules Script (scripting) | `Ctrl/⌘ R` | |
-| Focus Command Bar | `Alt Q` | |
+| Focus the command field | `Alt Q` | |
+| Command palette | `Ctrl/⌘ K` | |
 | Statistics / Inspect | `F7` / `F8` | |
 | Composer | `F9` | |
 | Text Tools | `Ctrl/⌘ E` | |
 | Find sessions | `Ctrl/⌘ F` | |
 | Mark session red … purple / unmark | `Ctrl/⌘ 1` … `6` / `Ctrl/⌘ 0` | |
 
-Command Bar examples:
+Command field examples:
 
 ```text
 ?login        select sessions whose URL contains "login"
@@ -233,7 +234,7 @@ It leads to `http://quena.cert`, which serves the certificate (`.crt` for Androi
 ## Scripting
 
 Quena embeds a sandboxed JavaScript engine (QuickJS) for rules scripts.
-Open **Rules → Rules Script…** (`Ctrl/⌘ R`), edit, and press `Ctrl/⌘ S` — the script reloads
+Open **Capture → Rules Script…** (`Ctrl/⌘ R`), edit, and press `Ctrl/⌘ S` — the script reloads
 instantly and errors appear inline.
 
 ```js

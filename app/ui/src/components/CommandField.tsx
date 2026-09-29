@@ -1,5 +1,8 @@
+// Command field in the toolbar: filters and commands (`?text`, `=404`, `@host`, `bpu /login` …).
 import { useRef, useState } from "react";
+import { Search } from "lucide-react";
 import { actions } from "../actions";
+import { modKey } from "../lib/format";
 
 const HISTORY_KEY = "quena.quickexec.history";
 
@@ -11,7 +14,7 @@ function loadHistory(): string[] {
   }
 }
 
-export function QuickExec() {
+export function CommandField() {
   const [value, setValue] = useState("");
   const history = useRef<string[]>(loadHistory());
   const pos = useRef(-1);
@@ -31,11 +34,12 @@ export function QuickExec() {
   };
 
   return (
-    <div className="quickexec">
+    <div className="cmdfield" title="Filter or run a command (Alt+Q). Type help for the syntax.">
+      <Search size={14} className="cmd-icon" />
       <input
         value={value}
         spellCheck={false}
-        placeholder="Command: ?text  =404  @host  >10k  bpu /login  cls  help   (Alt+Q)"
+        placeholder="Filter or command  ?text  =404  @host  bpu /login"
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") run();
@@ -61,6 +65,7 @@ export function QuickExec() {
           }
         }}
       />
+      <kbd className="cmd-kbd">{modKey}K</kbd>
     </div>
   );
 }

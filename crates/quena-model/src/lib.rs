@@ -349,8 +349,9 @@ impl SessionDetail {
             s.host = host;
             s.url = path;
         } else {
-            s.host = "Tunnel to".into();
-            s.url = self.request.url.clone();
+            // The list shows the tunnel's target as host; the path column marks it as a tunnel.
+            s.host = self.request.url.clone();
+            s.url = String::new();
         }
         s.protocol = protocol_label(&self.request.url, self.request.version, s.kind);
         s.request_body_len = self.request_body.wire_len();

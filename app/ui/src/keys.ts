@@ -13,9 +13,9 @@ export function installGlobalKeys(): () => void {
       return;
     }
     if (typing) return;
-    // Alt+Q focuses the Command Bar.
+    // Alt+Q focuses the command field.
     if (e.altKey && (e.key === "q" || e.key === "Q" || e.code === "KeyQ")) {
-      document.querySelector<HTMLInputElement>(".quickexec input")?.focus();
+      document.querySelector<HTMLInputElement>(".cmdfield input")?.focus();
       e.preventDefault();
     }
     // Ctrl+I focuses inspectors.

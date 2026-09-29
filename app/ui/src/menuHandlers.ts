@@ -94,10 +94,14 @@ export async function handleMenu(id: string) {
       set((s) => ({ layout: { ...s.layout, stacked: false } }));
       return actions.saveLayout();
     case "view.minimize-to-quickexec":
-      document.querySelector<HTMLInputElement>(".quickexec input")?.focus();
+      document.querySelector<HTMLInputElement>(".cmdfield input")?.focus();
       return;
     case "view.jobs":
       return set({ dialog: { kind: "jobs" } });
+    case "view.reset-columns":
+      return actions.resetColumns();
+    case "view.palette":
+      return set({ dialog: get().dialog?.kind === "palette" ? null : { kind: "palette" } });
     case "dev.mock-1k":
       return api.mockStart(5000, 1000);
     case "dev.mock-100k":
@@ -134,25 +138,26 @@ export async function handleMenu(id: string) {
 
 /** Name mapping for people switching over (descriptive use; see docs/coming-from-fiddler.md). */
 const COMING_FROM = `Quena is an independent project, not affiliated with Progress Software.
-Your files, Command Bar syntax and shortcuts carry over; some features have other names.
+Your files, the filter/command syntax and shortcuts carry over; some features have other names.
 
 Files
   .saz session archives     File → Import / Export Sessions → SAZ Archive…
   .farx AutoResponder rules Mock Rules tab → Import… / Export…
 
 Names
-  QuickExec                 Command Bar (Alt+Q)
+  QuickExec                 Command field in the toolbar (Alt+Q), palette Cmd/Ctrl+K
   AutoResponder             Mock Rules
   Inspectors                Inspect
-  TextView / SyntaxView     Text / Pretty
+  TextView / SyntaxView     Plain Text / Body
   WebForms / HexView        Form Data / Hex
   ImageView / WebView       Image / Preview
   Transformer               Encoding
   TextWizard                Text Tools (Ctrl/Cmd+E)
-  FiddlerScript             Rules Script, JavaScript (Ctrl/Cmd+R)
+  FiddlerScript             Capture → Rules Script…, JavaScript (Ctrl/Cmd+R)
+  Rules menu                Capture menu; Hide … items under View → Hide in List
   Reissue …                 Replay …
   Any Process               Process Filter
-  Hide CONNECTs             Hide Tunnels (CONNECT)
+  Hide CONNECTs             View → Hide in List → Tunnels (CONNECT)
   Result / Body columns     Status / Size columns
 
 Layout

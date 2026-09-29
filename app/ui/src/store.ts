@@ -55,14 +55,14 @@ const col = (key: ColumnKey, width: number, visible: boolean, align?: "left" | "
 
 /** Quena's default columns: what, where, outcome, size, time. */
 export const DEFAULT_COLUMNS: ColumnConf[] = [
-  col("id", 42, true, "left"),
-  col("method", 54, true),
-  col("result", 48, true, "right"),
-  col("host", 140, true),
-  col("url", 190, true),
-  col("contentType", 96, true),
+  col("id", 44, true, "left"),
+  col("method", 72, true),
+  col("result", 54, true),
+  col("host", 136, true),
+  col("url", 176, true),
+  col("contentType", 92, true),
   col("body", 62, true, "right"),
-  col("duration", 64, true, "right"),
+  col("duration", 62, true, "right"),
   col("process", 90, false),
   col("protocol", 70, false),
   col("comments", 120, false),
@@ -73,19 +73,19 @@ export const DEFAULT_COLUMNS: ColumnConf[] = [
 
 /** Classic: a dense list with more columns, for long-time proxy users. */
 export const CLASSIC_COLUMNS: ColumnConf[] = [
-  col("id", 74, true, "left"),
-  col("result", 52, true, "right"),
-  col("protocol", 62, true),
-  col("host", 170, true),
-  col("url", 300, true),
+  col("id", 52, true, "left"),
+  col("method", 72, true),
+  col("result", 52, true),
+  col("protocol", 58, true),
+  col("host", 160, true),
+  col("url", 280, true),
+  col("contentType", 120, true),
   col("body", 80, true, "right"),
+  col("duration", 64, true, "right"),
   col("caching", 90, true),
-  col("contentType", 130, true),
   col("process", 90, true),
   col("comments", 120, true),
-  col("custom", 80, true),
-  col("method", 60, false),
-  col("duration", 70, false, "right"),
+  col("custom", 80, false),
   col("started", 90, false),
 ];
 
@@ -150,6 +150,7 @@ export type Dialog =
   | { kind: "options" }
   | { kind: "recover" }
   | { kind: "find" }
+  | { kind: "palette" }
   | { kind: "jobs" }
   | { kind: "about" }
   | { kind: "text"; title: string; text: string }

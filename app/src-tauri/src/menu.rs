@@ -44,8 +44,6 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         "File",
         true,
         &[
-            &CheckMenuItem::with_id(app, "file.capture", "Capture Traffic", true, false, Some("F12"))?,
-            &sep()?,
             &item(app, "file.new-viewer", "New Viewer", None)?,
             &item(app, "file.load", "Load Archive…", Some("CmdOrCtrl+O"))?,
             &item(app, "file.recover", "Recover Previous Capture…", None)?,
@@ -140,27 +138,27 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         ],
     )?;
 
-    let rules = Submenu::with_items(
+    let capture = Submenu::with_items(
         app,
-        "Rules",
+        "Capture",
         true,
         &[
+            &CheckMenuItem::with_id(app, "file.capture", "Capture Traffic", true, false, Some("F12"))?,
+            &item(app, "tools.https", "HTTPS Settings…", None)?,
+            &item(app, "tools.connect-device", "Connect Device…", None)?,
+            &sep()?,
             &Submenu::with_items(
                 app,
-                "Automatic Breakpoints",
+                "Breakpoints",
                 true,
                 &[
                     &item(app, "rules.bp-before", "Before Requests", Some("F11"))?,
                     &item(app, "rules.bp-after", "After Responses", Some("Alt+F11"))?,
-                    &item(app, "rules.bp-off", "Disabled", Some("Shift+F11"))?,
+                    &item(app, "rules.bp-off", "Off", Some("Shift+F11"))?,
                 ],
             )?,
-            &sep()?,
+            &item(app, "view.autoresponder", "Mock Rules", None)?,
             &item(app, "rules.customize", "Rules Script…", Some("CmdOrCtrl+R"))?,
-            &sep()?,
-            &item(app, "rules.hide-connects", "Hide Tunnels (CONNECT)", None)?,
-            &item(app, "rules.hide-images", "Hide Image Requests", None)?,
-            &item(app, "rules.hide-304", "Hide 304s", None)?,
             &sep()?,
             &item(app, "rules.auto-auth", "Enable Automatic Authentication", None)?,
         ],
@@ -173,9 +171,6 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         &[
             #[cfg(not(target_os = "macos"))]
             &item(app, "tools.options", "Options…", None)?,
-            &item(app, "tools.https", "HTTPS Settings…", None)?,
-            &item(app, "tools.connect-device", "Connect Device…", None)?,
-            &sep()?,
             &item(app, "tools.textwizard", "Text Tools…", Some("CmdOrCtrl+E"))?,
             &item(app, "tools.composer", "Composer", Some("F9"))?,
             &sep()?,
@@ -188,19 +183,31 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         "View",
         true,
         &[
-            &item(app, "view.statistics", "Statistics", Some("F7"))?,
+            &item(app, "view.palette", "Command Palette…", Some("CmdOrCtrl+K"))?,
+            &item(app, "view.minimize-to-quickexec", "Focus Command Field", Some("Alt+Q"))?,
+            &sep()?,
             &item(app, "view.inspectors", "Inspect", Some("F8"))?,
-            &item(app, "view.autoresponder", "Mock Rules", None)?,
             &item(app, "view.composer", "Composer", None)?,
+            &item(app, "view.statistics", "Statistics", Some("F7"))?,
             &item(app, "view.filters", "Filters", None)?,
             &item(app, "view.log", "Log", None)?,
             &item(app, "view.timeline", "Timeline", None)?,
             &sep()?,
-            &item(app, "view.stacked", "Stacked Layout", None)?,
-            &item(app, "view.wide", "Wide Layout", None)?,
+            &Submenu::with_items(
+                app,
+                "Hide in List",
+                true,
+                &[
+                    &item(app, "rules.hide-connects", "Tunnels (CONNECT)", None)?,
+                    &item(app, "rules.hide-images", "Image Requests", None)?,
+                    &item(app, "rules.hide-304", "304 Not Modified", None)?,
+                ],
+            )?,
+            &sep()?,
+            &item(app, "view.stacked", "Request Above Response", None)?,
+            &item(app, "view.wide", "Request Beside Response", None)?,
             &item(app, "view.tearoff", "Tear off Inspectors", None)?,
             &sep()?,
-            &item(app, "view.minimize-to-quickexec", "Focus Command Bar", Some("Alt+Q"))?,
             &item(app, "view.jobs", "Jobs", None)?,
             &sep()?,
             &Submenu::with_items(
@@ -229,7 +236,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         "Help",
         true,
         &[
-            &item(app, "help.quickexec", "Command Bar Commands", None)?,
+            &item(app, "help.quickexec", "Command Syntax", None)?,
             &item(app, "help.shortcuts", "Keyboard Shortcuts", None)?,
             &item(app, "help.coming-from", "Coming from Fiddler Classic…", None)?,
             #[cfg(not(target_os = "macos"))]
@@ -238,7 +245,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     )?;
 
     #[cfg(target_os = "macos")]
-    return Menu::with_items(app, &[&app_menu, &file, &edit, &rules, &tools, &view, &help]);
+    return Menu::with_items(app, &[&app_menu, &file, &edit, &capture, &view, &tools, &help]);
     #[cfg(not(target_os = "macos"))]
-    Menu::with_items(app, &[&file, &edit, &rules, &tools, &view, &help])
+    Menu::with_items(app, &[&file, &edit, &capture, &view, &tools, &help])
 }
