@@ -268,10 +268,27 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, ParseError> {
     Ok(out)
 }
 
+/// Parentheses/`not` nesting accepted (recursive descent: each level is stack).
+const MAX_DEPTH: usize = 64;
+/// Terms per expression.
+const MAX_TERMS: usize = 10_000;
+
 struct Parser {
     toks: Vec<(Tok, usize)>,
     i: usize,
     len: usize,
+    depth: usize,
+    terms: usize,
+}
+
+/// Combine `v` (non-empty) into a balanced tree, so long `a and b and …` chains
+/// don't make `eval`/drop recurse once per term. Evaluation order is unchanged.
+fn balanced(mut v: Vec<Expr>, f: fn(Box<Expr>, Box<Expr>) -> Expr) -> Expr {
+    if v.len() == 1 {
+        return v.pop().expect("non-empty");
+    }
+    let right = v.split_off(v.len() / 2);
+    f(Box::new(balanced(v, f)), Box::new(balanced(right, f)))
 }
 
 impl Parser {
@@ -292,16 +309,15 @@ impl Parser {
         }
     }
     fn or(&mut self) -> Result<Expr, ParseError> {
-        let mut l = self.and()?;
+        let mut v = vec![self.and()?];
         while self.is_kw("or") {
             self.i += 1;
-            let r = self.and()?;
-            l = Expr::Or(Box::new(l), Box::new(r));
+            v.push(self.and()?);
         }
-        Ok(l)
+        Ok(balanced(v, Expr::Or))
     }
     fn and(&mut self) -> Result<Expr, ParseError> {
-        let mut l = self.unary()?;
+        let mut v = vec![self.unary()?];
         loop {
             if self.is_kw("and") {
                 self.i += 1;
@@ -309,15 +325,34 @@ impl Parser {
                 break;
             }
             // Implicit AND between adjacent terms.
-            let r = self.unary()?;
-            l = Expr::And(Box::new(l), Box::new(r));
+            v.push(self.unary()?);
         }
-        Ok(l)
+        Ok(balanced(v, Expr::And))
     }
     fn unary(&mut self) -> Result<Expr, ParseError> {
+        let nests = self.is_kw("not") || self.peek() == Some(&Tok::LParen);
+        if nests {
+            if self.depth >= MAX_DEPTH {
+                return self.err(&format!("expression nested deeper than {MAX_DEPTH} levels"));
+            }
+            self.depth += 1;
+        }
+        let r = self.unary_inner();
+        if nests {
+            self.depth -= 1;
+        }
+        r
+    }
+    fn unary_inner(&mut self) -> Result<Expr, ParseError> {
         if self.is_kw("not") {
             self.i += 1;
             return Ok(Expr::Not(Box::new(self.unary()?)));
+        }
+        if !matches!(self.peek(), Some(Tok::LParen) | None) {
+            self.terms += 1;
+            if self.terms > MAX_TERMS {
+                return self.err(&format!("more than {MAX_TERMS} terms"));
+            }
         }
         match self.peek().cloned() {
             Some(Tok::LParen) => {
@@ -381,7 +416,7 @@ impl Parser {
                 Some(n) => Value::Num(n),
                 None if field == Field::Status && raw.to_ascii_lowercase().ends_with("xx") => {
                     // status == 4xx
-                    let d: u64 = raw[..1].parse().map_err(|_| ParseError { msg: "bad status class".into(), pos: self.pos() })?;
+                    let d: u64 = raw.get(..1).unwrap_or("").parse().map_err(|_| ParseError { msg: "bad status class".into(), pos: self.pos() })?;
                     let lo = Expr::Cmp(Field::Status, Op::Ge, Value::Num(d * 100));
                     let hi = Expr::Cmp(Field::Status, Op::Lt, Value::Num(d * 100 + 100));
                     let both = Expr::And(Box::new(lo), Box::new(hi));
@@ -404,7 +439,7 @@ pub fn parse(src: &str) -> Result<Expr, ParseError> {
     if toks.is_empty() {
         return Ok(Expr::True);
     }
-    let mut p = Parser { toks, i: 0, len: src.len() };
+    let mut p = Parser { toks, i: 0, len: src.len(), depth: 0, terms: 0 };
     let e = p.or()?;
     if p.i != p.toks.len() {
         return p.err("unexpected token");
@@ -460,5 +495,22 @@ mod tests {
         assert!(parse("status >= ").is_err());
         assert!(parse("(a").is_err());
         assert!(parse("size > abc").is_err());
+        assert!(parse("status == äxx").is_err());
+    }
+
+    #[test]
+    fn nesting_and_term_limits() {
+        let deep = format!("{}a{}", "(".repeat(100_000), ")".repeat(100_000));
+        assert!(parse(&deep).unwrap_err().msg.contains("nested"));
+        assert!(parse(&"not ".repeat(100_000)).is_err());
+        let ok = format!("{}login{}", "(".repeat(MAX_DEPTH), ")".repeat(MAX_DEPTH));
+        assert!(parse(&ok).unwrap().eval(&s()));
+        assert!(parse(&"a ".repeat(MAX_TERMS + 1)).unwrap_err().msg.contains("terms"));
+        // A long chain parses into a shallow tree: evaluating and dropping it is cheap on the stack.
+        let long = vec!["status == 502"; MAX_TERMS].join(" and ");
+        let e = std::thread::Builder::new().stack_size(256 * 1024).spawn(move || parse(&long).unwrap().eval(&s())).unwrap().join().unwrap();
+        assert!(e);
+        let long = format!("{} or login", vec!["process ~ x"; 5000].join(" or "));
+        assert!(parse(&long).unwrap().eval(&s()));
     }
 }

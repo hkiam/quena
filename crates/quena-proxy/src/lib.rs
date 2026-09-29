@@ -199,6 +199,11 @@ impl ProxyConfig {
 }
 
 /// Shared state of a running proxy.
+/// Upper bound for simultaneous client connections (the engine raises the process
+/// descriptor limit well above this at startup).
+pub const MAX_CLIENT_CONNECTIONS: usize = 4096;
+static LAST_LIMIT_WARN: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
 pub struct Shared {
     pub capture: RwLock<Arc<Capture>>,
     pub cfg: RwLock<Arc<ProxyConfig>>,
@@ -211,6 +216,9 @@ pub struct Shared {
     pub upstream: RwLock<Arc<Upstream>>,
     pub listen: RwLock<Vec<SocketAddr>>,
     pub conn_ids: std::sync::atomic::AtomicU64,
+    /// Caps concurrent client connections so a flood (or a proxy loop) cannot exhaust
+    /// file descriptors; excess connections are closed right away.
+    pub conn_limit: Arc<tokio::sync::Semaphore>,
 }
 
 impl Shared {
@@ -265,6 +273,7 @@ impl Proxy {
             upstream: RwLock::new(upstream),
             listen: RwLock::new(vec![]),
             conn_ids: std::sync::atomic::AtomicU64::new(1),
+            conn_limit: Arc::new(tokio::sync::Semaphore::new(MAX_CLIENT_CONNECTIONS)),
         });
         Ok(Arc::new(Proxy { shared, rt, stop: RwLock::new(None) }))
     }
@@ -338,6 +347,7 @@ impl Proxy {
             return Err(ProxyError::Bind(a, e));
         }
         *self.shared.listen.write() = addrs.clone();
+        connector::add_self_addrs(&addrs);
         *self.stop.write() = Some(tx);
         tracing::info!(target: "quena::proxy", "listening on {}", addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "));
         Ok(addrs)
@@ -349,10 +359,24 @@ impl Proxy {
             loop {
                 tokio::select! {
                     r = l.accept() => match r {
-                        Ok((s, peer)) => {
-                            let shared = shared.clone();
-                            tokio::spawn(async move { conn::handle_client(shared, s, peer).await });
-                        }
+                        Ok((s, peer)) => match shared.conn_limit.clone().try_acquire_owned() {
+                            Ok(permit) => {
+                                let shared = shared.clone();
+                                tokio::spawn(async move {
+                                    let _permit = permit;
+                                    conn::handle_client(shared, s, peer).await
+                                });
+                            }
+                            Err(_) => {
+                                drop(s);
+                                let now = quena_model::now_us();
+                                let last = LAST_LIMIT_WARN.load(std::sync::atomic::Ordering::Relaxed);
+                                if now - last > 5_000_000 {
+                                    LAST_LIMIT_WARN.store(now, std::sync::atomic::Ordering::Relaxed);
+                                    tracing::warn!(target: "quena::proxy", "more than {MAX_CLIENT_CONNECTIONS} client connections; refusing new ones");
+                                }
+                            }
+                        },
                         Err(e) => {
                             tracing::warn!(target: "quena::proxy", "accept failed: {e}");
                             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -369,7 +393,9 @@ impl Proxy {
             let _ = tx.send(true);
             tracing::info!(target: "quena::proxy", "stopped listening");
         }
-        self.shared.listen.write().clear();
+        let mut listen = self.shared.listen.write();
+        connector::remove_self_addrs(&listen);
+        listen.clear();
     }
 
     /// Apply a new configuration. Restarts listeners if the listen settings changed.

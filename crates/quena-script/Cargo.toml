@@ -13,7 +13,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 parking_lot = { workspace = true }
-tokio = { version = "1", default-features = false, features = ["sync"] }
+tokio = { version = "1", default-features = false, features = ["sync", "time"] }
 
 [dev-dependencies]
-tokio = { version = "1", default-features = false, features = ["sync", "rt", "macros"] }
+tokio = { version = "1", default-features = false, features = ["sync", "rt", "macros", "time"] }

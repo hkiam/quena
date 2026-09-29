@@ -14,6 +14,34 @@ mod sspi_windows;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 
+/// Server tokens arrive with or without `=` padding (and occasionally wrapped).
+const B64_LENIENT: base64::engine::GeneralPurpose = base64::engine::GeneralPurpose::new(
+    &base64::alphabet::STANDARD,
+    base64::engine::GeneralPurposeConfig::new().with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
+);
+
+/// Split on `sep` outside double quotes (`realm="a, b"` stays one parameter).
+fn split_unquoted(s: &str, sep: char) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            c if c == sep && !quoted => {
+                out.push(&s[start..i]);
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
     #[error("no credentials available")]
@@ -84,14 +112,15 @@ pub fn parse_challenges(values: &[String]) -> Vec<Offer> {
             let mut params = Vec::new();
             if !rest.is_empty() {
                 if rest.contains('=') && rest.contains(char::is_whitespace) || rest.contains(',') || looks_like_params(rest) {
-                    for kv in rest.split(',') {
+                    for kv in split_unquoted(rest, ',') {
                         if let Some((k, val)) = kv.split_once('=') {
                             params.push((k.trim().to_string(), val.trim().trim_matches('"').to_string()));
                         }
                     }
                 } else {
                     // Bare token (NTLM/Negotiate continuation) is base64.
-                    token = B64.decode(rest.trim_end_matches('=').to_string() + &"=".repeat(rest.len() % 4)).ok().or_else(|| B64.decode(rest).ok());
+                    let compact: String = rest.chars().filter(|c| !c.is_whitespace()).collect();
+                    token = B64_LENIENT.decode(compact.as_bytes()).ok();
                 }
             }
             out.push(Offer { scheme, token, params });
@@ -111,7 +140,7 @@ fn split_challenges(v: &str) -> Vec<String> {
     // Common case: a single scheme per header line. Handle "Negotiate, NTLM" too.
     let mut result = Vec::new();
     let mut current = String::new();
-    for tok in v.split(',') {
+    for tok in split_unquoted(v, ',') {
         let t = tok.trim();
         let first = t.split_whitespace().next().unwrap_or("");
         if Scheme::parse(first).is_some() && !current.is_empty() {
@@ -297,6 +326,20 @@ pub fn redact(name: &str, value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lenient_challenges() {
+        // Unpadded token (len % 4 == 2) and a quoted realm with a comma.
+        let offers = parse_challenges(&["NTLM TlRMTVNTUAACAA".into(), "Basic realm=\"Sales, EMEA\", charset=\"UTF-8\"".into()]);
+        assert_eq!(offers.len(), 2);
+        assert!(offers[0].token.is_some(), "unpadded base64 must decode");
+        assert_eq!(offers[1].params[0], ("realm".into(), "Sales, EMEA".into()));
+        assert_eq!(offers[1].params[1].1, "UTF-8");
+        // Garbage never panics.
+        for v in ["", ",,,", "NTLM ===", "Negotiate \u{0}", "Basic realm=\"unterminated", "\"\"\""] {
+            let _ = parse_challenges(&[v.to_string()]);
+        }
+    }
 
     #[test]
     fn parse_basic_and_ntlm() {

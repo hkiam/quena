@@ -43,7 +43,7 @@ impl UpstreamResolver for PacResolver {
 pub fn load_pac_source(loc: &str) -> Result<String> {
     let loc = loc.trim();
     if let Some(path) = loc.strip_prefix("file://") {
-        return Ok(std::fs::read_to_string(path)?);
+        return read_pac_file(path);
     }
     if loc.starts_with("http://") {
         return http_get(loc);
@@ -51,10 +51,27 @@ pub fn load_pac_source(loc: &str) -> Result<String> {
     if loc.starts_with("https://") {
         return Err(anyhow!("https:// PAC URLs are not fetched automatically; download the file and set its path"));
     }
-    Ok(std::fs::read_to_string(loc)?)
+    read_pac_file(loc)
 }
 
+fn read_pac_file(path: &str) -> Result<String> {
+    let f = std::fs::File::open(path)?;
+    let mut buf = Vec::new();
+    f.take(PAC_MAX_BYTES as u64 + 1).read_to_end(&mut buf)?;
+    if buf.len() > PAC_MAX_BYTES {
+        return Err(anyhow!("PAC file larger than {} KB", PAC_MAX_BYTES / 1024));
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Whole PAC download (DNS + connect + transfer); it runs during startup.
+const PAC_FETCH_DEADLINE: Duration = Duration::from_secs(15);
+/// Real PAC files are a few KB; anything this large is not one.
+const PAC_MAX_BYTES: usize = 1 << 20;
+
 fn http_get(url: &str) -> Result<String> {
+    let deadline = std::time::Instant::now() + PAC_FETCH_DEADLINE;
+    let remaining = || deadline.saturating_duration_since(std::time::Instant::now()).max(Duration::from_millis(1));
     let rest = &url["http://".len()..];
     let (authority, path) = match rest.split_once('/') {
         Some((a, p)) => (a, format!("/{p}")),
@@ -64,18 +81,39 @@ fn http_get(url: &str) -> Result<String> {
         Some((h, p)) => (h.to_string(), p.parse().unwrap_or(80)),
         None => (authority.to_string(), 80u16),
     };
-    // Connect with a bound so a black-holed PAC host can't hang the load.
-    let addr = (host.as_str(), port)
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| anyhow!("cannot resolve PAC host {host}"))?;
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+    // getaddrinfo cannot be cancelled: resolve on a helper thread with a bound.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let h2 = host.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send((h2.as_str(), port).to_socket_addrs().map(|mut a| a.next()));
+    });
+    let addr = match rx.recv_timeout(remaining().min(Duration::from_secs(5))) {
+        Ok(Ok(Some(a))) => a,
+        Ok(Ok(None)) => return Err(anyhow!("cannot resolve PAC host {host}")),
+        Ok(Err(e)) => return Err(anyhow!("cannot resolve PAC host {host}: {e}")),
+        Err(_) => return Err(anyhow!("resolving PAC host {host} timed out")),
+    };
+    let mut stream = TcpStream::connect_timeout(&addr, remaining().min(Duration::from_secs(10)))?;
+    stream.set_write_timeout(Some(remaining()))?;
     let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: Quena\r\n\r\n");
     stream.write_all(req.as_bytes())?;
+    // Bounded in time (a server trickling bytes) and size (a server sending gigabytes).
     let mut buf = Vec::new();
-    stream.read_to_end(&mut buf)?;
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(anyhow!("PAC download did not finish within {} s", PAC_FETCH_DEADLINE.as_secs()));
+        }
+        stream.set_read_timeout(Some(remaining()))?;
+        let n = stream.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if buf.len() > PAC_MAX_BYTES + 16 * 1024 {
+            return Err(anyhow!("PAC file larger than {} KB", PAC_MAX_BYTES / 1024));
+        }
+    }
     let idx = buf.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| anyhow!("malformed HTTP response"))?;
     let head = &buf[..idx];
     let status_line = head.split(|&b| b == b'\n').next().unwrap_or(&[]);

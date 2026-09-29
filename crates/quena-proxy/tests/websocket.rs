@@ -1,6 +1,6 @@
 //! WebSocket frame recording: pump forwards raw bytes and logs unmasked frames.
 
-use quena_proxy::wsframe::{pump, record, DIR_CLIENT, DIR_SERVER, FrameReader};
+use quena_proxy::wsframe::{pump, record, DIR_CLIENT, DIR_SERVER, FrameLog, FrameReader};
 use tokio::io::duplex;
 
 fn text_frame(payload: &[u8], masked: bool) -> Vec<u8> {
@@ -28,9 +28,13 @@ async fn pump_forwards_and_logs() {
     src_w.write_all(&input).await.unwrap();
     drop(src_w); // EOF
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
-    let total = pump(src_r, dst_w, DIR_CLIENT, &tx).await;
+    let queued = std::sync::atomic::AtomicUsize::new(0);
+    let last = std::sync::atomic::AtomicI64::new(0);
+    let log = FrameLog { tx: &tx, queued: &queued, budget: 1 << 20, last: &last };
+    let (total, err) = pump(src_r, dst_w, DIR_CLIENT, &log).await;
     drop(tx);
     assert_eq!(total, input.len() as u64);
+    assert_eq!(err, None);
     let mut forwarded = Vec::new();
     dst_r.read_to_end(&mut forwarded).await.unwrap();
     assert_eq!(forwarded, input, "raw bytes forwarded unchanged");

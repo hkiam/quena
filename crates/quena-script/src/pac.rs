@@ -8,7 +8,9 @@
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::{IpAddr, ToSocketAddrs};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError};
 use std::time::{Duration, Instant};
 
 const PAC_PRELUDE: &str = include_str!("pac_prelude.js");
@@ -36,10 +38,20 @@ const CACHE_TTL: Duration = Duration::from_secs(300);
 /// Upper bound on a single `FindProxyForURL` evaluation, so a slow/hung script
 /// or DNS lookup can never block the caller indefinitely.
 const EVAL_TIMEOUT: Duration = Duration::from_secs(5);
+/// CPU budget for JS itself (an endless loop in the script is interrupted).
+const JS_EVAL_BUDGET: Duration = Duration::from_secs(2);
+const JS_LOAD_BUDGET: Duration = Duration::from_secs(3);
+/// Pending evaluations; beyond this, lookups answer DIRECT instead of queueing up.
+const QUEUE_BOUND: usize = 64;
+/// Cached hosts before expired entries are swept.
+const CACHE_MAX: usize = 4096;
+/// Concurrent `dnsResolve` threads (a hung resolver must not pile up threads).
+const DNS_MAX_INFLIGHT: usize = 16;
+static DNS_INFLIGHT: AtomicUsize = AtomicUsize::new(0);
 
 /// A compiled PAC script. Evaluation is cached per host.
 pub struct PacEngine {
-    tx: Sender<Cmd>,
+    tx: SyncSender<Cmd>,
     cache: Mutex<HashMap<String, (Vec<ProxyEntry>, Instant)>>,
     source_error: Option<String>,
 }
@@ -48,16 +60,17 @@ impl PacEngine {
     /// Compile a PAC script. Returns an engine even if the script is invalid;
     /// in that case every lookup yields DIRECT and [`PacEngine::error`] is set.
     pub fn new(source: &str) -> PacEngine {
-        let (tx, rx) = std::sync::mpsc::channel::<Cmd>();
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Cmd>(QUEUE_BOUND);
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
         let src = source.to_string();
         std::thread::Builder::new()
             .name("quena-pac".into())
             .spawn(move || worker(rx, &src, ready_tx))
             .expect("spawn pac worker");
-        let source_error = match ready_rx.recv() {
+        let source_error = match ready_rx.recv_timeout(JS_LOAD_BUDGET + Duration::from_secs(5)) {
             Ok(Ok(())) => None,
             Ok(Err(e)) => Some(e),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some("PAC script did not finish loading in time".into()),
             Err(_) => Some("pac worker did not start".into()),
         };
         PacEngine { tx, cache: Mutex::new(HashMap::new()), source_error }
@@ -84,13 +97,25 @@ impl PacEngine {
             return vec![ProxyEntry::Direct];
         }
         let (reply, rx) = std::sync::mpsc::channel();
-        if self.tx.send(Cmd::Eval { url: url.to_string(), host: host.to_string(), reply }).is_err() {
-            return vec![ProxyEntry::Direct];
+        match self.tx.try_send(Cmd::Eval { url: url.to_string(), host: host.to_string(), reply }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                tracing::warn!(target: "quena", "PAC evaluation queue full; using DIRECT for {host} (not cached)");
+                return vec![ProxyEntry::Direct];
+            }
+            Err(TrySendError::Disconnected(_)) => return vec![ProxyEntry::Direct],
         }
         match rx.recv_timeout(EVAL_TIMEOUT) {
             Ok(Ok(s)) => {
                 let entries = parse_pac_result(&s);
-                self.cache.lock().insert(key, (entries.clone(), Instant::now()));
+                let mut cache = self.cache.lock();
+                if cache.len() >= CACHE_MAX {
+                    cache.retain(|_, (_, at)| at.elapsed() < CACHE_TTL);
+                    if cache.len() >= CACHE_MAX {
+                        cache.clear();
+                    }
+                }
+                cache.insert(key, (entries.clone(), Instant::now()));
                 entries
             }
             Ok(Err(e)) => {
@@ -127,7 +152,7 @@ impl PacEngine {
 
 impl Drop for PacEngine {
     fn drop(&mut self) {
-        let _ = self.tx.send(Cmd::Shutdown);
+        let _ = self.tx.try_send(Cmd::Shutdown);
     }
 }
 
@@ -206,6 +231,15 @@ fn worker(rx: Receiver<Cmd>, source: &str, ready: Sender<Result<(), String>>) {
         }
     };
     rt.set_memory_limit(MEMORY_LIMIT);
+    rt.set_max_stack_size(1 << 20);
+    // Interrupt runaway JS (endless loops) once the current deadline passes.
+    let base = Instant::now();
+    let deadline = Arc::new(AtomicU64::new(u64::MAX));
+    {
+        let deadline = deadline.clone();
+        rt.set_interrupt_handler(Some(Box::new(move || base.elapsed().as_micros() as u64 > deadline.load(Ordering::Relaxed))));
+    }
+    let arm = |budget: Duration| deadline.store((base.elapsed() + budget).as_micros() as u64, Ordering::Relaxed);
     let ctx = match Context::full(&rt) {
         Ok(c) => c,
         Err(e) => {
@@ -214,6 +248,7 @@ fn worker(rx: Receiver<Cmd>, source: &str, ready: Sender<Result<(), String>>) {
         }
     };
 
+    arm(JS_LOAD_BUDGET);
     let init = ctx.with(|cx| -> Result<(), String> {
         install_dns(&cx)?;
         cx.eval::<(), _>(PAC_PRELUDE).map_err(|e| e.to_string())?;
@@ -233,6 +268,7 @@ fn worker(rx: Receiver<Cmd>, source: &str, ready: Sender<Result<(), String>>) {
     for cmd in rx {
         match cmd {
             Cmd::Eval { url, host, reply } => {
+                arm(JS_EVAL_BUDGET);
                 let out = ctx.with(|cx| -> Result<String, String> {
                     let f: rquickjs::Function = cx.globals().get("FindProxyForURL").map_err(|e| e.to_string())?;
                     let s: String = f.call((url, host)).map_err(|e| exc(&cx, e))?;
@@ -262,12 +298,24 @@ fn dns_resolve(host: &str) -> Option<String> {
     // `getaddrinfo` can't be cancelled, so run it on a throwaway thread and give
     // up after a bound — a hung resolver must not wedge the PAC worker (and, via
     // the eval timeout, the caller). The abandoned thread finishes on its own.
+    if host.is_empty() || host.len() > 253 {
+        return None;
+    }
+    if DNS_INFLIGHT.fetch_add(1, Ordering::SeqCst) >= DNS_MAX_INFLIGHT {
+        DNS_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+        return None;
+    }
     let host = host.to_string();
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
+    let spawned = std::thread::Builder::new().name("quena-pac-dns".into()).spawn(move || {
         let addrs = (host.as_str(), 0u16).to_socket_addrs().ok().map(|it| it.map(|s| s.ip()).collect::<Vec<IpAddr>>());
+        DNS_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
         let _ = tx.send(addrs);
     });
+    if spawned.is_err() {
+        DNS_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+        return None;
+    }
     let addrs = rx.recv_timeout(Duration::from_secs(3)).ok().flatten()?;
     // Prefer IPv4 to match classic PAC helpers (isInNet is IPv4).
     addrs.iter().find(|a| a.is_ipv4()).or_else(|| addrs.first()).map(|a| a.to_string())
@@ -298,6 +346,21 @@ fn exc(cx: &rquickjs::Ctx, e: rquickjs::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endless_loops_are_interrupted() {
+        let t = Instant::now();
+        let e = PacEngine::new("while (true) {}");
+        assert!(e.error().is_some(), "top-level loop must fail to load");
+        assert!(t.elapsed() < Duration::from_secs(8));
+        let e = PacEngine::new("function FindProxyForURL(u, h) { if (h == 'loop') { while (true) {} } return 'PROXY p:1'; }");
+        assert!(e.error().is_none());
+        let t = Instant::now();
+        assert_eq!(e.find("http://loop/", "loop"), vec![ProxyEntry::Direct]);
+        assert!(t.elapsed() < EVAL_TIMEOUT, "loop not interrupted");
+        // The worker is still usable afterwards.
+        assert_eq!(e.find("http://ok/", "ok"), vec![ProxyEntry::Proxy("p".into(), 1)]);
+    }
 
     #[test]
     fn direct_and_proxy() {

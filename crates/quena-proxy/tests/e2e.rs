@@ -65,6 +65,10 @@ async fn app(req: Request<hyper::body::Incoming>) -> Result<Response<TBody>, Inf
             });
             Response::builder().header("Content-Type", "application/octet-stream").body(body.boxed())
         }
+        "/hang" => {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Response::builder().body(Full::new(Bytes::from("late")).boxed())
+        }
         "/status/404" => Response::builder().status(404).body(Full::new(Bytes::from("nope")).boxed()),
         "/version" => Response::builder().body(Full::new(Bytes::from(format!("{:?}", req.version()))).boxed()),
         _ => Response::builder().status(404).body(Full::new(Bytes::new()).boxed()),
@@ -227,4 +231,48 @@ fn http_https_h2_and_big_bodies() {
     assert!(out.starts_with("-----BEGIN CERTIFICATE-----"));
 
     env.proxy.stop();
+}
+
+
+/// A client that disconnects while the server has not answered yet must not leave the
+/// session "in flight" forever; garbage on the proxy port must not disturb other clients.
+#[test]
+fn client_disconnect_and_garbage_input() {
+    use std::io::{Read, Write};
+    let env = setup();
+    let mut c = std::net::TcpStream::connect(env.proxy_addr).unwrap();
+    write!(c, "GET http://{}/hang HTTP/1.1\r\nHost: {}\r\n\r\n", env.http, env.http).unwrap();
+    // Wait until the proxy forwarded it and waits for the server.
+    for _ in 0..200 {
+        env.capture.index.tick();
+        if !env.capture.index.find_all(|s| s.url == "/hang" && s.state == SessionState::AwaitingResponse).is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    drop(c);
+    let s = wait_done(&env, |s| s.url == "/hang");
+    assert_eq!(s.state, SessionState::Aborted);
+    let d = env.capture.detail(s.id).unwrap();
+    assert!(d.error.as_deref().unwrap_or("").contains("client closed"), "error: {:?}", d.error);
+
+    // Garbage and malformed requests: each connection fails on its own.
+    let junk: Vec<Vec<u8>> = vec![
+        b"\x16\x03\x01\x00\x00garbage\r\n\r\n".to_vec(),
+        b"GET\r\n\r\n".to_vec(),
+        b"GET / HTTP/1.1\r\nHost: x\r\nContent-Length: -5\r\n\r\n".to_vec(),
+        b"POST http://x/ HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n".to_vec(),
+        b"CONNECT :::::: HTTP/1.1\r\n\r\n".to_vec(),
+        format!("GET / HTTP/1.1\r\nX: {}\r\n\r\n", "a".repeat(2 << 20)).into_bytes(),
+        (0..=255u8).cycle().take(64 * 1024).collect(),
+    ];
+    for j in junk {
+        let mut c = std::net::TcpStream::connect(env.proxy_addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let _ = c.write_all(&j);
+        let mut buf = [0u8; 256];
+        let _ = c.read(&mut buf);
+    }
+    let (out, err) = curl(&env, &[&format!("http://{}/hello", env.http)]);
+    assert_eq!(out, "hello world", "proxy unusable after garbage input: {err}");
 }

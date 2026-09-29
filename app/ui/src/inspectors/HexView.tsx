@@ -56,6 +56,11 @@ export function HexView({ id, part, variant, len }: { id: SessionId; part: Part;
         }
         force((x) => x + 1);
       })
+      .catch(() => {
+        // Show the block as unreadable instead of refetching it on every render.
+        blocks.current.set(b, new Uint8Array(0));
+        force((x) => x + 1);
+      })
       .finally(() => inflight.current.delete(b));
   }
 

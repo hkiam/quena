@@ -31,8 +31,8 @@ fn configure(c: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-pub(crate) fn encode(d: &SessionDetail) -> Vec<u8> {
-    rmp_serde::to_vec_named(d).expect("serialize session")
+pub(crate) fn encode(d: &SessionDetail) -> std::result::Result<Vec<u8>, rmp_serde::encode::Error> {
+    rmp_serde::to_vec_named(d)
 }
 
 pub(crate) fn decode(b: &[u8]) -> Option<SessionDetail> {
@@ -100,15 +100,35 @@ impl Db {
         Ok(row.and_then(|b| decode(&b)))
     }
 
+    /// Visit all stored sessions. Undecodable rows are skipped (logged); a damaged
+    /// table ends the scan with what could be read instead of failing the load.
     pub fn for_each(&self, mut f: impl FnMut(SessionDetail)) -> Result<()> {
         let c = self.reader.lock();
-        let mut st = c.prepare("SELECT detail FROM sessions ORDER BY id")?;
+        let mut st = c.prepare("SELECT id, detail FROM sessions ORDER BY id")?;
         let mut rows = st.query([])?;
-        while let Some(r) = rows.next()? {
-            let b: Vec<u8> = r.get(0)?;
-            if let Some(d) = decode(&b) {
-                f(d);
+        let mut skipped = 0u64;
+        loop {
+            let r = match rows.next() {
+                Ok(Some(r)) => r,
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::error!("session db damaged, stopping the scan: {e}");
+                    break;
+                }
+            };
+            match r.get::<_, Vec<u8>>(1) {
+                Ok(b) => match decode(&b) {
+                    Some(d) => f(d),
+                    None => skipped += 1,
+                },
+                Err(e) => {
+                    tracing::warn!(id = r.get::<_, i64>(0).ok(), "unreadable session row: {e}");
+                    skipped += 1;
+                }
             }
+        }
+        if skipped > 0 {
+            tracing::warn!(skipped, "skipped unreadable session rows");
         }
         Ok(())
     }
@@ -126,74 +146,155 @@ impl Drop for Db {
     }
 }
 
+/// One row change, flattened from [`Op`] (kept for a retry when a write fails).
+#[derive(Clone)]
+enum Change {
+    Put(Arc<SessionDetail>),
+    Delete(SessionId),
+    Clear,
+}
+
+fn apply(c: &mut Connection, changes: &[Change]) -> rusqlite::Result<()> {
+    let tx = c.transaction()?;
+    {
+        let mut put = tx.prepare_cached("INSERT OR REPLACE INTO sessions (id, detail) VALUES (?1, ?2)")?;
+        let mut del = tx.prepare_cached("DELETE FROM sessions WHERE id = ?1")?;
+        for ch in changes {
+            match ch {
+                Change::Put(d) => {
+                    let b = encode(d).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                    put.execute(params![d.summary.id as i64, b])?;
+                }
+                Change::Delete(id) => {
+                    del.execute(params![*id as i64])?;
+                }
+                Change::Clear => {
+                    tx.execute("DELETE FROM sessions", [])?;
+                }
+            }
+        }
+    }
+    tx.commit()
+}
+
+/// Drop changes superseded by a later change of the same id (or a later clear).
+fn compact(changes: Vec<Change>) -> Vec<Change> {
+    let start = changes.iter().rposition(|c| matches!(c, Change::Clear)).unwrap_or(0);
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<Change> = changes
+        .into_iter()
+        .skip(start)
+        .rev()
+        .filter(|c| match c {
+            Change::Put(d) => seen.insert(d.summary.id),
+            Change::Delete(id) => seen.insert(*id),
+            Change::Clear => true,
+        })
+        .collect();
+    out.reverse();
+    out
+}
+
+/// Remove pending entries that are now committed (unless superseded meanwhile).
+fn settle(pending: &Mutex<HashMap<SessionId, Option<Arc<SessionDetail>>>>, done: &[Change]) {
+    let mut p = pending.lock();
+    for ch in done {
+        let (id, d) = match ch {
+            Change::Put(d) => (d.summary.id, Some(d)),
+            Change::Delete(id) => (*id, None),
+            Change::Clear => continue,
+        };
+        if let Some(cur) = p.get(&id) {
+            let same = match (cur, d) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if same {
+                p.remove(&id);
+            }
+        }
+    }
+}
+
+/// Failed batches are retried after this long (doubling up to `MAX_RETRY_DELAY`).
+const RETRY_DELAY: Duration = Duration::from_millis(500);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
 fn writer(mut c: Connection, rx: Receiver<Op>, pending: Arc<Mutex<HashMap<SessionId, Option<Arc<SessionDetail>>>>>) {
     let mut batch: Vec<Op> = Vec::new();
+    // Changes of failed writes; they stay readable from `pending` meanwhile.
+    let mut retry: Vec<Change> = Vec::new();
+    let mut failures = 0u32;
+    let mut disconnected = false;
     loop {
-        let first = match rx.recv() {
-            Ok(op) => op,
-            Err(_) => return,
-        };
-        batch.push(first);
+        if retry.is_empty() {
+            match rx.recv() {
+                Ok(op) => batch.push(op),
+                Err(_) => return,
+            }
+        } else {
+            let delay = RETRY_DELAY.saturating_mul(1 << failures.min(6)).min(MAX_RETRY_DELAY);
+            match rx.recv_timeout(delay) {
+                Ok(op) => batch.push(op),
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => disconnected = true,
+            }
+        }
         // Collect a batch (≤ 2000 ops or 50 ms).
         let deadline = std::time::Instant::now() + Duration::from_millis(50);
-        while batch.len() < 2000 {
+        while !batch.is_empty() && batch.len() < 2000 && !matches!(batch.last(), Some(Op::Flush(_) | Op::Close(_))) {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             match rx.recv_timeout(left) {
-                Ok(op) => {
-                    let barrier = matches!(op, Op::Flush(_) | Op::Close(_));
-                    batch.push(op);
-                    if barrier {
-                        break;
-                    }
-                }
+                Ok(op) => batch.push(op),
                 Err(_) => break,
             }
         }
         let mut acks = Vec::new();
         let mut close = None;
-        let mut committed: Vec<(SessionId, Option<Arc<SessionDetail>>)> = Vec::new();
-        let res = (|| -> rusqlite::Result<()> {
-            let tx = c.transaction()?;
-            {
-                let mut put = tx.prepare_cached("INSERT OR REPLACE INTO sessions (id, detail) VALUES (?1, ?2)")?;
-                let mut del = tx.prepare_cached("DELETE FROM sessions WHERE id = ?1")?;
-                for op in batch.drain(..) {
-                    match op {
-                        Op::Put(d) => {
-                            put.execute(params![d.summary.id as i64, encode(&d)])?;
-                            committed.push((d.summary.id, Some(d)));
-                        }
-                        Op::Delete(ids) => {
-                            for id in ids {
-                                del.execute(params![id as i64])?;
-                                committed.push((id, None));
+        let mut changes = std::mem::take(&mut retry);
+        for op in batch.drain(..) {
+            match op {
+                Op::Put(d) => changes.push(Change::Put(d)),
+                Op::Delete(ids) => changes.extend(ids.into_iter().map(Change::Delete)),
+                Op::Clear => changes.push(Change::Clear),
+                Op::Flush(a) => acks.push(a),
+                Op::Close(a) => close = Some(a),
+            }
+        }
+        if !changes.is_empty() {
+            match apply(&mut c, &changes) {
+                Ok(()) => {
+                    failures = 0;
+                    settle(&pending, &changes);
+                }
+                Err(e) => {
+                    failures += 1;
+                    let changes = compact(changes);
+                    tracing::error!(changes = changes.len(), attempt = failures, "session db write failed, keeping the changes in memory: {e}");
+                    // After repeated failures, isolate rows that fail on their own (e.g. too
+                    // big) so they don't block everything else; they stay in `pending`.
+                    if failures >= 3 {
+                        let mut ok = 0usize;
+                        let mut failed = Vec::new();
+                        for ch in changes {
+                            if apply(&mut c, std::slice::from_ref(&ch)).is_ok() {
+                                ok += 1;
+                                settle(&pending, std::slice::from_ref(&ch));
+                            } else {
+                                failed.push(ch);
                             }
                         }
-                        Op::Clear => {
-                            tx.execute("DELETE FROM sessions", [])?;
+                        if ok > 0 {
+                            if !failed.is_empty() {
+                                tracing::error!(rows = failed.len(), "session rows cannot be written; kept in memory for this run only");
+                            }
+                            failures = 0;
+                        } else {
+                            retry = failed;
                         }
-                        Op::Flush(a) => acks.push(a),
-                        Op::Close(a) => close = Some(a),
-                    }
-                }
-            }
-            tx.commit()
-        })();
-        if let Err(e) = res {
-            tracing::error!("session db write failed: {e}");
-        }
-        {
-            // Drop pending entries that are now committed (unless superseded meanwhile).
-            let mut p = pending.lock();
-            for (id, d) in committed {
-                if let Some(cur) = p.get(&id) {
-                    let same = match (cur, &d) {
-                        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-                        (None, None) => true,
-                        _ => false,
-                    };
-                    if same {
-                        p.remove(&id);
+                    } else {
+                        retry = changes;
                     }
                 }
             }
@@ -201,10 +302,79 @@ fn writer(mut c: Connection, rx: Receiver<Op>, pending: Arc<Mutex<HashMap<Sessio
         for a in acks {
             let _ = a.send(());
         }
-        if let Some(a) = close {
+        if close.is_some() || disconnected {
+            if !retry.is_empty() {
+                tracing::error!(changes = retry.len(), "session db closed with unwritten changes");
+            }
             drop(c);
-            let _ = a.send(());
+            if let Some(a) = close {
+                let _ = a.send(());
+            }
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn for_each_skips_corrupt_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite");
+        let db = Db::open(&path).unwrap();
+        let mut d = SessionDetail::default();
+        d.summary.id = 1;
+        db.put(Arc::new(d.clone()));
+        d.summary.id = 3;
+        db.put(Arc::new(d));
+        db.flush();
+        let c = Connection::open(&path).unwrap();
+        c.execute("INSERT INTO sessions (id, detail) VALUES (2, x'c1c1c1')", []).unwrap();
+        // Garbage msgpack and a wrong column type.
+        c.execute("INSERT INTO sessions (id, detail) VALUES (4, 42)", []).unwrap();
+        let mut ids = vec![];
+        db.for_each(|d| ids.push(d.summary.id)).unwrap();
+        assert_eq!(ids, vec![1, 3]);
+    }
+
+    #[test]
+    fn failed_write_keeps_pending_and_retries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite");
+        let db = Db::open(&path).unwrap();
+        // Make writes fail: a trigger that aborts every insert.
+        let c = Connection::open(&path).unwrap();
+        c.execute_batch("CREATE TRIGGER nope BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'disk says no'); END;").unwrap();
+        let mut d = SessionDetail::default();
+        d.summary.id = 7;
+        db.put(Arc::new(d));
+        db.flush();
+        assert!(db.get(7).unwrap().is_some(), "entry lost after a failed write");
+        c.execute_batch("DROP TRIGGER nope;").unwrap();
+        // Retried on the next round.
+        let t0 = std::time::Instant::now();
+        while Db::count(&path).unwrap() == 0 && t0.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(Db::count(&path).unwrap(), 1);
+    }
+
+    #[test]
+    fn recovery_never_deletes_unreadable_capture() {
+        let root = tempfile::tempdir().unwrap();
+        let bad = root.path().join("bad");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("capture.lock"), "0").unwrap();
+        std::fs::write(bad.join("session.sqlite"), vec![0xabu8; 8192]).unwrap();
+        let empty = root.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::write(empty.join("capture.lock"), "0").unwrap();
+        drop(Db::open(&empty.join("session.sqlite")).unwrap());
+        let found = crate::find_recoverable(root.path());
+        assert!(found.is_empty());
+        assert!(bad.join("session.sqlite").exists(), "damaged capture was deleted");
+        assert!(!empty.exists(), "empty capture should be cleaned up");
     }
 }

@@ -97,6 +97,43 @@ pub fn reveal(path: &Path) -> Result<()> {
 }
 
 /// Local IPv4 addresses of active interfaces (for the device assistant).
+/// Write a small state file so a crash mid-write never leaves a truncated file behind.
+pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(tmp, path)
+}
+
+/// Raise the open-file limit (GUI apps on macOS start with a soft limit of 256, which a
+/// busy browser plus tunnels exhausts quickly). Returns the new soft limit.
+#[cfg(unix)]
+pub fn raise_fd_limit(want: u64) -> Option<u64> {
+    let mut rl = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    // SAFETY: getrlimit/setrlimit only read/write the struct we pass.
+    unsafe {
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) != 0 {
+            return None;
+        }
+        let target = (want as libc::rlim_t).min(rl.rlim_max);
+        // macOS rejects values above OPEN_MAX for the soft limit.
+        #[cfg(target_os = "macos")]
+        let target = target.min(10240);
+        if target > rl.rlim_cur {
+            let new = libc::rlimit { rlim_cur: target, rlim_max: rl.rlim_max };
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &new) == 0 {
+                return Some(target as u64);
+            }
+        }
+        Some(rl.rlim_cur as u64)
+    }
+}
+
+/// Windows has no small per-process descriptor limit for sockets.
+#[cfg(not(unix))]
+pub fn raise_fd_limit(_want: u64) -> Option<u64> {
+    None
+}
+
 pub fn local_addresses() -> Vec<(String, String)> {
     imp::local_addresses()
 }

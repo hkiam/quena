@@ -36,6 +36,8 @@ pub struct Multipart {
     pub start: String,
     pub parts: Vec<Part>,
     pub error: Option<String>,
+    /// More than `MAX_PARTS` parts; the rest is not listed.
+    pub truncated: bool,
 }
 
 fn param<'a>(ct: &'a str, name: &str) -> Option<&'a str> {
@@ -53,6 +55,10 @@ fn param<'a>(ct: &'a str, name: &str) -> Option<&'a str> {
 
 const PREVIEW: usize = 2048;
 const MAX_HEADER: usize = 64 * 1024;
+/// Parts listed per body.
+const MAX_PARTS: usize = 10_000;
+/// RFC 2046 §5.1.1: boundaries are 1–70 characters.
+const MAX_BOUNDARY: usize = 70;
 
 /// Parse the multipart structure of a body given its Content-Type.
 pub fn parse(body: &Body, content_type: &str) -> Multipart {
@@ -63,6 +69,10 @@ pub fn parse(body: &Body, content_type: &str) -> Multipart {
         out.error = Some("no boundary parameter in Content-Type".into());
         return out;
     };
+    if boundary.is_empty() || boundary.len() > MAX_BOUNDARY {
+        out.error = Some(format!("invalid boundary ({} characters, RFC 2046 allows 1–{MAX_BOUNDARY}); not parsed as multipart", boundary.len()));
+        return out;
+    }
     out.boundary = boundary.to_string();
     out.root_type = param(content_type, "type").unwrap_or("").to_string();
     out.start = param(content_type, "start").unwrap_or("").trim_matches(['<', '>']).to_string();
@@ -91,10 +101,21 @@ pub fn parse(body: &Body, content_type: &str) -> Multipart {
         for i in finder.iter(&buf[..n]) {
             boundaries.push(pos + i as u64 + 2); // skip the leading CRLF
         }
+        // Parts beyond the limit are not listed (the +1 closes the last listed one).
+        if boundaries.len() > MAX_PARTS + 1 {
+            boundaries.sort_unstable();
+            boundaries.dedup();
+            if boundaries.len() > MAX_PARTS + 1 {
+                boundaries.truncate(MAX_PARTS + 1);
+                out.truncated = true;
+                break;
+            }
+        }
         if pos + n as u64 >= total {
             break;
         }
-        pos += (n - overlap.min(n)) as u64;
+        // Always advance, even for a short read not longer than the overlap.
+        pos += ((n - overlap.min(n)) as u64).max(1);
     }
     boundaries.sort_unstable();
     boundaries.dedup();
@@ -180,6 +201,12 @@ fn skip_crlf(body: &Body, mut pos: u64) -> u64 {
 
 fn read_part_headers(body: &Body, start: u64) -> (Vec<(String, String)>, u64) {
     let chunk = body.read_range(start, MAX_HEADER).unwrap_or_default();
+    // A part without headers starts with the blank line right away.
+    if chunk.starts_with(b"\r\n") {
+        return (Vec::new(), start + 2);
+    } else if chunk.starts_with(b"\n") {
+        return (Vec::new(), start + 1);
+    }
     // headers end at the first blank line
     let end = chunk.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4).or_else(|| chunk.windows(2).position(|w| w == b"\n\n").map(|i| i + 2)).unwrap_or(chunk.len());
     let text = String::from_utf8_lossy(&chunk[..end.saturating_sub(if end >= 2 { 2 } else { 0 })]);
@@ -270,5 +297,33 @@ mod tests {
         assert_eq!(m.parts[0].preview.as_deref(), Some("value1"));
         assert_eq!(m.parts[1].name, "file");
         assert_eq!(m.parts[1].filename, "a.txt");
+    }
+
+    #[test]
+    fn huge_or_empty_boundary_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        let big = "B".repeat(300 * 1024);
+        let b = store.store_bytes(format!("--{big}\r\n\r\nx\r\n--{big}--").as_bytes());
+        let m = parse(&b, &format!("multipart/mixed; boundary={big}"));
+        assert!(m.parts.is_empty() && m.error.unwrap().contains("boundary"));
+        let m = parse(&b, "multipart/mixed; boundary=\"\"");
+        assert!(m.error.is_some());
+    }
+
+    #[test]
+    fn part_count_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        let mut body = Vec::new();
+        for _ in 0..(MAX_PARTS + 500) {
+            body.extend_from_slice(b"--X\r\n\r\nv\r\n");
+        }
+        body.extend_from_slice(b"--X--\r\n");
+        let b = store.store_bytes(&body);
+        let m = parse(&b, "multipart/form-data; boundary=X");
+        assert!(m.truncated);
+        assert_eq!(m.parts.len(), MAX_PARTS);
+        assert_eq!(m.parts[5].preview.as_deref(), Some("v"));
     }
 }

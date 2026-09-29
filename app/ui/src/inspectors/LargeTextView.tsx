@@ -25,6 +25,7 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
   const [hitIdx, setHitIdx] = useState(-1);
   const [searching, setSearching] = useState(false);
   const [goto, setGoto] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const req = useRef(0);
   const totalLines = view?.lines ?? 0;
 
@@ -43,11 +44,14 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
         const v = await api.bodyOpen(id, part, variant);
         if (!alive) return;
         setView(v);
+        setError(null);
         if (!v.linesDone || !v.complete) timer = window.setTimeout(poll, 300);
       } catch (e) {
         console.warn(e);
+        if (alive) setError(String(e));
       }
     };
+    setError(null);
     setChunk({ start: 0, lines: [] });
     setHits([]);
     setHitIdx(-1);
@@ -64,9 +68,13 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
     const need = Math.max(0, firstLine - 50);
     if (chunk.lines.length && need >= chunk.start && firstLine + visible <= chunk.start + chunk.lines.length && (view.linesDone || chunk.start + chunk.lines.length < view.lines - 1)) return;
     const my = ++req.current;
-    const r = await api.bodyLines(id, part, variant, need, WINDOW);
-    if (my !== req.current) return;
-    setChunk({ start: r.start, lines: r.lines });
+    try {
+      const r = await api.bodyLines(id, part, variant, need, WINDOW);
+      if (my !== req.current) return;
+      setChunk({ start: r.start, lines: r.lines });
+    } catch (e) {
+      if (my === req.current) setError(String(e));
+    }
   }, [view, firstLine, visible, chunk, id, part, variant]);
 
   useEffect(() => {
@@ -92,9 +100,23 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
     if (!search) return;
     setSearching(true);
     setHits([]);
-    const job = await api.bodySearch(id, part, variant, search, true);
+    let job: Awaited<ReturnType<typeof api.bodySearch>>;
+    try {
+      job = await api.bodySearch(id, part, variant, search, true);
+    } catch (e) {
+      setSearching(false);
+      setError(`Search failed: ${String(e)}`);
+      return;
+    }
     const poll = async () => {
-      const r = await api.searchResult(job);
+      let r: Awaited<ReturnType<typeof api.searchResult>>;
+      try {
+        r = await api.searchResult(job);
+      } catch (e) {
+        setSearching(false);
+        setError(`Search failed: ${String(e)}`);
+        return;
+      }
       if (r) {
         setHits(r.hits);
         if (r.hits.length && hitIdx < 0) {
@@ -140,9 +162,12 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
               {!view.complete && " · receiving/decoding…"}
               {view.error && <span className="err"> · {view.error}</span>}
             </>
+          ) : error ? (
+            <span className="err">Could not open the body: {error}</span>
           ) : (
             "Opening…"
           )}
+          {view && error && <span className="err"> · {error}</span>}
         </span>
         <input className="lt-goto" placeholder="Line" value={goto} onChange={(e) => setGoto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scrollToLine(Math.max(0, Number(goto) - 1))} />
         <input

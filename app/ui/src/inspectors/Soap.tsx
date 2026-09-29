@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Detail, Part, Variant } from "../api";
 import { loadText } from "../lib/bodytext";
+import { parseXml } from "../lib/xml";
 import { fmtBytes, headerValue } from "../lib/format";
-import { XNode } from "./views";
+import { ROW_CAP, XNode } from "./views";
 
 const SOAP11 = "http://schemas.xmlsoap.org/soap/envelope/";
 const SOAP12 = "http://www.w3.org/2003/05/soap-envelope";
@@ -40,11 +41,16 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const variant = sourceVariant(detail, part);
   const [xml, setXml] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     setXml(null);
+    setLoadErr(null);
     if (info.len > LIMIT && !variant.startsWith("plugin:")) return;
-    loadText(detail.summary.id, part, info, LIMIT, variant).then((t) => alive && setXml(t));
+    loadText(detail.summary.id, part, info, LIMIT, variant).then(
+      (t) => alive && setXml(t),
+      (e) => alive && setLoadErr(`Could not load the body: ${String(e)}`),
+    );
     return () => {
       alive = false;
     };
@@ -52,9 +58,9 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
 
   const parsed = useMemo(() => {
     if (xml == null) return null;
-    const doc = new DOMParser().parseFromString(xml, "application/xml");
-    if (doc.querySelector("parsererror")) return { error: "The body is not well-formed XML." };
-    const env = doc.documentElement;
+    const res = parseXml(xml);
+    if ("error" in res) return { error: res.error };
+    const env = res.root;
     const ns = env.namespaceURI ?? "";
     if (env.localName !== "Envelope" || (ns !== SOAP11 && ns !== SOAP12)) return { error: `Not a SOAP envelope (root element {${ns}}${env.localName}).` };
     const header = child(env, ns, "Header");
@@ -76,6 +82,7 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
   }, [xml]);
 
   if (info.len > LIMIT && !variant.startsWith("plugin:")) return <div className="placeholder">Body is {fmtBytes(info.len)} – too large for the SOAP view. Use TextView/SyntaxView.</div>;
+  if (loadErr) return <div className="placeholder">{loadErr}</div>;
   if (!parsed) return <div className="placeholder">Loading…</div>;
   if ("error" in parsed) return <div className="placeholder">{parsed.error}</div>;
   const { ns, blocks, payload, fault, wsa } = parsed;
@@ -125,7 +132,7 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
       </table>
       {blocks.length > 0 && (
         <>
-          <h4>Header blocks ({blocks.length})</h4>
+          <h4>Header blocks ({blocks.length}{blocks.length > ROW_CAP ? `, first ${ROW_CAP} shown` : ""})</h4>
           <table className="kv">
             <thead>
               <tr>
@@ -136,7 +143,7 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
               </tr>
             </thead>
             <tbody>
-              {blocks.map((b, i) => (
+              {blocks.slice(0, ROW_CAP).map((b, i) => (
                 <tr key={i}>
                   <td className="mono">{b.localName}</td>
                   <td className="mono small">{b.namespaceURI}</td>

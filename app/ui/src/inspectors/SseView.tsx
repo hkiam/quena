@@ -1,7 +1,7 @@
 // Server-Sent Events inspector (M15): parse text/event-stream into events.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, fetchBody, type Detail } from "../api";
-import { fmtInt } from "../lib/format";
+import { fmtBytes, fmtInt } from "../lib/format";
 import { decodeText } from "../lib/bodytext";
 import { useStore } from "../store";
 
@@ -15,7 +15,8 @@ interface Event {
 
 function parse(text: string): { events: Event[]; partial: string } {
   const events: Event[] = [];
-  const blocks = text.split(/\n\n/);
+  // The spec allows CR, LF and CRLF line endings.
+  const blocks = text.replace(/\r\n?/g, "\n").split(/\n\n/);
   const partial = blocks.pop() ?? "";
   for (const block of blocks) {
     if (!block.trim() || block.startsWith(":")) continue;
@@ -38,20 +39,41 @@ function parse(text: string): { events: Event[]; partial: string } {
 }
 
 const LIMIT = 8 << 20;
+/** Events rendered at once (newest); older ones behind "show more". */
+const SHOW = 1000;
 
 export function SseView({ detail }: { detail: Detail }) {
   const [events, setEvents] = useState<Event[]>([]);
   const [live, setLive] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [show, setShow] = useState(SHOW);
   const version = useStore((s) => s.listVersion);
+  const seen = useRef({ id: -1, len: -1, complete: false });
   useEffect(() => {
     let alive = true;
+    let busy = false;
     const load = async () => {
-      const v = await api.bodyOpen(detail.summary.id, "response", "raw");
-      const { data } = await fetchBody(detail.summary.id, "response", "raw", 0, Math.min(v.len, LIMIT));
-      if (!alive) return;
-      const { events } = parse(decodeText(data));
-      setEvents(events);
-      setLive(!v.complete);
+      if (busy) return;
+      busy = true;
+      try {
+        const v = await api.bodyOpen(detail.summary.id, "response", "raw");
+        if (!alive) return;
+        setLive(!v.complete);
+        setTotal(v.len);
+        // Re-parse only when the stream actually grew (the poll runs every 500 ms).
+        const last = seen.current;
+        if (last.id === detail.summary.id && last.len === v.len && last.complete === v.complete) return;
+        const { data } = await fetchBody(detail.summary.id, "response", "raw", 0, Math.min(v.len, LIMIT));
+        if (!alive) return;
+        seen.current = { id: detail.summary.id, len: v.len, complete: v.complete };
+        setEvents(parse(decodeText(data)).events);
+        setError(null);
+      } catch (e) {
+        if (alive) setError(`Could not load the event stream: ${String(e)}`);
+      } finally {
+        busy = false;
+      }
     };
     load();
     const running = detail.summary.state !== "done" && detail.summary.state !== "aborted";
@@ -62,14 +84,23 @@ export function SseView({ detail }: { detail: Detail }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.summary.id, version]);
+  useEffect(() => setShow(SHOW), [detail.summary.id]);
 
+  const from = Math.max(0, events.length - show);
   return (
     <div className="scroll pad sse">
       <div className="muted small">
         {fmtInt(events.length)} events{live ? " · live" : ""}
+        {total > LIMIT && ` · first ${fmtBytes(LIMIT)} of ${fmtBytes(total)} parsed`}
       </div>
-      {events.map((e, i) => (
-        <div key={i} className="sse-event">
+      {error && <div className="banner error">{error}</div>}
+      {from > 0 && (
+        <div className="j-more" onClick={() => setShow(show + SHOW)}>
+          … {fmtInt(from)} earlier events (show {fmtInt(Math.min(SHOW, from))} more)
+        </div>
+      )}
+      {events.slice(from).map((e, i) => (
+        <div key={from + i} className="sse-event">
           <div className="sse-head">
             <span className="sse-type">{e.event}</span>
             {e.id && <span className="muted">id: {e.id}</span>}
@@ -78,7 +109,7 @@ export function SseView({ detail }: { detail: Detail }) {
           <pre className="sse-data">{e.data}</pre>
         </div>
       ))}
-      {events.length === 0 && <div className="placeholder">No events yet.</div>}
+      {events.length === 0 && !error && <div className="placeholder">No events yet.</div>}
     </div>
   );
 }

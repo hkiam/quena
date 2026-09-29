@@ -6,6 +6,7 @@ use crate::store::{BodyStore, Variant};
 use crate::{BodyError, Result};
 use std::io::{self, BufWriter, Read, Write};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Encoding {
@@ -16,20 +17,31 @@ pub enum Encoding {
     Identity,
 }
 
+/// More stacked codings than this are refused: nobody sends them legitimately, and
+/// each layer is another nested decoder (stack depth, buffers, bomb multiplier).
+pub const MAX_STACKED_ENCODINGS: usize = 4;
+
+/// Absolute floor of the cap on derived output; the cap is the larger of this and
+/// 4× the source size (pretty printing grows text), never above `max_derived`.
+pub const MAX_DECODED_OUTPUT: u64 = 2 << 30;
+
 /// Parse a `Content-Encoding` header value (applied in order; decode in reverse).
 pub fn parse_encodings(value: &str) -> std::result::Result<Vec<Encoding>, String> {
     let mut out = Vec::new();
     for t in value.split(',').map(|t| t.trim().to_ascii_lowercase()) {
-        out.push(match t.as_str() {
-            "" | "identity" => Encoding::Identity,
+        let e = match t.as_str() {
+            "" | "identity" => continue,
             "gzip" | "x-gzip" => Encoding::Gzip,
             "deflate" => Encoding::Deflate,
             "br" => Encoding::Brotli,
             "zstd" => Encoding::Zstd,
-            other => return Err(other.to_string()),
-        });
+            other => return Err(other.chars().take(64).collect()),
+        };
+        if out.len() >= MAX_STACKED_ENCODINGS {
+            return Err(format!("with more than {MAX_STACKED_ENCODINGS} stacked codings"));
+        }
+        out.push(e);
     }
-    out.retain(|e| *e != Encoding::Identity);
     Ok(out)
 }
 
@@ -114,7 +126,8 @@ impl<'a> DeflateAuto<'a> {
 impl Read for DeflateAuto<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.dec.is_none() {
-            let mut inner = self.inner.take().expect("inner");
+            // `inner` is gone if sniffing the header failed before; don't panic on a retry.
+            let Some(mut inner) = self.inner.take() else { return Err(io::Error::other("deflate stream failed")) };
             let mut head = [0u8; 2];
             let mut got = 0;
             while got < 2 {
@@ -132,21 +145,39 @@ impl Read for DeflateAuto<'_> {
                 Box::new(flate2::read::DeflateDecoder::new(chained))
             });
         }
-        self.dec.as_mut().expect("dec").read(buf)
+        match self.dec.as_mut() {
+            Some(d) => d.read(buf),
+            None => Err(io::Error::other("deflate stream failed")),
+        }
     }
 }
 
-/// Wraps a writer and enforces the decompression-ratio limit.
-struct RatioGuard<'a, W: Write> {
-    inner: W,
+/// Wraps the derived writer and enforces the decompression-ratio limit and the
+/// absolute output cap. Once the output is truncated (cap reached, derived limit
+/// or quota hit) it fails the next write so decoding stops instead of churning
+/// through the rest; `stopped` tells the caller that this was a clean truncation.
+struct RatioGuard<'a> {
+    inner: BodyWriter,
     written: u64,
     input: &'a dyn Fn() -> u64,
     max_ratio: u64,
+    max_output: u64,
+    stopped: Arc<AtomicBool>,
 }
 
-impl<W: Write> Write for RatioGuard<'_, W> {
+impl Write for RatioGuard<'_> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.written += buf.len() as u64;
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        let room = self.max_output.saturating_sub(self.written);
+        if room == 0 || self.inner.body().is_truncated() {
+            self.inner.add_dropped(buf.len() as u64);
+            self.stopped.store(true, Ordering::Relaxed);
+            return Err(io::Error::other(format!("output truncated at {} bytes", self.written)));
+        }
+        let n = (buf.len() as u64).min(room) as usize;
+        self.written += n as u64;
         if self.written > 16 << 20 {
             let input = (self.input)().max(1);
             if self.written / input > self.max_ratio {
@@ -156,7 +187,7 @@ impl<W: Write> Write for RatioGuard<'_, W> {
                 )));
             }
         }
-        self.inner.write(buf)
+        Write::write(&mut self.inner, &buf[..n])
     }
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
@@ -207,12 +238,18 @@ pub fn derive(store: &Arc<BodyStore>, source: &Body, v: Variant, spec: &DeriveSp
         let source = source.clone();
         let store2 = store.clone();
         let ct = spec.content_type.clone();
+        let cfg = store.config();
         let work = move |p: &dyn Progress| -> Result<()> {
             let total = source.len();
             let src = source.stream(0, true);
             let counted = Counting { inner: src, count: 0, total, last_report: 0, progress: p };
-            let mut reader = decoding_reader(Box::new(counted), &encodings);
-            let buffered = BufWriter::with_capacity(256 * 1024, writer);
+            let consumed = Arc::new(AtomicU64::new(0));
+            let tracker = TrackRead { inner: counted, consumed: consumed.clone() };
+            let mut reader = decoding_reader(Box::new(tracker), &encodings);
+            let input = move || consumed.load(Ordering::Relaxed);
+            let stopped = Arc::new(AtomicBool::new(false));
+            let guard = RatioGuard { inner: writer, written: 0, input: &input, max_ratio: cfg.max_ratio, max_output: output_cap(&cfg, total), stopped: stopped.clone() };
+            let buffered = BufWriter::with_capacity(256 * 1024, guard);
             let kind = plugins.pretty_kind(n);
             let cancelled = || p.cancelled();
             let r = match kind {
@@ -228,6 +265,8 @@ pub fn derive(store: &Arc<BodyStore>, source: &Body, v: Variant, spec: &DeriveSp
             p.progress(total, total);
             match r {
                 Ok(()) => Ok(()),
+                // Output cap reached: the partial result is kept, marked truncated.
+                Err(_) if stopped.load(Ordering::Relaxed) && !p.cancelled() => Ok(()),
                 Err(e) if p.cancelled() => {
                     store2.forget_derived(source.id(), v);
                     let _ = e;
@@ -251,10 +290,11 @@ pub fn derive(store: &Arc<BodyStore>, source: &Body, v: Variant, spec: &DeriveSp
     };
     let source = source.clone();
     let store2 = store.clone();
-    let max_ratio = store.config().max_ratio;
+    let cfg = store.config();
     let work = move |p: &dyn Progress| -> Result<()> {
         let id = source.id();
-        let r = run_derivation(&source, writer, &encodings, if v == Variant::Pretty { pretty_kind } else { None }, max_ratio, p);
+        let limits = (cfg.max_ratio, output_cap(&cfg, source.len()));
+        let r = run_derivation(&source, writer, &encodings, if v == Variant::Pretty { pretty_kind } else { None }, limits, p);
         if let Err(e) = &r {
             // Keep the partial output for errors (useful for inspection) but drop it when cancelled.
             if matches!(e, BodyError::Cancelled) {
@@ -266,15 +306,20 @@ pub fn derive(store: &Arc<BodyStore>, source: &Body, v: Variant, spec: &DeriveSp
     Ok(Derivation { body, work: Some(Box::new(work)) })
 }
 
+/// Absolute cap on derived output for a source of `source_len` bytes.
+fn output_cap(cfg: &crate::BodyConfig, source_len: u64) -> u64 {
+    MAX_DECODED_OUTPUT.max(source_len.saturating_mul(4)).min(cfg.max_derived)
+}
+
 fn run_derivation(
     source: &Body,
     writer: BodyWriter,
     encodings: &[Encoding],
     pretty_kind: Option<PrettyKind>,
-    max_ratio: u64,
+    (max_ratio, max_output): (u64, u64),
     p: &dyn Progress,
 ) -> Result<()> {
-    let consumed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let consumed = Arc::new(AtomicU64::new(0));
     let total = source.len();
     let src = source.stream(0, true);
     let counted = Counting { inner: src, count: 0, total, last_report: 0, progress: p };
@@ -284,8 +329,9 @@ fn run_derivation(
         reader = wrap_decoder(reader, *e);
     }
     let consumed2 = consumed.clone();
-    let input = move || consumed2.load(std::sync::atomic::Ordering::Relaxed);
-    let guard = RatioGuard { inner: writer, written: 0, input: &input, max_ratio };
+    let input = move || consumed2.load(Ordering::Relaxed);
+    let stopped = Arc::new(AtomicBool::new(false));
+    let guard = RatioGuard { inner: writer, written: 0, input: &input, max_ratio, max_output, stopped: stopped.clone() };
     let buffered = BufWriter::with_capacity(256 * 1024, guard);
     let res = match pretty_kind {
         Some(k) => {
@@ -301,18 +347,20 @@ fn run_derivation(
     match res {
         Ok(()) => Ok(()),
         Err(e) if crate::is_cancelled(&e) => Err(BodyError::Cancelled),
+        // Output cap reached: the partial result is kept, marked truncated.
+        Err(_) if stopped.load(Ordering::Relaxed) => Ok(()),
         Err(e) => Err(BodyError::Io(e)),
     }
 }
 
 struct TrackRead<R> {
     inner: R,
-    consumed: Arc<std::sync::atomic::AtomicU64>,
+    consumed: Arc<AtomicU64>,
 }
 impl<R: Read> Read for TrackRead<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let n = self.inner.read(buf)?;
-        self.consumed.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+        self.consumed.fetch_add(n as u64, Ordering::Relaxed);
         Ok(n)
     }
 }
@@ -339,5 +387,28 @@ pub fn decode_bytes(data: &[u8], content_encoding: &str, limit: usize) -> io::Re
     }
     let mut out = Vec::new();
     reader.take(limit as u64).read_to_end(&mut out)?;
+    Ok(out)
+}
+
+/// Decode (at most `limit` bytes of) a stored body in memory without creating a
+/// cached variant – for searching. A decoder error after some output returns the
+/// part decoded so far (truncated/corrupt streams are common); cancellation errors.
+pub fn decode_prefix(source: &Body, content_encoding: &str, limit: usize, p: &dyn Progress) -> io::Result<Vec<u8>> {
+    let encodings = parse_encodings(content_encoding).map_err(io::Error::other)?;
+    let total = source.len();
+    let counted = Counting { inner: source.stream(0, false), count: 0, total, last_report: 0, progress: p };
+    let mut reader = decoding_reader(Box::new(counted), &encodings);
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    while out.len() < limit {
+        let want = buf.len().min(limit - out.len());
+        match reader.read(&mut buf[..want]) {
+            Ok(0) => break,
+            Ok(n) => out.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) if crate::is_cancelled(&e) || out.is_empty() => return Err(e),
+            Err(_) => break,
+        }
+    }
     Ok(out)
 }

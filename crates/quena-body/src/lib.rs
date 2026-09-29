@@ -171,4 +171,61 @@ mod tests {
         .unwrap();
         assert_eq!(hits, vec![(1 << 20) - 2, (1 << 20) + 104]);
     }
+
+    #[test]
+    fn stacked_encodings_capped() {
+        use decode::{Encoding, parse_encodings};
+        assert_eq!(parse_encodings("gzip, identity, br").unwrap(), vec![Encoding::Gzip, Encoding::Brotli]);
+        assert_eq!(parse_encodings(&vec!["gzip"; 4].join(",")).unwrap().len(), 4);
+        assert!(parse_encodings(&vec!["gzip"; 5].join(",")).is_err());
+        assert!(parse_encodings(&vec!["gzip"; 100_000].join(",")).is_err());
+        // Identity layers don't count.
+        assert_eq!(parse_encodings(&format!("{}gzip", "identity,".repeat(1000))).unwrap(), vec![Encoding::Gzip]);
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        let body = store.store_bytes(b"x");
+        let spec = DeriveSpec { content_encoding: Some(vec!["gzip"; 50].join(",")), content_type: None };
+        assert!(!decode::variant_applies(&spec, Variant::Decoded));
+        assert!(matches!(derive(&store, &body, Variant::Decoded, &spec), Err(BodyError::Unsupported(_))));
+    }
+
+    #[test]
+    fn derived_output_cap_stops_decoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig { max_derived: 100_000, ..Default::default() }).unwrap();
+        let data: Vec<u8> = (0..4_000_000u32).map(|i| (i % 7) as u8 + b'a').collect();
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(&data).unwrap();
+        let body = store.store_bytes(&enc.finish().unwrap());
+        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: None };
+        let d = derive(&store, &body, Variant::Decoded, &spec).unwrap();
+        (d.work.unwrap())(&NoProgress).unwrap();
+        assert!(d.body.is_truncated());
+        assert_eq!(d.body.len(), 100_000);
+        assert_eq!(d.body.read_range(0, 100).unwrap(), &data[..100]);
+    }
+
+    #[test]
+    fn decode_prefix_bounded_and_partial() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        let data = vec![b'z'; 1 << 20];
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(&data).unwrap();
+        let gz = enc.finish().unwrap();
+        let body = store.store_bytes(&gz);
+        assert_eq!(decode::decode_prefix(&body, "gzip", 1000, &NoProgress).unwrap().len(), 1000);
+        // Truncated stream: returns what could be decoded.
+        let cut = store.store_bytes(&gz[..gz.len() / 2]);
+        let out = decode::decode_prefix(&cut, "gzip", usize::MAX, &NoProgress).unwrap();
+        assert!(!out.is_empty() && out.len() < data.len());
+        assert!(decode::decode_prefix(&body, "gzip,gzip,gzip,gzip,gzip", 10, &NoProgress).is_err());
+    }
+
+    #[test]
+    fn bump_id_saturates() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        store.bump_id(u64::MAX);
+    }
 }

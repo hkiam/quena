@@ -7,6 +7,7 @@ import { StatisticsPanel } from "./Statistics";
 import { FiltersPanel } from "./Filters";
 import { LogPanel } from "./Log";
 import { TimelinePanel } from "./Timeline";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 
 const AutoResponderPanel = lazy(() => import("./AutoResponder"));
 const ComposerPanel = lazy(() => import("./Composer"));
@@ -40,16 +41,22 @@ export function RightPane() {
       <div className="rp-content">
         {/* Keep inspectors mounted to preserve scroll positions. */}
         <div style={{ display: tab === "inspectors" ? "contents" : "none" }}>
-          <Inspectors />
+          <ErrorBoundary name="inspectors">
+            <Inspectors />
+          </ErrorBoundary>
         </div>
-        {tab === "statistics" && <StatisticsPanel />}
-        {tab === "filters" && <FiltersPanel />}
-        {tab === "log" && <LogPanel />}
-        {tab === "timeline" && <TimelinePanel />}
-        <Suspense fallback={<div className="placeholder">Loading…</div>}>
-          {tab === "autoresponder" && <AutoResponderPanel />}
-          {tab === "composer" && <ComposerPanel />}
-        </Suspense>
+        {tab !== "inspectors" && (
+          <ErrorBoundary name={tab} resetKey={tab}>
+            {tab === "statistics" && <StatisticsPanel />}
+            {tab === "filters" && <FiltersPanel />}
+            {tab === "log" && <LogPanel />}
+            {tab === "timeline" && <TimelinePanel />}
+            <Suspense fallback={<div className="placeholder">Loading…</div>}>
+              {tab === "autoresponder" && <AutoResponderPanel />}
+              {tab === "composer" && <ComposerPanel />}
+            </Suspense>
+          </ErrorBoundary>
+        )}
       </div>
     </div>
   );

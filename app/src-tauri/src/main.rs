@@ -24,7 +24,19 @@ pub type Core = Arc<AppCore>;
 
 fn main() {
     let log = quena_app_core::init_tracing();
-    let core = AppCore::new(Paths::default_paths(), log).expect("initialise Quena core");
+    let paths = Paths::default_paths();
+    // One instance per data directory: a second one would run crash recovery and restore
+    // (i.e. undo) the system proxy the running instance set.
+    let _instance = match lock_instance(&paths.data) {
+        Some(l) => l,
+        None => {
+            tracing::warn!(target: "quena", "Quena is already running with data in {}; exiting", paths.data.display());
+            eprintln!("Quena is already running (data directory {}).", paths.data.display());
+            return;
+        }
+    };
+    let core = AppCore::new(paths, log).expect("initialise Quena core");
+    quena_app_core::engine::install_panic_hook(&core.paths.data);
     let engine = quena_app_core::engine::ProxyEngine::new(&core).expect("initialise capture engine");
     core.set_proxy_engine(engine.clone());
     if core.settings().proxy.capture_on_startup {
@@ -121,6 +133,22 @@ fn disable_browser_accelerators(w: &tauri::WebviewWindow) {
     });
     if let Err(e) = res {
         tracing::warn!(target: "quena", "webview not available: {e}");
+    }
+}
+
+/// Hold an exclusive lock on `<data>/instance.lock` for the life of the process (the OS
+/// releases it on exit or crash). `None` if another process holds it.
+fn lock_instance(data: &std::path::Path) -> Option<Option<std::fs::File>> {
+    let _ = std::fs::create_dir_all(data);
+    let f = match std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(data.join("instance.lock")) {
+        Ok(f) => f,
+        // Can't create the lock file (read-only location…): don't block startup.
+        Err(_) => return Some(None),
+    };
+    match f.try_lock() {
+        Ok(()) => Some(Some(f)),
+        Err(std::fs::TryLockError::WouldBlock) => None,
+        Err(_) => Some(None),
     }
 }
 

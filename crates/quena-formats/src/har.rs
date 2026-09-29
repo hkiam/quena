@@ -8,7 +8,7 @@ use quena_body::Body;
 use quena_model::*;
 use quena_store::Capture;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::Deserializer;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
@@ -269,23 +269,25 @@ pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, o: &HarOptions
 
 // ------------------------------------------------------------------ import
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
+// Entries are read one by one as JSON values and converted leniently: HAR files
+// from the wild have nulls, numbers as strings (and vice versa) and missing
+// fields; one odd field must not fail the entry, one odd entry not the file.
+
+use serde_json::Value;
+
+#[derive(Default)]
 struct NameValue {
     name: String,
     value: String,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Default)]
 struct PostData {
-    mime_type: String,
     text: String,
     encoding: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Default)]
 struct HarRequest {
     method: String,
     url: String,
@@ -294,16 +296,14 @@ struct HarRequest {
     post_data: Option<PostData>,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Default)]
 struct Content {
     mime_type: String,
     text: Option<String>,
     encoding: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Default)]
 struct HarResponse {
     status: u16,
     status_text: String,
@@ -312,27 +312,95 @@ struct HarResponse {
     content: Content,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Default)]
 struct Timings {
     dns: f64,
     connect: f64,
     ssl: f64,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Default)]
 struct HarEntry {
     started_date_time: String,
     time: f64,
     request: HarRequest,
     response: HarResponse,
     timings: Timings,
-    #[serde(rename = "serverIPAddress")]
     server_ip_address: Option<String>,
     comment: Option<String>,
-    #[serde(rename = "_process")]
     process: Option<String>,
+}
+
+/// Any scalar as text (null/objects/arrays → None).
+fn opt_str(v: Option<&Value>) -> Option<String> {
+    match v? {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+fn str_of(v: Option<&Value>) -> String {
+    opt_str(v).unwrap_or_default()
+}
+
+/// Number or numeric string; `default` for anything else (and NaN/inf).
+fn num_of(v: Option<&Value>, default: f64) -> f64 {
+    let n = match v {
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.trim().parse().ok(),
+        _ => None,
+    };
+    n.filter(|n: &f64| n.is_finite()).unwrap_or(default)
+}
+
+fn name_values(v: Option<&Value>) -> Vec<NameValue> {
+    let Some(Value::Array(a)) = v else { return vec![] };
+    a.iter()
+        .filter(|nv| nv.is_object())
+        .map(|nv| NameValue { name: str_of(nv.get("name")), value: str_of(nv.get("value")) })
+        .filter(|nv| !nv.name.is_empty())
+        .collect()
+}
+
+fn entry_of(v: &Value) -> Option<HarEntry> {
+    let e = v.as_object()?;
+    let req = e.get("request").filter(|r| r.is_object());
+    let resp = e.get("response").filter(|r| r.is_object());
+    let content = resp.and_then(|r| r.get("content")).filter(|c| c.is_object());
+    let timings = e.get("timings").filter(|t| t.is_object());
+    let status = num_of(resp.and_then(|r| r.get("status")), 0.0);
+    Some(HarEntry {
+        started_date_time: str_of(e.get("startedDateTime")),
+        time: num_of(e.get("time"), 0.0),
+        request: HarRequest {
+            method: str_of(req.and_then(|r| r.get("method"))),
+            url: str_of(req.and_then(|r| r.get("url"))),
+            http_version: str_of(req.and_then(|r| r.get("httpVersion"))),
+            headers: name_values(req.and_then(|r| r.get("headers"))),
+            post_data: req.and_then(|r| r.get("postData")).filter(|p| p.is_object()).map(|p| PostData { text: str_of(p.get("text")), encoding: opt_str(p.get("encoding")) }),
+        },
+        response: HarResponse {
+            status: if (0.0..=999.0).contains(&status) { status as u16 } else { 0 },
+            status_text: str_of(resp.and_then(|r| r.get("statusText"))),
+            http_version: str_of(resp.and_then(|r| r.get("httpVersion"))),
+            headers: name_values(resp.and_then(|r| r.get("headers"))),
+            content: Content {
+                mime_type: str_of(content.and_then(|c| c.get("mimeType"))),
+                text: opt_str(content.and_then(|c| c.get("text"))),
+                encoding: opt_str(content.and_then(|c| c.get("encoding"))),
+            },
+        },
+        timings: Timings {
+            dns: num_of(timings.and_then(|t| t.get("dns")), -1.0),
+            connect: num_of(timings.and_then(|t| t.get("connect")), -1.0),
+            ssl: num_of(timings.and_then(|t| t.get("ssl")), -1.0),
+        },
+        server_ip_address: opt_str(e.get("serverIPAddress")),
+        comment: opt_str(e.get("comment")),
+        process: opt_str(e.get("_process")),
+    })
 }
 
 fn to_headers(v: &[NameValue]) -> Headers {
@@ -343,9 +411,18 @@ fn to_headers(v: &[NameValue]) -> Headers {
     h
 }
 
+/// Base64 as found in the wild: line breaks/spaces, missing padding, URL-safe alphabet.
+fn decode_base64(text: &str) -> Option<Vec<u8>> {
+    use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+    let clean: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    let cfg = GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent).with_decode_allow_trailing_bits(true);
+    let alphabet = if clean.contains(['-', '_']) { &base64::alphabet::URL_SAFE } else { &base64::alphabet::STANDARD };
+    GeneralPurpose::new(alphabet, cfg).decode(clean.as_bytes()).ok()
+}
+
 fn body_bytes(text: &str, encoding: Option<&str>) -> Vec<u8> {
-    if encoding == Some("base64") {
-        base64::engine::general_purpose::STANDARD.decode(text.trim()).unwrap_or_else(|_| text.as_bytes().to_vec())
+    if encoding.is_some_and(|e| e.trim().eq_ignore_ascii_case("base64")) {
+        decode_base64(text).unwrap_or_else(|| text.as_bytes().to_vec())
     } else {
         text.as_bytes().to_vec()
     }
@@ -389,7 +466,7 @@ fn to_session(cap: &Arc<Capture>, e: HarEntry) -> (SessionDetail, Body, Body) {
     }
     let dur = (e.time.max(0.0) * 1000.0) as i64;
     d.timers.client_begin_request = Some(start);
-    d.timers.client_done_response = Some(start + dur);
+    d.timers.client_done_response = Some(start.saturating_add(dur));
     let ms = |v: f64| if v >= 0.0 { Some(v as u32) } else { None };
     d.timers.dns_ms = ms(e.timings.dns);
     d.timers.tcp_connect_ms = ms(e.timings.connect);
@@ -409,6 +486,7 @@ fn to_session(cap: &Arc<Capture>, e: HarEntry) -> (SessionDetail, Body, Body) {
 struct Import<'a> {
     cap: &'a Arc<Capture>,
     ids: &'a mut Vec<SessionId>,
+    skipped: &'a mut usize,
     p: &'a dyn Progress,
 }
 
@@ -472,7 +550,7 @@ struct EntriesSeed<'a>(Import<'a>);
 impl<'de> DeserializeSeed<'de> for EntriesSeed<'_> {
     type Value = ();
     fn deserialize<D: Deserializer<'de>>(self, d: D) -> std::result::Result<(), D::Error> {
-        d.deserialize_seq(EntriesV(self.0))
+        d.deserialize_any(EntriesV(self.0))
     }
 }
 struct EntriesV<'a>(Import<'a>);
@@ -483,25 +561,48 @@ impl<'de> Visitor<'de> for EntriesV<'_> {
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut s: A) -> std::result::Result<(), A::Error> {
         let imp = self.0;
-        while let Some(e) = s.next_element::<HarEntry>()? {
+        while let Some(v) = s.next_element::<Value>()? {
             if imp.p.cancelled() {
                 return Err(serde::de::Error::custom("cancelled"));
             }
+            let Some(e) = entry_of(&v) else {
+                *imp.skipped += 1;
+                continue;
+            };
+            drop(v);
             let (d, req, resp) = to_session(imp.cap, e);
             imp.ids.push(imp.cap.insert(d, req, resp));
             imp.p.progress(imp.ids.len() as u64, 0);
         }
         Ok(())
     }
+    // `"entries": null` (or another non-list): no entries.
+    fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<(), E> {
+        Ok(())
+    }
+    fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> std::result::Result<(), A::Error> {
+        while m.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        *self.0.skipped += 1;
+        Ok(())
+    }
 }
 
 pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<SessionId>> {
-    let f = BufReader::with_capacity(1 << 20, File::open(path)?);
+    use std::io::BufRead;
+    let mut f = BufReader::with_capacity(1 << 20, File::open(path)?);
+    // Tolerate a UTF-8 byte order mark (common for files saved on Windows).
+    if f.fill_buf()?.starts_with(b"\xef\xbb\xbf") {
+        f.consume(3);
+    }
     let mut ids = Vec::new();
+    let mut skipped = 0;
     let mut de = serde_json::Deserializer::from_reader(f);
-    Import { cap, ids: &mut ids, p }.deserialize(&mut de).map_err(|e| {
+    Import { cap, ids: &mut ids, skipped: &mut skipped, p }.deserialize(&mut de).map_err(|e| {
         if e.to_string().contains("cancelled") { FormatError::Cancelled } else { FormatError::Json(e) }
     })?;
+    if skipped > 0 {
+        tracing::warn!(skipped, imported = ids.len(), "HAR import: skipped entries that are not objects");
+    }
     Ok(ids)
 }
 
@@ -581,5 +682,39 @@ mod tests {
         let (_, a) = cap.bodies_of(id).unwrap();
         let (_, b) = cap2.bodies_of(ids[0]).unwrap();
         assert_eq!(a.read_range(0, 10_000).unwrap(), b.read_range(0, 10_000).unwrap());
+    }
+
+    #[test]
+    fn har_lenient_import() {
+        let dir = tempfile::tempdir().unwrap();
+        let cap = Capture::open(dir.path().join("a"), BodyConfig::default(), true).unwrap();
+        let har = r#"{"log":{"version":"1.2","entries":[
+            {"startedDateTime":null,"time":"12.5","request":{"method":"GET","url":"http://a/1","headers":[{"name":"X","value":7},null,{"name":null}]},
+             "response":{"status":"200","statusText":null,"headers":"nope","content":{"mimeType":"text/plain","text":"aGVs\nbG8","encoding":"base64"}},
+             "timings":{"dns":"x","connect":null,"ssl":3}},
+            42,
+            {"request":{"method":"POST","url":"http://a/2","postData":{"text":"_-8","encoding":"base64"}},"response":{"status":1e9},"time":1e300},
+            {"request":"broken","response":[]}
+        ]}}"#;
+        let path = dir.path().join("x.har");
+        let mut bytes = b"\xef\xbb\xbf".to_vec();
+        bytes.extend_from_slice(har.as_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        let ids = import(&cap, &path, &NoProgress).unwrap();
+        assert_eq!(ids.len(), 3);
+        let d = cap.detail(ids[0]).unwrap();
+        assert_eq!(d.request.headers.get("x"), Some("7"));
+        assert_eq!(d.response.as_ref().unwrap().status, 200);
+        assert_eq!(d.timers.tls_handshake_ms, Some(3));
+        assert_eq!(d.timers.dns_ms, None);
+        let (_, resp) = cap.bodies_of(ids[0]).unwrap();
+        assert_eq!(resp.read_range(0, 100).unwrap(), b"hello");
+        let d = cap.detail(ids[1]).unwrap();
+        assert!(d.response.is_none());
+        let (req, _) = cap.bodies_of(ids[1]).unwrap();
+        assert_eq!(req.read_range(0, 100).unwrap(), [0xff, 0xef]);
+        // entries: null is an empty archive, not an error.
+        std::fs::write(&path, r#"{"log":{"entries":null}}"#).unwrap();
+        assert!(import(&cap, &path, &NoProgress).unwrap().is_empty());
     }
 }

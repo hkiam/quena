@@ -41,6 +41,13 @@ pub fn pinned_client(ctx: &ConnCtx, host: &str, port: u16) -> Arc<Client<Connect
     let client = Client::builder(TokioExecutor::new())
         .pool_idle_timeout(Duration::from_secs(120))
         .pool_max_idle_per_host(1)
+        // Real servers send sloppy heads; accept what browsers accept instead of a 502.
+        .http1_allow_spaces_after_header_name_in_responses(true)
+        .http1_allow_obsolete_multiline_headers_in_responses(true)
+        .http1_ignore_invalid_headers_in_responses(true)
+        .http1_max_headers(1000)
+        // Reap idle pooled connections in the background, not only on checkout.
+        .pool_timer(hyper_util::rt::TokioTimer::new())
         .http1_preserve_header_case(true)
         .http2_only(false)
         .set_host(true)
@@ -72,12 +79,35 @@ fn build_req(head: &RequestHead, extra_auth: Option<(&str, String)>, body: Proxy
     Ok(req)
 }
 
+/// Read and discard a 401/407 body so the connection can be reused for the next leg.
+/// Bounded: a huge or endless challenge body is abandoned (the connection is then dropped).
 async fn drain(resp: Response<Incoming>) {
     let mut b = resp.into_body();
-    while let Some(f) = b.frame().await {
-        if f.is_err() {
-            break;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let mut total = 0usize;
+        while let Some(f) = b.frame().await {
+            match f {
+                Ok(f) => {
+                    total += f.data_ref().map_or(0, |d| d.len());
+                    if total > 1 << 20 {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
         }
+    })
+    .await;
+}
+
+/// `client.request` with the same response-head bound as ordinary requests.
+async fn request_bounded<C>(client: &hyper_util::client::legacy::Client<C, crate::body::ProxyBody>, req: http::Request<crate::body::ProxyBody>) -> Result<Response<Incoming>, String>
+where
+    C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
+{
+    match tokio::time::timeout(crate::forward::RESPONSE_HEAD_TIMEOUT, client.request(req)).await {
+        Ok(r) => r.map_err(err_chain),
+        Err(_) => Err(format!("no response from the server within {} s", crate::forward::RESPONSE_HEAD_TIMEOUT.as_secs())),
     }
 }
 
@@ -104,7 +134,7 @@ pub async fn send_with_auth(
 
     // Leg 1: normal request with body.
     let req = build_req(head, None, stream(&body), false)?;
-    let resp = client.request(req).await.map_err(err_chain)?;
+    let resp = request_bounded(&client, req).await?;
     let is_proxy_challenge = resp.status() == http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
     let is_server_challenge = resp.status() == http::StatusCode::UNAUTHORIZED;
     let applies = (is_server_challenge && cfg.auth_applies(&host)) || (is_proxy_challenge && cfg.auto_auth && cfg.auto_auth_upstream);
@@ -138,14 +168,16 @@ pub async fn send_with_auth(
     // rejects (a fresh challenge without a continuation token) falls through to the
     // next one — e.g. a server that advertises Negotiate but only really does NTLM.
     for cand in &candidates {
-        let mut hs = match Handshake::start(cand.scheme, creds.as_ref(), &host) {
+        // Kerberos/SSPI may contact a domain controller and block for seconds: let the
+        // runtime move other tasks off this worker meanwhile.
+        let mut hs = match tokio::task::block_in_place(|| Handshake::start(cand.scheme, creds.as_ref(), &host)) {
             Ok(h) => h,
             Err(e) => {
                 tracing::debug!(target: "quena::auth", "{} start failed for {host}: {e}", cand.scheme.header_name());
                 continue;
             }
         };
-        let first_header = match hs.next_header(cand.token.as_deref()) {
+        let first_header = match tokio::task::block_in_place(|| hs.next_header(cand.token.as_deref())) {
             Ok(v) => v,
             Err(e) => {
                 tracing::debug!(target: "quena::auth", "{} unavailable for {host}: {e}", cand.scheme.header_name());
@@ -158,7 +190,7 @@ pub async fn send_with_auth(
         for leg in 0..6u8 {
             let header_value = match pending_header.take() {
                 Some(v) => v,
-                None => match hs.next_header(challenge_token.as_deref()) {
+                None => match tokio::task::block_in_place(|| hs.next_header(challenge_token.as_deref())) {
                     Ok(v) => v,
                     Err(e) => {
                         tracing::debug!(target: "quena::auth", "{} continuation failed for {host}: {e}", hs.scheme().header_name());
@@ -172,7 +204,7 @@ pub async fn send_with_auth(
             // Send body only on the final leg; negotiate legs carry an empty body.
             let leg_body = if final_leg { stream(&body) } else { empty() };
             let req = build_req(head, Some((auth_header, header_value)), leg_body, !final_leg)?;
-            let resp = client.request(req).await.map_err(err_chain)?;
+            let resp = request_bounded(&client, req).await?;
             tracing::debug!(target: "quena::auth", "{} leg {} to {host}: {} (body sent: {})", hs.scheme().header_name(), leg + 1, resp.status(), final_leg);
             let again_proxy = resp.status() == http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
             let again_server = resp.status() == http::StatusCode::UNAUTHORIZED;
@@ -196,7 +228,7 @@ pub async fn send_with_auth(
     }
     // Nothing worked → re-send the original request so the caller sees the 401/407.
     let req = build_req(head, None, stream(&body), false)?;
-    client.request(req).await.map_err(err_chain)
+    request_bounded(&client, req).await
 }
 
 /// Whether another leg is certain to follow the one being sent. Only then is the

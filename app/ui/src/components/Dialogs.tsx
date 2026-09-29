@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Recoverable, type Settings } from "../api";
 import { actions } from "../actions";
 import { fmtBytes, fmtDateTime, fmtInt, modKey } from "../lib/format";
-import { get, say, set, useStore } from "../store";
+import { get, say, set, useStore, type Dialog } from "../store";
 import { TextWizard } from "./TextWizard";
 import { CompareView } from "./CompareView";
 import { FindDialog } from "./FindDialog";
@@ -11,6 +11,7 @@ import { DeviceAssistant } from "./DeviceDialog";
 import { PluginsPanel } from "./PluginsDialog";
 import { RulesEditor } from "./RulesEditor";
 import { CommandPalette } from "./CommandPalette";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 function Modal({ title, children, onClose, wide, footer }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; footer?: React.ReactNode }) {
   return (
@@ -601,6 +602,26 @@ export function Dialogs() {
     else (prevFocus.current as HTMLElement | null)?.focus?.();
   }, [d]);
   if (!d) return null;
+  // A dialog that throws while rendering must not take the window down.
+  return (
+    <ErrorBoundary
+      name={`dialog ${d.kind}`}
+      resetKey={d}
+      fallback={(e, reset) => (
+        <Modal title="Dialog failed" onClose={close}>
+          <div className="view-error">
+            <div>This view failed: {e.message || e.name}</div>
+            <button onClick={reset}>Retry</button>
+          </div>
+        </Modal>
+      )}
+    >
+      <DialogBody d={d} />
+    </ErrorBoundary>
+  );
+}
+
+function DialogBody({ d }: { d: Dialog }) {
   switch (d.kind) {
     case "prompt":
       return <PromptDialog title={d.title} label={d.label} initial={d.initial} resolve={d.resolve} />;

@@ -13,6 +13,9 @@ tracing.workspace = true
 parking_lot.workspace = true
 thiserror.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 libproc = "0.14"
 

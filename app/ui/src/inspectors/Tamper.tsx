@@ -36,11 +36,13 @@ export interface TamperEdits {
 export function TamperEditor({ detail, part, edits, setEdits }: { detail: Detail; part: Part; edits: TamperEdits; setEdits: (e: TamperEdits) => void }) {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const [body, setBody] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const editable = info.len <= EDIT_LIMIT && (info.isText || info.len === 0) && !info.contentEncoding;
   const initialHead = useRef(headText(detail, part));
   useEffect(() => {
     initialHead.current = headText(detail, part);
-    if (editable && info.len) loadText(detail.summary.id, part, info, EDIT_LIMIT, "raw").then(setBody);
+    setLoadErr(null);
+    if (editable && info.len) loadText(detail.summary.id, part, info, EDIT_LIMIT, "raw").then(setBody, (e) => setLoadErr(String(e)));
     else setBody("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.summary.id, part]);
@@ -72,7 +74,9 @@ export function TamperEditor({ detail, part, edits, setEdits }: { detail: Detail
         {edits.file ? (
           <div className="placeholder">The body will be replaced by the selected file.</div>
         ) : editable ? (
-          body == null ? (
+          loadErr ? (
+            <div className="placeholder">Could not load the body ({loadErr}). It is forwarded unchanged unless you replace it with a file.</div>
+          ) : body == null ? (
             <div className="placeholder">Loading…</div>
           ) : (
             <CodeView text={edits.body ?? body} editable lang={langFor(info.contentType)} onChange={(t) => setEdits({ ...edits, body: t })} />

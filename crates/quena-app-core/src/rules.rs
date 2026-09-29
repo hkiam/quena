@@ -305,7 +305,14 @@ fn pairs_to_headers(pairs: Vec<(String, String)>) -> Headers {
 impl Rules {
     pub fn new(data_dir: &std::path::Path) -> Arc<Rules> {
         let path = data_dir.join("autoresponder.json");
-        let ar: AutoResponderState = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let ar: AutoResponderState = match std::fs::read(&path) {
+            Ok(b) => serde_json::from_slice(&b).unwrap_or_else(|e| {
+                let aside = crate::keep_corrupt(&path);
+                tracing::warn!(target: "quena", "mock rules unreadable ({e}); starting without rules, the old file was kept as {aside}");
+                AutoResponderState::default()
+            }),
+            Err(_) => AutoResponderState::default(),
+        };
         let max = ar.rules.iter().map(|r| r.id).max().unwrap_or(0);
         let r = Arc::new(Rules {
             core: RwLock::new(Weak::new()),
@@ -693,8 +700,9 @@ impl Rules {
                 return respond(self.synthetic(code, "text/plain; charset=utf-8", format!("[Quena] Mock Rules: {code}").as_bytes(), &[]));
             }
             if let Some(ms) = rest.strip_prefix("delay:") {
-                let d: u64 = ms.trim().parse().unwrap_or(0);
-                return Some(RequestAction::Forward { head: None, body: None, delay_ms: d + latency });
+                // At most an hour: a typo like *delay:99999999999 must not park requests forever.
+                let d: u64 = ms.trim().parse::<u64>().unwrap_or(0).min(3_600_000);
+                return Some(RequestAction::Forward { head: None, body: None, delay_ms: d.saturating_add(latency) });
             }
             if rest == "drop" || rest == "reset" || rest == "exit" {
                 return Some(RequestAction::Abort);
@@ -750,6 +758,15 @@ impl Rules {
         let (tx, rx) = oneshot::channel();
         let info = PausedInfo { id: s.id, phase: phase.into(), url, since: now_us() };
         self.paused.lock().insert(s.id, (if phase == "request" { Waiter::Request(tx) } else { Waiter::Response(tx) }, info.clone()));
+        // Removes the entry also when this future is dropped (the client went away while
+        // paused), so no dead breakpoint stays listed.
+        struct Unpause<'a>(&'a Mutex<HashMap<SessionId, (Waiter, PausedInfo)>>, SessionId);
+        impl Drop for Unpause<'_> {
+            fn drop(&mut self) {
+                self.0.lock().remove(&self.1);
+            }
+        }
+        let unpause = Unpause(&self.paused, s.id);
         s.live.update(|d| {
             d.summary.flags |= flags::BREAKPOINTED;
             d.summary.state = if phase == "request" { SessionState::BreakpointRequest } else { SessionState::BreakpointResponse };
@@ -766,7 +783,7 @@ impl Rules {
         } else {
             rx.await.unwrap_or(Resume { action: "continue".into(), head_text: None, body_text: None, body_file: None, status: None })
         };
-        self.paused.lock().remove(&s.id);
+        drop(unpause);
         s.live.update(|d| {
             d.summary.state = if phase == "request" { SessionState::SendingRequest } else { SessionState::ReceivingResponse };
         });

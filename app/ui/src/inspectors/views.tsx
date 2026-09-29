@@ -7,38 +7,57 @@ import { b64decode, parseCookies, parseQuery, rawResponseHead, requestLine } fro
 import { loadText } from "../lib/bodytext";
 import { BodyText } from "./BodyText";
 import { get } from "../store";
+import { parseXml } from "../lib/xml";
 
 const TREE_LIMIT = 5 << 20;
+/** Rows / children rendered before a "more" control (hostile bodies can have millions). */
+export const ROW_CAP = 1000;
+
+/** "… N more" control for capped lists. */
+export function MoreRows({ shown, total, onMore, step = ROW_CAP }: { shown: number; total: number; onMore: (n: number) => void; step?: number }) {
+  if (total <= shown) return null;
+  return (
+    <div className="j-more" onClick={() => onMore(shown + step)}>
+      … {fmtInt(total - shown)} more (show {fmtInt(Math.min(step, total - shown))})
+    </div>
+  );
+}
 
 function Table({ rows, head = ["Name", "Value"] }: { rows: (string | React.ReactNode)[][]; head?: string[] }) {
+  const [limit, setLimit] = useState(ROW_CAP);
   return (
-    <table className="kv">
-      <thead>
-        <tr>
-          {head.map((h) => (
-            <th key={h}>{h}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r, i) => (
-          <tr key={i}>
-            {r.map((c, j) => (
-              <td key={j}>{c}</td>
+    <>
+      <table className="kv">
+        <thead>
+          <tr>
+            {head.map((h) => (
+              <th key={h}>{h}</th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.slice(0, limit).map((r, i) => (
+            <tr key={i}>
+              {r.map((c, j) => (
+                <td key={j}>{c}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <MoreRows shown={limit} total={rows.length} onMore={setLimit} />
+    </>
   );
 }
 
 function useBodyText(detail: Detail, part: Part, limit: number) {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     setText(null);
+    setError(null);
     if (info.len === 0) {
       setText("");
       return;
@@ -47,12 +66,15 @@ function useBodyText(detail: Detail, part: Part, limit: number) {
       setText(null);
       return;
     }
-    loadText(detail.summary.id, part, info, limit).then((t) => alive && setText(t));
+    loadText(detail.summary.id, part, info, limit).then(
+      (t) => alive && setText(t),
+      (e) => alive && setError(`Could not load the body: ${String(e)}`),
+    );
     return () => {
       alive = false;
     };
   }, [detail.summary.id, part, info.len, info.complete]);
-  return { text, info };
+  return { text, info, error };
 }
 
 export function WebFormsView({ detail }: { detail: Detail }) {
@@ -324,7 +346,7 @@ function JNode({ k, v, depth }: { k: string | null; v: J; depth: number }) {
 }
 
 export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
-  const { text, info } = useBodyText(detail, part, TREE_LIMIT);
+  const { text, info, error } = useBodyText(detail, part, TREE_LIMIT);
   const parsed = useMemo(() => {
     if (text == null) return { err: null, v: undefined };
     const t = text.trim();
@@ -353,6 +375,7 @@ export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
   }, [text]);
   if (!info.len) return <div className="placeholder">No body</div>;
   if (info.len > TREE_LIMIT) return <div className="placeholder">Body is {fmtBytes(info.len)} – too large for the tree view. Use TextView (formatted) instead.</div>;
+  if (error) return <div className="placeholder">{error}</div>;
   if (text == null) return <div className="placeholder">Loading…</div>;
   if (parsed.err) return <div className="placeholder">Not valid JSON: {parsed.err}</div>;
   return (
@@ -364,8 +387,10 @@ export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
 
 export function XNode({ n, depth }: { n: Element; depth: number }) {
   const [open, setOpen] = useState(depth < 3);
-  const kids = Array.from(n.childNodes).filter((c) => c.nodeType === 1 || (c.nodeType === 3 && c.textContent!.trim()) || c.nodeType === 4);
-  const attrs = Array.from(n.attributes);
+  const [limit, setLimit] = useState(ROW_CAP);
+  const kids = Array.from(n.childNodes).filter((c) => c.nodeType === 1 || (c.nodeType === 3 && (c.textContent ?? "").trim()) || c.nodeType === 4);
+  const allAttrs = n.attributes;
+  const attrs = Array.from(allAttrs).slice(0, 200);
   const onlyText = kids.length === 1 && kids[0].nodeType !== 1;
   return (
     <div className="j-row">
@@ -383,10 +408,11 @@ export function XNode({ n, depth }: { n: Element; depth: number }) {
           {a.name}=<span className="j-str">"{a.value}"</span>
         </span>
       ))}
+      {allAttrs.length > attrs.length && <span className="muted"> … {fmtInt(allAttrs.length - attrs.length)} more attributes</span>}
       {onlyText && <span className="x-text"> {kids[0].textContent}</span>}
       {open && !onlyText && (
         <div className="j-children">
-          {kids.slice(0, 2000).map((c, i) =>
+          {kids.slice(0, limit).map((c, i) =>
             c.nodeType === 1 ? (
               <XNode key={i} n={c as Element} depth={depth + 1} />
             ) : (
@@ -395,6 +421,7 @@ export function XNode({ n, depth }: { n: Element; depth: number }) {
               </div>
             ),
           )}
+          <MoreRows shown={limit} total={kids.length} onMore={setLimit} />
         </div>
       )}
     </div>
@@ -402,20 +429,16 @@ export function XNode({ n, depth }: { n: Element; depth: number }) {
 }
 
 export function XmlView({ detail, part }: { detail: Detail; part: Part }) {
-  const { text, info } = useBodyText(detail, part, TREE_LIMIT);
-  const doc = useMemo(() => {
-    if (text == null) return null;
-    const d = new DOMParser().parseFromString(text, "application/xml");
-    const err = d.querySelector("parsererror");
-    return err ? { err: err.textContent ?? "parse error" } : { root: d.documentElement };
-  }, [text]);
+  const { text, info, error } = useBodyText(detail, part, TREE_LIMIT);
+  const doc = useMemo(() => (text == null ? null : parseXml(text)), [text]);
   if (!info.len) return <div className="placeholder">No body</div>;
   if (info.len > TREE_LIMIT) return <div className="placeholder">Body is {fmtBytes(info.len)} – too large for the tree view. Use TextView (formatted) instead.</div>;
+  if (error) return <div className="placeholder">{error}</div>;
   if (!doc) return <div className="placeholder">Loading…</div>;
-  if ("err" in doc) return <div className="placeholder">Not well-formed XML: {doc.err}</div>;
+  if ("error" in doc) return <div className="placeholder">{doc.error}</div>;
   return (
     <div className="scroll pad mono">
-      <XNode n={doc.root!} depth={0} />
+      <XNode n={doc.root} depth={0} />
     </div>
   );
 }

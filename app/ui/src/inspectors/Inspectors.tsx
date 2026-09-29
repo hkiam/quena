@@ -20,6 +20,7 @@ import { GrpcView, grpcCandidate } from "./GrpcView";
 import { ChevronDown } from "lucide-react";
 import { showContextMenu } from "../components/ContextMenu";
 import { methodPill, statusPill } from "../grid/style";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
@@ -49,16 +50,18 @@ const TITLES: Record<string, string> = {
 };
 
 /** Load the focused session's detail; refresh while it is in flight. */
-function useDetail(): Detail | null {
+function useDetail(): { detail: Detail | null; error: string | null } {
   const focusId = useStore((s) => s.focusId);
   const listVersion = useStore((s) => s.listVersion);
   const gridNonce = useStore((s) => s.gridNonce);
   const [detail, setDetail] = useState<Detail | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const req = useRef(0);
   const live = detail != null && detail.summary.id === focusId && detail.summary.state !== "done" && detail.summary.state !== "aborted";
   useEffect(() => {
     if (focusId == null) {
       setDetail(null);
+      setError(null);
       return;
     }
     // Immediate load on selection change; trailing-edge debounce (≤ 5 Hz) while in flight,
@@ -67,16 +70,25 @@ function useDetail(): Detail | null {
     const t = window.setTimeout(
       () => {
         const my = ++req.current;
-        api.detail(focusId).then((d) => {
-          if (my === req.current) setDetail(d);
-        });
+        api.detail(focusId).then(
+          (d) => {
+            if (my !== req.current) return;
+            setDetail(d);
+            setError(null);
+          },
+          (e) => {
+            if (my === req.current) setError(String(e));
+          },
+        );
       },
       fresh ? 0 : 200,
     );
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusId, gridNonce, live ? listVersion : 0]);
-  return focusId == null ? null : detail;
+  // Never show another session's detail under a failed load.
+  if (focusId == null || (error && detail?.summary.id !== focusId)) return { detail: null, error: focusId == null ? null : error };
+  return { detail, error: null };
 }
 
 function bodyVariant(detail: Detail, part: Part, decode: boolean, pretty: boolean): Variant {
@@ -299,7 +311,11 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
           </button>
         )}
     </div>
-      <div className="insp-content">{content}</div>
+      <div className="insp-content">
+        <ErrorBoundary name={`${part} ${tab}`} resetKey={`${detail?.summary.id ?? ""}:${tab}:${tamper ? "tamper" : ""}`}>
+          {content}
+        </ErrorBoundary>
+      </div>
     </div>
   );
 }
@@ -324,7 +340,7 @@ function SessionHeader({ detail }: { detail: Detail }) {
 }
 
 export function Inspectors() {
-  const detail = useDetail();
+  const { detail, error } = useDetail();
   const split = useStore((s) => s.layout.inspectorSplit);
   const stacked = useStore((s) => s.layout.stacked);
   const paused = pausedPart(detail);
@@ -338,6 +354,8 @@ export function Inspectors() {
         <TamperBar detail={detail} part={paused} edits={edits} onDone={() => setEdits({ head: null, body: null, file: null })} />
       ) : detail ? (
         <SessionHeader detail={detail} />
+      ) : error ? (
+        <div className="insp-summary err">Could not load session: {error}</div>
       ) : (
         <div className="insp-summary muted">No session selected</div>
       )}

@@ -8,7 +8,7 @@ use crate::util::split_host_port;
 use http::{Request, Response, StatusCode};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use quena_model::*;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -19,6 +19,13 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::watch;
+use std::time::Duration;
+
+/// A client must deliver a complete request head within this time (slowloris guard). hyper
+/// applies it to idle keep-alive connections as well, so idle client connections close.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// Handshake with the client after its ClientHello (it may stall or never finish).
+const CLIENT_TLS_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn handle_client(shared: Arc<Shared>, stream: TcpStream, peer: SocketAddr) {
     let cfg = shared.cfg();
@@ -73,6 +80,8 @@ where
         }
     });
     let r = hyper::server::conn::http1::Builder::new()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HEADER_READ_TIMEOUT)
         .preserve_header_case(true)
         .keep_alive(true)
         .max_buf_size(1 << 20)
@@ -119,7 +128,9 @@ async fn connect_inner(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<
         }
     });
     let mut rh = Headers::new();
-    rh.push("Quena-Gateway", shared.cfg().upstream_for(&target).map(|(h, p)| format!("{h}:{p}")).unwrap_or_else(|| "Direct".into()));
+    // PAC evaluation may block (script, DNS): keep it off the async workers.
+    let gateway = crate::resolve_upstream(&shared.cfg(), target.clone()).await;
+    rh.push("Quena-Gateway", gateway.map(|(h, p)| format!("{h}:{p}")).unwrap_or_else(|| "Direct".into()));
     live.update(|d| {
         d.response = Some(ResponseHead { status: 200, reason: "Connection Established".into(), version: HttpVersion::Http11, headers: rh });
         d.timers.got_response_headers = Some(now_us());
@@ -127,6 +138,8 @@ async fn connect_inner(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<
     let on_upgrade = hyper::upgrade::on(&mut req);
     let proc_name = process.map(|p| p.display()).unwrap_or_default();
     tokio::spawn(async move {
+        // Ends the tunnel session if this task is dropped or panics before finishing it.
+        let _guard = live.abort_on_drop("the tunnel ended unexpectedly");
         match on_upgrade.await {
             Ok(up) => {
                 let f: Pin<Box<dyn std::future::Future<Output = ()> + Send>> = Box::pin(tunnel_or_intercept(ctx, live, TokioIo::new(up), host, port, target, proc_name));
@@ -205,9 +218,19 @@ async fn tunnel_or_intercept<S>(
     let shared = ctx.shared.clone();
     let cfg = shared.cfg();
     let mut first = [0u8; 1];
-    let n = match tokio::time::timeout(std::time::Duration::from_secs(60), io.read(&mut first)).await {
+    // TLS (443) clients speak first. On other ports the server may speak first (SMTP,
+    // IMAP, FTP, databases): if the client stays silent briefly, just pass the tunnel through.
+    let wait = if port == 443 { Duration::from_secs(60) } else { Duration::from_secs(1) };
+    let n = match tokio::time::timeout(wait, io.read(&mut first)).await {
         Ok(Ok(n)) => n,
-        _ => 0,
+        Ok(Err(_)) => 0,
+        Err(_) if port != 443 => {
+            live.set_response_body(tunnel_body(&shared, format!("This is a CONNECT tunnel to {target}.\nThe client did not speak first (server-first protocol); it is passed through.\n")));
+            live.update(|_| {});
+            tunnel::raw(&shared, &live, io, &host, port).await;
+            return;
+        }
+        Err(_) => 0,
     };
     if n == 0 {
         live.update(|d| {
@@ -260,9 +283,10 @@ where
         Ok(c) => c,
         Err(e) => return fail_tunnel(&live, format!("certificate generation failed: {e}")),
     };
-    let tls = match start.into_stream(server_cfg).await {
-        Ok(t) => t,
-        Err(e) => {
+    let tls = match tokio::time::timeout(CLIENT_TLS_TIMEOUT, start.into_stream(server_cfg)).await {
+        Err(_) => return fail_tunnel(&live, format!("TLS handshake with the client timed out after {}s", CLIENT_TLS_TIMEOUT.as_secs())),
+        Ok(Ok(t)) => t,
+        Ok(Err(e)) => {
             let msg = format!(
                 "TLS handshake with the client failed: {e}.\nThe client probably does not trust the Quena root certificate (Tools → HTTPS → Trust root certificate), or it pins certificates for {cert_host}."
             );
@@ -316,6 +340,10 @@ where
         let c2 = inner.clone();
         let svc = service_fn(move |req: Request<Incoming>| forward::handle(c2.clone(), req));
         let r = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+            .timer(TokioTimer::new())
+            // Detect dead h2 clients (sleeping laptops, dropped Wi-Fi).
+            .keep_alive_interval(Some(Duration::from_secs(30)))
+            .keep_alive_timeout(Duration::from_secs(20))
             .enable_connect_protocol()
             .max_concurrent_streams(250)
             .serve_connection(TokioIo::new(tls), svc)

@@ -183,11 +183,12 @@ impl Default for BodyConfigDto {
 impl BodyConfigDto {
     pub fn to_config(&self) -> BodyConfig {
         BodyConfig {
-            inline_limit: (self.inline_limit_kb.max(1) * 1024) as usize,
-            max_recorded_body: self.max_recorded_body_mb << 20,
-            quota: self.quota_gb.max(1) << 30,
-            min_free_space: self.min_free_space_gb << 30,
-            max_derived: self.max_derived_gb.max(1) << 30,
+            // Clamped: hand-edited or damaged settings must not overflow into tiny limits.
+            inline_limit: (self.inline_limit_kb.clamp(1, 1 << 20) * 1024) as usize,
+            max_recorded_body: self.max_recorded_body_mb.min(1 << 30) << 20,
+            quota: self.quota_gb.clamp(1, 1 << 20) << 30,
+            min_free_space: self.min_free_space_gb.min(1 << 20) << 30,
+            max_derived: self.max_derived_gb.clamp(1, 1 << 20) << 30,
             max_ratio: self.max_ratio.max(10),
         }
     }
@@ -197,7 +198,9 @@ impl Settings {
     pub fn load(path: &Path) -> Settings {
         match std::fs::read(path) {
             Ok(b) => serde_json::from_slice(&b).unwrap_or_else(|e| {
-                tracing::warn!("settings unreadable, using defaults: {e}");
+                // Keep the damaged file: the next save would otherwise overwrite it for good.
+                let aside = crate::keep_corrupt(path);
+                tracing::warn!("settings unreadable ({e}); using defaults, the old file was kept as {aside}");
                 Settings::default()
             }),
             Err(_) => Settings::default(),

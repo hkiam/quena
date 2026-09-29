@@ -578,6 +578,19 @@ impl AppCore {
 }
 
 /// Initialise tracing (stderr + Log tab). Returns the log buffer.
+/// Copy a state file that failed to parse next to itself (`name.corrupt-<unix time>`), so a
+/// later save does not destroy the user's data. Returns the backup's file name.
+pub(crate) fn keep_corrupt(path: &std::path::Path) -> String {
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(format!(".corrupt-{ts}"));
+    let aside = path.with_file_name(&name);
+    match std::fs::copy(path, &aside) {
+        Ok(_) => name.to_string_lossy().into_owned(),
+        Err(e) => format!("(copy failed: {e})"),
+    }
+}
+
 pub fn init_tracing() -> Arc<LogBuffer> {
     use tracing_subscriber::prelude::*;
     let buf = LogBuffer::new(10_000);

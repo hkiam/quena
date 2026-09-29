@@ -17,6 +17,9 @@ const LOAD_BUDGET_US: u64 = 2_000_000; // 2 s for top-level script + onBoot
 const NO_DEADLINE: u64 = u64::MAX;
 const MAX_LOG_LINES: usize = 2000;
 const QUEUE_BOUND: usize = 256;
+/// Longest a request waits for the script (queueing + hook). After that it passes through
+/// unchanged, so a slow script degrades to "no rules" instead of stalling traffic.
+const HOOK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn now_us() -> u64 {
     std::time::SystemTime::now()
@@ -191,8 +194,12 @@ impl ScriptEngine {
             // Queue full or worker gone: don't block forwarding, pass through.
             return RequestDecision::default();
         }
-        match rx.await {
-            Ok(Ok(json)) => parse_req_result(&json),
+        match tokio::time::timeout(HOOK_WAIT, rx).await {
+            Ok(Ok(Ok(json))) => parse_req_result(&json),
+            Err(_) => {
+                tracing::warn!(target: "quena::script", "onBeforeRequest did not answer within {} s; request passed through unchanged", HOOK_WAIT.as_secs());
+                RequestDecision::default()
+            }
             _ => RequestDecision::default(),
         }
     }
@@ -207,8 +214,12 @@ impl ScriptEngine {
         if self.tx.try_send(Cmd::Response { input, reply }).is_err() {
             return ResponseDecision::default();
         }
-        match rx.await {
-            Ok(Ok(json)) => parse_resp_result(&json),
+        match tokio::time::timeout(HOOK_WAIT, rx).await {
+            Ok(Ok(Ok(json))) => parse_resp_result(&json),
+            Err(_) => {
+                tracing::warn!(target: "quena::script", "onBeforeResponse did not answer within {} s; response passed through unchanged", HOOK_WAIT.as_secs());
+                ResponseDecision::default()
+            }
             _ => ResponseDecision::default(),
         }
     }
@@ -287,6 +298,8 @@ fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>, alive: Arc<Ato
                     }
                 }
             }
+            // The caller gave up waiting (HOOK_WAIT): don't run a stale hook.
+            Cmd::Request { reply, .. } | Cmd::Response { reply, .. } if reply.is_closed() => {}
             Cmd::Request { input, reply } => {
                 let out = dispatch(&ctx, &deadline, base, "__dispatchRequest", &input);
                 let _ = reply.send(out);
@@ -529,7 +542,7 @@ mod tests {
     use super::*;
 
     fn rt() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread().build().unwrap()
+        tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap()
     }
 
     #[test]

@@ -3494,6 +3494,7 @@ dependencies = [
 name = "quena-platform"
 version = "0.0.1"
 dependencies = [
+ "libc",
  "libproc",
  "parking_lot",
  "quena-model",
@@ -3605,6 +3606,7 @@ dependencies = [
  "rustls-native-certs",
  "rustls-pemfile",
  "sha2",
+ "tempfile",
  "thiserror 2.0.21",
  "time",
  "tracing",

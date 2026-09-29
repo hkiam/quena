@@ -32,6 +32,13 @@ impl Upstream {
         let client = Client::builder(TokioExecutor::new())
             .pool_idle_timeout(Duration::from_secs(90))
             .pool_max_idle_per_host(32)
+            // Real servers send sloppy heads; accept what browsers accept instead of a 502.
+            .http1_allow_spaces_after_header_name_in_responses(true)
+            .http1_allow_obsolete_multiline_headers_in_responses(true)
+            .http1_ignore_invalid_headers_in_responses(true)
+            .http1_max_headers(1000)
+            // Reap idle pooled connections in the background, not only on checkout.
+            .pool_timer(hyper_util::rt::TokioTimer::new())
             .http1_preserve_header_case(true)
             .http1_title_case_headers(false)
             .http2_adaptive_window(true)
@@ -146,10 +153,18 @@ fn absolute_url(req: &Request<Incoming>, ctx: &ConnCtx) -> Option<String> {
     Some(format!("{}://{authority}{pq}", ctx.scheme))
 }
 
+/// Upper bound for waiting on an upstream response head. Generous on purpose: long-polling
+/// endpoints legitimately hold requests for minutes; this only ends true hangs.
+pub(crate) const RESPONSE_HEAD_TIMEOUT: Duration = Duration::from_secs(600);
+
 fn is_self_target(shared: &Shared, url: &str) -> bool {
     let Ok(u) = url.parse::<http::Uri>() else { return false };
     let host = u.host().unwrap_or("").trim_matches(['[', ']']).to_ascii_lowercase();
     if host == "quena.cert" || host == "quena" || host == "ipv4.quena" {
+        return true;
+    }
+    // 0.0.0.0 / :: on our port reach the listener too.
+    if (host == "0.0.0.0" || host == "::") && shared.listen.read().iter().any(|a| Some(a.port()) == u.port_u16()) {
         return true;
     }
     let port = u.port_u16().unwrap_or(if u.scheme_str() == Some("https") { 443 } else { 80 });
@@ -180,6 +195,11 @@ fn headers_only(cfg: &ProxyConfig, host: &str, ct: Option<&str>) -> bool {
     host_matches(&cfg.headers_only_hosts, host) || ct.is_some_and(|ct| cfg.headers_only_types.iter().any(|t| ct.to_ascii_lowercase().contains(t.as_str())))
 }
 
+/// Largest body held back completely (breakpoints, rules that edit bodies, automatic
+/// authentication, "Stream" off). Larger bodies fail the session with a clear message
+/// instead of filling the disk while the peer waits.
+const MAX_BUFFERED_BODY: u64 = 512 << 20;
+
 /// Read a body completely into the store (lossless, bypasses the recorder queue).
 pub(crate) async fn buffer_body<B>(shared: &Shared, mut body: B) -> Result<(StoredBody, bool), BoxError>
 where
@@ -194,6 +214,9 @@ where
             Some(Ok(f)) => {
                 if let Some(d) = f.data_ref() {
                     tokio::task::block_in_place(|| w.write(d)).map_err(|e| Box::new(e) as BoxError)?;
+                    if w.body().len() > MAX_BUFFERED_BODY {
+                        return Err(format!("the body is larger than {} MB and cannot be held back completely (breakpoint, rule, authentication or Stream off)", MAX_BUFFERED_BODY >> 20).into());
+                    }
                 }
             }
             Some(Err(e)) => {
@@ -242,6 +265,8 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
             d.summary.flags |= flags::REMOTE_CLIENT;
         }
     });
+    // Client gone (hyper drops this future), panic, or a forgotten path: end the session.
+    let mut guard = live.abort_on_drop("the client closed the connection before the session completed");
     let view = SessionView { id: live.id, live: live.clone(), process: process.as_ref().map(|p| p.display()).unwrap_or_default(), client_ip };
     let hooks = shared.hooks();
     let upgrade_req = req.headers().get(http::header::UPGRADE).is_some() && h1;
@@ -269,9 +294,12 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
         let times = Arc::new(TeeTimes::default());
         let l2 = live.clone();
         let t2 = times.clone();
+        let hold = live.hold();
         let key = shared.recorder.open(
+            live.id,
             writer,
             Box::new(move |b, _aborted| {
+                let _hold = hold;
                 l2.set_request_body(b);
                 let last = t2.last.load(Ordering::Relaxed);
                 l2.update(|d| d.timers.client_done_request = Some(if last > 0 { last } else { now_us() }));
@@ -387,10 +415,11 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
 
     if resp.status() == StatusCode::SWITCHING_PROTOCOLS {
         if let Some(cu) = client_upgrade {
+            guard.disarm(); // the WebSocket pump finishes the session
             return Ok(crate::tunnel::websocket(&shared, &live, resp, cu));
         }
     }
-    Ok(deliver_response(&shared, &live, &view, &head, resp).await)
+    Ok(deliver_response(&shared, &live, &view, &head, resp, &mut guard).await)
 }
 
 fn url_host(url: &str) -> String {
@@ -428,7 +457,10 @@ pub(crate) async fn send_upstream(
     });
     let up = shared.upstream();
     let sent = now_us();
-    let result = up.client.request(req).await;
+    let result = match tokio::time::timeout(RESPONSE_HEAD_TIMEOUT, up.client.request(req)).await {
+        Ok(r) => r,
+        Err(_) => return Err(format!("no response from the server within {} s", RESPONSE_HEAD_TIMEOUT.as_secs())),
+    };
     // Connection metadata (also available on errors after connecting).
     let mut ext = http::Extensions::new();
     if let Some(c) = captured.connection_metadata().as_ref() {
@@ -483,7 +515,14 @@ pub(crate) fn record_response_head(live: &Arc<LiveSession>, resp: &Response<Inco
 }
 
 /// Stream (or buffer) the upstream response to the client while recording it.
-async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &SessionView, req_head: &RequestHead, resp: Response<Incoming>) -> Response<ProxyBody> {
+async fn deliver_response(
+    shared: &Arc<Shared>,
+    live: &Arc<LiveSession>,
+    view: &SessionView,
+    req_head: &RequestHead,
+    resp: Response<Incoming>,
+    guard: &mut quena_store::AbortOnDrop,
+) -> Response<ProxyBody> {
     let cfg = shared.cfg();
     let hooks = shared.hooks();
     let (mut parts, incoming) = resp.into_parts();
@@ -525,7 +564,9 @@ async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &
         }
     };
     let mode = hooks.response_mode(view, req_head, &resp_head);
-    if mode == Mode::Buffer || !cfg.stream {
+    // Event streams never end; buffering them would only stall the client.
+    let endless = resp_head.headers.get("content-type").is_some_and(|ct| ct.to_ascii_lowercase().starts_with("text/event-stream"));
+    if mode == Mode::Buffer || (!cfg.stream && !endless) {
         if mode == Mode::Buffer {
             live.update(|d| d.summary.state = SessionState::BreakpointResponse);
         }
@@ -581,7 +622,9 @@ async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &
     let hooks2 = hooks.clone();
     let view2 = view.clone();
     let expected = parts.headers.get(http::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
+    let hold = live.hold();
     let key = shared.recorder.open(
+        live.id,
         writer,
         Box::new(move |b, aborted| {
             let wire = b.wire_len();
@@ -605,10 +648,14 @@ async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &
                     d.summary.state = SessionState::Done;
                 }
             });
+            // Release our own hold first, so finish only waits for other bodies.
+            drop(hold);
             l2.finish();
             hooks2.on_complete(&view2);
         }),
     );
+    // From here the streaming body (its recorder callback) finishes the session.
+    guard.disarm();
     live.update(|d| d.timers.client_begin_response = Some(now_us()));
     let body = throttle(Tee::new(incoming, shared.recorder.clone(), key, times).boxed());
     let mut out = Response::from_parts(parts, body);
@@ -732,6 +779,7 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
     });
     live.set_request_body(body.clone());
     live.update(|_| {});
+    let mut guard = live.abort_on_drop("the request was cancelled before it completed");
     let id = live.id;
     started(id);
     let view = SessionView { id, live: live.clone(), process: "quena".into(), client_ip: String::new() };
@@ -758,7 +806,7 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
     };
     match send_upstream(&shared, &live, &head, StoredStream::new(body).boxed(), false).await {
         Ok(resp) => {
-            let r = deliver_response(&shared, &live, &view, &head, resp).await;
+            let r = deliver_response(&shared, &live, &view, &head, resp, &mut guard).await;
             // Consume the body so it gets recorded.
             let mut b = r.into_body();
             while let Some(f) = b.frame().await {

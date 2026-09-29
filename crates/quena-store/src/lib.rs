@@ -37,6 +37,20 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// How long a finished session waits for body recordings that are still running before it
+/// is persisted anyway (a recording that never ends must not keep a session live forever).
+const FINISH_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
+#[derive(Default)]
+struct FinishState {
+    /// Body recordings still writing into this session.
+    pending: u32,
+    /// `finish` was called.
+    requested: bool,
+    /// Persisted (at most once).
+    done: bool,
+}
+
 /// A session in flight (or any session opened for inspection).
 pub struct LiveSession {
     pub id: SessionId,
@@ -44,6 +58,64 @@ pub struct LiveSession {
     request_body: RwLock<Body>,
     response_body: RwLock<Body>,
     capture: Weak<Capture>,
+    fin: Mutex<FinishState>,
+}
+
+/// Ends a session as aborted if it is dropped before the session was finished — the client
+/// went away (hyper drops the handler future), a task panicked, or an error path forgot to
+/// finish it. Without this such sessions would stay "in flight" forever.
+/// [`disarm`](AbortOnDrop::disarm) it when another owner (a streaming body, a tunnel pump)
+/// takes over finishing the session.
+pub struct AbortOnDrop {
+    live: Arc<LiveSession>,
+    reason: &'static str,
+    armed: bool,
+}
+
+impl AbortOnDrop {
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        if !self.armed || self.live.fin.lock().requested {
+            return;
+        }
+        let reason = self.reason;
+        let panicking = std::thread::panicking();
+        self.live.update(|d| {
+            if !d.summary.state.is_final() {
+                d.summary.state = SessionState::Aborted;
+                d.summary.flags |= quena_model::flags::CLIENT_ABORTED;
+                d.error.get_or_insert_with(|| if panicking { format!("{reason} (internal error)") } else { reason.to_string() });
+            }
+        });
+        self.live.finish();
+    }
+}
+
+/// Keeps a session from being persisted while one of its bodies is still being recorded.
+/// Dropping the guard releases it (also when the recording is abandoned).
+pub struct BodyHold(Arc<LiveSession>);
+
+impl Drop for BodyHold {
+    fn drop(&mut self) {
+        let go = {
+            let mut f = self.0.fin.lock();
+            f.pending = f.pending.saturating_sub(1);
+            if f.pending == 0 && f.requested && !f.done {
+                f.done = true;
+                true
+            } else {
+                false
+            }
+        };
+        if go {
+            self.0.persist();
+        }
+    }
 }
 
 impl LiveSession {
@@ -117,8 +189,56 @@ impl LiveSession {
         changed
     }
 
-    /// Session finished: persist and drop from the live set.
-    pub fn finish(&self) {
+    /// Guard that aborts and finishes the session if it is dropped unfinished.
+    pub fn abort_on_drop(self: &Arc<Self>, reason: &'static str) -> AbortOnDrop {
+        AbortOnDrop { live: self.clone(), reason, armed: true }
+    }
+
+    /// A body recording starts; the session is not persisted before the guard is dropped.
+    pub fn hold(self: &Arc<Self>) -> BodyHold {
+        self.fin.lock().pending += 1;
+        BodyHold(self.clone())
+    }
+
+    /// Session finished: persist and drop from the live set, once all body recordings
+    /// have completed (or after [`FINISH_GRACE`]).
+    pub fn finish(self: &Arc<Self>) {
+        let (go, wait) = {
+            let mut f = self.fin.lock();
+            f.requested = true;
+            if f.done {
+                (false, false)
+            } else if f.pending == 0 {
+                f.done = true;
+                (true, false)
+            } else {
+                (false, true)
+            }
+        };
+        if go {
+            self.persist();
+        } else if wait {
+            if let Some(c) = self.capture.upgrade() {
+                c.finish_later(self.clone());
+            }
+        }
+    }
+
+    /// Persist now, even if recordings are still pending (grace period expired).
+    fn force_finish(&self) {
+        let go = {
+            let mut f = self.fin.lock();
+            let go = !f.done;
+            f.done = true;
+            go
+        };
+        if go {
+            tracing::warn!(target: "quena::store", "session {}: body recording did not finish in time; saved without waiting", self.id);
+            self.persist();
+        }
+    }
+
+    fn persist(&self) {
         if let Some(c) = self.capture.upgrade() {
             c.finish(self.id);
         }
@@ -180,6 +300,8 @@ pub struct Capture {
     cache: Mutex<Lru>,
     next_id: AtomicU64,
     temporary: bool,
+    /// Sessions waiting for their body recordings (see [`LiveSession::finish`]).
+    deferred: Mutex<Option<std::sync::mpsc::Sender<(Arc<LiveSession>, std::time::Instant)>>>,
 }
 
 /// A previous capture that was not closed cleanly.
@@ -209,6 +331,7 @@ impl Capture {
             cache: Mutex::new(Lru { map: HashMap::new(), order: VecDeque::new(), cap: 4096 }),
             next_id: AtomicU64::new(1),
             temporary,
+            deferred: Mutex::new(None),
         });
         cap.load_existing()?;
         Ok(cap)
@@ -230,7 +353,7 @@ impl Capture {
             }
             self.index.upsert(s);
         })?;
-        self.next_id.store(max_id + 1, Ordering::Relaxed);
+        self.next_id.store(max_id.saturating_add(1), Ordering::Relaxed);
         self.bodies.bump_id(max_body);
         self.index.tick();
         Ok(())
@@ -264,6 +387,7 @@ impl Capture {
             request_body: RwLock::new(Body::empty()),
             response_body: RwLock::new(Body::empty()),
             capture: Arc::downgrade(self),
+            fin: Mutex::new(FinishState::default()),
         });
         self.live.write().insert(id, live.clone());
         self.index.upsert(d.summary);
@@ -300,6 +424,31 @@ impl Capture {
 
     pub fn live_sessions(&self) -> Vec<Arc<LiveSession>> {
         self.live.read().values().cloned().collect()
+    }
+
+    /// Force-persist `live` after the grace period unless its recordings finish first.
+    /// One background thread serves all deferred sessions (deadlines are FIFO).
+    fn finish_later(&self, live: Arc<LiveSession>) {
+        let deadline = std::time::Instant::now() + FINISH_GRACE;
+        let mut tx = self.deferred.lock();
+        if tx.as_ref().is_none_or(|t| t.send((live.clone(), deadline)).is_err()) {
+            let (t, rx) = std::sync::mpsc::channel::<(Arc<LiveSession>, std::time::Instant)>();
+            let spawned = std::thread::Builder::new().name("quena-finish".into()).spawn(move || {
+                while let Ok((l, at)) = rx.recv() {
+                    let now = std::time::Instant::now();
+                    if at > now {
+                        std::thread::sleep(at - now);
+                    }
+                    l.force_finish();
+                }
+            });
+            if spawned.is_err() {
+                live.force_finish();
+                return;
+            }
+            let _ = t.send((live, deadline));
+            *tx = Some(t);
+        }
     }
 
     fn finish(&self, id: SessionId) {
@@ -465,8 +614,21 @@ pub fn find_recoverable(captures_root: &Path) -> Vec<RecoverableCapture> {
         if pid == std::process::id() || (pid != 0 && pid_alive(pid)) {
             continue;
         }
-        let sessions = Db::count(&dir.join("session.sqlite")).unwrap_or(0);
-        let modified = std::fs::metadata(dir.join("session.sqlite"))
+        let db = dir.join("session.sqlite");
+        // No database at all: nothing was ever recorded. A database that cannot be
+        // counted may be damaged but still hold sessions – never delete it here.
+        let sessions = if !db.exists() {
+            0
+        } else {
+            match Db::count(&db) {
+                Ok(n) => n,
+                Err(e) => {
+                    tracing::warn!(dir = %dir.display(), "capture left behind by a crash cannot be read, leaving it alone: {e}");
+                    continue;
+                }
+            }
+        };
+        let modified = std::fs::metadata(&db)
             .and_then(|m| m.modified())
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -484,6 +646,28 @@ pub fn find_recoverable(captures_root: &Path) -> Vec<RecoverableCapture> {
 mod tests {
     use super::*;
     use quena_model::{RequestHead, ResponseHead};
+
+    #[test]
+    fn finish_waits_for_pending_body_recordings() {
+        let dir = tempfile::tempdir().unwrap();
+        let cap = Capture::open(dir.path().join("cap"), BodyConfig::default(), true).unwrap();
+        let s = cap.begin(SessionKind::Http, |d| {
+            d.request = RequestHead { method: "POST".into(), url: "http://a/x".into(), ..Default::default() };
+        });
+        let hold = s.hold();
+        // The response is complete before the request body recording finished.
+        s.finish();
+        assert!(cap.live(s.id).is_some(), "persisted before the request body was recorded");
+        let mut w = cap.bodies.writer();
+        w.write(b"late request body").unwrap();
+        s.set_request_body(w.finish());
+        drop(hold);
+        assert!(cap.live(s.id).is_none());
+        let (req, _) = cap.bodies_of(s.id).unwrap();
+        assert_eq!(req.read_range(0, 100).unwrap(), b"late request body");
+        // A second finish is a no-op.
+        s.finish();
+    }
 
     #[test]
     fn lifecycle_and_reopen() {

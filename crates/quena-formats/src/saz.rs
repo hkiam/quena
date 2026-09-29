@@ -300,37 +300,106 @@ fn read_meta(xml: &str, d: &mut SessionDetail) {
     }
 }
 
-/// Read a message (head + body) from a ZIP entry into the store.
-fn read_message<R: Read>(cap: &Arc<Capture>, r: R) -> Result<Option<(String, Headers, Body)>> {
+/// `_m.xml` is small; anything beyond this is not metadata.
+const MAX_META: u64 = 1 << 20;
+
+/// Read a message (head + body) from a ZIP entry into the store. The body is
+/// recorded with the normal recording limit; reading stops once it truncates.
+fn read_message<R: Read>(cap: &Arc<Capture>, r: R, p: &dyn Progress) -> Result<Option<(String, Headers, Body)>> {
     let mut br = BufReader::with_capacity(256 * 1024, r);
     let Some((first, headers)) = raw::read_head(&mut br)? else { return Ok(None) };
-    let mut w = cap.bodies.writer_with_limit(u64::MAX);
+    let mut w = cap.bodies.writer();
     let mut buf = vec![0u8; 1 << 20];
     let mut src: Box<dyn Read> = if raw::is_chunked(&headers) { Box::new(ChunkedReader::new(br)) } else { Box::new(br) };
     loop {
+        if p.cancelled() {
+            return Err(FormatError::Cancelled);
+        }
         let n = match src.read(&mut buf) {
             Ok(n) => n,
-            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                // Corrupt/truncated entry: keep what was read so far.
                 tracing::warn!("SAZ body: {e}");
+                w.add_dropped(1);
                 break;
             }
-            Err(e) => return Err(e.into()),
         };
         if n == 0 {
             break;
         }
-        w.write(&buf[..n]).map_err(|e| FormatError::Invalid(e.to_string()))?;
+        if let Err(e) = w.write(&buf[..n]) {
+            tracing::warn!("SAZ body not stored completely: {e}");
+            w.add_dropped(n as u64);
+            break;
+        }
+        if w.body().is_truncated() {
+            break;
+        }
     }
     Ok(Some((first, headers, w.finish())))
 }
 
-/// Import a SAZ file into `cap`. Returns the new session ids.
+/// Read one session from its ZIP entries. `Ok(None)`: no usable request.
+fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchive<R>, e: &Entry, p: &dyn Progress) -> Result<Option<(SessionDetail, Body, Body)>> {
+    let Some(ci) = e.c else { return Ok(None) };
+    let mut d = SessionDetail::default();
+    let (req_first, req_headers, req_body) = match read_message(cap, zip.by_index(ci)?, p)? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    let (method, url, version) = raw::parse_request_line(&req_first);
+    let url = if url.starts_with('/') {
+        let host = req_headers.get("host").unwrap_or("unknown");
+        let scheme = if host.ends_with(":443") { "https" } else { "http" };
+        format!("{scheme}://{host}{url}")
+    } else {
+        url
+    };
+    if method.eq_ignore_ascii_case("CONNECT") {
+        d.summary.kind = SessionKind::Tunnel;
+    }
+    d.request = RequestHead { method, url, version, headers: req_headers };
+    let mut resp_body = cap.bodies.store_bytes(&[]);
+    // A broken response or metadata entry doesn't lose the request.
+    if let Some(si) = e.s {
+        match zip.by_index(si).map_err(FormatError::from).and_then(|f| read_message(cap, f, p)) {
+            Ok(Some((first, headers, body))) => {
+                let (v, status, reason) = raw::parse_status_line(&first);
+                d.response = Some(ResponseHead { status, reason, version: v, headers });
+                resp_body = body;
+            }
+            Ok(None) => {}
+            Err(FormatError::Cancelled) => return Err(FormatError::Cancelled),
+            Err(err) => d.error = Some(format!("SAZ response entry unreadable: {err}")),
+        }
+    }
+    if let Some(mi) = e.m {
+        let mut b = Vec::new();
+        match zip.by_index(mi).map_err(FormatError::from).and_then(|f| Ok(f.take(MAX_META).read_to_end(&mut b)?)) {
+            Ok(_) => read_meta(&String::from_utf8_lossy(&b), &mut d),
+            Err(err) => tracing::warn!("SAZ metadata entry unreadable: {err}"),
+        }
+    }
+    Ok(Some((d, req_body, resp_body)))
+}
+
+/// Import a SAZ file into `cap`. Returns the new session ids. Unreadable entries
+/// (corrupt, encrypted, unsupported compression) are skipped and logged.
 pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<SessionId>> {
     let file = File::open(path)?;
     let mut zip = zip::ZipArchive::new(BufReader::new(file))?;
     let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
+    let mut skipped = 0usize;
     for i in 0..zip.len() {
-        let name = zip.by_index_raw(i)?.name().replace('\\', "/");
+        let name = match zip.by_index_raw(i) {
+            Ok(f) => f.name().replace('\\', "/"),
+            Err(e) => {
+                tracing::warn!("SAZ entry {i}: {e}");
+                skipped += 1;
+                continue;
+            }
+        };
         let Some(rest) = name.strip_prefix("raw/") else { continue };
         let Some((num, kind)) = rest.rsplit_once('_') else { continue };
         let e = entries.entry(num.to_string()).or_default();
@@ -351,38 +420,16 @@ pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<S
             return Err(FormatError::Cancelled);
         }
         p.progress(n as u64, total);
-        let e = &entries[k];
-        let Some(ci) = e.c else { continue };
-        let mut d = SessionDetail::default();
-        let (req_first, req_headers, req_body) = match read_message(cap, zip.by_index(ci)?)? {
-            Some(v) => v,
-            None => continue,
-        };
-        let (method, url, version) = raw::parse_request_line(&req_first);
-        let url = if url.starts_with('/') {
-            let host = req_headers.get("host").unwrap_or("unknown");
-            let scheme = if host.ends_with(":443") { "https" } else { "http" };
-            format!("{scheme}://{host}{url}")
-        } else {
-            url
-        };
-        if method.eq_ignore_ascii_case("CONNECT") {
-            d.summary.kind = SessionKind::Tunnel;
-        }
-        d.request = RequestHead { method, url, version, headers: req_headers };
-        let mut resp_body = cap.bodies.store_bytes(&[]);
-        if let Some(si) = e.s {
-            if let Some((first, headers, body)) = read_message(cap, zip.by_index(si)?)? {
-                let (v, status, reason) = raw::parse_status_line(&first);
-                d.response = Some(ResponseHead { status, reason, version: v, headers });
-                resp_body = body;
+        let (mut d, req_body, resp_body) = match read_session(cap, &mut zip, &entries[k], p) {
+            Ok(Some(v)) => v,
+            Ok(None) => continue,
+            Err(FormatError::Cancelled) => return Err(FormatError::Cancelled),
+            Err(e) => {
+                tracing::warn!("SAZ session {k} skipped: {e}");
+                skipped += 1;
+                continue;
             }
-        }
-        if let Some(mi) = e.m {
-            let mut s = String::new();
-            zip.by_index(mi)?.read_to_string(&mut s)?;
-            read_meta(&s, &mut d);
-        }
+        };
         if d.summary.state != SessionState::Aborted {
             d.summary.state = SessionState::Done;
         }
@@ -391,6 +438,47 @@ pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<S
         let id = cap.insert(d, req_body, resp_body);
         ids.push(id);
     }
+    if skipped > 0 {
+        tracing::warn!(skipped, imported = ids.len(), "SAZ import: skipped unreadable entries");
+    }
     p.progress(total, total);
     Ok(ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::NoProgress;
+    use quena_body::BodyConfig;
+
+    #[test]
+    fn bad_entries_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.saz");
+        {
+            let mut z = zip::ZipWriter::new(File::create(&path).unwrap());
+            let o = SimpleFileOptions::default();
+            z.start_file("raw/01_c.txt", o).unwrap();
+            z.write_all(b"GET http://a/ok HTTP/1.1\r\nHost: a\r\n\r\n").unwrap();
+            z.start_file("raw/01_s.txt", o).unwrap();
+            z.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nzz\r\n").unwrap();
+            z.start_file("raw/01_m.xml", o).unwrap();
+            z.write_all(b"<Session><SessionFlags><SessionFlag N=\"ui-comments\" V=\"caf\xe9\" /></SessionFlags></Session>").unwrap();
+            // Head without end: a 2 MB line.
+            z.start_file("raw/02_c.txt", o).unwrap();
+            z.write_all(&vec![b'a'; 2 << 20]).unwrap();
+            z.start_file("raw/03_c.txt", o).unwrap();
+            z.write_all(b"GET http://a/three HTTP/1.1\r\n\r\n").unwrap();
+            z.finish().unwrap();
+        }
+        let cap = Capture::open(dir.path().join("cap"), BodyConfig { max_recorded_body: 3, ..Default::default() }, true).unwrap();
+        let ids = import(&cap, &path, &NoProgress).unwrap();
+        assert_eq!(ids.len(), 2);
+        let d = cap.detail(ids[0]).unwrap();
+        assert_eq!(d.summary.comment, "caf\u{fffd}");
+        let (_, resp) = cap.bodies_of(ids[0]).unwrap();
+        assert_eq!(resp.read_range(0, 100).unwrap(), b"hel");
+        assert!(resp.is_truncated());
+        assert_eq!(cap.detail(ids[1]).unwrap().request.url, "http://a/three");
+    }
 }

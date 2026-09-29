@@ -30,6 +30,8 @@ pub struct GrpcMessage {
     pub len: u32,
     pub fields: Vec<Field>,
     pub error: Option<String>,
+    /// Field tree or string values were cut (see the `MAX_*` limits).
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -41,6 +43,8 @@ pub struct Grpc {
     pub status: Option<String>,
     pub status_message: Option<String>,
     pub error: Option<String>,
+    /// Not all messages are listed (message or field limit reached).
+    pub truncated: bool,
 }
 
 struct Reader<'a> {
@@ -76,15 +80,42 @@ impl<'a> Reader<'a> {
 }
 
 const MAX_DEPTH: usize = 32;
+/// Bytes of one gRPC message (or raw protobuf body) that are decoded.
+const MAX_MESSAGE: u32 = 16 << 20;
+/// Messages listed per body.
+const MAX_MESSAGES: usize = 1000;
+/// Fields decoded per message and per body (each one is a DTO for the UI).
+const MAX_FIELDS: usize = 50_000;
+const MAX_FIELDS_TOTAL: usize = 200_000;
+/// Longest string value shown.
+const MAX_STRING: usize = 4096;
+
+/// Field budget and truncation flag shared by one decode.
+struct Budget {
+    fields: usize,
+    truncated: bool,
+}
 
 /// Decode a protobuf message into fields. Returns None if it is clearly not protobuf.
+#[cfg(test)]
 fn decode_message(data: &[u8], depth: usize) -> Option<Vec<Field>> {
+    decode_limited(data, depth, &mut Budget { fields: MAX_FIELDS, truncated: false })
+}
+
+/// [`decode_message`] within a field budget; when it runs out the fields so far are
+/// returned and `truncated` is set.
+fn decode_limited(data: &[u8], depth: usize, budget: &mut Budget) -> Option<Vec<Field>> {
     if depth > MAX_DEPTH {
         return None;
     }
     let mut r = Reader { b: data, p: 0 };
     let mut fields = Vec::new();
     while r.p < data.len() {
+        if budget.fields == 0 {
+            budget.truncated = true;
+            break;
+        }
+        budget.fields -= 1;
         let tag = r.varint()?;
         let number = tag >> 3;
         let wire = (tag & 7) as u8;
@@ -109,15 +140,21 @@ fn decode_message(data: &[u8], depth: usize) -> Option<Vec<Field>> {
                 Field { number, wire_type: 5, kind: "i32/float".into(), value: format!("{u}  ({})", f32::from_bits(u)), children: vec![] }
             }
             2 => {
-                let len = r.varint()? as usize;
+                let len = usize::try_from(r.varint()?).ok()?;
                 let bytes = r.take(len)?;
                 // Try nested message, then UTF-8 string, else bytes.
                 if !bytes.is_empty() {
-                    if let Some(nested) = decode_message(bytes, depth + 1) {
+                    // A failed nested attempt must not use up the budget.
+                    let saved = (budget.fields, budget.truncated);
+                    let nested = decode_limited(bytes, depth + 1, budget);
+                    if nested.is_none() {
+                        (budget.fields, budget.truncated) = saved;
+                    }
+                    if let Some(nested) = nested {
                         Field { number, wire_type: 2, kind: "message".into(), value: format!("{{{} fields}}", nested.len()), children: nested }
                     } else if let Ok(s) = std::str::from_utf8(bytes) {
                         if s.chars().all(|c| !c.is_control() || c == '\n' || c == '\t') {
-                            Field { number, wire_type: 2, kind: "string".into(), value: s.to_string(), children: vec![] }
+                            Field { number, wire_type: 2, kind: "string".into(), value: cut_string(s, budget), children: vec![] }
                         } else {
                             Field { number, wire_type: 2, kind: "bytes".into(), value: hex_preview(bytes), children: vec![] }
                         }
@@ -135,6 +172,19 @@ fn decode_message(data: &[u8], depth: usize) -> Option<Vec<Field>> {
     Some(fields)
 }
 
+/// `s`, cut at `MAX_STRING` bytes (on a char boundary) with a size note.
+fn cut_string(s: &str, budget: &mut Budget) -> String {
+    if s.len() <= MAX_STRING {
+        return s.to_string();
+    }
+    budget.truncated = true;
+    let mut end = MAX_STRING;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} … ({} bytes)", &s[..end], s.len())
+}
+
 fn zigzag(v: u64) -> i64 {
     ((v >> 1) as i64) ^ -((v & 1) as i64)
 }
@@ -150,7 +200,12 @@ fn decode_grpc(body: &Body) -> Grpc {
     let total = body.len();
     let mut pos = 0u64;
     let mut idx = 0;
+    let mut fields_left = MAX_FIELDS_TOTAL;
     while pos + 5 <= total {
+        if idx >= MAX_MESSAGES || fields_left == 0 {
+            out.truncated = true;
+            break;
+        }
         let mut hdr = [0u8; 5];
         if body.read_at(pos, &mut hdr).unwrap_or(0) < 5 {
             break;
@@ -162,16 +217,20 @@ fn decode_grpc(body: &Body) -> Grpc {
             out.error = Some("truncated gRPC frame".into());
             break;
         }
-        let data = body.read_range(msg_start, len as usize).unwrap_or_default();
+        let mut budget = Budget { fields: MAX_FIELDS.min(fields_left), truncated: false };
         let (fields, error) = if compressed {
             (vec![], Some("compressed message (grpc-encoding); decompression not applied".into()))
+        } else if len > MAX_MESSAGE {
+            (vec![], Some(format!("message of {len} bytes is above the {} MB decode limit; not decoded", MAX_MESSAGE >> 20)))
         } else {
-            match decode_message(&data, 0) {
+            let data = body.read_range(msg_start, len as usize).unwrap_or_default();
+            match decode_limited(&data, 0, &mut budget) {
                 Some(f) => (f, None),
                 None => (vec![], Some("not valid protobuf".into())),
             }
         };
-        out.messages.push(GrpcMessage { index: idx, compressed, len, fields, error });
+        fields_left -= MAX_FIELDS.min(fields_left) - budget.fields;
+        out.messages.push(GrpcMessage { index: idx, compressed, len, fields, error, truncated: budget.truncated });
         idx += 1;
         pos = msg_start + len as u64;
     }
@@ -198,11 +257,20 @@ impl AppCore {
             Some(g)
         } else if ct.contains("protobuf") || ct.contains("x-protobuf") {
             // Raw protobuf (not gRPC framed).
-            let data = body.read_range(0, (body.len() as usize).min(16 << 20)).unwrap_or_default();
-            let fields = decode_message(&data, 0);
+            let data = body.read_range(0, body.len().min(MAX_MESSAGE as u64) as usize).unwrap_or_default();
+            let mut budget = Budget { fields: MAX_FIELDS, truncated: body.len() > MAX_MESSAGE as u64 };
+            let fields = decode_limited(&data, 0, &mut budget);
             Some(Grpc {
                 is_grpc: false,
-                messages: vec![GrpcMessage { index: 0, compressed: false, len: body.len() as u32, fields: fields.clone().unwrap_or_default(), error: fields.is_none().then(|| "not valid protobuf".into()) }],
+                truncated: budget.truncated,
+                messages: vec![GrpcMessage {
+                    index: 0,
+                    compressed: false,
+                    len: body.len().min(u32::MAX as u64) as u32,
+                    error: fields.is_none().then(|| "not valid protobuf".into()),
+                    fields: fields.unwrap_or_default(),
+                    truncated: budget.truncated,
+                }],
                 ..Default::default()
             })
         } else {
@@ -263,5 +331,53 @@ mod tests {
         assert_eq!(g.messages.len(), 2);
         assert_eq!(g.messages[0].fields.len(), 3);
         assert!(g.messages[1].error.is_none());
+    }
+
+    #[test]
+    fn field_and_string_caps() {
+        // 60k varint fields: field 1 = 1.
+        let data: Vec<u8> = std::iter::repeat([0x08u8, 0x01]).take(60_000).flatten().collect();
+        let mut b = Budget { fields: MAX_FIELDS, truncated: false };
+        let f = decode_limited(&data, 0, &mut b).unwrap();
+        assert_eq!(f.len(), MAX_FIELDS);
+        assert!(b.truncated);
+        // Long string with a multi-byte char straddling the cut.
+        let s = format!("a{}", "ä".repeat(5000));
+        let mut m = vec![0x12u8];
+        let mut n = s.len();
+        while n >= 0x80 {
+            m.push((n as u8) | 0x80);
+            n >>= 7;
+        }
+        m.push(n as u8);
+        m.extend_from_slice(s.as_bytes());
+        let mut b = Budget { fields: MAX_FIELDS, truncated: false };
+        let f = decode_limited(&m, 0, &mut b).unwrap();
+        assert_eq!(f[0].kind, "string");
+        assert!(f[0].value.len() < MAX_STRING + 32 && b.truncated);
+    }
+
+    #[test]
+    fn message_count_and_size_caps() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        let msg = sample();
+        let mut framed = Vec::new();
+        for _ in 0..1500 {
+            framed.push(0);
+            framed.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+            framed.extend_from_slice(&msg);
+        }
+        let g = decode_grpc(&store.store_bytes(&framed));
+        assert_eq!(g.messages.len(), MAX_MESSAGES);
+        assert!(g.truncated);
+        // A frame claiming more than the per-message limit is reported, not read.
+        let big = MAX_MESSAGE as usize + 10;
+        let mut framed = vec![0u8];
+        framed.extend_from_slice(&(big as u32).to_be_bytes());
+        framed.resize(5 + big, 0);
+        let g = decode_grpc(&store.store_bytes(&framed));
+        assert_eq!(g.messages.len(), 1);
+        assert!(g.messages[0].error.as_deref().unwrap().contains("decode limit"));
     }
 }

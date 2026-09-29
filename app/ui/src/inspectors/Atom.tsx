@@ -3,13 +3,18 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Detail, Part, Variant } from "../api";
 import { loadText } from "../lib/bodytext";
-import { fmtBytes } from "../lib/format";
+import { parseXml } from "../lib/xml";
+import { fmtBytes, fmtInt } from "../lib/format";
+import { MoreRows } from "./views";
 
 const ATOM = "http://www.w3.org/2005/Atom";
 const ODATA_M = ["http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"];
 const ODATA_D = ["http://schemas.microsoft.com/ado/2007/08/dataservices"];
 const EDMX = ["http://schemas.microsoft.com/ado/2007/06/edmx", "http://docs.oasis-open.org/odata/ns/edmx"];
 const LIMIT = 16 << 20;
+/** Rendered rows / columns before "more" (feeds can hold 100k entries × many properties). */
+const ROWS = 500;
+const COLS = 60;
 
 export function atomCandidate(detail: Detail, part: Part): boolean {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
@@ -75,12 +80,21 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const variant = sourceVariant(detail, part);
   const [xml, setXml] = useState<string | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [sel, setSel] = useState(0);
+  const [rows, setRows] = useState(ROWS);
+  const [propRows, setPropRows] = useState(ROWS);
   useEffect(() => {
     let alive = true;
     setXml(null);
+    setLoadErr(null);
+    setSel(0);
+    setRows(ROWS);
     if (info.len > LIMIT && !variant.startsWith("plugin:")) return;
-    loadText(detail.summary.id, part, info, LIMIT, variant).then((t) => alive && setXml(t));
+    loadText(detail.summary.id, part, info, LIMIT, variant).then(
+      (t) => alive && setXml(t),
+      (e) => alive && setLoadErr(`Could not load the body: ${String(e)}`),
+    );
     return () => {
       alive = false;
     };
@@ -88,9 +102,9 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
 
   const parsed = useMemo(() => {
     if (xml == null) return null;
-    const doc = new DOMParser().parseFromString(xml, "application/xml");
-    if (doc.querySelector("parsererror")) return { error: "The body is not well-formed XML." };
-    const root = doc.documentElement;
+    const res = parseXml(xml);
+    if ("error" in res) return { error: res.error };
+    const root = res.root;
     if (EDMX.includes(root.namespaceURI ?? "")) {
       const types = Array.from(root.getElementsByTagNameNS("*", "EntityType")).map((t) => ({
         name: t.getAttribute("Name") ?? "",
@@ -127,6 +141,7 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
   }, [xml]);
 
   if (info.len > LIMIT && !variant.startsWith("plugin:")) return <div className="placeholder">Body is {fmtBytes(info.len)} – too large for the Atom view.</div>;
+  if (loadErr) return <div className="placeholder">{loadErr}</div>;
   if (!parsed) return <div className="placeholder">Loading…</div>;
   if ("error" in parsed) return <div className="placeholder">{parsed.error}</div>;
   const src = variant.startsWith("plugin:") ? `decoded by ${info.plugins.find((p) => p.variant === variant)?.tab}` : variant;
@@ -136,13 +151,14 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
       <div className="scroll pad">
         <div className="muted small">OData service metadata (EDMX {parsed.version}) · {src}</div>
         <h4>Entity sets</h4>
-        <ul className="notes">{parsed.sets.map((s) => <li key={s} className="mono">{s}</li>)}</ul>
+        <ul className="notes">{parsed.sets.slice(0, rows).map((s, i) => <li key={i} className="mono">{s}</li>)}</ul>
+        <MoreRows shown={rows} total={parsed.sets.length} onMore={setRows} step={ROWS} />
         <h4>Entity types</h4>
         <table className="kv">
           <thead><tr><th>Type</th><th>Key</th><th>Properties</th><th>Navigation</th></tr></thead>
           <tbody>
-            {parsed.types.map((t) => (
-              <tr key={t.name}>
+            {parsed.types.slice(0, rows).map((t, i) => (
+              <tr key={i}>
                 <td className="mono">{t.name}</td>
                 <td className="mono">{t.keys.join(", ")}</td>
                 <td className="mono small">{t.props.join(" · ")}</td>
@@ -151,11 +167,13 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
             ))}
           </tbody>
         </table>
+        <MoreRows shown={rows} total={parsed.types.length} onMore={setRows} step={ROWS} />
       </div>
     );
   }
   const { feed, entries, odata } = parsed;
-  const cols = Array.from(new Set(entries.flatMap((e) => e.props.map((p) => p.name))));
+  const allCols = Array.from(new Set(entries.flatMap((e) => e.props.map((p) => p.name))));
+  const cols = allCols.slice(0, COLS);
   const e = entries[Math.min(sel, entries.length - 1)];
   return (
     <div className="scroll pad atom">
@@ -177,22 +195,27 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
       {cols.length > 0 && (
         <>
           <h4>Entries</h4>
+          {allCols.length > cols.length && <div className="muted small">Showing the first {COLS} of {fmtInt(allCols.length)} properties as columns; select an entry to see all.</div>}
           <div className="atom-grid">
             <table className="kv">
               <thead><tr><th>#</th>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
               <tbody>
-                {entries.map((en, i) => (
-                  <tr key={i} className={i === sel ? "sel" : ""} onClick={() => setSel(i)}>
-                    <td>{i + 1}</td>
-                    {cols.map((c) => {
-                      const p = en.props.find((x) => x.name === c);
-                      return <td key={c} className={p?.nul ? "muted" : ""}>{p ? (p.nul ? "null" : p.value) : ""}</td>;
-                    })}
-                  </tr>
-                ))}
+                {entries.slice(0, rows).map((en, i) => {
+                  const byName = new Map(en.props.map((x) => [x.name, x]));
+                  return (
+                    <tr key={i} className={i === sel ? "sel" : ""} onClick={() => { setSel(i); setPropRows(ROWS); }}>
+                      <td>{i + 1}</td>
+                      {cols.map((c) => {
+                        const p = byName.get(c);
+                        return <td key={c} className={p?.nul ? "muted" : ""}>{p ? (p.nul ? "null" : p.value) : ""}</td>;
+                      })}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+          <MoreRows shown={rows} total={entries.length} onMore={setRows} step={ROWS} />
         </>
       )}
       {e && (
@@ -209,8 +232,8 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
           <table className="kv">
             <thead><tr><th>Property</th><th>Edm type</th><th>Value</th></tr></thead>
             <tbody>
-              {e.props.map((p) => (
-                <tr key={p.name}>
+              {e.props.slice(0, propRows).map((p, i) => (
+                <tr key={i}>
                   <td className="mono">{p.name}</td>
                   <td className="mono small">{p.type || "Edm.String"}</td>
                   <td className={p.nul ? "muted" : ""}>{p.nul ? "null" : p.value}</td>
@@ -218,11 +241,12 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
               ))}
             </tbody>
           </table>
+          <MoreRows shown={propRows} total={e.props.length} onMore={setPropRows} step={ROWS} />
           {e.links.length > 0 && (
             <table className="kv">
               <thead><tr><th>Link</th><th>Title</th><th>href</th><th>Inline</th></tr></thead>
               <tbody>
-                {e.links.map((l, i) => (
+                {e.links.slice(0, ROWS).map((l, i) => (
                   <tr key={i}>
                     <td className="mono small">{l.rel}</td>
                     <td>{l.title}</td>

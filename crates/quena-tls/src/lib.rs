@@ -77,6 +77,21 @@ fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::rename(tmp, path)
 }
 
+fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp-cert");
+    std::fs::write(&tmp, data)?;
+    std::fs::rename(tmp, path)
+}
+
+fn move_aside(path: &Path) {
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    name.push(format!(".corrupt-{ts}"));
+    if let Err(e) = std::fs::rename(path, path.with_file_name(name)) {
+        tracing::warn!(target: "quena::tls", "could not move {} aside: {e}", path.display());
+    }
+}
+
 fn random_serial() -> SerialNumber {
     let mut b = [0u8; 16];
     let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
@@ -114,19 +129,36 @@ impl CertAuthority {
         std::fs::create_dir_all(&dir)?;
         let cert_path = dir.join(CA_CERT_FILE);
         let key_path = dir.join(CA_KEY_FILE);
-        let (cert_pem, key) = if cert_path.exists() && key_path.exists() {
-            let cert_pem = std::fs::read_to_string(&cert_path)?;
-            let key = KeyPair::from_pem(&std::fs::read_to_string(&key_path)?)?;
-            (cert_pem, key)
-        } else {
-            let key = KeyPair::generate()?;
-            let cert = ca_params().self_signed(&key)?;
-            write_private(&key_path, key.serialize_pem().as_bytes())?;
-            std::fs::write(&cert_path, cert.pem())?;
-            tracing::info!(target: "quena::tls", "generated new root CA in {}", dir.display());
-            (cert.pem(), key)
-        };
-        Self::from_parts(dir, cert_pem, key)
+        match (cert_path.exists(), key_path.exists()) {
+            (true, true) => {
+                let loaded = (|| -> Result<CertAuthority> {
+                    let cert_pem = std::fs::read_to_string(&cert_path)?;
+                    let key = KeyPair::from_pem(&std::fs::read_to_string(&key_path)?)?;
+                    Self::from_parts(dir.clone(), cert_pem, key)
+                })();
+                match loaded {
+                    Ok(ca) => return Ok(ca),
+                    // A damaged CA (truncated write, disk error) must not keep Quena from
+                    // starting: keep the files for inspection and create a new CA. The UI
+                    // then shows it as not trusted.
+                    Err(e) => {
+                        tracing::error!(target: "quena::tls", "root CA in {} is unreadable ({e}); moving it aside and creating a new one", dir.display());
+                        move_aside(&cert_path);
+                        move_aside(&key_path);
+                    }
+                }
+            }
+            // Only one half present (interrupted creation): start over.
+            (true, false) => move_aside(&cert_path),
+            (false, true) => move_aside(&key_path),
+            (false, false) => {}
+        }
+        let key = KeyPair::generate()?;
+        let cert = ca_params().self_signed(&key)?;
+        write_private(&key_path, key.serialize_pem().as_bytes())?;
+        write_atomic(&cert_path, cert.pem().as_bytes())?;
+        tracing::info!(target: "quena::tls", "generated new root CA in {}", dir.display());
+        Self::from_parts(dir, cert.pem(), key)
     }
 
     fn from_parts(dir: PathBuf, cert_pem: String, key: KeyPair) -> Result<CertAuthority> {
@@ -474,6 +506,20 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corrupt_ca_is_replaced_instead_of_failing() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = CertAuthority::load_or_create(dir.path()).unwrap();
+        std::fs::write(dir.path().join(CA_KEY_FILE), b"-----BEGIN PRIVATE KEY-----\ntruncated").unwrap();
+        let second = CertAuthority::load_or_create(dir.path()).unwrap();
+        assert_ne!(first.sha256_fingerprint(), second.sha256_fingerprint());
+        let aside = std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().contains(".corrupt-")).count();
+        assert_eq!(aside, 2, "both halves of the damaged CA are kept");
+        // A half-written CA (key only) is recreated as well.
+        std::fs::remove_file(dir.path().join(CA_CERT_FILE)).unwrap();
+        CertAuthority::load_or_create(dir.path()).unwrap();
+    }
 
     #[test]
     fn ca_roundtrip_and_leaf() {

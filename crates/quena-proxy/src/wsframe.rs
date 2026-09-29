@@ -124,36 +124,63 @@ pub fn record(dir: u8, frame: &Frame, ts_us: i64) -> Vec<u8> {
     r
 }
 
+/// Where pumps send frame records, with a byte budget for records not yet stored.
+pub struct FrameLog<'a> {
+    pub tx: &'a tokio::sync::mpsc::Sender<Vec<u8>>,
+    pub queued: &'a std::sync::atomic::AtomicUsize,
+    pub budget: usize,
+    /// Time of the last frame in either direction (idle detection).
+    pub last: &'a std::sync::atomic::AtomicI64,
+}
+
 /// Forward frames from `src` to `dst`, sending each parsed frame to `log`.
-/// Returns bytes forwarded. Stops at EOF or a close frame passing through.
-pub async fn pump<R, W>(mut src: R, mut dst: W, dir: u8, log: &tokio::sync::mpsc::Sender<Vec<u8>>) -> u64
+/// Returns bytes forwarded and, if the direction ended abnormally, why.
+/// Stops at EOF or a close frame passing through.
+pub async fn pump<R, W>(mut src: R, mut dst: W, dir: u8, log: &FrameLog<'_>) -> (u64, Option<String>)
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    use std::sync::atomic::Ordering;
     let mut reader = FrameReader::default();
     let mut total = 0u64;
+    let mut dropped = 0u64;
+    let mut error = None;
     loop {
         match reader.next(&mut src).await {
             Ok(Some(frame)) => {
-                if dst.write_all(&frame.raw).await.is_err() {
+                log.last.store(quena_model::now_us(), Ordering::Relaxed);
+                if let Err(e) = dst.write_all(&frame.raw).await {
+                    error = Some(format!("write failed: {e}"));
                     break;
                 }
                 let _ = dst.flush().await;
                 total += frame.raw.len() as u64;
+                // Log the frame unless the store is too far behind (memory bound).
                 let rec = record(dir, &frame, quena_model::now_us());
-                let _ = log.try_send(rec);
+                let n = rec.len();
+                if log.queued.load(Ordering::Relaxed) + n <= log.budget && log.tx.try_send(rec).is_ok() {
+                    log.queued.fetch_add(n, Ordering::Relaxed);
+                } else {
+                    dropped += 1;
+                }
                 if frame.opcode == 0x8 {
                     // close: forward and stop this direction
                     break;
                 }
             }
             Ok(None) => break,
-            Err(_) => break,
+            Err(e) => {
+                error = Some(e.to_string());
+                break;
+            }
         }
     }
     let _ = dst.shutdown().await;
-    total
+    if dropped > 0 && error.is_none() {
+        error = Some(format!("{dropped} frames were forwarded but not logged (recording could not keep up)"));
+    }
+    (total, error)
 }
 
 pub fn opcode_name(op: u8) -> &'static str {

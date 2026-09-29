@@ -2033,3 +2033,33 @@ pre {
 .pal-enter {
   color: var(--accent);
 }
+
+/* Error boundaries: a failed view shows this instead of blanking the window. */
+.view-error {
+  padding: 12px 16px;
+  margin: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--banner-err);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  overflow-wrap: anywhere;
+  align-self: start;
+}
+.app-crash {
+  padding: 40px;
+  height: 100%;
+  overflow: auto;
+  background: var(--bg);
+  color: var(--fg);
+}
+.app-crash pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--banner-err);
+  padding: 8px;
+  border-radius: var(--radius);
+}

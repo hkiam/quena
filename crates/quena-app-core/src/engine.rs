@@ -56,6 +56,20 @@ fn backup_path(data: &std::path::Path) -> PathBuf {
     data.join("system-proxy-backup.json")
 }
 
+/// A panic on the main thread ends the app without the normal shutdown: restore the
+/// system proxy first, so the machine is not left pointing at a proxy that is gone.
+/// Panics on worker threads are caught and do not end the app, so they leave it alone.
+pub fn install_panic_hook(data: &std::path::Path) {
+    let backup = backup_path(data);
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().name() == Some("main") && backup.exists() {
+            let _ = quena_platform::restore_system_proxy(&backup);
+        }
+        prev(info);
+    }));
+}
+
 pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, pac: Option<Arc<dyn UpstreamResolver>>) -> ProxyConfig {
     let upstream = if !s.proxy.manual_upstream.trim().is_empty() {
         let (h, p) = split_host_port(s.proxy.manual_upstream.trim(), 8080);
@@ -116,6 +130,10 @@ fn parse_prefer(s: &str) -> Vec<quena_proxy::Scheme> {
 impl ProxyEngine {
     pub fn new(core: &Arc<AppCore>) -> Result<Arc<ProxyEngine>> {
         let data = core.paths.data.clone();
+        // Browsers open many connections; the default soft limit (256 on macOS) is too low.
+        if let Some(n) = quena_platform::raise_fd_limit(2 * quena_proxy::MAX_CLIENT_CONNECTIONS as u64 + 1024) {
+            tracing::debug!(target: "quena", "open-file limit {n}");
+        }
         // Crash recovery: a previous run left the system proxy pointing to us.
         match quena_platform::restore_system_proxy(&backup_path(&data)) {
             Ok(true) => tracing::warn!(target: "quena", "restored the system proxy left over by a previous run"),
@@ -351,6 +369,8 @@ impl CaptureEngine for ProxyEngine {
             match quena_platform::set_system_proxy(port, &bypass, &backup_path(&self.data_dir)) {
                 Ok(()) => self.state.lock().system_proxy = true,
                 Err(e) => {
+                    // Some services may already point to us: undo the partial change.
+                    let _ = quena_platform::restore_system_proxy(&backup_path(&self.data_dir));
                     tracing::warn!(target: "quena", "could not set the system proxy: {e} – configure clients to use 127.0.0.1:{port} manually");
                     self.state.lock().error = Some(format!("system proxy: {e}"));
                 }

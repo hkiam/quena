@@ -157,7 +157,7 @@ impl BodyStore {
 
     /// Ensure future ids are above `id` (after loading persisted sessions).
     pub fn bump_id(&self, id: u64) {
-        self.next_id.fetch_max(id + 1, Ordering::Relaxed);
+        self.next_id.fetch_max(id.saturating_add(1), Ordering::Relaxed);
     }
 
     fn blob_path(&self, id: u64) -> PathBuf {

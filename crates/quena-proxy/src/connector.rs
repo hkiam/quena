@@ -104,14 +104,54 @@ pub struct Connector {
 }
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// getaddrinfo can block for a long time on broken resolvers.
+const DNS_TIMEOUT: Duration = Duration::from_secs(10);
+/// Reply of an upstream proxy to our CONNECT.
+const PROXY_CONNECT_REPLY_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Addresses Quena itself listens on (set by the proxy on start); used to refuse
+/// connections that would loop back into Quena.
+static SELF_ADDRS: parking_lot::RwLock<Vec<std::net::SocketAddr>> = parking_lot::RwLock::new(Vec::new());
+
+pub(crate) fn add_self_addrs(addrs: &[std::net::SocketAddr]) {
+    SELF_ADDRS.write().extend_from_slice(addrs);
+}
+
+pub(crate) fn remove_self_addrs(addrs: &[std::net::SocketAddr]) {
+    SELF_ADDRS.write().retain(|a| !addrs.contains(a));
+}
+
+/// Whether connecting to `a` would reach Quena's own listener (a request loop).
+pub(crate) fn is_self_addr(a: &std::net::SocketAddr) -> bool {
+    let own = SELF_ADDRS.read();
+    if !own.iter().any(|o| o.port() == a.port()) {
+        return false;
+    }
+    let ip = a.ip().to_canonical();
+    if ip.is_loopback() || ip.is_unspecified() || own.iter().any(|o| o.ip().to_canonical() == ip) {
+        return true;
+    }
+    let s = ip.to_string();
+    quena_platform::local_addresses().iter().any(|(_, l)| *l == s)
+}
+
+fn loop_error(host: &str, port: u16) -> std::io::Error {
+    std::io::Error::other(format!("{host}:{port} is Quena itself; refusing to forward the request to avoid a loop"))
+}
 
 /// Open a TCP connection with DNS/connect timing.
 pub async fn tcp_connect(host: &str, port: u16) -> std::io::Result<(TcpStream, u32, u32, String)> {
     let t0 = Instant::now();
-    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.trim_matches(['[', ']']), port)).await?.collect();
+    let addrs: Vec<std::net::SocketAddr> = match tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host.trim_matches(['[', ']']), port))).await {
+        Ok(r) => r?.collect(),
+        Err(_) => return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("DNS lookup for {host} timed out after {}s", DNS_TIMEOUT.as_secs()))),
+    };
     let dns_ms = t0.elapsed().as_millis() as u32;
     if addrs.is_empty() {
         return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("no address for {host}")));
+    }
+    if addrs.iter().any(is_self_addr) {
+        return Err(loop_error(host, port));
     }
     let t1 = Instant::now();
     // Happy Eyeballs (RFC 8305, simplified): alternate families, start the next
@@ -159,6 +199,13 @@ pub async fn tcp_connect(host: &str, port: u16) -> std::io::Result<(TcpStream, u
 
 /// Establish a CONNECT tunnel through an upstream proxy.
 pub async fn connect_via_proxy(s: &mut TcpStream, host: &str, port: u16) -> std::io::Result<()> {
+    match tokio::time::timeout(PROXY_CONNECT_REPLY_TIMEOUT, connect_via_proxy_inner(s, host, port)).await {
+        Ok(r) => r,
+        Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("upstream proxy did not answer the CONNECT within {}s", PROXY_CONNECT_REPLY_TIMEOUT.as_secs()))),
+    }
+}
+
+async fn connect_via_proxy_inner(s: &mut TcpStream, host: &str, port: u16) -> std::io::Result<()> {
     let target = if host.contains(':') { format!("[{host}]:{port}") } else { format!("{host}:{port}") };
     let req = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Connection: Keep-Alive\r\nUser-Agent: Quena\r\n\r\n");
     s.write_all(req.as_bytes()).await?;

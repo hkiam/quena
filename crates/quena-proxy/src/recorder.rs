@@ -44,13 +44,19 @@ impl Recorder {
         self.0.lossless.store(on, Ordering::Relaxed);
     }
 
+    /// The worker index is encoded in the low byte of the key.
     fn tx(&self, key: RecKey) -> &Sender<Msg> {
-        &self.0.workers[(key as usize) % self.0.workers.len()]
+        &self.0.workers[(key & 0xff) as usize % self.0.workers.len()]
     }
 
     /// Start recording into `writer`; `done` runs on the recorder thread once complete.
-    pub fn open(&self, writer: BodyWriter, done: OnDone) -> RecKey {
-        let key = self.0.next.fetch_add(1, Ordering::Relaxed);
+    ///
+    /// All bodies of one session (`session`) go to the same worker, so their `done`
+    /// callbacks run in the order the bodies ended (request before response).
+    pub fn open(&self, session: u64, writer: BodyWriter, done: OnDone) -> RecKey {
+        let seq = self.0.next.fetch_add(1, Ordering::Relaxed);
+        let worker = session % self.0.workers.len() as u64;
+        let key = (seq << 8) | worker;
         // Open must never be dropped.
         let _ = self.tx(key).send(Msg::Open { key, writer, done });
         key
@@ -79,24 +85,33 @@ impl Recorder {
 fn worker(rx: Receiver<Msg>) {
     let mut open: HashMap<RecKey, (BodyWriter, OnDone)> = HashMap::new();
     while let Ok(m) = rx.recv() {
-        match m {
-            Msg::Open { key, writer, done } => {
-                open.insert(key, (writer, done));
-            }
-            Msg::Chunk { key, data } => {
-                if let Some((w, _)) = open.get_mut(&key) {
-                    if let Err(e) = w.write(&data) {
-                        tracing::warn!(target: "quena::proxy", "recording failed: {e}");
-                        w.add_dropped(data.len() as u64);
-                    }
+        // A panic in a completion callback (store, rules hooks) must not kill the worker:
+        // every later session routed here would then never finish.
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(&mut open, m)));
+        if r.is_err() {
+            tracing::error!(target: "quena::proxy", "recorder: a completion callback panicked; continuing");
+        }
+    }
+}
+
+fn handle(open: &mut HashMap<RecKey, (BodyWriter, OnDone)>, m: Msg) {
+    match m {
+        Msg::Open { key, writer, done } => {
+            open.insert(key, (writer, done));
+        }
+        Msg::Chunk { key, data } => {
+            if let Some((w, _)) = open.get_mut(&key) {
+                if let Err(e) = w.write(&data) {
+                    tracing::warn!(target: "quena::proxy", "recording failed: {e}");
+                    w.add_dropped(data.len() as u64);
                 }
             }
-            Msg::End { key, dropped, aborted } => {
-                if let Some((mut w, done)) = open.remove(&key) {
-                    w.add_dropped(dropped);
-                    let body = w.finish();
-                    done(body, aborted);
-                }
+        }
+        Msg::End { key, dropped, aborted } => {
+            if let Some((mut w, done)) = open.remove(&key) {
+                w.add_dropped(dropped);
+                let body = w.finish();
+                done(body, aborted);
             }
         }
     }

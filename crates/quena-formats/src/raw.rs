@@ -4,6 +4,8 @@ use quena_model::{Headers, RequestHead, ResponseHead, HttpVersion, latin1_to_str
 use std::io::{self, BufRead, Read, Write};
 
 const MAX_HEAD: usize = 1 << 20;
+/// Longest chunk-size line (size + extensions) accepted.
+const MAX_CHUNK_LINE: u64 = 4096;
 
 /// Read a message head (start line + headers) up to the empty line.
 pub fn read_head<R: BufRead>(r: &mut R) -> io::Result<Option<(String, Headers)>> {
@@ -13,7 +15,8 @@ pub fn read_head<R: BufRead>(r: &mut R) -> io::Result<Option<(String, Headers)>>
     let mut line = Vec::new();
     loop {
         line.clear();
-        let n = r.read_until(b'\n', &mut line)?;
+        // Bounded read: a huge "line" without newline must not be buffered whole.
+        let n = r.by_ref().take((MAX_HEAD - total) as u64 + 1).read_until(b'\n', &mut line)?;
         if n == 0 {
             return Ok(if first.is_empty() { None } else { Some((first, headers)) });
         }
@@ -131,18 +134,22 @@ impl<R: BufRead> Read for ChunkedReader<R> {
             return Ok(0);
         }
         if self.remaining == 0 {
-            let mut line = String::new();
+            let mut raw = Vec::new();
             // Skip the CRLF that terminates the previous chunk.
             loop {
-                line.clear();
-                if self.inner.read_line(&mut line)? == 0 {
+                raw.clear();
+                if self.inner.by_ref().take(MAX_CHUNK_LINE).read_until(b'\n', &mut raw)? == 0 {
                     self.done = true;
                     return Ok(0);
                 }
-                if !line.trim().is_empty() {
+                if raw.last() != Some(&b'\n') && raw.len() as u64 >= MAX_CHUNK_LINE {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "chunk size line too long"));
+                }
+                if !raw.trim_ascii().is_empty() {
                     break;
                 }
             }
+            let line = String::from_utf8_lossy(&raw);
             let size = line.trim().split(';').next().unwrap_or("0");
             self.remaining = u64::from_str_radix(size.trim(), 16).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("bad chunk size {size:?}")))?;
             if self.remaining == 0 {
@@ -175,5 +182,21 @@ mod tests {
         let mut out = String::new();
         ChunkedReader::new(r).read_to_string(&mut out).unwrap();
         assert_eq!(out, "hello world");
+    }
+
+    #[test]
+    fn long_lines_bounded() {
+        // A 64 MB "line" without newline is rejected after MAX_HEAD, not buffered.
+        let big = io::repeat(b'a').take(64 << 20);
+        let mut r = io::BufReader::new(big);
+        assert!(read_head(&mut r).is_err());
+        let mut r = io::BufReader::new(io::repeat(b'1').take(1 << 20));
+        let mut out = Vec::new();
+        assert!(ChunkedReader::new(&mut r).read_to_end(&mut out).is_err());
+        // Non-UTF-8 chunk extensions don't fail the size parse.
+        let data = b"3;x=\xff\r\nabc\r\n0\r\n\r\n";
+        let mut out = Vec::new();
+        ChunkedReader::new(&data[..]).read_to_end(&mut out).unwrap();
+        assert_eq!(out, b"abc");
     }
 }

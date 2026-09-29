@@ -1,12 +1,11 @@
 //! Find Sessions (Ctrl/Cmd+F): search URLs, headers and bodies as a job.
 
 use crate::AppCore;
-use crate::bodies::CtxProgress;
 use crate::dto::spec_of;
 use anyhow::{Result, anyhow};
 use parking_lot::Mutex;
 use quena_body::Variant;
-use quena_body::decode::{derive, variant_applies};
+use quena_body::decode::{Progress, variant_applies};
 use quena_jobs::{JobId, Priority};
 use quena_model::{MarkColor, SessionId};
 use serde::{Deserialize, Serialize};
@@ -34,6 +33,18 @@ pub struct FindOptions {
     #[serde(default = "max_body")]
     pub max_body_mb: u64,
     pub mark: Option<MarkColor>,
+}
+
+/// At most this much of a body is decoded (in memory) for a decoded search.
+const DECODE_SEARCH_LIMIT: u64 = 64 << 20;
+
+/// Forwards only cancellation; body progress would clobber the per-session progress.
+struct CancelOnly<'a>(&'a quena_jobs::JobCtx);
+impl Progress for CancelOnly<'_> {
+    fn cancelled(&self) -> bool {
+        self.0.cancelled()
+    }
+    fn progress(&self, _: u64, _: u64) {}
 }
 
 fn all() -> String {
@@ -116,29 +127,23 @@ impl AppCore {
                                         continue;
                                     }
                                     let spec = spec_of(&h);
-                                    let body = if o.decode && variant_applies(&spec, Variant::Decoded) {
-                                        match derive(&cap.bodies, &body, Variant::Decoded, &spec) {
-                                            Ok(dv) => {
-                                                if let Some(w) = dv.work {
-                                                    let _ = w(&CtxProgress(ctx));
-                                                } else {
-                                                    while !dv.body.is_complete() && !ctx.cancelled() {
-                                                        std::thread::sleep(std::time::Duration::from_millis(5));
-                                                    }
-                                                }
-                                                dv.body
-                                            }
-                                            Err(_) => body,
-                                        }
-                                    } else {
-                                        body
+                                    // Decoded search works on a bounded in-memory decode instead of
+                                    // deriving (and caching) every matching body; an existing complete
+                                    // cache entry is searched directly.
+                                    let decoded = match (o.decode && variant_applies(&spec, Variant::Decoded), spec.content_encoding.as_deref()) {
+                                        (true, Some(ce)) => match cap.bodies.derived(body.id(), Variant::Decoded).filter(|b| b.is_complete()) {
+                                            Some(cached) => Some(cached.read_range(0, DECODE_SEARCH_LIMIT.min(max) as usize).unwrap_or_default()),
+                                            None => quena_body::decode::decode_prefix(&body, ce, DECODE_SEARCH_LIMIT.min(max) as usize, &CancelOnly(ctx)).ok(),
+                                        },
+                                        _ => None,
                                     };
-                                    let found = match &re {
-                                        Some(re) => {
+                                    let found = match (&decoded, &re) {
+                                        (Some(data), _) => text_hit(&String::from_utf8_lossy(data)),
+                                        (None, Some(re)) => {
                                             let data = body.read_range(0, max as usize).unwrap_or_default();
                                             re.is_match(&String::from_utf8_lossy(&data))
                                         }
-                                        None => {
+                                        (None, None) => {
                                             let mut f = false;
                                             let _ = quena_body::search::search(&body, o.text.as_bytes(), !o.match_case, 0, &quena_body::decode::NoProgress, |_| {
                                                 f = true;

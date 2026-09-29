@@ -16,6 +16,8 @@ export function WebSocketView({ detail }: { detail: Detail }) {
   const [frames, setFrames] = useState<WsFrame[]>([]);
   const [total, setTotal] = useState(0);
   const [complete, setComplete] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [sel, setSel] = useState<number | null>(null);
   const [filter, setFilter] = useState<"all" | "text" | "in" | "out">("all");
   const version = useStore((s) => s.listVersion);
@@ -24,14 +26,25 @@ export function WebSocketView({ detail }: { detail: Detail }) {
 
   useEffect(() => {
     let alive = true;
+    let busy = false;
     const load = () => {
+      if (busy) return;
+      busy = true;
       const start = Math.max(0, total - PAGE);
-      api.wsFrames(detail.summary.id, complete ? start : Math.max(0, (total || 0) - PAGE), PAGE).then((m) => {
-        if (!alive) return;
-        setFrames(m.frames);
-        setTotal(m.total);
-        setComplete(m.complete);
-      });
+      api
+        .wsFrames(detail.summary.id, complete ? start : Math.max(0, (total || 0) - PAGE), PAGE)
+        .then(
+          (m) => {
+            if (!alive) return;
+            setFrames(m.frames);
+            setTotal(m.total);
+            setComplete(m.complete);
+            setTruncated(!!m.truncated);
+            setError(null);
+          },
+          (e) => alive && setError(`Could not load frames: ${String(e)}`),
+        )
+        .finally(() => (busy = false));
     };
     load();
     const t = detail.summary.state === "done" || detail.summary.state === "aborted" ? null : setInterval(load, 500);
@@ -57,7 +70,12 @@ export function WebSocketView({ detail }: { detail: Detail }) {
   return (
     <div className="wsview">
       <div className="lt-bar">
-        <span className="lt-info">{fmtInt(total)} frames{!complete ? " · live" : ""}</span>
+        <span className="lt-info">
+          {fmtInt(total)} frames{!complete ? " · live" : ""}
+          {total > frames.length && ` · last ${fmtInt(frames.length)} shown`}
+          {truncated && " · truncated (recording limit reached)"}
+          {error && <span className="err"> · {error}</span>}
+        </span>
         <select value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
           <option value="all">All frames</option>
           <option value="text">Text messages</option>
@@ -80,10 +98,10 @@ export function WebSocketView({ detail }: { detail: Detail }) {
               <span className="ws-op">{f.opcodeName}</span>
               <span className="ws-time">{fmtTime(f.time)}</span>
               <span className="ws-len">{fmtBytes(f.len)}</span>
-              <span className="ws-text">{f.text ?? f.preview ?? ""}</span>
+              <span className="ws-text">{(f.text ?? f.preview ?? "").slice(0, 500)}</span>
             </div>
           ))}
-          {shown.length === 0 && <div className="placeholder">No frames{total > 0 ? " match the filter" : " yet"}.</div>}
+          {shown.length === 0 && !error && <div className="placeholder">No frames{total > 0 ? " match the filter" : " yet"}.</div>}
         </div>
         {selFrame && (
           <div className="ws-detail">

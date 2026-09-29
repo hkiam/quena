@@ -41,6 +41,11 @@ pub fn parse_type2(data: &[u8]) -> Result<Challenge, AuthError> {
     server_challenge.copy_from_slice(&data[24..32]);
     // TargetInfoFields at offset 40: len(2), maxlen(2), offset(4)
     let ti_len = u16::from_le_bytes(data[40..42].try_into().unwrap()) as usize;
+    // The Type 3 message carries target info in u16-length fields together with ~50 more
+    // bytes; a larger block cannot be answered correctly.
+    if ti_len > 60_000 {
+        return Err(AuthError::Protocol("NTLM Type 2 target info too large".into()));
+    }
     let ti_off = u32::from_le_bytes(data[44..48].try_into().unwrap()) as usize;
     let target_info = if ti_len > 0 && ti_off + ti_len <= data.len() { data[ti_off..ti_off + ti_len].to_vec() } else { Vec::new() };
     Ok(Challenge { server_challenge, target_info, flags })

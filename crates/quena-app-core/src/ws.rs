@@ -35,6 +35,19 @@ pub struct WsMessages {
 
 const PREVIEW: usize = 4096;
 
+/// Cap a (lossily decoded) text preview at `PREVIEW` bytes on a char boundary;
+/// replacement chars make the string longer than the bytes read.
+fn cut_preview(t: String) -> String {
+    if t.len() <= PREVIEW {
+        return t;
+    }
+    let mut end = PREVIEW;
+    while !t.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &t[..end])
+}
+
 fn opcode_name(op: u8) -> &'static str {
     match op {
         0x0 => "continuation",
@@ -85,7 +98,7 @@ impl AppCore {
                     fin,
                     time,
                     len,
-                    text: text.map(|t| if t.len() > PREVIEW { format!("{}…", &t[..PREVIEW]) } else { t }),
+                    text: text.map(cut_preview),
                     preview,
                     offset: payload_off,
                 });
@@ -138,5 +151,16 @@ mod tests {
         let m2 = core.ws_frames(id, 1, 1);
         assert_eq!(m2.frames.len(), 1);
         assert_eq!(m2.frames[0].seq, 1);
+    }
+
+    #[test]
+    fn preview_cut_on_char_boundary() {
+        // Invalid bytes turn into 3-byte U+FFFD, multi-byte chars straddle PREVIEW.
+        let t = String::from_utf8_lossy(&[0xffu8; PREVIEW]).into_owned();
+        assert!(cut_preview(t).ends_with('…'));
+        let t = format!("a{}", "ä".repeat(PREVIEW));
+        let c = cut_preview(t);
+        assert!(c.len() <= PREVIEW + '…'.len_utf8());
+        assert_eq!(cut_preview("short".into()), "short");
     }
 }

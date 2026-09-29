@@ -112,7 +112,7 @@ pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<(
             overrides: reg_get("ProxyOverride"),
             auto_config: reg_get("AutoConfigURL"),
         };
-        std::fs::write(backup, serde_json::to_vec_pretty(&b).expect("backup json"))?;
+        crate::write_atomic(backup, &serde_json::to_vec_pretty(&b).expect("backup json"))?;
     }
     reg_set_str("ProxyServer", &format!("http=127.0.0.1:{port};https=127.0.0.1:{port}"))?;
     let mut o: Vec<String> = bypass.iter().map(|b| b.replace("169.254/16", "169.254.*")).collect();
@@ -126,7 +126,18 @@ pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<(
 
 pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
     let Ok(data) = std::fs::read(backup) else { return Ok(false) };
-    let b: Backup = serde_json::from_slice(&data).map_err(|e| PlatformError::Command(format!("backup unreadable: {e}")))?;
+    let b: Backup = match serde_json::from_slice(&data) {
+        Ok(b) => b,
+        Err(e) => {
+            // Damaged backup: the old settings are lost, but never leave Windows pointing
+            // at a proxy on this machine that is gone.
+            tracing::error!(target: "quena::platform", "system proxy backup unreadable ({e}); turning the proxy off");
+            let _ = reg_set_dword("ProxyEnable", 0);
+            notify_wininet();
+            let _ = std::fs::remove_file(backup);
+            return Ok(true);
+        }
+    };
     match &b.server {
         Some(s) if !s.contains(&format!("127.0.0.1:{}", b.port)) => reg_set_str("ProxyServer", s)?,
         _ => reg_delete("ProxyServer"),
