@@ -1,4 +1,4 @@
-// Tools → Connect Device: remote clients, QR code, certificate download and live status.
+// Capture → Connect Device: remote clients, QR code, certificate download and live status.
 import { useEffect, useMemo, useState } from "react";
 import qrcode from "qrcode-generator";
 import { api, type DeviceInfo } from "../api";

@@ -1,4 +1,4 @@
-// Tools → HTTPS: decryption options and root certificate management.
+// Capture → HTTPS Settings: decryption options and root certificate management.
 import { useEffect, useState } from "react";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { api, type CaInfo } from "../api";

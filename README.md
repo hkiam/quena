@@ -218,15 +218,18 @@ npm run build --prefix app/ui      # typecheck + production build of the UI
 ### First capture
 
 1. Start Quena. It begins capturing and — with *Act as system proxy* in *Settings → Connections* (on by default) — registers
-   itself as the system proxy (the previous proxy is kept as upstream and restored on exit).
+   itself as the system proxy (the previous proxy is kept as upstream and restored on exit). On Linux this
+   is the GNOME or KDE Plasma proxy setting that browsers follow.
 2. Browse. Sessions appear live in the list; select one to inspect it.
-3. Want HTTPS content? Open **Tools → HTTPS Settings…**, enable *Decrypt HTTPS traffic* and click
+3. Want HTTPS content? Open **Capture → HTTPS Settings…**, enable *Decrypt HTTPS traffic* and click
    **Trust root certificate**. The certificate is generated on your machine and never leaves it.
+   On Linux, Quena adds it to Chrome's and Firefox's certificate databases and — after asking for
+   your password — to the system store used by curl and other tools.
 4. Command-line tools work too: `curl -x http://127.0.0.1:8866 https://example.com`.
 
 ### Phones, tablets and VMs
 
-Open **Tools → Connect Device…**, allow remote connections, and scan the QR code with the device.
+Open **Capture → Connect Device…**, allow remote connections, and scan the QR code with the device.
 It leads to `http://quena.cert`, which serves the certificate (`.crt` for Android,
 `.mobileconfig` for iOS) together with step-by-step instructions.
 
@@ -262,7 +265,8 @@ function onBeforeResponse(s) {
 ```
 
 Scripts run off the proxy threads with a time and memory budget and have no file-system,
-network or environment access. They see headers and metadata only — bodies keep streaming,
+network or environment access. A script that does not answer within 2 s is skipped for that
+request, so a slow script degrades to "no rules" instead of stalling traffic. They see headers and metadata only — bodies keep streaming,
 so enabling a script never turns a 5 GB download into a 5 GB buffer.
 Full API: [`crates/quena-script/src/quena.d.ts`](crates/quena-script/src/quena.d.ts) ·
 Design notes: [`docs/m14-scripting-and-pac.md`](docs/m14-scripting-and-pac.md)
@@ -346,7 +350,12 @@ The full design and roadmap live in [`PLAN.md`](PLAN.md) (German).
 - HTTPS decryption is **opt-in**, can be scoped (browsers only, non-browsers, remote clients)
   and can exclude hosts entirely.
 - Stored credentials for automatic authentication live in the **OS secure store**
-  (Keychain / Credential Manager) — never in plain-text settings. Auth headers are redacted in logs.
+  (Keychain / Credential Manager / Secret Service) — never in plain-text settings. Auth headers are
+  redacted in logs.
+- Built for **broken and hostile traffic**: stalled clients and servers time out, decompression,
+  imports and inspectors have size limits, a request loop back into Quena is refused, and a view
+  that cannot render a payload shows an error instead of taking the window down. Damaged state
+  files (settings, rules, certificate, database) are set aside instead of blocking the start.
 - Remote connections are **off by default** and restricted by an allow-list when enabled.
 
 Please report vulnerabilities privately — see [SECURITY.md](SECURITY.md).

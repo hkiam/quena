@@ -156,9 +156,9 @@ pub(crate) fn guess_type(path: &std::path::Path) -> &'static str {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BreakpointState {
-    /// Rules → Automatic Breakpoints → Before Requests.
+    /// Capture → Breakpoints → Before Requests.
     pub all_requests: bool,
-    /// Rules → Automatic Breakpoints → After Responses.
+    /// Capture → Breakpoints → After Responses.
     pub all_responses: bool,
     /// `bpu text`
     pub request_url: Option<String>,

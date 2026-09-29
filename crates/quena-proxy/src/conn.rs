@@ -249,7 +249,7 @@ async fn tunnel_or_intercept<S>(
         let why = if !is_tls {
             "Traffic in this tunnel is not TLS; it is passed through."
         } else if !cfg.decrypt {
-            "HTTPS decryption is disabled (Tools → Options → HTTPS)."
+            "HTTPS decryption is disabled (Capture → HTTPS Settings…)."
         } else if ca.is_none() {
             "No root certificate is available."
         } else {
@@ -288,7 +288,7 @@ where
         Ok(Ok(t)) => t,
         Ok(Err(e)) => {
             let msg = format!(
-                "TLS handshake with the client failed: {e}.\nThe client probably does not trust the Quena root certificate (Tools → HTTPS → Trust root certificate), or it pins certificates for {cert_host}."
+                "TLS handshake with the client failed: {e}.\nThe client probably does not trust the Quena root certificate (Capture → HTTPS Settings… → Trust root certificate), or it pins certificates for {cert_host}."
             );
             tracing::info!(target: "quena::proxy", "{cert_host}: client rejected the interception certificate ({e})");
             return fail_tunnel(&live, msg);

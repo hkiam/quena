@@ -1,5 +1,5 @@
 // Quena rules — a JavaScript script that runs on every session.
-// Enable it under Rules → Rules Script… (Ctrl/Cmd+R). Reloads on save.
+// Enable it under Capture → Rules Script… (Ctrl/Cmd+R). Reloads on save.
 // See the type hints (Quena.d.ts) for the full API.
 
 // Called once when the script loads.

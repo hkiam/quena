@@ -13,6 +13,9 @@ design: a JavaScript rules script (the FiddlerScript replacement) and PAC
 - Scripts run under a **wall-clock budget** (interrupt handler, 250 ms per hook,
   2 s for load/boot) and a **memory limit** (64 MB), and have **no access** to the
   filesystem, network or environment — only `console.*` and the session object.
+- The hook queue is bounded (256). A request waits at most **2 s** for its hook
+  (queueing included); after that it passes through unchanged and the stale hook is
+  skipped, so a slow script never stalls traffic.
 - Per Quena's large-body invariant (PLAN.md §2.12), scripts see **heads and
   metadata only**; bodies never enter the JS engine. Response headers are rewritten
   through a head-only hook (`on_response_head`) that runs in the streaming path, so
@@ -34,7 +37,7 @@ The `session` object exposes `method`, `url`, `host`, `path`, `status`,
 and actions: `redirect(url)`, `abort()`, `respond(status, body, headers)`,
 `comment(text)`, `color(name)`, `flag(k, v)`.
 
-Edit under **Rules → Customize Rules… (Ctrl/Cmd+R)**: a CodeMirror editor with an
+Edit under **Capture → Rules Script… (Ctrl/Cmd+R)**: a CodeMirror editor with an
 enable toggle, hot reload on save (Ctrl/Cmd+S), a compile-error banner and the
 script's `console` output. Enabled state is persisted (`scripting_enabled`); the
 script itself lives in `rules.js` in the data dir.
@@ -54,11 +57,22 @@ upstream proxy overrides PAC. `file://`, `http://` and local paths are fetched;
 `ProxyConfig::upstream_for` via the `UpstreamResolver` trait, exactly like a
 static upstream.
 
+Limits, because a PAC file comes from the network and may be broken:
+
+- The download (DNS, connect, transfer) must finish within **15 s** and is at most
+  **1 MB**; it runs during startup, so it can never hang the app.
+- The script has **3 s** to load and **2 s** of JS time per evaluation (an endless
+  loop is interrupted); the caller waits at most 5 s and then uses DIRECT (not
+  cached). At most 64 evaluations queue; beyond that lookups answer DIRECT.
+- `dnsResolve` gives up after 3 s and runs at most 16 lookups at a time.
+- Evaluation always runs off the async proxy threads (also for CONNECT).
+
 ## Tests
 
 - `quena-script`: engine (header rewrite, redirect, abort, respond, response
   edits, error isolation, infinite-loop interrupt, console) and PAC (evaluation,
-  cache, invalid script, directive parsing, per-host resolver).
+  cache, invalid script, directive parsing, per-host resolver, endless loops at load
+  and evaluation time).
 - `quena-app-core`: PAC resolver + file loading; `rules_e2e::scripting_through_proxy`
   drives a real proxy and verifies request-header rewrite, local `respond()`,
   `redirect()`, and streaming response-header rewrite end to end.

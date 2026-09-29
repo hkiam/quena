@@ -81,13 +81,18 @@ Abhängigkeitsbaum permissiv und stabil. Modul `quena-auth::crypto`.
     reinen Proxy-Durchlauf; MIC-Berechnung als optionaler Schritt vorsehen).
 - **Known-Answer-Tests** aus MS-NLMP §4.2.4 (veröffentlichte Vektoren) als Unit-Test.
 
-### 3.3 Negotiate/Kerberos (SPNEGO, macOS)
+### 3.3 Negotiate/Kerberos (SPNEGO, macOS und Linux)
 
-- GSS.framework über GSS-API-C-Bindings (`gss_init_sec_context` mit SPNEGO-Mech-OID).
+- GSS-API-C-Bindings (`gss_init_sec_context` mit SPNEGO-Mech-OID), gemeinsamer Code in
+  `negotiate_gss.rs`.
 - Ziel-SPN: `HTTP@<host>` (bzw. `HTTP/<host>`).
 - SSO mit vorhandenem Ticket; kein Ticket → `AuthError::NoCredentials` → Fallback
   auf NTLM/Basic oder UI-Prompt.
-- Framework-Link: `#[link(name = "GSS", kind = "framework")]`, nur `cfg(target_os="macos")`.
+- macOS: Framework-Link `#[link(name = "GSS", kind = "framework")]`.
+- Linux: `libgssapi_krb5.so.2` (MIT) bzw. `libgssapi.so.3` (Heimdal) wird zur Laufzeit per
+  `libloading` geladen, also keine Build-Abhängigkeit auf Kerberos. Fehlt die Bibliothek →
+  `AuthError::Unsupported` → Fallback auf NTLM. SSO mit einem Ticket aus `kinit`.
+- Windows: Negotiate und NTLM über SSPI (siehe M8a.7).
 - SPNEGO-Token-Wrapping isoliert unit-testbar; der volle Handshake braucht ein KDC
   → als manueller/optionaler Test markiert.
 
@@ -107,8 +112,9 @@ pub trait SecureStore {
 - **macOS**: Keychain über das `security`-CLI (`add-generic-password -U`,
   `find-generic-password -w`, `delete-generic-password`), Service `io.github.hkiam.quena.auth`,
   Account = `realm|host|user`. Konsistent mit der bestehenden CA-Trust-Nutzung von `security`.
-- **Windows**: Credential Manager (`CredWriteW`/`CredReadW`) – mit M13.
-- **Linux**: Secret Service (libsecret) optional; sonst nur In-Memory für die Session.
+- **Windows**: Credential Manager (`CredWriteW`/`CredReadW`).
+- **Linux**: Secret Service (GNOME Keyring, KWallet) über `secret-tool`; der Wert geht über
+  stdin, nie über argv oder eine Datei. Ohne Keyring nur In-Memory bis zum Programmende.
 
 ## 5. Verbindungs-Pinning in `quena-proxy`
 
@@ -155,7 +161,7 @@ send_upstream_with_auth:
 
 ```rust
 pub struct AuthSettings {
-    pub enabled: bool,                 // Rules → Enable Automatic Authentication
+    pub enabled: bool,                 // Capture → Enable Automatic Authentication
     pub hosts: String,                 // Allowlist (leer = alle), ";"-getrennt, Wildcards
     pub upstream_auth: bool,           // 407 vom Firmenproxy behandeln
     pub prefer: Vec<Scheme>,           // Default [Negotiate, Ntlm, Basic]
@@ -203,6 +209,7 @@ pub struct AuthSettings {
 | M8a.5 | Negotiate/Kerberos via GSS.framework (macOS) | SPNEGO-Wrapping-Unit; KDC manuell |
 | M8a.6 | UI: Rules-Menü, Options-Tab, Credential-Manager, Handshake-Sessions | manueller UI-Test |
 | M8a.7 | Windows-SSPI (mit M13): SSO NTLM + Negotiate | Windows-CI |
+| M8a.8 | Linux: Negotiate über GSSAPI (dlopen), Secret Service | Linux-CI; KDC manuell |
 
 ## 10. Definition of Done (M8a)
 
@@ -210,6 +217,7 @@ pub struct AuthSettings {
 - Basic + NTLMv2 gegen Test-Server erfolgreich; UI zeigt finale 200 + Handshake-Legs.
 - `407` gegen Firmenproxy erfolgreich.
 - Zwei Clients an denselben Host teilen keinen Auth-Zustand (Pinning bewiesen).
-- Zugangsdaten ausschließlich in der Keychain; keine Klartext-Persistenz; Logs redigiert.
-- Kerberos-SSO funktioniert, wenn ein Ticket vorhanden ist (macOS).
+- Zugangsdaten ausschließlich im OS-Secure-Store (Keychain, Credential Manager, Secret
+  Service); keine Klartext-Persistenz; Logs redigiert.
+- Kerberos-SSO funktioniert, wenn ein Ticket vorhanden ist (macOS, Linux; Windows über SSPI).
 - NTLMv2-KAT grün.
