@@ -25,7 +25,7 @@ Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Li
 
 <br>
 
-<img src="docs/screenshots/overview.png" alt="Quena main window: session list, request headers and a pretty-printed JSON response" width="920">
+<img src="docs/screenshots/overview.png" alt="Quena main window: session list, request headers and pretty-printed JSON response side by side" width="920">
 
 </div>
 
@@ -135,8 +135,8 @@ Quena is an independent, open-source take on this kind of tool, with its own des
 <p align="center"><sub><b>JavaScript rules</b> — hooks, custom menu and column, live console</sub></p>
 </td>
 <td width="50%">
-<img src="docs/screenshots/overview.png" alt="Main window with script-populated Comments and Custom columns">
-<p align="center"><sub><b>Session list</b> — comments, colors and the Custom column set by a script</sub></p>
+<img src="docs/screenshots/classic-layout.png" alt="Optional Classic layout: dense session list, request above response">
+<p align="center"><sub><b>Classic layout</b> — optional: denser list, request above response</sub></p>
 </td>
 </tr>
 </table>

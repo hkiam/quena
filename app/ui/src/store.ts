@@ -55,15 +55,15 @@ const col = (key: ColumnKey, width: number, visible: boolean, align?: "left" | "
 
 /** Quena's default columns: what, where, outcome, size, time. */
 export const DEFAULT_COLUMNS: ColumnConf[] = [
-  col("id", 56, true, "left"),
-  col("method", 64, true),
-  col("result", 56, true, "right"),
-  col("host", 160, true),
-  col("url", 250, true),
-  col("contentType", 120, true),
-  col("body", 76, true, "right"),
-  col("duration", 76, true, "right"),
-  col("process", 90, true),
+  col("id", 42, true, "left"),
+  col("method", 54, true),
+  col("result", 48, true, "right"),
+  col("host", 140, true),
+  col("url", 190, true),
+  col("contentType", 96, true),
+  col("body", 62, true, "right"),
+  col("duration", 64, true, "right"),
+  col("process", 90, false),
   col("protocol", 70, false),
   col("comments", 120, false),
   col("custom", 90, false),
@@ -108,7 +108,7 @@ type PresetParts = Pick<Layout, "leftWidth" | "inspectorSplit" | "stacked" | "co
 
 export const PRESETS: Record<LayoutPreset, PresetParts> = {
   // List left, request and response side by side.
-  quena: { leftWidth: 0.42, inspectorSplit: 0.5, stacked: false, columns: DEFAULT_COLUMNS },
+  quena: { leftWidth: 0.5, inspectorSplit: 0.5, stacked: false, columns: DEFAULT_COLUMNS },
   // Dense list, request above response.
   classic: { leftWidth: 0.52, inspectorSplit: 0.42, stacked: true, columns: CLASSIC_COLUMNS },
 };
@@ -125,7 +125,9 @@ export const DEFAULT_LAYOUT: Layout = {
 export function restoreLayout(saved: Partial<Layout> | undefined): Layout {
   if (!saved) return { ...DEFAULT_LAYOUT, columns: [...DEFAULT_COLUMNS] };
   // Layouts saved before presets existed: stacked inspectors meant the classic arrangement.
-  const preset: LayoutPreset = saved.preset ?? (saved.stacked === false ? "quena" : "classic");
+  // Unknown/legacy preset names (e.g. from before the rename) fall back by arrangement.
+  const preset: LayoutPreset =
+    saved.preset && saved.preset in PRESETS ? saved.preset : saved.stacked === false ? "quena" : "classic";
   const base = PRESETS[preset];
   const layout: Layout = { ...DEFAULT_LAYOUT, ...base, ...saved, preset, presetChosen: saved.presetChosen ?? false };
   // Titles from the key; columns added in newer versions are appended (hidden if unknown to the preset).
