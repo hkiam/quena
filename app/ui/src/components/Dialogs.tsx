@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { api, type Recoverable, type Settings } from "../api";
 import { actions } from "../actions";
 import { fmtBytes, fmtDateTime, fmtInt, modKey, osNames } from "../lib/format";
 import { get, say, set, useStore, type Dialog } from "../store";
-import { TextWizard } from "./TextWizard";
-import { CompareView } from "./CompareView";
 import { FindDialog } from "./FindDialog";
 import { HttpsPanel } from "./HttpsDialog";
-import { DeviceAssistant } from "./DeviceDialog";
-import { PluginsPanel } from "./PluginsDialog";
-import { RulesEditor } from "./RulesEditor";
+
+// Rarely used, heavy dialogs (diff editor, script editor, QR code…) load on first open.
+const TextWizard = lazy(() => import("./TextWizard").then((m) => ({ default: m.TextWizard })));
+const CompareView = lazy(() => import("./CompareView").then((m) => ({ default: m.CompareView })));
+const DeviceAssistant = lazy(() => import("./DeviceDialog").then((m) => ({ default: m.DeviceAssistant })));
+const PluginsPanel = lazy(() => import("./PluginsDialog").then((m) => ({ default: m.PluginsPanel })));
+const RulesEditor = lazy(() => import("./RulesEditor").then((m) => ({ default: m.RulesEditor })));
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
 
@@ -616,7 +618,9 @@ export function Dialogs() {
         </Modal>
       )}
     >
-      <DialogBody d={d} />
+      <Suspense fallback={null}>
+        <DialogBody d={d} />
+      </Suspense>
     </ErrorBoundary>
   );
 }

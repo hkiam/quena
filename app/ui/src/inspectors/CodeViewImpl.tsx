@@ -1,43 +1,41 @@
-// CodeMirror 6 wrapper for small and medium bodies (read-only unless editable).
+// CodeMirror 6 editor behind CodeView (loaded on first use, see CodeView.tsx).
 import { useEffect, useRef } from "react";
 import { EditorState, Compartment, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers, highlightActiveLine, keymap, drawSelection } from "@codemirror/view";
 import { defaultHighlightStyle, syntaxHighlighting, bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches, search } from "@codemirror/search";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { json } from "@codemirror/lang-json";
-import { xml } from "@codemirror/lang-xml";
-import { html } from "@codemirror/lang-html";
-import { javascript } from "@codemirror/lang-javascript";
-import { css } from "@codemirror/lang-css";
 
-export type Lang = "json" | "xml" | "html" | "js" | "css" | "text";
+import type { Lang } from "./CodeView";
 
-export function langFor(contentType: string | null | undefined): Lang {
-  const ct = (contentType ?? "").toLowerCase();
-  if (ct.includes("json")) return "json";
-  if (ct.includes("html")) return "html";
-  if (ct.includes("xml") || ct.includes("soap")) return "xml";
-  if (ct.includes("javascript") || ct.includes("ecmascript")) return "js";
-  if (ct.includes("css")) return "css";
-  return "text";
-}
-
-function langExt(l: Lang): Extension {
-  switch (l) {
-    case "json":
-      return json();
-    case "xml":
-      return xml();
-    case "html":
-      return html();
-    case "js":
-      return javascript();
-    case "css":
-      return css();
-    default:
-      return [];
+// Language packs are loaded on first use, so they are not part of the startup bundle.
+const langCache = new Map<Lang, Promise<Extension>>();
+function loadLang(l: Lang): Promise<Extension> {
+  let p = langCache.get(l);
+  if (!p) {
+    switch (l) {
+      case "json":
+        p = import("@codemirror/lang-json").then((m) => m.json());
+        break;
+      case "xml":
+        p = import("@codemirror/lang-xml").then((m) => m.xml());
+        break;
+      case "html":
+        p = import("@codemirror/lang-html").then((m) => m.html());
+        break;
+      case "js":
+        p = import("@codemirror/lang-javascript").then((m) => m.javascript());
+        break;
+      case "css":
+        p = import("@codemirror/lang-css").then((m) => m.css());
+        break;
+      default:
+        p = Promise.resolve([]);
+    }
+    p = p.catch(() => [] as Extension);
+    langCache.set(l, p);
   }
+  return p;
 }
 
 const theme = EditorView.theme({
@@ -89,7 +87,7 @@ export function CodeView({
         search({ top: true }),
         keymap.of([...searchKeymap, ...foldKeymap, ...defaultKeymap, ...historyKeymap]),
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        c.lang.of(highlight ? langExt(lang) : []),
+        c.lang.of([]),
         c.wrap.of(wrap ? EditorView.lineWrapping : []),
         c.edit.of([EditorState.readOnly.of(!editable), EditorView.editable.of(true)]),
         theme,
@@ -112,7 +110,17 @@ export function CodeView({
   }, [text]);
 
   useEffect(() => {
-    view.current?.dispatch({ effects: comp.current.lang.reconfigure(highlight ? langExt(lang) : []) });
+    let current = true;
+    if (!highlight) {
+      view.current?.dispatch({ effects: comp.current.lang.reconfigure([]) });
+      return;
+    }
+    loadLang(lang).then((ext) => {
+      if (current) view.current?.dispatch({ effects: comp.current.lang.reconfigure(ext) });
+    });
+    return () => {
+      current = false;
+    };
   }, [lang, highlight]);
   useEffect(() => {
     view.current?.dispatch({ effects: comp.current.wrap.reconfigure(wrap ? EditorView.lineWrapping : []) });
