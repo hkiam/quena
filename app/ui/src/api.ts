@@ -312,6 +312,8 @@ export interface Settings {
     useSystemUpstream: boolean;
     manualUpstream: string;
     upstreamBypass: string;
+    useSystemPac: boolean;
+    pacUrl: string;
   };
   https: {
     decrypt: boolean;
@@ -339,6 +341,7 @@ export interface Settings {
   keepCaptures: boolean;
   offerRecovery: boolean;
   auth: AuthSettings;
+  scriptingEnabled: boolean;
   ui: unknown;
 }
 
@@ -598,7 +601,26 @@ export const api = {
     invoke<number>("replay", { ids, options }),
   compose: (request: ComposeRequest) => invoke<SessionId>("compose", { request }),
   parseRawRequest: (raw: string) => invoke<{ method: string; url: string; version: string; headers: string; body: string }>("parse_raw_request", { raw }),
+  scriptGet: () => invoke<ScriptState>("script_get"),
+  scriptSet: (source: string) => invoke<ScriptState>("script_set", { source }),
+  scriptSetEnabled: (enabled: boolean) => invoke<ScriptState>("script_set_enabled", { enabled }),
+  scriptLogs: () => invoke<ScriptLog[]>("script_logs"),
+  scriptClearLogs: () => invoke<void>("script_clear_logs"),
 };
+
+export interface ScriptState {
+  source: string;
+  enabled: boolean;
+  loaded: boolean;
+  error: string | null;
+  types: string;
+}
+
+export interface ScriptLog {
+  level: string;
+  message: string;
+  tsUs: number;
+}
 
 /** URL of a body variant served by the `piper://` protocol (supports Range). */
 export function bodyUrl(id: SessionId, part: Part, variant: Variant): string {

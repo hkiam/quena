@@ -1,0 +1,28 @@
+// Piper rules — a FiddlerScript-style script that runs on every session.
+// Enable it under Rules → Customize Rules… (Ctrl+R). Reloads on save.
+// See the type hints (Piper.d.ts) for the full API.
+
+// Called once when the script loads.
+function onBoot() {
+    console.log('Piper rules loaded');
+}
+
+// Called before each request is forwarded. Mutate the session in place.
+function onBeforeRequest(s) {
+    // Example: tag slow-loading hosts, force HTTPS, block an ad host.
+    // s.requestHeaders.set('X-Piper', '1');
+    // if (s.host === 'ads.example.com') s.abort();
+    // if (s.url.indexOf('http://') === 0) s.redirect('https://' + s.url.slice(7));
+}
+
+// Called before each response is returned to the client.
+function onBeforeResponse(s) {
+    // Example: strip a header, flag errors in red.
+    // s.responseHeaders.remove('Set-Cookie');
+    // if (s.status >= 500) s.color('red');
+}
+
+// Called after a session finishes (summary only, no bodies).
+function onSessionComplete(session) {
+    // console.log(session.method, session.url, session.status);
+}

@@ -9,6 +9,7 @@ import { FindDialog } from "./FindDialog";
 import { HttpsPanel } from "./HttpsDialog";
 import { DeviceAssistant } from "./DeviceDialog";
 import { PluginsPanel } from "./PluginsDialog";
+import { RulesEditor } from "./RulesEditor";
 
 function Modal({ title, children, onClose, wide, footer }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; footer?: React.ReactNode }) {
   return (
@@ -425,6 +426,13 @@ function OptionsDialog() {
               <span>Bypass upstream for</span>
               <input value={s.proxy.upstreamBypass} onChange={(e) => up((x) => (x.proxy.upstreamBypass = e.target.value))} />
             </div>
+            <label className="f-check">
+              <input type="checkbox" checked={s.proxy.useSystemPac} onChange={(e) => up((x) => (x.proxy.useSystemPac = e.target.checked))} /> Use the system proxy auto-config (PAC) script
+            </label>
+            <div className="f-row">
+              <span>PAC URL or file</span>
+              <input placeholder="empty = use system PAC; or http://…/proxy.pac, file path" value={s.proxy.pacUrl} onChange={(e) => up((x) => (x.proxy.pacUrl = e.target.value))} />
+            </div>
           </>
         )}
         {tab === "https" && (
@@ -533,14 +541,6 @@ function TextDialog({ title, text }: { title: string; text: string }) {
   );
 }
 
-function Pending({ title, what }: { title: string; what: string }) {
-  return (
-    <Modal title={title} onClose={close}>
-      <p className="muted">{what}</p>
-    </Modal>
-  );
-}
-
 export function Dialogs() {
   const d = useStore((s) => s.dialog);
   const prevFocus = useRef<Element | null>(null);
@@ -603,6 +603,10 @@ export function Dialogs() {
         </Modal>
       );
     case "rules":
-      return <Pending title="Customize Rules" what="Scripting (FiddlerScript replacement) arrives with milestone M14." />;
+      return (
+        <Modal title="Customize Rules" onClose={close} wide>
+          <RulesEditor />
+        </Modal>
+      );
   }
 }

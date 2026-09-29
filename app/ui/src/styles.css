@@ -1531,3 +1531,111 @@ pre {
 .pb-val {
   color: var(--fg);
 }
+
+/* Customize Rules editor (M14) */
+.rules-editor {
+  display: flex;
+  flex-direction: column;
+  height: 70vh;
+  min-height: 420px;
+}
+.rules-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.rules-toolbar .spacer {
+  flex: 1;
+}
+.rules-toolbar .chk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rules-status {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.rules-status.ok {
+  color: var(--ok, #3a8);
+  border-color: var(--ok, #3a8);
+}
+.rules-status.off {
+  color: var(--muted);
+}
+.rules-error {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--err-bg, #3a1a1a);
+  color: var(--err-fg, #f6b6b6);
+  border: 1px solid var(--err-border, #6a2a2a);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  max-height: 120px;
+  overflow: auto;
+}
+.rules-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.rules-cm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.rules-types {
+  width: 340px;
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 1px solid var(--border);
+  background: var(--gutter-bg);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.45;
+  overflow: auto;
+  white-space: pre;
+}
+.rules-log {
+  height: 130px;
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.rules-log-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 11px;
+}
+.rules-log-body {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.rules-log-body .log-warn {
+  color: var(--warn, #d90);
+}
+.rules-log-body .log-error {
+  color: var(--err-fg, #e66);
+}

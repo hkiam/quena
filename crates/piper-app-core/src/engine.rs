@@ -6,7 +6,7 @@ use crate::{AppCore, CaptureEngine, EngineStatus};
 use anyhow::{Context, Result, anyhow};
 use parking_lot::{Mutex, RwLock};
 use piper_proxy::util::{Cidr, split_host_port, split_list};
-use piper_proxy::{DecryptScope, Proxy, ProxyConfig};
+use piper_proxy::{DecryptScope, Proxy, ProxyConfig, UpstreamResolver};
 use piper_tls::CertAuthority;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -18,6 +18,8 @@ pub struct ProxyEngine {
     data_dir: PathBuf,
     state: Mutex<State>,
     rules: RwLock<Option<Arc<crate::rules::Rules>>>,
+    /// Currently loaded PAC resolver (cached; rebuilt only when the source changes).
+    pac: Mutex<Option<Arc<crate::pac::PacResolver>>>,
 }
 
 #[derive(Default)]
@@ -54,7 +56,7 @@ fn backup_path(data: &std::path::Path) -> PathBuf {
     data.join("system-proxy-backup.json")
 }
 
-pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>) -> ProxyConfig {
+pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, pac: Option<Arc<dyn UpstreamResolver>>) -> ProxyConfig {
     let upstream = if !s.proxy.manual_upstream.trim().is_empty() {
         let (h, p) = split_host_port(s.proxy.manual_upstream.trim(), 8080);
         Some((h, p))
@@ -81,6 +83,7 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>) -> ProxyConfi
         http2_downgrade_hosts: split_list(&s.https.http2_downgrade_hosts),
         upstream,
         upstream_bypass: split_list(&s.proxy.upstream_bypass),
+        pac,
         stream: s.stream,
         headers_only_hosts: split_list(&s.headers_only_hosts),
         headers_only_types: split_list(&s.headers_only_types),
@@ -124,7 +127,9 @@ impl ProxyEngine {
             None
         };
         let detected = detect_upstream(s.proxy.port);
-        let proxy = Proxy::new(core.capture(), proxy_config(&s, detected.0.clone()), ca.clone()).map_err(|e| anyhow!("{e}"))?;
+        let pac_slot: Mutex<Option<Arc<crate::pac::PacResolver>>> = Mutex::new(None);
+        let pac = resolve_pac(&pac_slot, &s, detected.1.as_deref());
+        let proxy = Proxy::new(core.capture(), proxy_config(&s, detected.0.clone(), pac), ca.clone()).map_err(|e| anyhow!("{e}"))?;
         proxy.shared.recorder.set_lossless(s.lossless_recording);
         if let Some(r) = &core.rules {
             proxy.set_interceptor(r.clone());
@@ -136,6 +141,7 @@ impl ProxyEngine {
             data_dir: data,
             state: Mutex::new(State { detected_upstream: detected.0, pac_url: detected.1, ..Default::default() }),
             rules: RwLock::new(core.rules.clone()),
+            pac: pac_slot,
         });
         Ok(e)
     }
@@ -215,7 +221,9 @@ impl ProxyEngine {
             self.ensure_ca()?;
         }
         let detected = self.state.lock().detected_upstream.clone();
-        let cfg = proxy_config(&s, detected);
+        let system_pac = self.state.lock().pac_url.clone();
+        let pac = resolve_pac(&self.pac, &s, system_pac.as_deref());
+        let cfg = proxy_config(&s, detected, pac);
         self.state.lock().upstream = cfg.upstream.as_ref().map(|(h, p)| format!("{h}:{p}"));
         self.proxy.shared.recorder.set_lossless(s.lossless_recording);
         self.proxy.reconfigure(cfg).map_err(|e| anyhow!("{e}"))
@@ -223,6 +231,54 @@ impl ProxyEngine {
 }
 
 /// Read the current system proxy (before Piper overrides it).
+/// Decide the effective PAC source and (re)build the resolver, caching it so the
+/// engine is only recompiled when the source URL/path changes. A manual upstream
+/// proxy disables PAC (the static upstream wins, as in Fiddler).
+fn resolve_pac(
+    slot: &Mutex<Option<Arc<crate::pac::PacResolver>>>,
+    s: &Settings,
+    system_pac: Option<&str>,
+) -> Option<Arc<dyn UpstreamResolver>> {
+    if !s.proxy.manual_upstream.trim().is_empty() {
+        *slot.lock() = None;
+        return None;
+    }
+    let manual = s.proxy.pac_url.trim();
+    let location = if !manual.is_empty() {
+        Some(manual.to_string())
+    } else if s.proxy.use_system_pac {
+        system_pac.map(|p| p.to_string())
+    } else {
+        None
+    };
+    let Some(location) = location else {
+        *slot.lock() = None;
+        return None;
+    };
+    if let Some(cur) = slot.lock().as_ref() {
+        if cur.source_id == location {
+            return Some(cur.clone() as Arc<dyn UpstreamResolver>);
+        }
+    }
+    let source = match crate::pac::load_pac_source(&location) {
+        Ok(src) => src,
+        Err(e) => {
+            tracing::warn!(target: "piper", "PAC load from {location} failed: {e}; using direct/static upstream");
+            *slot.lock() = None;
+            return None;
+        }
+    };
+    let resolver = crate::pac::PacResolver::new(location.clone(), &source);
+    if let Some(err) = resolver.error() {
+        tracing::warn!(target: "piper", "PAC script {location} is invalid: {err}; using direct/static upstream");
+        *slot.lock() = None;
+        return None;
+    }
+    tracing::info!(target: "piper", "PAC loaded from {location}");
+    *slot.lock() = Some(resolver.clone());
+    Some(resolver as Arc<dyn UpstreamResolver>)
+}
+
 fn detect_upstream(own_port: u16) -> (Option<(String, u16)>, Option<String>) {
     match piper_platform::system_proxy() {
         Ok(p) if p.points_to(own_port) => (None, None),
@@ -232,7 +288,7 @@ fn detect_upstream(own_port: u16) -> (Option<(String, u16)>, Option<String>) {
                 tracing::info!(target: "piper", "upstream gateway detected: {h}:{port}");
             }
             if let Some(pac) = &p.pac_url {
-                tracing::warn!(target: "piper", "the system uses a proxy auto-config script ({pac}); PAC evaluation is not supported yet – set a manual upstream proxy if needed");
+                tracing::info!(target: "piper", "the system uses a proxy auto-config script ({pac}); Piper will evaluate it when \"use system PAC\" is enabled");
             }
             (up, p.pac_url)
         }

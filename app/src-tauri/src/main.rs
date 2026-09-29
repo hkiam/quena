@@ -60,6 +60,16 @@ fn main() {
             }
             core.set_sink(Arc::new(TauriSink(handle.clone())));
             core.start_ticker();
+            // Load the rules script if scripting was left enabled.
+            if core.settings().scripting_enabled {
+                if let Some(r) = core.rules.clone() {
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(err) = r.set_script_enabled(true).await {
+                            tracing::error!(target: "piper", "rules script failed to load: {err}");
+                        }
+                    });
+                }
+            }
             let m = menu::build(&handle)?;
             app.set_menu(m)?;
             app.on_menu_event(|app, ev| {

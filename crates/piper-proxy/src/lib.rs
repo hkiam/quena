@@ -21,8 +21,14 @@ pub mod util;
 
 pub use body::{BoxError, ProxyBody, empty, full};
 pub use forward::{ExecuteOptions, Upstream, execute, execute_with};
-pub use hooks::{Interceptor, NoInterceptor, RequestAction, ResponseAction, SessionView};
+pub use hooks::{Interceptor, NoInterceptor, RequestAction, ResponseAction, ResponseHeadAction, SessionView};
 pub use auth::{CredentialResolver, NoCredentials};
+
+/// Resolves the upstream proxy for a host (implemented by the app via PAC).
+pub trait UpstreamResolver: Send + Sync + std::fmt::Debug {
+    /// Upstream `host:port` for the request target `host_port`, or `None` for direct.
+    fn upstream_for(&self, host_port: &str) -> Option<(String, u16)>;
+}
 pub use piper_auth::Scheme;
 
 use parking_lot::RwLock;
@@ -69,6 +75,9 @@ pub struct ProxyConfig {
     pub http2_downgrade_hosts: Vec<String>,
     pub upstream: Option<(String, u16)>,
     pub upstream_bypass: Vec<String>,
+    /// Proxy auto-config resolver. When set it decides the upstream per host
+    /// (Fiddler's PAC support); `upstream` is the static fallback.
+    pub pac: Option<Arc<dyn UpstreamResolver>>,
     /// Stream responses (true) or buffer them completely first (Fiddler "Stream" off).
     pub stream: bool,
     pub headers_only_hosts: Vec<String>,
@@ -99,6 +108,7 @@ impl Default for ProxyConfig {
             http2_downgrade_hosts: vec![],
             upstream: None,
             upstream_bypass: vec![],
+            pac: None,
             stream: true,
             headers_only_hosts: vec![],
             headers_only_types: vec![],
@@ -138,6 +148,9 @@ impl ProxyConfig {
         let h = piper_query::host_without_port(host);
         if util::is_loopback_host(h) || host_matches(&self.upstream_bypass, host) {
             return None;
+        }
+        if let Some(pac) = &self.pac {
+            return pac.upstream_for(host);
         }
         self.upstream.clone()
     }

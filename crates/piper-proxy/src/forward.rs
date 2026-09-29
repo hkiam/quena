@@ -2,7 +2,7 @@
 
 use crate::body::{BoxError, ProxyBody, StoredStream, Tee, TeeTimes, empty, full};
 use crate::connector::{ConnInfo, Connector};
-use crate::hooks::{Mode, RequestAction, ResponseAction, SessionView};
+use crate::hooks::{Mode, RequestAction, ResponseAction, ResponseHeadAction, SessionView};
 use crate::util::{HOP_BY_HOP, title_case};
 use crate::{ProxyConfig, Shared, host_matches};
 use bytes::Bytes;
@@ -486,8 +486,27 @@ pub(crate) fn record_response_head(live: &Arc<LiveSession>, resp: &Response<Inco
 async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &SessionView, req_head: &RequestHead, resp: Response<Incoming>) -> Response<ProxyBody> {
     let cfg = shared.cfg();
     let hooks = shared.hooks();
-    let (parts, incoming) = resp.into_parts();
-    let resp_head = live.detail().response.unwrap_or_default();
+    let (mut parts, incoming) = resp.into_parts();
+    let mut resp_head = live.detail().response.unwrap_or_default();
+    // Head-only script hook — runs in both streaming and buffering modes.
+    match hooks.on_response_head(view.clone(), resp_head.clone()).await {
+        ResponseHeadAction::Continue => {}
+        ResponseHeadAction::Replace(h) => {
+            // Apply to the outgoing http parts too, since the streaming path
+            // sends `parts` verbatim to the client (not `resp_head`).
+            parts.status = StatusCode::from_u16(h.status).unwrap_or(parts.status);
+            parts.headers = to_header_map(&h.headers, true, false);
+            resp_head = h.clone();
+            live.update(move |d| {
+                d.response = Some(h);
+                d.summary.flags |= flags::TAMPERED;
+            });
+        }
+        ResponseHeadAction::Abort => {
+            finish_error(live, "aborted by script");
+            return error_response(StatusCode::BAD_GATEWAY, "Response aborted in Piper");
+        }
+    }
     let mode = hooks.response_mode(view, req_head, &resp_head);
     if mode == Mode::Buffer || !cfg.stream {
         if mode == Mode::Buffer {

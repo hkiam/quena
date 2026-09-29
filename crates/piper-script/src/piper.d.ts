@@ -1,0 +1,74 @@
+// Type definitions for Piper rules scripts (M14). Loaded by the editor for
+// autocomplete; not evaluated at runtime.
+
+/** An ordered, case-insensitive collection of HTTP headers. */
+interface PiperHeaders {
+  /** First value for `name`, or null. */
+  get(name: string): string | null;
+  /** All values for `name`. */
+  getAll(name: string): string[];
+  has(name: string): boolean;
+  /** Set `name` to `value`, removing any duplicates. */
+  set(name: string, value: string): PiperHeaders;
+  /** Append a value without removing existing ones. */
+  add(name: string, value: string): PiperHeaders;
+  remove(name: string): PiperHeaders;
+  names(): string[];
+  toArray(): [string, string][];
+}
+
+/** The session handed to request/response hooks. Mutate it in place. */
+interface PiperSession {
+  readonly id: number;
+  readonly process: string;
+  readonly clientIp: string;
+  readonly phase: 'request' | 'response';
+
+  // Request phase
+  method?: string;
+  host?: string;
+  path?: string;
+  requestHeaders?: PiperHeaders;
+
+  // Response phase
+  status?: number;
+  reason?: string;
+  responseHeaders?: PiperHeaders;
+
+  /** Full URL (request phase: editable to redirect). */
+  url: string;
+
+  /** Attach a comment (shown in the Comments column). */
+  comment(text: string): PiperSession;
+  /** Colour the row (e.g. 'red', 'green', '#ffcc00'). */
+  color(color: string): PiperSession;
+  /** Attach an arbitrary flag to the session. */
+  flag(key: string, value: string): PiperSession;
+
+  /** Request phase: redirect to another URL. */
+  redirect(url: string): void;
+  /** Drop the connection (request phase) / cut the response (response phase). */
+  abort(): void;
+  /** Request phase: answer locally without contacting the server. */
+  respond(status: number, body?: string, headers?: Record<string, string>): void;
+}
+
+interface PiperSummary {
+  id: number;
+  method: string;
+  url: string;
+  status: number;
+}
+
+declare const console: {
+  log(...args: any[]): void;
+  info(...args: any[]): void;
+  warn(...args: any[]): void;
+  error(...args: any[]): void;
+  debug(...args: any[]): void;
+};
+
+declare function onBoot(): void;
+declare function onBeforeRequest(session: PiperSession): void;
+declare function onBeforeResponse(session: PiperSession): void;
+declare function onSessionComplete(summary: PiperSummary): void;

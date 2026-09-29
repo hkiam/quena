@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 piper-app-core.workspace = true
 piper-model.workspace = true
 piper-body.workspace = true
+piper-script.workspace = true
 piper-index.workspace = true
 piper-query.workspace = true
 piper-plugin-host.workspace = true

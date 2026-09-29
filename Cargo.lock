@@ -1849,6 +1849,8 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash",
  "serde",
  "serde_core",
@@ -3181,6 +3183,7 @@ dependencies = [
  "piper-platform",
  "piper-plugin-host",
  "piper-query",
+ "piper-script",
  "serde",
  "serde_json",
  "signal-hook",
@@ -3209,6 +3212,7 @@ dependencies = [
  "piper-plugin-host",
  "piper-proxy",
  "piper-query",
+ "piper-script",
  "piper-store",
  "piper-tls",
  "quick-xml 0.38.4",
@@ -3367,6 +3371,18 @@ dependencies = [
  "regex",
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "piper-script"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3900,6 +3916,34 @@ checksum = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
 dependencies = [
  "rmp",
  "serde",
+]
+
+[[package]]
+name = "rquickjs"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0a22bf72f515cc4189dd7c63d016f6de92a11eee98ddf7dd64794198f6eb34e"
+dependencies = [
+ "rquickjs-core",
+]
+
+[[package]]
+name = "rquickjs-core"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6657979a24d543e5fc66f32cef2f47ca82ce8eb55cec5f7d59a12b7b570bbf24"
+dependencies = [
+ "hashbrown 0.17.1",
+ "rquickjs-sys",
+]
+
+[[package]]
+name = "rquickjs-sys"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

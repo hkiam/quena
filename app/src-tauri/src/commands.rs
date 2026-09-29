@@ -215,7 +215,16 @@ async fn settings_get(core: State<'_, Core>) -> R<Settings> {
 #[tauri::command]
 async fn settings_set(core: State<'_, Core>, settings: Settings) -> R<()> {
     let core = core.inner().clone();
-    blocking(move || core.update_settings(settings).map_err(e)).await
+    let old_scripting = core.settings().scripting_enabled;
+    let new_scripting = settings.scripting_enabled;
+    let cc = core.clone();
+    blocking(move || cc.update_settings(settings).map_err(e)).await?;
+    if new_scripting != old_scripting {
+        if let Some(r) = core.rules.clone() {
+            let _ = r.set_script_enabled(new_scripting).await;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -495,6 +504,65 @@ mod piper_store_dto {
     }
 }
 
+// ---------------------------------------------------------------- Scripting (M14)
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ScriptState {
+    source: String,
+    enabled: bool,
+    loaded: bool,
+    error: Option<String>,
+    types: String,
+}
+
+fn script_state(r: &std::sync::Arc<piper_app_core::rules::Rules>) -> ScriptState {
+    let eng = r.script_engine();
+    ScriptState {
+        source: r.script_source(),
+        enabled: r.script_enabled(),
+        loaded: eng.is_loaded(),
+        error: eng.last_error(),
+        types: piper_script::TYPES_DTS.to_string(),
+    }
+}
+
+#[tauri::command]
+async fn script_get(core: State<'_, Core>) -> R<ScriptState> {
+    Ok(script_state(&rules(core.inner())?))
+}
+
+#[tauri::command]
+async fn script_set(core: State<'_, Core>, source: String) -> R<ScriptState> {
+    let r = rules(core.inner())?;
+    // A compile error is not a command failure: it is surfaced in `error` so the
+    // editor can show it. The source is still saved.
+    let _ = r.set_script(source).await;
+    Ok(script_state(&r))
+}
+
+#[tauri::command]
+async fn script_set_enabled(core: State<'_, Core>, enabled: bool) -> R<ScriptState> {
+    let core = core.inner().clone();
+    let r = rules(&core)?;
+    let _ = r.set_script_enabled(enabled).await;
+    let mut s = core.settings();
+    s.scripting_enabled = enabled;
+    core.update_settings(s).map_err(e)?;
+    Ok(script_state(&r))
+}
+
+#[tauri::command]
+async fn script_logs(core: State<'_, Core>) -> R<Vec<piper_script::LogLine>> {
+    Ok(rules(core.inner())?.script_engine().logs())
+}
+
+#[tauri::command]
+async fn script_clear_logs(core: State<'_, Core>) -> R<()> {
+    rules(core.inner())?.script_engine().clear_logs();
+    Ok(())
+}
+
 pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         status,
@@ -569,5 +637,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         plugin_set_enabled,
         plugins_rescan,
         plugins_reveal,
+        script_get,
+        script_set,
+        script_set_enabled,
+        script_logs,
+        script_clear_logs,
     ]
 }

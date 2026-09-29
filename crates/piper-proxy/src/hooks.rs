@@ -50,6 +50,15 @@ pub enum ResponseAction {
     Abort,
 }
 
+/// Head-only response decision. Runs in both streaming and buffering modes, so
+/// a script can rewrite response headers without the body being materialised
+/// (Piper's large-body invariant, PLAN.md §2.12).
+pub enum ResponseHeadAction {
+    Continue,
+    Replace(ResponseHead),
+    Abort,
+}
+
 pub trait Interceptor: Send + Sync {
     /// Does the request hook need the complete request body?
     fn request_mode(&self, _s: &SessionView, _head: &RequestHead) -> Mode {
@@ -58,6 +67,11 @@ pub trait Interceptor: Send + Sync {
     /// Called before forwarding. `body` is `Some` only in buffer mode.
     fn on_request(&self, _s: SessionView, _head: RequestHead, _body: Option<Body>) -> BoxFuture<RequestAction> {
         Box::pin(async { RequestAction::forward() })
+    }
+    /// Head-only response hook, always called (streaming and buffering). Lets a
+    /// script rewrite response headers or abort without buffering the body.
+    fn on_response_head(&self, _s: SessionView, _resp: ResponseHead) -> BoxFuture<ResponseHeadAction> {
+        Box::pin(async { ResponseHeadAction::Continue })
     }
     /// Does the response hook need the complete response body?
     fn response_mode(&self, _s: &SessionView, _req: &RequestHead, _resp: &ResponseHead) -> Mode {

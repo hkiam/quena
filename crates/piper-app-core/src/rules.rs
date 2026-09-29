@@ -12,7 +12,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use piper_script::{RequestDecision, RequestInfo, ResponseDecision, ResponseInfo, ScriptEngine, SessionMeta};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -238,6 +239,10 @@ pub struct Rules {
     /// Sessions that asked to break on the response (Break on Response / *bpafter).
     break_response: Mutex<std::collections::HashSet<SessionId>>,
     path: PathBuf,
+    // ---- Scripting (M14)
+    script: ScriptEngine,
+    script_path: PathBuf,
+    script_enabled: AtomicBool,
 }
 
 fn parse_head_text(text: &str) -> (String, Headers) {
@@ -256,6 +261,31 @@ fn parse_head_text(text: &str) -> (String, Headers) {
     (first, h)
 }
 
+/// Split a request URL into (host, path+query). Handles absolute URLs and the
+/// `host:port` form used for CONNECT tunnels.
+fn split_url_host_path(url: &str) -> (String, String) {
+    if let Some((_, rest)) = url.split_once("://") {
+        match rest.split_once('/') {
+            Some((host, path)) => (piper_query::host_without_port(host).to_string(), format!("/{path}")),
+            None => (piper_query::host_without_port(rest).to_string(), "/".to_string()),
+        }
+    } else {
+        (piper_query::host_without_port(url).to_string(), String::new())
+    }
+}
+
+fn headers_to_pairs(h: &Headers) -> Vec<(String, String)> {
+    h.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect()
+}
+
+fn pairs_to_headers(pairs: Vec<(String, String)>) -> Headers {
+    let mut h = Headers::new();
+    for (n, v) in pairs {
+        h.push(n, v);
+    }
+    h
+}
+
 impl Rules {
     pub fn new(data_dir: &std::path::Path) -> Arc<Rules> {
         let path = data_dir.join("autoresponder.json");
@@ -270,9 +300,74 @@ impl Rules {
             paused: Mutex::new(HashMap::new()),
             break_response: Mutex::new(Default::default()),
             path,
+            script: ScriptEngine::new(),
+            script_path: data_dir.join("rules.js"),
+            script_enabled: AtomicBool::new(false),
         });
         let _ = r.set_autoresponder(ar, false);
         r
+    }
+
+    // ---- Scripting (M14)
+
+    /// A cheap handle to the script engine (for async load/log queries).
+    pub fn script_engine(&self) -> ScriptEngine {
+        self.script.clone()
+    }
+
+    /// The current rules script source (the saved file, or the starter template).
+    pub fn script_source(&self) -> String {
+        std::fs::read_to_string(&self.script_path).unwrap_or_else(|_| piper_script::DEFAULT_SCRIPT.to_string())
+    }
+
+    /// Whether the user toggled scripting on.
+    pub fn script_enabled(&self) -> bool {
+        self.script_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Scripting is on *and* a script compiled successfully.
+    pub fn script_active(&self) -> bool {
+        self.script_enabled() && self.script.is_loaded()
+    }
+
+    /// Save and hot-reload the script source. Returns the compile/boot error, if any.
+    pub async fn set_script(&self, source: String) -> std::result::Result<(), String> {
+        if let Err(e) = std::fs::write(&self.script_path, &source) {
+            return Err(format!("save {}: {e}", self.script_path.display()));
+        }
+        self.script.load(source).await
+    }
+
+    /// Turn scripting on/off. When turning on, compile the saved script if not loaded.
+    pub async fn set_script_enabled(&self, on: bool) -> std::result::Result<(), String> {
+        self.script_enabled.store(on, Ordering::Relaxed);
+        if on && !self.script.is_loaded() {
+            let src = self.script_source();
+            return self.script.load(src).await;
+        }
+        Ok(())
+    }
+
+    /// Apply a script's session metadata (comment/color/flags) to the live row.
+    fn apply_meta(&self, s: &SessionView, meta: &SessionMeta) {
+        if meta.is_empty() {
+            return;
+        }
+        s.live.update(|d| {
+            if let Some(c) = &meta.comment {
+                d.summary.comment = c.clone();
+            }
+            if let Some(c) = &meta.color {
+                d.summary.color = MarkColor::parse(c);
+            }
+            for (k, v) in &meta.flags {
+                if let Some(e) = d.extra_flags.iter_mut().find(|(ek, _)| ek == k) {
+                    e.1 = v.clone();
+                } else {
+                    d.extra_flags.push((k.clone(), v.clone()));
+                }
+            }
+        });
     }
 
     pub fn attach(&self, core: &Arc<AppCore>) {
@@ -652,6 +747,8 @@ impl Interceptor for Rules {
         let this = self.core().and_then(|c| c.rules.clone());
         let Some(this) = this else { return Box::pin(async { RequestAction::forward() }) };
         Box::pin(async move {
+            let mut head = head;
+            let mut script_edited = false;
             // 1. AutoResponder
             let mut want_bp = false;
             if let Some((rule, _)) = this.find_rule(&head, body.as_ref()) {
@@ -671,6 +768,57 @@ impl Interceptor for Rules {
             } else if this.ar.read().enabled && !this.ar.read().unmatched_passthrough {
                 if let Some((h, b)) = this.synthetic(404, "text/plain; charset=utf-8", b"[Piper] AutoResponder: no rule matched and unmatched requests are not passed through", &[]) {
                     return RequestAction::Respond { head: h, body: b, delay_ms: 0 };
+                }
+            }
+            // 1b. Script onBeforeRequest (heads/metadata only; bodies keep streaming).
+            if this.script_active() {
+                let (host, path) = split_url_host_path(&head.url);
+                let info = RequestInfo {
+                    id: s.id,
+                    method: head.method.clone(),
+                    url: head.url.clone(),
+                    host,
+                    path,
+                    process: s.process.clone(),
+                    client_ip: s.client_ip.clone(),
+                    headers: headers_to_pairs(&head.headers),
+                };
+                match this.script.on_request(&info).await {
+                    RequestDecision::Continue { method, url, headers, meta } => {
+                        this.apply_meta(&s, &meta);
+                        if let Some(m) = method {
+                            head.method = m;
+                            script_edited = true;
+                        }
+                        if let Some(u) = url {
+                            head.url = u;
+                            script_edited = true;
+                        }
+                        if let Some(hs) = headers {
+                            head.headers = pairs_to_headers(hs);
+                            script_edited = true;
+                        }
+                    }
+                    RequestDecision::Respond { status, headers, body, meta } => {
+                        this.apply_meta(&s, &meta);
+                        let ct = headers
+                            .iter()
+                            .find(|(n, _)| n.eq_ignore_ascii_case("content-type"))
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_else(|| "text/plain; charset=utf-8".into());
+                        let extra: Vec<(&str, String)> = headers
+                            .iter()
+                            .filter(|(n, _)| !n.eq_ignore_ascii_case("content-type") && !n.eq_ignore_ascii_case("content-length"))
+                            .map(|(n, v)| (n.as_str(), v.clone()))
+                            .collect();
+                        if let Some((h, b)) = this.synthetic(status, &ct, body.as_bytes(), &extra) {
+                            return RequestAction::Respond { head: h, body: b, delay_ms: 0 };
+                        }
+                    }
+                    RequestDecision::Abort { meta } => {
+                        this.apply_meta(&s, &meta);
+                        return RequestAction::Abort;
+                    }
                 }
             }
             // 2. Breakpoint before request
@@ -704,10 +852,56 @@ impl Interceptor for Rules {
                     let mut h = head.clone();
                     fix_length(&mut h.headers, b);
                     head_out = Some(h);
+                } else if head_out.is_none() && script_edited {
+                    // Carry the script's head edits through the breakpoint.
+                    head_out = Some(head.clone());
                 }
                 return RequestAction::Forward { head: head_out, body: new_body, delay_ms: 0 };
             }
-            RequestAction::forward()
+            if script_edited {
+                RequestAction::Forward { head: Some(head), body: None, delay_ms: 0 }
+            } else {
+                RequestAction::forward()
+            }
+        })
+    }
+
+    fn on_response_head(&self, s: SessionView, resp: ResponseHead) -> BoxFuture<piper_proxy::ResponseHeadAction> {
+        use piper_proxy::ResponseHeadAction;
+        let this = self.core().and_then(|c| c.rules.clone());
+        let Some(this) = this else { return Box::pin(async { ResponseHeadAction::Continue }) };
+        if !this.script_active() {
+            return Box::pin(async { ResponseHeadAction::Continue });
+        }
+        Box::pin(async move {
+            let info = ResponseInfo {
+                id: s.id,
+                url: s.live.detail().request.url,
+                status: resp.status,
+                reason: resp.reason.clone(),
+                headers: headers_to_pairs(&resp.headers),
+            };
+            match this.script.on_response(&info).await {
+                ResponseDecision::Continue { status, headers, meta } => {
+                    this.apply_meta(&s, &meta);
+                    if status.is_none() && headers.is_none() {
+                        return ResponseHeadAction::Continue;
+                    }
+                    let mut h = resp;
+                    if let Some(st) = status {
+                        h.status = st;
+                        h.reason = crate::mock::reason(st).to_string();
+                    }
+                    if let Some(hs) = headers {
+                        h.headers = pairs_to_headers(hs);
+                    }
+                    ResponseHeadAction::Replace(h)
+                }
+                ResponseDecision::Abort { meta } => {
+                    this.apply_meta(&s, &meta);
+                    ResponseHeadAction::Abort
+                }
+            }
         })
     }
 
@@ -748,6 +942,17 @@ impl Interceptor for Rules {
 
     fn on_complete(&self, s: &SessionView) {
         self.break_response.lock().remove(&s.id);
+        if self.script_active() {
+            let d = s.live.detail();
+            self.script.on_complete(serde_json::json!({
+                "id": s.id,
+                "method": d.summary.method,
+                "url": d.summary.full_url(),
+                "status": d.summary.status,
+                "host": d.summary.host,
+                "process": d.summary.process,
+            }));
+        }
     }
 }
 

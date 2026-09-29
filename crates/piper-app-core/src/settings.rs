@@ -19,6 +19,10 @@ pub struct ProxySettings {
     pub manual_upstream: String,
     /// Hosts that bypass the upstream proxy.
     pub upstream_bypass: String,
+    /// Use the system-detected proxy auto-config (PAC) script for upstream selection.
+    pub use_system_pac: bool,
+    /// Manual PAC URL or file path (overrides the system PAC when non-empty).
+    pub pac_url: String,
 }
 
 impl Default for ProxySettings {
@@ -32,6 +36,8 @@ impl Default for ProxySettings {
             use_system_upstream: true,
             manual_upstream: String::new(),
             upstream_bypass: "localhost;127.0.0.1;::1;*.local".into(),
+            use_system_pac: true,
+            pac_url: String::new(),
         }
     }
 }
@@ -97,6 +103,8 @@ pub struct Settings {
     /// Offer to restore captures after a crash.
     pub offer_recovery: bool,
     pub auth: AuthSettings,
+    /// Enable the JavaScript rules script (M14).
+    pub scripting_enabled: bool,
     /// Opaque UI preferences (column layout, splitters …).
     pub ui: serde_json::Value,
 }
@@ -116,6 +124,7 @@ impl Default for Settings {
             keep_captures: false,
             offer_recovery: true,
             auth: AuthSettings::default(),
+            scripting_enabled: false,
             ui: serde_json::Value::Null,
         }
     }
