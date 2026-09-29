@@ -138,7 +138,10 @@ fn ntlm_server() -> u16 {
                             }
                         }
                         _ => {
-                            let _ = s.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+                            // Unsupported scheme (e.g. Negotiate from SSPI on Windows): answer like a
+                            // real server does — 401 with the schemes it actually accepts.
+                            let _ = s.write_all(b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n");
+                            stage = 0;
                         }
                     }
                     let _ = first;
