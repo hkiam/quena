@@ -198,10 +198,10 @@ rustup target add wasm32-wasip2
 ./plugins/build.sh
 
 # Run in development mode
-npm run tauri --prefix app/ui -- dev
+npm exec --prefix app/ui -- tauri dev
 
 # …or build an installable bundle
-npm run tauri --prefix app/ui -- build
+npm exec --prefix app/ui -- tauri build
 ```
 
 Run the test suite:

@@ -17,7 +17,7 @@ platform work are all very welcome.
 ```bash
 npm ci --prefix app/ui
 rustup target add wasm32-wasip2 && ./plugins/build.sh   # bundled plugins
-npm run tauri --prefix app/ui -- dev                     # run the app
+npm exec --prefix app/ui -- tauri dev                     # run the app
 ```
 
 Requirements: Rust 1.90+, Node.js 20+ and the
@@ -29,7 +29,7 @@ Requirements: Rust 1.90+, Node.js 20+ and the
 > ```bash
 > mkdir -p /tmp/piper-dev
 > echo '{"proxy":{"actAsSystemProxy":false}}' > /tmp/piper-dev/settings.json
-> PIPER_DATA_DIR=/tmp/piper-dev npm run tauri --prefix app/ui -- dev
+> PIPER_DATA_DIR=/tmp/piper-dev npm exec --prefix app/ui -- tauri dev
 > ```
 >
 > Then test with `curl -x http://127.0.0.1:8866 …` (add `--cacert /tmp/piper-dev/piper-root-ca.pem`

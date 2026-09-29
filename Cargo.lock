@@ -3172,7 +3172,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "piper-app"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "percent-encoding",
@@ -3196,7 +3196,7 @@ dependencies = [
 
 [[package]]
 name = "piper-app-core"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
@@ -3229,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "piper-auth"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
  "thiserror 2.0.21",
@@ -3238,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "piper-body"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "brotli 8.0.4",
  "flate2",
@@ -3255,7 +3255,7 @@ dependencies = [
 
 [[package]]
 name = "piper-formats"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -3274,7 +3274,7 @@ dependencies = [
 
 [[package]]
 name = "piper-index"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "parking_lot",
  "piper-model",
@@ -3285,7 +3285,7 @@ dependencies = [
 
 [[package]]
 name = "piper-jobs"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "crossbeam-channel",
  "parking_lot",
@@ -3295,7 +3295,7 @@ dependencies = [
 
 [[package]]
 name = "piper-model"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "serde",
  "serde_bytes",
@@ -3303,7 +3303,7 @@ dependencies = [
 
 [[package]]
 name = "piper-platform"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "libproc",
  "parking_lot",
@@ -3317,7 +3317,7 @@ dependencies = [
 
 [[package]]
 name = "piper-plugin-host"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -3333,7 +3333,7 @@ dependencies = [
 
 [[package]]
 name = "piper-proxy"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -3365,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "piper-query"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "piper-model",
  "regex",
@@ -3375,7 +3375,7 @@ dependencies = [
 
 [[package]]
 name = "piper-script"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "parking_lot",
  "rquickjs",
@@ -3387,7 +3387,7 @@ dependencies = [
 
 [[package]]
 name = "piper-store"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "crossbeam-channel",
  "parking_lot",
@@ -3404,7 +3404,7 @@ dependencies = [
 
 [[package]]
 name = "piper-tls"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
  "hex",
