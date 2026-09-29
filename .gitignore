@@ -8,3 +8,6 @@ dist/
 
 # Local exports (e.g. "Save as PDF" of the docs)
 /*.pdf
+
+# Local tool configuration
+/.serena/

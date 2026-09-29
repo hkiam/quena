@@ -480,7 +480,7 @@ impl Decoder {
                 while let Some(n) = self.stack.pop() {
                     let _ = write!(self.out, "</{n}>");
                 }
-                let _ = write!(self.out, "\n<!-- Piper: Fast Infoset document truncated; {open} element(s) were closed automatically -->");
+                let _ = write!(self.out, "\n<!-- Quena: Fast Infoset document truncated; {open} element(s) were closed automatically -->");
             } else if self.buf.len() > self.pos || self.phase != Phase::Children || !self.root_seen {
                 return Err(format!("Fast Infoset: unexpected end of document (at byte {})", self.pos));
             }

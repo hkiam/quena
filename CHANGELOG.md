@@ -1,7 +1,7 @@
 # Changelog
 
-All notable changes to Piper are documented here.
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Piper uses
+All notable changes to Quena are documented here.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Quena uses
 [Semantic Versioning](https://semver.org/). While the major version is `0`, any release may
 contain breaking changes (settings, file formats, plugin API).
 
@@ -14,7 +14,7 @@ contain breaking changes (settings, file formats, plugin API).
 - Own names: Command Bar, Mock Rules, Text Tools, Inspect; inspector tabs Text, Pretty,
   Form Data, Hex, Image, Preview, Encoding; *Rules Script…*; *Replay …*. Command Bar syntax
   and shortcuts are unchanged. *Help → Coming from Fiddler Classic…* maps the names.
-- `.saz` is registered as a viewer (macOS rank "Alternate") and not at all on Windows, so Piper
+- `.saz` is registered as a viewer (macOS rank "Alternate") and not at all on Windows, so Quena
   never takes over another application's file association.
 
 ### Fixed
@@ -27,7 +27,7 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [0.0.1] — 2026-09-29
 
-First test build — an early preview for trying Piper on macOS and Windows. Installers are
+First test build — an early preview for trying Quena on macOS and Windows. Installers are
 **not code-signed** yet.
 
 ### Added
@@ -44,11 +44,11 @@ First test build — an early preview for trying Piper on macOS and Windows. Ins
   rules editor with hot reload.
 - WebAssembly plugin host (sandboxed) with the bundled Fast Infoset decoder.
 - System proxy integration on macOS and Windows with crash recovery; upstream proxy, PAC,
-  bypass list; remote devices with QR-code assistant and `http://piper.cert` landing page.
+  bypass list; remote devices with QR-code assistant and `http://quena.cert` landing page.
 - Automatic authentication (NTLM, Negotiate/Kerberos, Basic) with SSO on Windows (SSPI) and
   macOS (Kerberos); credentials in the OS secure store.
 - Client certificates (mTLS) per host; bandwidth and latency simulation.
 - SAZ (compatible with Fiddler Classic) and HAR 1.2 import/export; copy as cURL.
 
-[Unreleased]: https://github.com/hkiam/piper/compare/v0.0.1...HEAD
-[0.0.1]: https://github.com/hkiam/piper/releases/tag/v0.0.1
+[Unreleased]: https://github.com/hkiam/quena/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/hkiam/quena/releases/tag/v0.0.1

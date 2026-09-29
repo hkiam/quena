@@ -84,8 +84,8 @@ export function DeviceAssistant() {
               <>
                 <li>Settings → Wi-Fi → (i) of your network → Configure Proxy → Manual: server <b>{addr}</b>, port <b>{info.port}</b>.</li>
                 <li>Scan the QR code (or open <span className="mono">{url}</span> in Safari) and download the <i>.mobileconfig</i> profile.</li>
-                <li>Settings → General → VPN &amp; Device Management → install the Piper profile.</li>
-                <li>Settings → General → About → Certificate Trust Settings → enable full trust for “Piper Root CA”.</li>
+                <li>Settings → General → VPN &amp; Device Management → install the Quena profile.</li>
+                <li>Settings → General → About → Certificate Trust Settings → enable full trust for “Quena Root CA”.</li>
               </>
             )}
             {os === "android" && (
@@ -107,7 +107,7 @@ export function DeviceAssistant() {
         <div className="qr-box">{url ? <Qr text={url} /> : null}<div className="mono small">{url}</div></div>
       </div>
       <div className="device-status">
-        <div>{info.listening ? "✓ Piper is listening" : "✗ Piper is not capturing (F12)"}</div>
+        <div>{info.listening ? "✓ Quena is listening" : "✗ Quena is not capturing (F12)"}</div>
         <div>{seen ? `✓ First connection from ${seen.ip} detected` : "… waiting for a connection from the device"}</div>
         <div>{seen?.https ? "✓ HTTPS traffic decrypted" : seen ? "… no decrypted HTTPS yet (certificate trusted?)" : ""}</div>
       </div>

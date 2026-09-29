@@ -6,7 +6,7 @@ import { say, useStore } from "../store";
 import { showContextMenu } from "../components/ContextMenu";
 
 const MATCH_TEMPLATES = ["*", "EXACT:https://example.com/path", "regex:(?i)^https://.*\\.example\\.com/api/(.*)$", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json", "URLWithBody:/soap regex:GetOrder"];
-const ACTIONS = ["*200", "*204", "*404", "*500", "*502", "*drop", "*delay:2000", "*redir:https://example.com/", "*header:X-Piper=1", "*CORSPreflightAllow", "*bpu", "*bpafter"];
+const ACTIONS = ["*200", "*204", "*404", "*500", "*502", "*drop", "*delay:2000", "*redir:https://example.com/", "*header:X-Quena=1", "*CORSPreflightAllow", "*bpu", "*bpafter"];
 
 export default function AutoResponderPanel() {
   const [st, setSt] = useState<ArState | null>(null);
@@ -67,7 +67,7 @@ export default function AutoResponderPanel() {
     <div
       className={`ar ${over ? "drop" : ""}`}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes("piper/sessions")) {
+        if (e.dataTransfer.types.includes("quena/sessions")) {
           e.preventDefault();
           setOver(true);
         }
@@ -75,7 +75,7 @@ export default function AutoResponderPanel() {
       onDragLeave={() => setOver(false)}
       onDrop={async (e) => {
         setOver(false);
-        const ids = JSON.parse(e.dataTransfer.getData("piper/sessions") || "[]") as number[];
+        const ids = JSON.parse(e.dataTransfer.getData("quena/sessions") || "[]") as number[];
         if (!ids.length) return;
         const n = await api.arAddSessions(ids, true);
         say(`${n} rule(s) added`);
@@ -117,7 +117,7 @@ export default function AutoResponderPanel() {
         </button>
         <button
           onClick={async () => {
-            const p = await save({ defaultPath: "piper-rules.farx", filters: [{ name: "Mock rules (.farx)", extensions: ["farx"] }] });
+            const p = await save({ defaultPath: "quena-rules.farx", filters: [{ name: "Mock rules (.farx)", extensions: ["farx"] }] });
             if (!p) return;
             await api.arExportFarx(p);
             say(`Rules exported to ${p}`);

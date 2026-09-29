@@ -258,7 +258,7 @@ export function TransformerView({ detail }: { detail: Detail }) {
           ["Decoded view", info.variants.includes("decoded") ? (decode ? "on (toolbar ‘Decode’)" : "off – enable ‘Decode’ in the toolbar") : "not needed"],
         ]}
       />
-      <p className="muted">Piper never modifies the recorded body; decoded and formatted views are derived caches (Raw Traffic = Source of Truth).</p>
+      <p className="muted">Quena never modifies the recorded body; decoded and formatted views are derived caches (Raw Traffic = Source of Truth).</p>
     </div>
   );
 }

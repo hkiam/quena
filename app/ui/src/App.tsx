@@ -93,7 +93,7 @@ export function App() {
   const leftWidth = useStore((s) => s.layout.leftWidth);
   const overlay = useStore((s) => s.overlay);
   if (!isTauri) {
-    return <div className="not-tauri">Piper UI must run inside the Piper app (npm exec --prefix app/ui -- tauri dev).</div>;
+    return <div className="not-tauri">Quena UI must run inside the Quena app (npm exec --prefix app/ui -- tauri dev).</div>;
   }
   return (
     <div className="app">

@@ -1,9 +1,9 @@
-// Piper plugin API, version 1 (PLAN.md §12–§15).
+// Quena plugin API, version 1 (PLAN.md §12–§15).
 //
 // Decoders are streaming from the start (§2.12.3): the host pushes the body
 // in chunks and collects output chunks, so a plugin never has to hold a
 // 500 MB payload in its memory.
-package piper:plugin@1.0.0;
+package quena:plugin@1.0.0;
 
 interface decoder {
     /// How the host should present the output.

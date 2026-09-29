@@ -1,0 +1,10 @@
+[package]
+name = "quena-model"
+description = "Core domain model of Quena: sessions, messages, timings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_bytes = "0.11"

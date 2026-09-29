@@ -27,7 +27,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Piper version or commit
+      label: Quena version or commit
     validations:
       required: true
   - type: dropdown

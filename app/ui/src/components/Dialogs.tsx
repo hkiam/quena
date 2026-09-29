@@ -186,7 +186,7 @@ function RecoverDialog() {
         <div className="muted">No unfinished captures found.</div>
       ) : (
         <>
-          <p>Piper was not closed cleanly. The following captures can be restored:</p>
+          <p>Quena was not closed cleanly. The following captures can be restored:</p>
           <table className="kv">
             <tbody>
               {list.map((c) => (
@@ -268,7 +268,7 @@ function AuthOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) =>
         <input type="checkbox" checked={s.auth.enabled} onChange={(e) => up((x) => (x.auth.enabled = e.target.checked))} /> Enable Automatic Authentication
       </label>
       <p className="muted small">
-        Piper answers 401/407 challenges (Negotiate/Kerberos, NTLM, Basic) with your credentials so you don't log in on every request. An authenticated
+        Quena answers 401/407 challenges (Negotiate/Kerberos, NTLM, Basic) with your credentials so you don't log in on every request. An authenticated
         connection is pinned to one client and never shared. Default off.
       </p>
       <div className="f-row">
@@ -533,9 +533,9 @@ function AboutDialog() {
     api.appInfo().then(setInfo);
   }, []);
   return (
-    <Modal title="About Piper" onClose={close}>
+    <Modal title="About Quena" onClose={close}>
       <p>
-        <b>Piper</b> {info?.version} – easy-to-use, fast HTTP(S) debugging proxy.
+        <b>Quena</b> {info?.version} – easy-to-use, fast HTTP(S) debugging proxy.
       </p>
       <p className="muted small">Data: {info?.dataDir}</p>
       <p className="muted small">Capture: {info?.captureDir}</p>
@@ -558,7 +558,7 @@ function LayoutChoice() {
     <div className="f-row layout-choice">
       <span>Layout</span>
       <label className="f-check">
-        <input type="radio" name="layout-preset" checked={preset === "piper"} onChange={() => actions.applyLayoutPreset("piper")} /> Piper — list left, request and response side by side
+        <input type="radio" name="layout-preset" checked={preset === "quena"} onChange={() => actions.applyLayoutPreset("quena")} /> Quena — list left, request and response side by side
       </label>
       <label className="f-check">
         <input type="radio" name="layout-preset" checked={preset === "classic"} onChange={() => actions.applyLayoutPreset("classic")} /> Classic — dense list, request above response, more columns
@@ -568,7 +568,7 @@ function LayoutChoice() {
 }
 
 function ChooseLayoutDialog() {
-  const pick = (p: "piper" | "classic") => {
+  const pick = (p: "quena" | "classic") => {
     actions.applyLayoutPreset(p);
     close();
   };
@@ -576,8 +576,8 @@ function ChooseLayoutDialog() {
     <Modal title="Choose a layout" onClose={() => pick(get().layout.preset)}>
       <p className="muted">You can change this any time in Settings → General or with View → Stacked / Wide.</p>
       <div className="layout-cards">
-        <button className="layout-card" onClick={() => pick("piper")}>
-          <b>Piper</b>
+        <button className="layout-card" onClick={() => pick("quena")}>
+          <b>Quena</b>
           <span>Session list on the left, request and response side by side. Rows coloured by outcome.</span>
         </button>
         <button className="layout-card" onClick={() => pick("classic")}>

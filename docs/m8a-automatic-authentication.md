@@ -1,7 +1,7 @@
 # M8a – Automatic Authentication (Umsetzungsplan)
 
 > Detailplan zu `PLAN.md` §2.14. Fiddler-Feature „Enable Automatic Authentication“:
-> Piper beantwortet `401`/`407`-Challenges selbst mit den Zugangsdaten des Entwicklers,
+> Quena beantwortet `401`/`407`-Challenges selbst mit den Zugangsdaten des Entwicklers,
 > damit man beim Debuggen nicht bei jedem Request manuell einloggen muss.
 > Standardmäßig **aus**, opt-in pro Host empfohlen.
 
@@ -9,7 +9,7 @@
 
 Wenn ein Server `401 Unauthorized` (`WWW-Authenticate`) oder ein vorgeschalteter
 Firmenproxy `407 Proxy Authentication Required` (`Proxy-Authenticate`) liefert und
-das Schema von Piper unterstützt wird, führt Piper den Auth-Handshake transparent
+das Schema von Quena unterstützt wird, führt Quena den Auth-Handshake transparent
 durch und liefert dem Client die fertige, authentifizierte Antwort. Die einzelnen
 Handshake-Legs werden in der Session-Liste sichtbar gemacht (wie in Fiddler).
 
@@ -35,7 +35,7 @@ SSPI (`InitializeSecurityContextW`) mit dem angemeldeten Windows-Benutzer.
    andere Client-Verbindung vererbt werden (sonst spräche Client B unter der Identität
    von Client A). Siehe §5.
 
-## 3. Neues Crate `piper-auth`
+## 3. Neues Crate `quena-auth`
 
 Schema-unabhängige Engine, keine Netzwerk- oder Proxy-Abhängigkeit (testbar isoliert).
 
@@ -62,9 +62,9 @@ Auswahl: stärkstes unterstütztes Schema in der Reihenfolge Negotiate > NTLM > 
 ### 3.1 Krypto ohne fremde Versions-Kopplung
 
 MD4, MD5, HMAC-MD5 werden **selbst implementiert** (wie schon SHA-1 für den
-CA-Fingerprint in `piper-tls`). Grund: die `digest`-Versionsketten von `md4`/`md-5`/
+CA-Fingerprint in `quena-tls`). Grund: die `digest`-Versionsketten von `md4`/`md-5`/
 `hmac` kollidieren leicht, und die Algorithmen sind klein. Das hält den
-Abhängigkeitsbaum permissiv und stabil. Modul `piper-auth::crypto`.
+Abhängigkeitsbaum permissiv und stabil. Modul `quena-auth::crypto`.
 
 ### 3.2 NTLMv2 (MS-NLMP)
 
@@ -93,7 +93,7 @@ Abhängigkeitsbaum permissiv und stabil. Modul `piper-auth::crypto`.
 
 ## 4. Credential Store (`PlatformServices::secure_store`)
 
-Neuer Trait-Teil in `piper-platform`:
+Neuer Trait-Teil in `quena-platform`:
 
 ```rust
 pub trait SecureStore {
@@ -105,12 +105,12 @@ pub trait SecureStore {
 ```
 
 - **macOS**: Keychain über das `security`-CLI (`add-generic-password -U`,
-  `find-generic-password -w`, `delete-generic-password`), Service `io.github.hkiam.piper.auth`,
+  `find-generic-password -w`, `delete-generic-password`), Service `io.github.hkiam.quena.auth`,
   Account = `realm|host|user`. Konsistent mit der bestehenden CA-Trust-Nutzung von `security`.
 - **Windows**: Credential Manager (`CredWriteW`/`CredReadW`) – mit M13.
 - **Linux**: Secret Service (libsecret) optional; sonst nur In-Memory für die Session.
 
-## 5. Verbindungs-Pinning in `piper-proxy`
+## 5. Verbindungs-Pinning in `quena-proxy`
 
 Kernstück und die eigentliche Architekturänderung.
 
@@ -119,7 +119,7 @@ teilt sie über alle Client-Verbindungen. Für verbindungsgebundene Auth ist das
 
 **Design `AuthBoundConn`:**
 - Wird für einen Host Auto-Auth ausgelöst, verlässt dieser Request den geteilten Pool.
-- Piper öffnet eine **dedizierte** Upstream-Verbindung, betreibt darauf den Handshake
+- Quena öffnet eine **dedizierte** Upstream-Verbindung, betreibt darauf den Handshake
   und **pinnt** sie an `(client_conn_id, host, port)` für die restliche Lebensdauer
   der Client-Verbindung. Map `HashMap<(u64,String,u16), PinnedConn>` in `Shared`.
 - Folge-Requests derselben Client-Verbindung an denselben Host laufen über diese
@@ -184,7 +184,7 @@ pub struct AuthSettings {
 - **Header-Parser:** mehrere `WWW-Authenticate`-Zeilen, gemischte Schemata,
   Groß/Kleinschreibung, Token mit/ohne `=` Padding.
 - **Lokaler NTLM-Testserver** (im Test): fordert `WWW-Authenticate: NTLM`, validiert
-  Type-1/Type-3, antwortet 200. Piper muss den Handshake abschließen; UI zeigt 200 +
+  Type-1/Type-3, antwortet 200. Quena muss den Handshake abschließen; UI zeigt 200 +
   Legs. Reines Rust, kein AD nötig.
 - **Basic:** gegen `/basic-auth/user/pass`-artigen Testserver.
 - **Sicherheits-Test Pinning:** zwei nebenläufige Clients an denselben Auth-Host →
@@ -196,8 +196,8 @@ pub struct AuthSettings {
 
 | Schritt | Inhalt | Test |
 |---|---|---|
-| M8a.1 | `piper-auth`: crypto (MD4/MD5/HMAC-MD5), Header-Parser, Basic, NTLMv2 | KAT + Parser-Unit-Tests |
-| M8a.2 | `SecureStore` (macOS Keychain) in `piper-platform` | Roundtrip-Test (temp. Service) |
+| M8a.1 | `quena-auth`: crypto (MD4/MD5/HMAC-MD5), Header-Parser, Basic, NTLMv2 | KAT + Parser-Unit-Tests |
+| M8a.2 | `SecureStore` (macOS Keychain) in `quena-platform` | Roundtrip-Test (temp. Service) |
 | M8a.3 | Verbindungs-Pinning + `send_upstream_with_auth` (Server-401, NTLM/Basic) | lokaler NTLM-Testserver, e2e |
 | M8a.4 | Upstream-`407` behandeln | Proxy-Testserver |
 | M8a.5 | Negotiate/Kerberos via GSS.framework (macOS) | SPNEGO-Wrapping-Unit; KDC manuell |

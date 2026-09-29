@@ -1,4 +1,4 @@
-//! Piper plugin: Fast Infoset → XML (streaming).
+//! Quena plugin: Fast Infoset → XML (streaming).
 pub mod fi;
 
 #[cfg(target_arch = "wasm32")]
@@ -7,7 +7,7 @@ mod plugin {
     use std::cell::RefCell;
 
     wit_bindgen::generate!({ path: "../../wit/plugin.wit", world: "plugin" });
-    use exports::piper::plugin::decoder::{Guest, GuestSession, Info, Representation};
+    use exports::quena::plugin::decoder::{Guest, GuestSession, Info, Representation};
 
     struct Fi;
 

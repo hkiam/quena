@@ -1,10 +1,10 @@
-//! `piper://localhost/body/{session}/{part}/{variant}` – body bytes with
+//! `quena://localhost/body/{session}/{part}/{variant}` – body bytes with
 //! HTTP Range support (inspectors, hex view, image/media preview). Bodies
 //! never travel through the JSON IPC (PLAN.md §2.13 R6).
 
-use piper_app_core::AppCore;
-use piper_app_core::dto::Part;
-use piper_body::Variant;
+use quena_app_core::AppCore;
+use quena_app_core::dto::Part;
+use quena_body::Variant;
 use tauri::http::{Request, Response, StatusCode, header};
 
 fn error(status: StatusCode, msg: &str) -> Response<Vec<u8>> {
@@ -67,13 +67,13 @@ pub fn handle(core: &AppCore, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let n = body.data.len() as u64;
     let mut b = Response::builder()
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, "Content-Range, X-Piper-Total, X-Piper-Complete, X-Piper-Variant")
+        .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, "Content-Range, X-Quena-Total, X-Quena-Complete, X-Quena-Variant")
         .header(header::CONTENT_TYPE, ct)
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, "no-store")
-        .header("X-Piper-Total", total.to_string())
-        .header("X-Piper-Complete", if complete { "1" } else { "0" })
-        .header("X-Piper-Variant", format!("{:?}", body.variant).to_lowercase());
+        .header("X-Quena-Total", total.to_string())
+        .header("X-Quena-Complete", if complete { "1" } else { "0" })
+        .header("X-Quena-Variant", format!("{:?}", body.variant).to_lowercase());
     if range.is_some() {
         b = b.status(StatusCode::PARTIAL_CONTENT).header(
             header::CONTENT_RANGE,

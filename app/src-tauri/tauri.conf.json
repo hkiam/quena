@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Piper",
+  "productName": "Quena",
   "version": "0.0.1",
-  "identifier": "io.github.hkiam.piper",
+  "identifier": "io.github.hkiam.quena",
   "build": {
     "beforeDevCommand": {
       "script": "npm run dev",
@@ -20,7 +20,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Piper",
+        "title": "Quena",
         "width": 1440,
         "height": 900,
         "minWidth": 900,
@@ -29,7 +29,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' piper: http://piper.localhost data: blob:; media-src 'self' piper: http://piper.localhost blob:; connect-src 'self' ipc: http://ipc.localhost piper: http://piper.localhost; style-src 'self' 'unsafe-inline'; frame-src 'self' piper: http://piper.localhost"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' quena: http://quena.localhost data: blob:; media-src 'self' quena: http://quena.localhost blob:; connect-src 'self' ipc: http://ipc.localhost quena: http://quena.localhost; style-src 'self' 'unsafe-inline'; frame-src 'self' quena: http://quena.localhost"
     }
   },
   "bundle": {
@@ -42,7 +42,7 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "HTTP(S) traffic workbench",
-    "longDescription": "Piper is an easy-to-use, fast HTTP(S) debugging proxy for macOS, Windows and Linux.",
+    "longDescription": "Quena is an easy-to-use, fast HTTP(S) debugging proxy for macOS, Windows and Linux.",
     "copyright": "\u00a9 2026 Maik Hofmann",
     "icon": [
       "icons/32x32.png",

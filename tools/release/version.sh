@@ -1,5 +1,5 @@
 #!/bin/sh
-# Show, check or set the Piper version in every place it is declared.
+# Show, check or set the Quena version in every place it is declared.
 #
 #   tools/release/version.sh            print the versions found (non-zero exit if they differ)
 #   tools/release/version.sh 0.0.2      set them all to 0.0.2

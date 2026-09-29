@@ -1,4 +1,4 @@
-// Typed bindings to the Piper core (Tauri commands + events).
+// Typed bindings to the Quena core (Tauri commands + events).
 // Bodies are never transferred through invoke – see bodyUrl().
 import { invoke as tauriInvoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -630,9 +630,9 @@ export interface ScriptLog {
   tsUs: number;
 }
 
-/** URL of a body variant served by the `piper://` protocol (supports Range). */
+/** URL of a body variant served by the `quena://` protocol (supports Range). */
 export function bodyUrl(id: SessionId, part: Part, variant: Variant): string {
-  return convertFileSrc(`body/${id}/${part}/${variant}`, "piper");
+  return convertFileSrc(`body/${id}/${part}/${variant}`, "quena");
 }
 
 /** Fetch a byte range of a body. */
@@ -654,8 +654,8 @@ export async function fetchBody(
   perf.ipc("body-range", performance.now() - t0);
   return {
     data: buf,
-    total: Number(res.headers.get("X-Piper-Total") ?? buf.length),
-    complete: res.headers.get("X-Piper-Complete") === "1",
+    total: Number(res.headers.get("X-Quena-Total") ?? buf.length),
+    complete: res.headers.get("X-Quena-Complete") === "1",
   };
 }
 

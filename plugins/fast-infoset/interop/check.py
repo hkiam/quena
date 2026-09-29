@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interop check: decode every corpus/*.fi with Piper's decoder (several chunk
+"""Interop check: decode every corpus/*.fi with Quena's decoder (several chunk
 sizes) and compare the canonical XML (C14N 2.0) with the Java reference."""
 import subprocess, sys, glob, os
 from xml.etree.ElementTree import canonicalize

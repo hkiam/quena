@@ -15,14 +15,14 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let sep = || PredefinedMenuItem::separator(app);
     let about = PredefinedMenuItem::about(
         app,
-        Some("About Piper"),
-        Some(AboutMetadata { name: Some("Piper".into()), version: Some(env!("CARGO_PKG_VERSION").into()), copyright: Some("© 2026 Maik Hofmann".into()), ..Default::default() }),
+        Some("About Quena"),
+        Some(AboutMetadata { name: Some("Quena".into()), version: Some(env!("CARGO_PKG_VERSION").into()), copyright: Some("© 2026 Maik Hofmann".into()), ..Default::default() }),
     )?;
 
     #[cfg(target_os = "macos")]
     let app_menu = Submenu::with_items(
         app,
-        "Piper",
+        "Quena",
         true,
         &[
             &about,

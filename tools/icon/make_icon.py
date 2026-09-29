@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn the Piper artwork (rounded square on black) into a 1024x1024 source
+"""Turn the Quena artwork (rounded square on black) into a 1024x1024 source
 icon with transparent corners, then run `tauri icon` for all platforms.
 
 usage: tools/icon/make_icon.py path/to/artwork.png [--threshold N] [--radius F]

@@ -1,26 +1,26 @@
 [package]
-name = "piper-app"
-description = "Piper desktop application (Tauri shell)"
+name = "quena-app"
+description = "Quena desktop application (Tauri shell)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "piper"
+name = "quena"
 path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-piper-app-core.workspace = true
-piper-model.workspace = true
-piper-body.workspace = true
-piper-script.workspace = true
-piper-index.workspace = true
-piper-query.workspace = true
-piper-plugin-host.workspace = true
-piper-platform.workspace = true
+quena-app-core.workspace = true
+quena-model.workspace = true
+quena-body.workspace = true
+quena-script.workspace = true
+quena-index.workspace = true
+quena-query.workspace = true
+quena-plugin-host.workspace = true
+quena-platform.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde.workspace = true

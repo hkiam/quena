@@ -1,0 +1,12 @@
+[package]
+name = "quena-query"
+description = "Filter engine: Filters tab settings, expression language, QuickExec parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quena-model.workspace = true
+serde.workspace = true
+regex.workspace = true
+thiserror.workspace = true

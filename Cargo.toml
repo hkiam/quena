@@ -3,20 +3,20 @@ resolver = "3"
 # Plugins are separate cargo projects built for wasm32-wasip2.
 exclude = ["plugins"]
 members = [
-    "crates/piper-model",
-    "crates/piper-body",
-    "crates/piper-jobs",
-    "crates/piper-query",
-    "crates/piper-index",
-    "crates/piper-store",
-    "crates/piper-app-core",
-    "crates/piper-tls",
-    "crates/piper-platform",
-    "crates/piper-proxy",
-    "crates/piper-formats",
-    "crates/piper-plugin-host",
-    "crates/piper-auth",
-    "crates/piper-script",
+    "crates/quena-model",
+    "crates/quena-body",
+    "crates/quena-jobs",
+    "crates/quena-query",
+    "crates/quena-index",
+    "crates/quena-store",
+    "crates/quena-app-core",
+    "crates/quena-tls",
+    "crates/quena-platform",
+    "crates/quena-proxy",
+    "crates/quena-formats",
+    "crates/quena-plugin-host",
+    "crates/quena-auth",
+    "crates/quena-script",
     "app/src-tauri",
 ]
 
@@ -25,24 +25,24 @@ version = "0.0.1"
 edition = "2024"
 license = "Apache-2.0"
 authors = ["Maik Hofmann <maik.hofmann@gmail.com>"]
-repository = "https://github.com/hkiam/piper"
+repository = "https://github.com/hkiam/quena"
 rust-version = "1.90"
 
 [workspace.dependencies]
-piper-model = { path = "crates/piper-model" }
-piper-body = { path = "crates/piper-body" }
-piper-jobs = { path = "crates/piper-jobs" }
-piper-index = { path = "crates/piper-index" }
-piper-store = { path = "crates/piper-store" }
-piper-query = { path = "crates/piper-query" }
-piper-app-core = { path = "crates/piper-app-core" }
-piper-tls = { path = "crates/piper-tls" }
-piper-platform = { path = "crates/piper-platform" }
-piper-proxy = { path = "crates/piper-proxy" }
-piper-formats = { path = "crates/piper-formats" }
-piper-plugin-host = { path = "crates/piper-plugin-host" }
-piper-auth = { path = "crates/piper-auth" }
-piper-script = { path = "crates/piper-script" }
+quena-model = { path = "crates/quena-model" }
+quena-body = { path = "crates/quena-body" }
+quena-jobs = { path = "crates/quena-jobs" }
+quena-index = { path = "crates/quena-index" }
+quena-store = { path = "crates/quena-store" }
+quena-query = { path = "crates/quena-query" }
+quena-app-core = { path = "crates/quena-app-core" }
+quena-tls = { path = "crates/quena-tls" }
+quena-platform = { path = "crates/quena-platform" }
+quena-proxy = { path = "crates/quena-proxy" }
+quena-formats = { path = "crates/quena-formats" }
+quena-plugin-host = { path = "crates/quena-plugin-host" }
+quena-auth = { path = "crates/quena-auth" }
+quena-script = { path = "crates/quena-script" }
 
 anyhow = "1"
 thiserror = "2"

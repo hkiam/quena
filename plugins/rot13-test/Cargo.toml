@@ -3,7 +3,7 @@ name = "rot13-test"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Trivial Piper test decoder (ROT13) – validates the plugin architecture"
+description = "Trivial Quena test decoder (ROT13) – validates the plugin architecture"
 
 [lib]
 crate-type = ["cdylib"]

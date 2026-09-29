@@ -1,21 +1,21 @@
 <div align="center">
 
-<img src="docs/logo.png" alt="Piper logo" width="128" height="128">
+<img src="docs/logo.png" alt="Quena logo" width="128" height="128">
 
-# Piper
+# Quena
 
 **The easy, intuitive — yet seriously powerful — HTTP(S) debugging proxy. On every desktop.**
 
 Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Linux.
 
-[![CI](https://github.com/hkiam/piper/actions/workflows/ci.yml/badge.svg)](https://github.com/hkiam/piper/actions/workflows/ci.yml)
+[![CI](https://github.com/hkiam/quena/actions/workflows/ci.yml/badge.svg)](https://github.com/hkiam/quena/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20(experimental)-lightgrey)
 ![Rust](https://img.shields.io/badge/core-Rust-orange?logo=rust)
 ![Tauri 2](https://img.shields.io/badge/UI-Tauri%202%20%2B%20React-24C8DB?logo=tauri)
 ![Status](https://img.shields.io/badge/status-early%20preview-yellow)
 
-[Why Piper?](#why-piper) ·
+[Why Quena?](#why-quena) ·
 [Features](#features) ·
 [Screenshots](#screenshots) ·
 [Getting started](#getting-started) ·
@@ -25,23 +25,23 @@ Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Li
 
 <br>
 
-<img src="docs/screenshots/overview.png" alt="Piper main window: session list, request headers and a pretty-printed JSON response" width="920">
+<img src="docs/screenshots/overview.png" alt="Quena main window: session list, request headers and a pretty-printed JSON response" width="920">
 
 </div>
 
 ---
 
-## Why Piper?
+## Why Quena?
 
 On Windows, tools such as Fiddler Classic showed how productive an HTTP debugging proxy can be:
 a dense session list, inspectors right next to it, keyboard-driven, and powerful enough to break,
 tamper, replay or script any request — without getting in the way. Developers on macOS and Linux,
 and teams working across platforms, have had few free tools of that kind.
 
-Piper is an independent, open-source take on this kind of tool, with its own design, for
+Quena is an independent, open-source take on this kind of tool, with its own design, for
 **every desktop platform**:
 
-- **Easy to use.** Start Piper, and traffic appears. HTTPS decryption is one checkbox and one
+- **Easy to use.** Start Quena, and traffic appears. HTTPS decryption is one checkbox and one
   "Trust" click. No accounts, no cloud, no setup wizard marathon.
 - **Intuitive.** A dense, keyboard-driven workspace with a Command Bar, Mock Rules, a
   Composer and inspectors that pick the right view for the content. Coming from Fiddler
@@ -57,7 +57,7 @@ Piper is an independent, open-source take on this kind of tool, with its own des
   and there is no telemetry.
 - **Open source.** Apache-2.0 licensed, built in the open, contributions welcome.
 
-> Piper is an independent project. It is not affiliated with, endorsed by, or connected to
+> Quena is an independent project. It is not affiliated with, endorsed by, or connected to
 > Progress Software Corporation or the Fiddler product family. *Fiddler* is a trademark of its
 > respective owner and is mentioned here only to describe familiarity and compatibility.
 
@@ -74,7 +74,7 @@ Piper is an independent, open-source take on this kind of tool, with its own des
 - **WebSocket** frames and **Server-Sent Events**, live
 - System proxy on macOS and Windows — restored on quit *and* after a crash
 - Upstream proxy chaining, bypass list, **PAC** (proxy auto-config)
-- Remote devices: allow-list, landing page `http://piper.cert`,
+- Remote devices: allow-list, landing page `http://quena.cert`,
   **QR-code device assistant** for iOS and Android
 - Process attribution (which app sent the request)
 
@@ -145,7 +145,7 @@ Piper is an independent, open-source take on this kind of tool, with its own des
 
 ## Keyboard & Command Bar
 
-| Action | Piper | |
+| Action | Quena | |
 |---|---|---|
 | Start / stop capturing | `F12` | |
 | Break before requests / after responses / off | `F11` / `Alt F11` / `Shift F11` | |
@@ -172,7 +172,7 @@ tail 1000     keep the 1000 most recent sessions
 dump          save everything as a .saz archive
 ```
 
-Piper listens on **port 8866** by default. Layout: Piper's own arrangement by default, or **Classic** (dense list, request above response) in *Settings → General*.
+Quena listens on **port 8866** by default. Layout: Quena's own arrangement by default, or **Classic** (dense list, request above response) in *Settings → General*.
 
 ---
 
@@ -181,7 +181,7 @@ Piper listens on **port 8866** by default. Layout: Piper's own arrangement by de
 ### Install
 
 Pre-built, signed installers for macOS (`.dmg`) and Windows (`.exe`, NSIS) will be published on the
-[Releases](https://github.com/hkiam/piper/releases) page. Until the first release, build from source.
+[Releases](https://github.com/hkiam/quena/releases) page. Until the first release, build from source.
 
 ### Build from source
 
@@ -189,8 +189,8 @@ Requirements: [Rust](https://rustup.rs) **1.90+**, [Node.js](https://nodejs.org)
 [Tauri 2 prerequisites](https://tauri.app/start/prerequisites/) for your platform.
 
 ```bash
-git clone https://github.com/hkiam/piper.git
-cd piper
+git clone https://github.com/hkiam/quena.git
+cd quena
 
 # UI dependencies
 npm ci --prefix app/ui
@@ -209,13 +209,13 @@ npm exec --prefix app/ui -- tauri build
 Run the test suite:
 
 ```bash
-cargo test --workspace --exclude piper-app
+cargo test --workspace --exclude quena-app
 npm run build --prefix app/ui      # typecheck + production build of the UI
 ```
 
 ### First capture
 
-1. Start Piper. It begins capturing and — with *Act as system proxy* in *Settings → Connections* (on by default) — registers
+1. Start Quena. It begins capturing and — with *Act as system proxy* in *Settings → Connections* (on by default) — registers
    itself as the system proxy (the previous proxy is kept as upstream and restored on exit).
 2. Browse. Sessions appear live in the list; select one to inspect it.
 3. Want HTTPS content? Open **Tools → HTTPS Settings…**, enable *Decrypt HTTPS traffic* and click
@@ -225,29 +225,29 @@ npm run build --prefix app/ui      # typecheck + production build of the UI
 ### Phones, tablets and VMs
 
 Open **Tools → Connect Device…**, allow remote connections, and scan the QR code with the device.
-It leads to `http://piper.cert`, which serves the certificate (`.crt` for Android,
+It leads to `http://quena.cert`, which serves the certificate (`.crt` for Android,
 `.mobileconfig` for iOS) together with step-by-step instructions.
 
 ---
 
 ## Scripting
 
-Piper embeds a sandboxed JavaScript engine (QuickJS) for rules scripts.
+Quena embeds a sandboxed JavaScript engine (QuickJS) for rules scripts.
 Open **Rules → Rules Script…** (`Ctrl/⌘ R`), edit, and press `Ctrl/⌘ S` — the script reloads
 instantly and errors appear inline.
 
 ```js
 function onBoot() {
     // A "Custom" column filled from each response
-    Piper.registerColumn('Server', s => s.responseHeaders.get('Server') || '');
+    Quena.registerColumn('Server', s => s.responseHeaders.get('Server') || '');
 
     // A command in the session context menu (right click → Scripts)
-    Piper.registerMenu('Tag as reviewed', sessions =>
+    Quena.registerMenu('Tag as reviewed', sessions =>
         sessions.map(s => ({ id: s.id, comment: 'reviewed', color: 'green' })));
 }
 
 function onBeforeRequest(s) {
-    s.requestHeaders.set('X-Debug-Trace', 'piper-' + s.id);
+    s.requestHeaders.set('X-Debug-Trace', 'quena-' + s.id);
     if (s.host === 'ads.example.com') s.abort();
     if (s.path === '/api/feature-flags') s.respond(200, '{"newCheckout":true}',
                                                    { 'Content-Type': 'application/json' });
@@ -262,7 +262,7 @@ function onBeforeResponse(s) {
 Scripts run off the proxy threads with a time and memory budget and have no file-system,
 network or environment access. They see headers and metadata only — bodies keep streaming,
 so enabling a script never turns a 5 GB download into a 5 GB buffer.
-Full API: [`crates/piper-script/src/piper.d.ts`](crates/piper-script/src/piper.d.ts) ·
+Full API: [`crates/quena-script/src/quena.d.ts`](crates/quena-script/src/quena.d.ts) ·
 Design notes: [`docs/m14-scripting-and-pac.md`](docs/m14-scripting-and-pac.md)
 
 ## Plugins
@@ -294,25 +294,25 @@ Linux builds are experimental — help is very welcome.
 
 ## Architecture
 
-Piper is a Rust core with a thin, fast UI:
+Quena is a Rust core with a thin, fast UI:
 
 ```text
 ┌──────────────────────── Tauri 2 app ────────────────────────┐
 │  React + TypeScript UI · canvas session grid · CodeMirror 6  │
 │        ▲ viewport rows & deltas (≤ 60 Hz)   ▲ bodies via     │
-│        │ async IPC commands                 │ piper:// + Range│
+│        │ async IPC commands                 │ quena:// + Range│
 ├────────┴────────────────────────────────────┴────────────────┤
-│ piper-app-core   commands, jobs, rules, settings, archives    │
-│ piper-proxy      hyper/rustls MITM proxy, HTTP/2, WS, auth    │
-│ piper-index      incremental sort/filter over 500k sessions   │
-│ piper-body       disk-backed bodies, range reads, decoding    │
-│ piper-store      capture database (SQLite) + recovery         │
-│ piper-tls        root CA, per-host certificates, mTLS         │
-│ piper-auth       NTLMv2, Negotiate/Kerberos (GSS, SSPI)       │
-│ piper-script     QuickJS rules + PAC evaluation               │
-│ piper-plugin-host  Wasmtime component host (sandboxed)        │
-│ piper-formats    SAZ, HAR, cURL, raw HTTP                     │
-│ piper-query · piper-model · piper-jobs · piper-platform       │
+│ quena-app-core   commands, jobs, rules, settings, archives    │
+│ quena-proxy      hyper/rustls MITM proxy, HTTP/2, WS, auth    │
+│ quena-index      incremental sort/filter over 500k sessions   │
+│ quena-body       disk-backed bodies, range reads, decoding    │
+│ quena-store      capture database (SQLite) + recovery         │
+│ quena-tls        root CA, per-host certificates, mTLS         │
+│ quena-auth       NTLMv2, Negotiate/Kerberos (GSS, SSPI)       │
+│ quena-script     QuickJS rules + PAC evaluation               │
+│ quena-plugin-host  Wasmtime component host (sandboxed)        │
+│ quena-formats    SAZ, HAR, cURL, raw HTTP                     │
+│ quena-query · quena-model · quena-jobs · quena-platform       │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -321,10 +321,10 @@ Two principles shape every component:
 1. **Bodies can be huge.** Memory per session is O(1) in body size. Bodies never travel over IPC,
    into React state or into the DOM as a whole; every operation — viewing, searching, decoding,
    exporting — is streaming or windowed. See the large-body tests in
-   [`crates/piper-body/tests`](crates/piper-body/tests).
+   [`crates/quena-body/tests`](crates/quena-body/tests).
 2. **The UI never waits.** The core owns all state; the UI renders a viewport. Anything that can
    take time is a cancellable job, and list updates are coalesced with back-pressure.
-   See the performance guards in [`crates/piper-index/tests/perf.rs`](crates/piper-index/tests/perf.rs).
+   See the performance guards in [`crates/quena-index/tests/perf.rs`](crates/quena-index/tests/perf.rs).
 
 The full design and roadmap live in [`PLAN.md`](PLAN.md) (German).
 
@@ -332,9 +332,9 @@ The full design and roadmap live in [`PLAN.md`](PLAN.md) (German).
 
 ## Security & privacy
 
-- Piper runs **entirely locally**. There is no account, no cloud service and no telemetry.
+- Quena runs **entirely locally**. There is no account, no cloud service and no telemetry.
 - The root certificate and its private key are **generated on your machine** and stored in
-  Piper's data directory. You decide whether to trust it, and you can remove it at any time.
+  Quena's data directory. You decide whether to trust it, and you can remove it at any time.
 - HTTPS decryption is **opt-in**, can be scoped (browsers only, non-browsers, remote clients)
   and can exclude hosts entirely.
 - Stored credentials for automatic authentication live in the **OS secure store**
@@ -353,8 +353,8 @@ Please report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 - "Any Process" window picker for process filters
 - HTTP/3 (QUIC)
 
-Ideas and feedback are welcome in [Discussions](https://github.com/hkiam/piper/discussions) and
-[Issues](https://github.com/hkiam/piper/issues).
+Ideas and feedback are welcome in [Discussions](https://github.com/hkiam/quena/discussions) and
+[Issues](https://github.com/hkiam/quena/issues).
 
 ---
 
@@ -368,13 +368,13 @@ in CI with [`cargo-deny`](deny.toml).
 
 ## License
 
-Piper is licensed under the [Apache License, Version 2.0](LICENSE).
+Quena is licensed under the [Apache License, Version 2.0](LICENSE).
 
-Copyright © 2026 Maik Hofmann and Piper contributors.
+Copyright © 2026 Maik Hofmann and Quena contributors.
 
 ## Acknowledgements
 
-Piper stands on the shoulders of great open-source projects, among them
+Quena stands on the shoulders of great open-source projects, among them
 [Tauri](https://tauri.app), [hyper](https://hyper.rs), [rustls](https://github.com/rustls/rustls),
 [rcgen](https://github.com/rustls/rcgen), [Tokio](https://tokio.rs),
 [Wasmtime](https://wasmtime.dev), [QuickJS](https://bellard.org/quickjs/) via

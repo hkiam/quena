@@ -53,7 +53,7 @@ const col = (key: ColumnKey, width: number, visible: boolean, align?: "left" | "
   ...(align ? { align } : {}),
 });
 
-/** Piper's default columns: what, where, outcome, size, time. */
+/** Quena's default columns: what, where, outcome, size, time. */
 export const DEFAULT_COLUMNS: ColumnConf[] = [
   col("id", 56, true, "left"),
   col("method", 64, true),
@@ -89,7 +89,7 @@ export const CLASSIC_COLUMNS: ColumnConf[] = [
   col("started", 90, false),
 ];
 
-export type LayoutPreset = "piper" | "classic";
+export type LayoutPreset = "quena" | "classic";
 
 export interface Layout {
   leftWidth: number; // fraction of window width
@@ -108,16 +108,16 @@ type PresetParts = Pick<Layout, "leftWidth" | "inspectorSplit" | "stacked" | "co
 
 export const PRESETS: Record<LayoutPreset, PresetParts> = {
   // List left, request and response side by side.
-  piper: { leftWidth: 0.42, inspectorSplit: 0.5, stacked: false, columns: DEFAULT_COLUMNS },
+  quena: { leftWidth: 0.42, inspectorSplit: 0.5, stacked: false, columns: DEFAULT_COLUMNS },
   // Dense list, request above response.
   classic: { leftWidth: 0.52, inspectorSplit: 0.42, stacked: true, columns: CLASSIC_COLUMNS },
 };
 
 export const DEFAULT_LAYOUT: Layout = {
-  ...PRESETS.piper,
+  ...PRESETS.quena,
   requestTab: "headers",
   responseTab: "headers",
-  preset: "piper",
+  preset: "quena",
   presetChosen: false,
 };
 
@@ -125,7 +125,7 @@ export const DEFAULT_LAYOUT: Layout = {
 export function restoreLayout(saved: Partial<Layout> | undefined): Layout {
   if (!saved) return { ...DEFAULT_LAYOUT, columns: [...DEFAULT_COLUMNS] };
   // Layouts saved before presets existed: stacked inspectors meant the classic arrangement.
-  const preset: LayoutPreset = saved.preset ?? (saved.stacked === false ? "piper" : "classic");
+  const preset: LayoutPreset = saved.preset ?? (saved.stacked === false ? "quena" : "classic");
   const base = PRESETS[preset];
   const layout: Layout = { ...DEFAULT_LAYOUT, ...base, ...saved, preset, presetChosen: saved.presetChosen ?? false };
   // Titles from the key; columns added in newer versions are appended (hidden if unknown to the preset).
@@ -185,7 +185,7 @@ export interface AppState {
   composerLoad: { id: SessionId; nonce: number } | null;
   /** Bumped when AutoResponder rules change outside the panel. */
   arNonce: number;
-  /** Menu commands the active rules script registered (Piper.registerMenu). */
+  /** Menu commands the active rules script registered (Quena.registerMenu). */
   scriptMenus: string[];
 }
 

@@ -2,14 +2,14 @@
 //! (UI) thread; blocking work is moved to the blocking pool (R2/R7).
 
 use crate::Core;
-use piper_app_core::dto::*;
-use piper_app_core::settings::Settings;
-use piper_app_core::stats::Statistics;
-use piper_app_core::{JobInfo, logbuf::LogEntry, mock};
-use piper_body::Variant;
-use piper_index::{RowWindow, Sort};
-use piper_model::{MarkColor, SessionId};
-use piper_query::FilterSettings;
+use quena_app_core::dto::*;
+use quena_app_core::settings::Settings;
+use quena_app_core::stats::Statistics;
+use quena_app_core::{JobInfo, logbuf::LogEntry, mock};
+use quena_body::Variant;
+use quena_index::{RowWindow, Sort};
+use quena_model::{MarkColor, SessionId};
+use quena_query::FilterSettings;
 use serde::Serialize;
 use tauri::State;
 
@@ -121,7 +121,7 @@ async fn remove_where(core: State<'_, Core>, expr: String) -> R<usize> {
 }
 
 #[tauri::command]
-async fn summaries(core: State<'_, Core>, ids: Vec<SessionId>) -> R<Vec<piper_model::SessionSummary>> {
+async fn summaries(core: State<'_, Core>, ids: Vec<SessionId>) -> R<Vec<quena_model::SessionSummary>> {
     Ok(core.summaries(&ids))
 }
 
@@ -181,13 +181,13 @@ async fn save_body(core: State<'_, Core>, id: SessionId, part: Part, variant: Va
 }
 
 #[tauri::command]
-async fn find_sessions(core: State<'_, Core>, options: piper_app_core::find::FindOptions) -> R<u64> {
+async fn find_sessions(core: State<'_, Core>, options: quena_app_core::find::FindOptions) -> R<u64> {
     let core = core.inner().clone();
     blocking(move || core.find_sessions(options).map_err(e)).await
 }
 
 #[tauri::command]
-async fn find_result(core: State<'_, Core>, job: u64) -> R<Option<piper_app_core::find::FindResult>> {
+async fn find_result(core: State<'_, Core>, job: u64) -> R<Option<quena_app_core::find::FindResult>> {
     Ok(core.find_result(job))
 }
 
@@ -268,11 +268,11 @@ async fn toggle_capture(core: State<'_, Core>) -> R<bool> {
 }
 
 #[tauri::command]
-async fn recoverable(core: State<'_, Core>) -> R<Vec<piper_store_dto::Recoverable>> {
+async fn recoverable(core: State<'_, Core>) -> R<Vec<quena_store_dto::Recoverable>> {
     Ok(core
         .recoverable_captures()
         .into_iter()
-        .map(|c| piper_store_dto::Recoverable { dir: c.dir.display().to_string(), sessions: c.sessions, modified: c.modified })
+        .map(|c| quena_store_dto::Recoverable { dir: c.dir.display().to_string(), sessions: c.sessions, modified: c.modified })
         .collect())
 }
 
@@ -294,8 +294,8 @@ async fn discard(core: State<'_, Core>, dir: String) -> R<()> {
     blocking(move || core.discard_capture(dir.into()).map_err(e)).await
 }
 
-type Engine = std::sync::Arc<piper_app_core::engine::ProxyEngine>;
-use piper_app_core::engine::{CaInfo, DeviceInfo};
+type Engine = std::sync::Arc<quena_app_core::engine::ProxyEngine>;
+use quena_app_core::engine::{CaInfo, DeviceInfo};
 
 #[tauri::command]
 async fn ca_info(engine: State<'_, Engine>) -> R<CaInfo> {
@@ -333,25 +333,25 @@ async fn device_info(core: State<'_, Core>, engine: State<'_, Engine>) -> R<Devi
 }
 
 #[tauri::command]
-async fn replay(core: State<'_, Core>, ids: Vec<SessionId>, options: piper_app_core::compose::ReplayOptions) -> R<usize> {
+async fn replay(core: State<'_, Core>, ids: Vec<SessionId>, options: quena_app_core::compose::ReplayOptions) -> R<usize> {
     let core = core.inner().clone();
     blocking(move || core.replay(ids, options).map_err(e)).await
 }
 
 #[tauri::command]
-async fn compose(core: State<'_, Core>, request: piper_app_core::compose::ComposeRequest) -> R<SessionId> {
+async fn compose(core: State<'_, Core>, request: quena_app_core::compose::ComposeRequest) -> R<SessionId> {
     let core = core.inner().clone();
     blocking(move || core.compose(request).map_err(e)).await
 }
 
 #[tauri::command]
-async fn parse_raw_request(raw: String) -> R<piper_app_core::compose::ParsedRequest> {
-    piper_app_core::compose::parse_raw_request(&raw).map_err(e)
+async fn parse_raw_request(raw: String) -> R<quena_app_core::compose::ParsedRequest> {
+    quena_app_core::compose::parse_raw_request(&raw).map_err(e)
 }
 
 #[tauri::command]
-async fn parse_curl(cmd: String) -> R<piper_app_core::compose::ParsedRequest> {
-    piper_app_core::compose::parse_curl(&cmd).map_err(e)
+async fn parse_curl(cmd: String) -> R<quena_app_core::compose::ParsedRequest> {
+    quena_app_core::compose::parse_curl(&cmd).map_err(e)
 }
 
 #[tauri::command]
@@ -371,9 +371,9 @@ async fn write_text_file(path: String, text: String) -> R<()> {
     blocking(move || std::fs::write(path, text).map_err(e)).await
 }
 
-use piper_app_core::rules::{AutoResponderState, BreakpointState, PausedInfo, Resume};
+use quena_app_core::rules::{AutoResponderState, BreakpointState, PausedInfo, Resume};
 
-fn rules(core: &Core) -> R<std::sync::Arc<piper_app_core::rules::Rules>> {
+fn rules(core: &Core) -> R<std::sync::Arc<quena_app_core::rules::Rules>> {
     core.rules.clone().ok_or_else(|| "rules unavailable".to_string())
 }
 
@@ -398,7 +398,7 @@ async fn ar_import_farx(core: State<'_, Core>, path: String) -> R<AutoResponderS
     let r = rules(core.inner())?;
     blocking(move || {
         let xml = std::fs::read_to_string(&path).map_err(e)?;
-        let mut incoming = piper_app_core::rules::import_farx(&xml).map_err(e)?;
+        let mut incoming = quena_app_core::rules::import_farx(&xml).map_err(e)?;
         let mut cur = r.autoresponder();
         cur.rules.append(&mut incoming.rules);
         cur.enabled = cur.enabled || incoming.enabled;
@@ -411,7 +411,7 @@ async fn ar_import_farx(core: State<'_, Core>, path: String) -> R<AutoResponderS
 #[tauri::command]
 async fn ar_export_farx(core: State<'_, Core>, path: String) -> R<()> {
     let r = rules(core.inner())?;
-    std::fs::write(path, piper_app_core::rules::export_farx(&r.autoresponder())).map_err(e)
+    std::fs::write(path, quena_app_core::rules::export_farx(&r.autoresponder())).map_err(e)
 }
 
 #[tauri::command]
@@ -441,7 +441,7 @@ async fn bp_go(core: State<'_, Core>) -> R<usize> {
 }
 
 #[tauri::command]
-async fn plugins_list(core: State<'_, Core>) -> R<Vec<piper_plugin_host::PluginInfo>> {
+async fn plugins_list(core: State<'_, Core>) -> R<Vec<quena_plugin_host::PluginInfo>> {
     Ok(core.plugins())
 }
 
@@ -451,7 +451,7 @@ async fn plugin_set_enabled(core: State<'_, Core>, id: String, enabled: bool) ->
 }
 
 #[tauri::command]
-async fn plugins_rescan(core: State<'_, Core>) -> R<Vec<piper_plugin_host::PluginInfo>> {
+async fn plugins_rescan(core: State<'_, Core>) -> R<Vec<quena_plugin_host::PluginInfo>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.plugins_rescan())).await
 }
@@ -460,7 +460,7 @@ async fn plugins_rescan(core: State<'_, Core>) -> R<Vec<piper_plugin_host::Plugi
 async fn plugins_reveal(core: State<'_, Core>) -> R<()> {
     let d = core.plugin_dir();
     let _ = std::fs::create_dir_all(&d);
-    piper_platform::open(&d.display().to_string()).map_err(e)
+    quena_platform::open(&d.display().to_string()).map_err(e)
 }
 
 #[tauri::command]
@@ -476,7 +476,7 @@ async fn auth_remove_credential(core: State<'_, Core>, host: String) -> R<()> {
 }
 
 #[tauri::command]
-async fn ws_frames(core: State<'_, Core>, id: SessionId, start: u64, count: usize) -> R<piper_app_core::ws::WsMessages> {
+async fn ws_frames(core: State<'_, Core>, id: SessionId, start: u64, count: usize) -> R<quena_app_core::ws::WsMessages> {
     let core = core.inner().clone();
     blocking(move || Ok(core.ws_frames(id, start, count))).await
 }
@@ -488,18 +488,18 @@ async fn save_body_range(core: State<'_, Core>, id: SessionId, part: Part, offse
 }
 
 #[tauri::command]
-async fn grpc(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<piper_app_core::grpc::Grpc>> {
+async fn grpc(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<quena_app_core::grpc::Grpc>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.grpc(id, part))).await
 }
 
 #[tauri::command]
-async fn multipart(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<piper_app_core::multipart::Multipart>> {
+async fn multipart(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<quena_app_core::multipart::Multipart>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.multipart(id, part))).await
 }
 
-mod piper_store_dto {
+mod quena_store_dto {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
     pub struct Recoverable {
@@ -523,14 +523,14 @@ struct ScriptState {
     column_title: Option<String>,
 }
 
-fn script_state(r: &std::sync::Arc<piper_app_core::rules::Rules>) -> ScriptState {
+fn script_state(r: &std::sync::Arc<quena_app_core::rules::Rules>) -> ScriptState {
     let eng = r.script_engine();
     ScriptState {
         source: r.script_source(),
         enabled: r.script_enabled(),
         loaded: eng.is_loaded(),
         error: eng.last_error(),
-        types: piper_script::TYPES_DTS.to_string(),
+        types: quena_script::TYPES_DTS.to_string(),
         menus: r.script_menus(),
         column_title: r.script_column_title(),
     }
@@ -562,7 +562,7 @@ async fn script_set_enabled(core: State<'_, Core>, enabled: bool) -> R<ScriptSta
 }
 
 #[tauri::command]
-async fn script_logs(core: State<'_, Core>) -> R<Vec<piper_script::LogLine>> {
+async fn script_logs(core: State<'_, Core>) -> R<Vec<quena_script::LogLine>> {
     Ok(rules(core.inner())?.script_engine().logs())
 }
 

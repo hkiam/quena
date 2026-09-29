@@ -1,7 +1,7 @@
 //! Misbehaving decoder for sandbox tests: traps, loops forever, eats memory.
 wit_bindgen::generate!({ path: "../../wit/plugin.wit", world: "plugin" });
 
-use exports::piper::plugin::decoder::{Guest, GuestSession, Info, Representation};
+use exports::quena::plugin::decoder::{Guest, GuestSession, Info, Representation};
 
 struct Evil;
 

@@ -123,7 +123,7 @@ export function HttpsPanel() {
           <button
             disabled={busy || !ca?.exists}
             onClick={async () => {
-              const p = await save({ defaultPath: "piper-root-ca.crt", filters: [{ name: "Certificate", extensions: ["crt", "pem", "cer", "der"] }] });
+              const p = await save({ defaultPath: "quena-root-ca.crt", filters: [{ name: "Certificate", extensions: ["crt", "pem", "cer", "der"] }] });
               if (!p) return;
               await api.caExport(p, /\.(cer|der)$/i.test(p));
               say(`Exported to ${p}`);

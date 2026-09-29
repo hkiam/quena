@@ -8,7 +8,7 @@
 
 ## Checklist
 
-- [ ] `cargo test --workspace --exclude piper-app` passes
+- [ ] `cargo test --workspace --exclude quena-app` passes
 - [ ] `npm run build --prefix app/ui` passes
 - [ ] Large bodies stay streaming/windowed; no blocking work on the UI thread or forwarding path
 - [ ] New dependencies (if any) use permissive licenses

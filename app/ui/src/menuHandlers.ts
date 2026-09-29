@@ -133,7 +133,7 @@ export async function handleMenu(id: string) {
 }
 
 /** Name mapping for people switching over (descriptive use; see docs/coming-from-fiddler.md). */
-const COMING_FROM = `Piper is an independent project, not affiliated with Progress Software.
+const COMING_FROM = `Quena is an independent project, not affiliated with Progress Software.
 Your files, Command Bar syntax and shortcuts carry over; some features have other names.
 
 Files

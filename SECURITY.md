@@ -1,6 +1,6 @@
 # Security Policy
 
-Piper intercepts and decrypts network traffic and manages a local root certificate, so we take
+Quena intercepts and decrypts network traffic and manages a local root certificate, so we take
 security reports seriously.
 
 ## Reporting a vulnerability
@@ -8,7 +8,7 @@ security reports seriously.
 **Please do not open a public issue for security problems.**
 
 Report vulnerabilities privately through GitHub's
-[private vulnerability reporting](https://github.com/hkiam/piper/security/advisories/new)
+[private vulnerability reporting](https://github.com/hkiam/quena/security/advisories/new)
 ("Security" tab → "Report a vulnerability"). Please include:
 
 - the affected version or commit,
@@ -22,13 +22,13 @@ credit you in the release notes if you wish.
 
 Especially relevant are issues in:
 
-- certificate generation, storage or trust handling (`crates/piper-tls`),
-- the proxy and TLS interception (`crates/piper-proxy`),
-- automatic authentication and credential storage (`crates/piper-auth`, `crates/piper-platform`),
-- sandboxing of scripts (`crates/piper-script`) and WASM plugins (`crates/piper-plugin-host`),
+- certificate generation, storage or trust handling (`crates/quena-tls`),
+- the proxy and TLS interception (`crates/quena-proxy`),
+- automatic authentication and credential storage (`crates/quena-auth`, `crates/quena-platform`),
+- sandboxing of scripts (`crates/quena-script`) and WASM plugins (`crates/quena-plugin-host`),
 - remote-connection handling (allow-list, landing page),
 - restoring the system proxy after exit or crash.
 
 ## Supported versions
 
-Piper is in early preview. Security fixes are made on `main` and shipped in the next release.
+Quena is in early preview. Security fixes are made on `main` and shipped in the next release.

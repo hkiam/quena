@@ -397,9 +397,9 @@ function Header({ scrollX }: { scrollX: number }) {
               className={`gh-cell ${dragOver === c.key ? "drag-over" : ""} ${c.align === "right" ? "gh-right" : ""}`}
               style={{ width: c.width }}
               draggable
-              onDragStart={(e) => e.dataTransfer.setData("piper/column", c.key)}
+              onDragStart={(e) => e.dataTransfer.setData("quena/column", c.key)}
               onDragOver={(e) => {
-                if (e.dataTransfer.types.includes("piper/column")) {
+                if (e.dataTransfer.types.includes("quena/column")) {
                   e.preventDefault();
                   setDragOver(c.key);
                 }
@@ -407,7 +407,7 @@ function Header({ scrollX }: { scrollX: number }) {
               onDragLeave={() => setDragOver(null)}
               onDrop={(e) => {
                 setDragOver(null);
-                const from = e.dataTransfer.getData("piper/column") as ColumnKey;
+                const from = e.dataTransfer.getData("quena/column") as ColumnKey;
                 if (!from || from === c.key) return;
                 const cols = [...columns];
                 const fi = cols.findIndex((x) => x.key === from);
@@ -479,7 +479,7 @@ export function SessionGrid() {
       e.preventDefault();
       return;
     }
-    e.dataTransfer.setData("piper/sessions", JSON.stringify(ids));
+    e.dataTransfer.setData("quena/sessions", JSON.stringify(ids));
     e.dataTransfer.effectAllowed = "copy";
   };
 

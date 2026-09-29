@@ -1,8 +1,8 @@
 #!/bin/sh
 # Build all plugins as WASM components and stage them in plugins/dist/<name>/.
 set -e
-# rustup toolchain with the wasm32-wasip2 target (override with PIPER_WASM_TOOLCHAIN).
-TC="${PIPER_WASM_TOOLCHAIN:-stable}"
+# rustup toolchain with the wasm32-wasip2 target (override with QUENA_WASM_TOOLCHAIN).
+TC="${QUENA_WASM_TOOLCHAIN:-stable}"
 cd "$(dirname "$0")"
 for p in */; do
   p=${p%/}

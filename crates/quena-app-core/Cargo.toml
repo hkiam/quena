@@ -1,0 +1,37 @@
+[package]
+name = "quena-app-core"
+description = "Application facade for the UI: commands, events, ticker, settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quena-model.workspace = true
+quena-body.workspace = true
+quena-jobs.workspace = true
+quena-index.workspace = true
+quena-query.workspace = true
+quena-store.workspace = true
+quena-proxy.workspace = true
+quena-formats.workspace = true
+quena-plugin-host.workspace = true
+quena-auth.workspace = true
+quena-script.workspace = true
+quena-tls.workspace = true
+quena-platform.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+rand.workspace = true
+dirs.workspace = true
+time.workspace = true
+flate2.workspace = true
+regex.workspace = true
+tokio.workspace = true
+quick-xml = "0.38"
+
+[dev-dependencies]
+tempfile.workspace = true

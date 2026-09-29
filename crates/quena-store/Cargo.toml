@@ -1,0 +1,21 @@
+[package]
+name = "quena-store"
+description = "Capture store: live sessions, SQLite persistence, bodies, crash recovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quena-model.workspace = true
+quena-body.workspace = true
+quena-index.workspace = true
+parking_lot.workspace = true
+crossbeam-channel.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+rmp-serde = "1"
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

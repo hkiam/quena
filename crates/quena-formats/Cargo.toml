@@ -1,0 +1,23 @@
+[package]
+name = "quena-formats"
+description = "Session archive formats: Fiddler SAZ, HAR 1.2, cURL"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quena-model.workspace = true
+quena-body.workspace = true
+quena-store.workspace = true
+zip = { version = "8", default-features = false, features = ["deflate-flate2", "aes-crypto"] }
+flate2.workspace = true
+quick-xml = "0.38"
+serde.workspace = true
+serde_json.workspace = true
+base64 = "0.22"
+time.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

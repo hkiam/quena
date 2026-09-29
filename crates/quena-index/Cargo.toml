@@ -1,0 +1,15 @@
+[package]
+name = "quena-index"
+description = "Session index: incremental filtering/sorting, viewport queries, change coalescing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quena-model.workspace = true
+quena-query.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+rand.workspace = true

@@ -1,12 +1,12 @@
-// Piper desktop shell: binds piper-app-core to Tauri (commands, events,
-// `piper://` body protocol, native menu). No business logic lives here.
+// Quena desktop shell: binds quena-app-core to Tauri (commands, events,
+// `quena://` body protocol, native menu). No business logic lives here.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
 mod menu;
 mod protocol;
 
-use piper_app_core::{AppCore, EventSink, Paths};
+use quena_app_core::{AppCore, EventSink, Paths};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
@@ -23,16 +23,16 @@ impl EventSink for TauriSink {
 pub type Core = Arc<AppCore>;
 
 fn main() {
-    let log = piper_app_core::init_tracing();
-    let core = AppCore::new(Paths::default_paths(), log).expect("initialise Piper core");
-    let engine = piper_app_core::engine::ProxyEngine::new(&core).expect("initialise capture engine");
+    let log = quena_app_core::init_tracing();
+    let core = AppCore::new(Paths::default_paths(), log).expect("initialise Quena core");
+    let engine = quena_app_core::engine::ProxyEngine::new(&core).expect("initialise capture engine");
     core.set_proxy_engine(engine.clone());
     if core.settings().proxy.capture_on_startup {
         if let Err(e) = core.start_capture() {
-            tracing::error!(target: "piper", "could not start capturing: {e}");
+            tracing::error!(target: "quena", "could not start capturing: {e}");
         }
     }
-    tracing::info!(target: "piper", "Piper {} started, data in {}", env!("CARGO_PKG_VERSION"), core.paths.data.display());
+    tracing::info!(target: "quena", "Quena {} started, data in {}", env!("CARGO_PKG_VERSION"), core.paths.data.display());
 
     install_signal_handlers(core.clone());
     let exit_core = core.clone();
@@ -41,7 +41,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(core.clone())
         .manage(engine.clone())
-        .register_asynchronous_uri_scheme_protocol("piper", move |_ctx, request, responder| {
+        .register_asynchronous_uri_scheme_protocol("quena", move |_ctx, request, responder| {
             let core = proto_core.clone();
             std::thread::spawn(move || responder.respond(protocol::handle(&core, request)));
         })
@@ -56,7 +56,7 @@ fn main() {
                 .filter(|d| d.exists())
                 .or_else(|| Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist")).filter(|d| d.exists()));
             if let Err(e) = core.init_plugins(bundled) {
-                tracing::error!(target: "piper", "plugin host: {e:#}");
+                tracing::error!(target: "quena", "plugin host: {e:#}");
             }
             core.set_sink(Arc::new(TauriSink(handle.clone())));
             core.start_ticker();
@@ -65,7 +65,7 @@ fn main() {
                 if let Some(r) = core.rules.clone() {
                     tauri::async_runtime::spawn(async move {
                         if let Err(err) = r.set_script_enabled(true).await {
-                            tracing::error!(target: "piper", "rules script failed to load: {err}");
+                            tracing::error!(target: "quena", "rules script failed to load: {err}");
                         }
                     });
                 }
@@ -87,7 +87,7 @@ fn main() {
         })
         .invoke_handler(commands::handler())
         .build(tauri::generate_context!())
-        .expect("error while building Piper")
+        .expect("error while building Quena")
         .run(move |_app, event| {
             // Cmd+Q, dock "Quit", logout: always shut down cleanly (restores the system proxy).
             if let tauri::RunEvent::Exit = event {
@@ -103,10 +103,10 @@ fn install_signal_handlers(core: Core) {
     use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
     let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP]) else { return };
     std::thread::Builder::new()
-        .name("piper-signals".into())
+        .name("quena-signals".into())
         .spawn(move || {
             if let Some(sig) = signals.forever().next() {
-                tracing::info!(target: "piper", "signal {sig} received, shutting down");
+                tracing::info!(target: "quena", "signal {sig} received, shutting down");
                 core.shutdown();
                 std::process::exit(0);
             }

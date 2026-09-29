@@ -9,7 +9,7 @@ import { say, useStore } from "../store";
 import { actions } from "../actions";
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"];
-const HISTORY_KEY = "piper.composer.history";
+const HISTORY_KEY = "quena.composer.history";
 const INLINE_BODY_LIMIT = 1 << 20;
 
 interface Draft {
@@ -25,7 +25,7 @@ interface Draft {
 const EMPTY: Draft = {
   method: "GET",
   url: "https://",
-  headers: "User-Agent: Piper\nAccept: */*",
+  headers: "User-Agent: Quena\nAccept: */*",
   body: "",
   bodyFromSession: null,
   bodyFromSessionLen: 0,
@@ -57,7 +57,7 @@ export default function ComposerPanel() {
   const [tab, setTab] = useState<"parsed" | "raw" | "history">("parsed");
   const [d, setD] = useState<Draft>(() => {
     try {
-      return { ...EMPTY, ...JSON.parse(localStorage.getItem("piper.composer.draft") ?? "{}") };
+      return { ...EMPTY, ...JSON.parse(localStorage.getItem("quena.composer.draft") ?? "{}") };
     } catch {
       return EMPTY;
     }
@@ -72,7 +72,7 @@ export default function ComposerPanel() {
 
   useEffect(() => {
     try {
-      localStorage.setItem("piper.composer.draft", JSON.stringify({ ...d, body: d.body.length < 256 * 1024 ? d.body : "" }));
+      localStorage.setItem("quena.composer.draft", JSON.stringify({ ...d, body: d.body.length < 256 * 1024 ? d.body : "" }));
     } catch {
       /* ignore */
     }
@@ -153,7 +153,7 @@ export default function ComposerPanel() {
     <div
       className={`composer ${over ? "drop" : ""}`}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes("piper/sessions")) {
+        if (e.dataTransfer.types.includes("quena/sessions")) {
           e.preventDefault();
           setOver(true);
         }
@@ -161,7 +161,7 @@ export default function ComposerPanel() {
       onDragLeave={() => setOver(false)}
       onDrop={(e) => {
         setOver(false);
-        const ids = JSON.parse(e.dataTransfer.getData("piper/sessions") || "[]") as number[];
+        const ids = JSON.parse(e.dataTransfer.getData("quena/sessions") || "[]") as number[];
         if (ids[0]) fromSession(ids[0]);
       }}
     >

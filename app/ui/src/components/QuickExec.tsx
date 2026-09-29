@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { actions } from "../actions";
 
-const HISTORY_KEY = "piper.quickexec.history";
+const HISTORY_KEY = "quena.quickexec.history";
 
 function loadHistory(): string[] {
   try {

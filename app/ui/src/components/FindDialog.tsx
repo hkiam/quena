@@ -4,7 +4,7 @@ import { actions } from "../actions";
 import { fmtInt } from "../lib/format";
 import { get, say, set } from "../store";
 
-const KEY = "piper.find.options";
+const KEY = "quena.find.options";
 
 export function FindDialog({ onDone }: { onDone: () => void }) {
   const saved = (() => {

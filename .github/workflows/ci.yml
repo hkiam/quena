@@ -13,9 +13,9 @@ env:
   # Pinned: the runners' preinstalled 1.98.1 cannot link wasm32 components on
   # macOS (rust-lld: libLLVM.dylib not found). Keep in sync with local stable.
   RUST_TOOLCHAIN: "1.96.0"
-  PIPER_WASM_TOOLCHAIN: "1.96.0"
+  QUENA_WASM_TOOLCHAIN: "1.96.0"
   # Debug-build perf guards run on slow shared VMs: widen their time thresholds.
-  PIPER_PERF_SLACK: "3"
+  QUENA_PERF_SLACK: "3"
 
 jobs:
   build:
@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: ./plugins/build.sh
       - name: Rust tests
-        run: cargo test --workspace --exclude piper-app --no-fail-fast
+        run: cargo test --workspace --exclude quena-app --no-fail-fast
 
       # Platform-independent checks: run once.
       - uses: actions/setup-java@v4
@@ -86,7 +86,7 @@ jobs:
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: piper-${{ runner.os }}
+          name: quena-${{ runner.os }}
           if-no-files-found: error
           path: |
             target/release/bundle/dmg/*.dmg
@@ -111,4 +111,4 @@ jobs:
         run: |
           notes=$(awk "/^## \[${GITHUB_REF_NAME#v}\]/{f=1;next} /^## \[/{f=0} f" CHANGELOG.md)
           gh release create "$GITHUB_REF_NAME" --draft --prerelease \
-            --title "Piper $GITHUB_REF_NAME" --notes "$notes" $(find dist -type f)
+            --title "Quena $GITHUB_REF_NAME" --notes "$notes" $(find dist -type f)
