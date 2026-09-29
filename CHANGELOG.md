@@ -7,16 +7,6 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
-### Added
-- Portable edition for Windows (`Quena_<version>_x64-portable.zip`, xcopy deployment): unzip
-  anywhere and start `Quena.exe`; settings, sessions, rules, the root certificate and the web
-  view's own data stay in `quena-data` next to it.
-
-### Changed
-- In portable mode (a `portable` file or `quena-data` folder next to the executable, on every
-  platform) the web view's cache and storage move into the data folder as well, and bundled
-  plugins are found in a `plugins` folder beside the executable.
-
 ## [0.1.0] — 2026-09-29
 
 First public release of Quena, a local HTTP(S) debugging proxy for macOS, Windows and Linux:
@@ -27,7 +17,8 @@ authentication (NTLM, Kerberos, Basic) and SAZ/HAR import and export.
 **Installing:** packages are **not signed with a paid certificate or notarized** yet.
 - macOS (`.dmg`, Apple Silicon): on first start macOS warns about an unidentified developer —
   open *System Settings → Privacy & Security* and choose *Open Anyway*.
-- Windows (`.exe` / `.msi`): SmartScreen may warn — *More info → Run anyway*.
+- Windows (`.exe` / `.msi`, or the portable `Quena_0.1.0_x64-portable.zip` — unzip and run
+  `Quena.exe`, no installation): SmartScreen may warn — *More info → Run anyway*.
 - Linux: `.deb` (Debian, Ubuntu), `.rpm` (Fedora, openSUSE) or the AppImage (x86_64).
 
 This is an early `0.x` release: settings, file formats and the plugin API may still change.
@@ -47,6 +38,10 @@ This is an early `0.x` release: settings, file formats and the plugin API may st
   Damaged settings, rules, root certificate, database rows and system-proxy backups no longer
   block the start or lose data; a failing view shows an error instead of a blank window.
 - New app icon.
+- Portable edition for Windows (xcopy deployment): settings, sessions, rules, the root
+  certificate and the web view's own data stay in `quena-data` next to `Quena.exe`. The same
+  portable mode (a `portable` file or `quena-data` folder beside the executable) works on
+  every platform.
 - Header inspector plugins: the plugin API gains an additive `header-plugin` world (existing
   decoder plugins keep working). The bundled **auth-tokens** plugin decodes SPNEGO, Kerberos
   (AP-REQ/AP-REP/KRB-ERROR) and NTLM Type 1/2/3 tokens in the Auth inspector and flags
