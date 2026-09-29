@@ -92,8 +92,77 @@ unsafe extern "system" {
     fn FreeContextBuffer(buf: *mut c_void) -> i32;
 }
 
+#[repr(C)]
+struct AddrInfoW {
+    ai_flags: i32,
+    ai_family: i32,
+    ai_socktype: i32,
+    ai_protocol: i32,
+    ai_addrlen: usize,
+    ai_canonname: *mut u16,
+    ai_addr: *mut c_void,
+    ai_next: *mut AddrInfoW,
+}
+
+const AI_CANONNAME: i32 = 0x2;
+
+#[link(name = "ws2_32")]
+unsafe extern "system" {
+    fn WSAStartup(version: u16, data: *mut c_void) -> i32;
+    fn GetAddrInfoW(node: *const u16, service: *const u16, hints: *const AddrInfoW, result: *mut *mut AddrInfoW) -> i32;
+    fn FreeAddrInfoW(info: *mut AddrInfoW);
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Host name for the SPN: the canonical DNS name (CNAMEs followed), like
+/// WinHTTP/WinINet and browsers do. `app.example` → CNAME
+/// `srv-01.example.lan` must yield `HTTP/srv-01.example.lan`, otherwise the KDC
+/// knows no such principal and Negotiate silently falls back to NTLM.
+fn spn_host(host: &str) -> String {
+    let h = host.trim_matches(['[', ']']);
+    if h.parse::<std::net::IpAddr>().is_ok() {
+        return host.to_string();
+    }
+    let node = wide(h);
+    let hints = AddrInfoW {
+        ai_flags: AI_CANONNAME,
+        ai_family: 0,
+        ai_socktype: 0,
+        ai_protocol: 0,
+        ai_addrlen: 0,
+        ai_canonname: std::ptr::null_mut(),
+        ai_addr: std::ptr::null_mut(),
+        ai_next: std::ptr::null_mut(),
+    };
+    let mut res: *mut AddrInfoW = std::ptr::null_mut();
+    unsafe {
+        // Reference-counted; makes the call independent of prior socket use.
+        let mut wsa = [0u8; 512];
+        WSAStartup(0x0202, wsa.as_mut_ptr() as *mut c_void);
+        if GetAddrInfoW(node.as_ptr(), std::ptr::null(), &hints, &mut res) != 0 || res.is_null() {
+            return host.to_string();
+        }
+        let p = (*res).ai_canonname;
+        let canon = if p.is_null() {
+            String::new()
+        } else {
+            let len = (0..).take_while(|&i| *p.add(i) != 0).count();
+            String::from_utf16_lossy(std::slice::from_raw_parts(p, len))
+        };
+        FreeAddrInfoW(res);
+        let canon = canon.trim_end_matches('.').to_ascii_lowercase();
+        if canon.is_empty() {
+            host.to_string()
+        } else {
+            if !canon.eq_ignore_ascii_case(h) {
+                tracing::debug!(target: "quena::auth", "SPN for {host}: HTTP/{canon} (canonical name)");
+            }
+            canon
+        }
+    }
 }
 
 pub struct SspiCtx {
@@ -114,7 +183,7 @@ impl SspiCtx {
     /// `package` = "Negotiate" or "NTLM". Empty user → SSO with the logged-in user.
     pub fn new(package: &str, host: &str, user: &str, domain: &str, password: &str) -> Result<SspiCtx, AuthError> {
         let pkg = wide(package);
-        let target = wide(&format!("HTTP/{host}"));
+        let target = wide(&format!("HTTP/{}", spn_host(host)));
         let mut cred = SecHandle::zero();
         let mut expiry = 0i64;
 
