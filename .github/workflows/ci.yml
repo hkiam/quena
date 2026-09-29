@@ -66,9 +66,14 @@ jobs:
         run: npm ci --prefix app/ui
       - name: UI typecheck + build
         run: npm run build --prefix app/ui
+      - name: UI tests
+        run: npm test --prefix app/ui
       - name: Plugins
         shell: bash
         run: ./plugins/build.sh
+      - name: Plugin tests
+        shell: bash
+        run: cargo test --manifest-path plugins/auth-tokens/Cargo.toml
       - name: Rust tests
         run: cargo test --workspace --exclude quena-app --no-fail-fast
       - name: Linux desktop integration (GNOME proxy settings, NSS trust)

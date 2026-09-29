@@ -63,6 +63,7 @@ cargo test --workspace --exclude quena-app
 cargo clippy --workspace
 cargo fmt --all
 npm run build --prefix app/ui          # TypeScript typecheck + production build
+npm test --prefix app/ui               # UI unit tests (Vitest)
 ```
 
 ## Design principles

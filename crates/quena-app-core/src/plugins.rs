@@ -5,7 +5,7 @@ use crate::dto::{DetailDto, PluginCandidate};
 use anyhow::{Result, anyhow};
 use quena_body::pretty::PrettyKind;
 use quena_body::{Body, PluginDecoders, Variant};
-use quena_plugin_host::{Output, PluginHost, PluginInfo};
+use quena_plugin_host::{HeaderInspection, Output, PluginHost, PluginInfo};
 use quena_store::Capture;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -61,6 +61,12 @@ impl AppCore {
             h.discover();
         }
         self.plugins()
+    }
+
+    /// Header inspector plugins' view of one header value (best match first).
+    pub fn plugin_inspect_header(&self, name: &str, value: &str) -> Vec<HeaderInspection> {
+        let host = self.plugin_host.read().clone();
+        host.map(|h| h.inspect_header(name, value)).unwrap_or_default()
     }
 
     pub fn plugin_dir(&self) -> PathBuf {

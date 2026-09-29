@@ -1,7 +1,9 @@
 //! WASM component plugin host (PLAN.md §12–§15).
 //!
 //! * discovery: `<dir>/<plugin>/plugin.toml` + component `.wasm`
-//! * API: `wit/plugin.wit` (streaming decoder sessions), versioned
+//! * API: `wit/plugin.wit`, versioned: body decoders (world `plugin`, streaming
+//!   sessions) and header inspectors (world `header-plugin`, one value per call);
+//!   the manifest section `[decoder]` / `[header_inspector]` selects the world
 //! * isolation: fresh store per decoding run, no preopened directories,
 //!   no network, no environment, memory limit, execution deadline
 //! * a trapping or misbehaving plugin only fails its own run
@@ -18,12 +20,24 @@ use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
-wasmtime::component::bindgen!({
-    path: "../../wit/plugin.wit",
-    world: "plugin",
-});
+mod decoder_world {
+    wasmtime::component::bindgen!({
+        path: "../../wit/plugin.wit",
+        world: "plugin",
+    });
+}
 
-use exports::quena::plugin::decoder::Representation;
+mod header_world {
+    wasmtime::component::bindgen!({
+        path: "../../wit/plugin.wit",
+        world: "header-plugin",
+    });
+}
+
+use decoder_world::exports::quena::plugin::decoder::{Info as DecoderInfo, Representation};
+use decoder_world::{Plugin, PluginPre};
+use header_world::exports::quena::plugin::header_inspector::{Info as HeaderInfo, NodeKind};
+use header_world::{HeaderPlugin, HeaderPluginPre};
 
 pub const API_VERSION: &str = "1";
 
@@ -36,6 +50,13 @@ pub struct DecoderManifest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HeaderInspectorManifest {
+    /// Header names (case-insensitive) the plugin is asked about; empty = all.
+    #[serde(default)]
+    pub headers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Manifest {
     pub id: String,
     pub name: String,
@@ -44,8 +65,38 @@ pub struct Manifest {
     /// Component file relative to the manifest (default: first `.wasm`).
     pub wasm: Option<String>,
     pub decoder: Option<DecoderManifest>,
+    pub header_inspector: Option<HeaderInspectorManifest>,
     #[serde(default)]
     pub description: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PluginKind {
+    Decoder,
+    HeaderInspector,
+}
+
+/// One line of a header inspection (see `node` in `wit/plugin.wit`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectNode {
+    pub depth: u8,
+    /// `section`, `field`, `note` or `code`.
+    pub kind: &'static str,
+    pub name: String,
+    pub value: String,
+}
+
+/// Result of one header inspector for one header value.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderInspection {
+    pub plugin_id: String,
+    pub tab: String,
+    pub confidence: u8,
+    pub nodes: Vec<InspectNode>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,7 +120,10 @@ pub struct PluginInfo {
     pub status: String,
     pub error: Option<String>,
     pub path: String,
+    pub kind: PluginKind,
     pub mime_types: Vec<String>,
+    /// Header names of a header inspector.
+    pub headers: Vec<String>,
 }
 
 /// Resource limits per decoding run.
@@ -80,11 +134,13 @@ pub struct Limits {
     pub call_timeout: Duration,
     /// Maximum output size of one run.
     pub max_output: u64,
+    /// Maximum text (names + values) of one header inspection.
+    pub max_inspect_output: usize,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { memory: 512 << 20, call_timeout: Duration::from_secs(10), max_output: 16 << 30 }
+        Limits { memory: 512 << 20, call_timeout: Duration::from_secs(10), max_output: 16 << 30, max_inspect_output: 4 << 20 }
     }
 }
 
@@ -103,10 +159,38 @@ impl WasiView for State {
 struct Loaded {
     manifest: Manifest,
     dir: PathBuf,
+    kind: PluginKind,
+    /// Decoder plugins.
     pre: Option<PluginPre<State>>,
-    info: Option<exports::quena::plugin::decoder::Info>,
+    info: Option<DecoderInfo>,
+    /// Header inspector plugins.
+    header: Option<(HeaderPluginPre<State>, HeaderInfo)>,
     enabled: AtomicBool,
     error: Option<String>,
+}
+
+impl Loaded {
+    fn name(&self) -> String {
+        match (&self.info, &self.header) {
+            (Some(i), _) => i.name.clone(),
+            (_, Some((_, i))) => i.name.clone(),
+            _ => self.manifest.name.clone(),
+        }
+    }
+    fn version(&self) -> String {
+        match (&self.info, &self.header) {
+            (Some(i), _) => i.version.clone(),
+            (_, Some((_, i))) => i.version.clone(),
+            _ => self.manifest.version.clone(),
+        }
+    }
+    fn tab(&self) -> String {
+        match (&self.info, &self.header) {
+            (Some(i), _) => i.tab.clone(),
+            (_, Some((_, i))) => i.tab.clone(),
+            _ => self.manifest.name.clone(),
+        }
+    }
 }
 
 pub struct PluginHost {
@@ -192,7 +276,8 @@ impl PluginHost {
 
     fn load(&self, dir: &Path) -> Result<Loaded> {
         let manifest: Manifest = toml::from_str(&std::fs::read_to_string(dir.join("plugin.toml"))?).context("plugin.toml")?;
-        let mut l = Loaded { manifest: manifest.clone(), dir: dir.to_path_buf(), pre: None, info: None, enabled: AtomicBool::new(true), error: None };
+        let kind = if manifest.header_inspector.is_some() { PluginKind::HeaderInspector } else { PluginKind::Decoder };
+        let mut l = Loaded { manifest: manifest.clone(), dir: dir.to_path_buf(), kind, pre: None, info: None, header: None, enabled: AtomicBool::new(true), error: None };
         if manifest.api_version != API_VERSION {
             l.error = Some(format!("unsupported API version {} (host supports {API_VERSION})", manifest.api_version));
             return Ok(l);
@@ -205,31 +290,50 @@ impl PluginHost {
                 .find(|p| p.extension().is_some_and(|x| x == "wasm"))
                 .ok_or_else(|| anyhow!("no .wasm file"))?,
         };
-        let r = (|| -> Result<(PluginPre<State>, exports::quena::plugin::decoder::Info)> {
+        let r = (|| -> Result<()> {
             let component = Component::from_file(&self.engine, &wasm).map_err(|e| anyhow!("{e:#}"))?;
             let pre = self.linker.instantiate_pre(&component).map_err(|e| anyhow!("{e:#}"))?;
-            let pre = PluginPre::new(pre).map_err(|e| anyhow!("{e:#}"))?;
-            let (mut store, plugin) = self.instantiate(&pre)?;
-            let info = plugin.quena_plugin_decoder().call_get_info(&mut store).map_err(|e| anyhow!("{e:#}"))?;
-            Ok((pre, info))
-        })();
-        match r {
-            Ok((pre, info)) => {
-                l.pre = Some(pre);
-                l.info = Some(info);
+            match kind {
+                PluginKind::Decoder => {
+                    let pre = PluginPre::new(pre).map_err(|e| anyhow!("{e:#}"))?;
+                    let (mut store, plugin) = self.instantiate(&pre)?;
+                    let info = plugin.quena_plugin_decoder().call_get_info(&mut store).map_err(|e| anyhow!("{e:#}"))?;
+                    l.pre = Some(pre);
+                    l.info = Some(info);
+                }
+                PluginKind::HeaderInspector => {
+                    let pre = HeaderPluginPre::new(pre).map_err(|e| anyhow!("{e:#}"))?;
+                    let (mut store, plugin) = self.instantiate_header(&pre)?;
+                    let info = plugin.quena_plugin_header_inspector().call_get_info(&mut store).map_err(|e| anyhow!("{e:#}"))?;
+                    l.header = Some((pre, info));
+                }
             }
-            Err(e) => l.error = Some(format!("{e:#}")),
+            Ok(())
+        })();
+        if let Err(e) = r {
+            l.error = Some(format!("{e:#}"));
         }
         Ok(l)
     }
 
-    fn instantiate(&self, pre: &PluginPre<State>) -> Result<(Store<State>, Plugin)> {
-        // No preopens, no env, no args, no network: the plugin only computes.
+    /// Fresh sandboxed store: no preopens, no env, no args, no network — the plugin only computes.
+    fn store(&self) -> Store<State> {
         let wasi = WasiCtxBuilder::new().build();
         let limits = StoreLimitsBuilder::new().memory_size(self.limits.memory).instances(4).tables(32).memories(4).build();
         let mut store = Store::new(&self.engine, State { wasi, table: ResourceTable::new(), limits });
         store.limiter(|s| &mut s.limits);
         store.set_epoch_deadline(self.deadline_ticks());
+        store
+    }
+
+    fn instantiate(&self, pre: &PluginPre<State>) -> Result<(Store<State>, Plugin)> {
+        let mut store = self.store();
+        let plugin = pre.instantiate(&mut store).map_err(|e| anyhow!("{e:#}"))?;
+        Ok((store, plugin))
+    }
+
+    fn instantiate_header(&self, pre: &HeaderPluginPre<State>) -> Result<(Store<State>, HeaderPlugin)> {
+        let mut store = self.store();
         let plugin = pre.instantiate(&mut store).map_err(|e| anyhow!("{e:#}"))?;
         Ok((store, plugin))
     }
@@ -248,9 +352,9 @@ impl PluginHost {
                 PluginInfo {
                     index: i as u16,
                     id: l.manifest.id.clone(),
-                    name: l.info.as_ref().map(|x| x.name.clone()).unwrap_or_else(|| l.manifest.name.clone()),
-                    version: l.info.as_ref().map(|x| x.version.clone()).unwrap_or_else(|| l.manifest.version.clone()),
-                    tab: l.info.as_ref().map(|x| x.tab.clone()).unwrap_or_else(|| l.manifest.name.clone()),
+                    name: l.name(),
+                    version: l.version(),
+                    tab: l.tab(),
                     output: match l.info.as_ref().map(|x| x.output) {
                         Some(Representation::Xml) => Output::Xml,
                         Some(Representation::Json) => Output::Json,
@@ -260,7 +364,9 @@ impl PluginHost {
                     status: if l.error.is_some() { "Error".into() } else if enabled { "Enabled".into() } else { "Disabled".into() },
                     error: l.error.clone(),
                     path: l.dir.display().to_string(),
+                    kind: l.kind,
                     mime_types: l.manifest.decoder.as_ref().map(|d| d.mime_types.clone()).unwrap_or_default(),
+                    headers: l.manifest.header_inspector.as_ref().map(|h| h.headers.clone()).unwrap_or_default(),
                 }
             })
             .collect()
@@ -348,5 +454,62 @@ impl PluginHost {
         })();
         let _ = session.resource_drop(&mut store);
         result.map(|_| written)
+    }
+
+    /// Ask all enabled header inspectors about one header value; best match first.
+    /// A plugin that traps, times out or fails is reported with `error` and does
+    /// not affect the others.
+    pub fn inspect_header(&self, name: &str, value: &str) -> Vec<HeaderInspection> {
+        let name = name.to_ascii_lowercase();
+        let mut out = Vec::new();
+        for l in self.plugins.read().iter() {
+            if !l.enabled.load(Ordering::Relaxed) {
+                continue;
+            }
+            let (Some((pre, info)), Some(m)) = (&l.header, &l.manifest.header_inspector) else { continue };
+            if !m.headers.is_empty() && !m.headers.iter().any(|h| h.eq_ignore_ascii_case(&name)) {
+                continue;
+            }
+            let r = (|| -> Result<Option<(u8, Vec<InspectNode>)>> {
+                let (mut store, plugin) = self.instantiate_header(pre)?;
+                let h = plugin.quena_plugin_header_inspector();
+                let conf = h.call_detect(&mut store, &name, value).map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
+                if conf < 50 {
+                    return Ok(None);
+                }
+                store.set_epoch_deadline(self.deadline_ticks());
+                let nodes = h.call_inspect(&mut store, &name, value).map_err(|e| anyhow!("plugin trapped: {e:#}"))?.map_err(|e| anyhow!("{e}"))?;
+                let size: usize = nodes.iter().map(|n| n.name.len() + n.value.len()).sum();
+                if size > self.limits.max_inspect_output {
+                    return Err(anyhow!("plugin output exceeds {} bytes", self.limits.max_inspect_output));
+                }
+                let nodes = nodes
+                    .into_iter()
+                    .map(|n| InspectNode {
+                        depth: n.depth,
+                        kind: match n.kind {
+                            NodeKind::Section => "section",
+                            NodeKind::Field => "field",
+                            NodeKind::Note => "note",
+                            NodeKind::Code => "code",
+                        },
+                        name: n.name,
+                        value: n.value,
+                    })
+                    .collect();
+                Ok(Some((conf, nodes)))
+            })();
+            let entry = |confidence, nodes, error| HeaderInspection { plugin_id: l.manifest.id.clone(), tab: info.tab.clone(), confidence, nodes, error };
+            match r {
+                Ok(Some((conf, nodes))) => out.push(entry(conf, nodes, None)),
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::debug!(target: "quena::plugins", "{}: inspect failed: {e:#}", l.manifest.id);
+                    out.push(entry(0, vec![], Some(format!("{e:#}"))));
+                }
+            }
+        }
+        out.sort_by(|a, b| b.confidence.cmp(&a.confidence));
+        out
     }
 }

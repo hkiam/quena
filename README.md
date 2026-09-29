@@ -213,6 +213,7 @@ Run the test suite:
 ```bash
 cargo test --workspace --exclude quena-app
 npm run build --prefix app/ui      # typecheck + production build of the UI
+npm test --prefix app/ui           # UI unit tests (Vitest)
 ```
 
 ### First capture

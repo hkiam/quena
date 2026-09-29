@@ -100,7 +100,26 @@ export interface PluginInfo {
   status: string;
   error: string | null;
   path: string;
+  kind: "decoder" | "headerInspector";
   mimeTypes: string[];
+  /** Header names of a header inspector. */
+  headers: string[];
+}
+
+/** One line of a header inspection; the tree is flattened, `depth` is the nesting level. */
+export interface InspectNode {
+  depth: number;
+  kind: "section" | "field" | "note" | "code";
+  name: string;
+  value: string;
+}
+
+export interface HeaderInspection {
+  pluginId: string;
+  tab: string;
+  confidence: number;
+  nodes: InspectNode[];
+  error: string | null;
 }
 
 export interface Timers {
@@ -594,6 +613,7 @@ export const api = {
   pluginsList: () => invoke<PluginInfo[]>("plugins_list"),
   pluginSetEnabled: (id: string, enabled: boolean) => invoke<void>("plugin_set_enabled", { id, enabled }),
   pluginsRescan: () => invoke<PluginInfo[]>("plugins_rescan"),
+  pluginsInspectHeader: (name: string, value: string) => invoke<HeaderInspection[]>("plugins_inspect_header", { name, value }),
   pluginsReveal: () => invoke<void>("plugins_reveal"),
   saveBodyRange: (id: SessionId, part: Part, offset: number, len: number, path: string) =>
     invoke<number>("save_body_range", { id, part, offset, len, path }),

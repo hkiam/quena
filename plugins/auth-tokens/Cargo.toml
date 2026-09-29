@@ -1,0 +1,17 @@
+[package]
+name = "auth-tokens"
+version = "0.0.1"
+edition = "2024"
+license = "Apache-2.0"
+description = "Quena header inspector: decodes Kerberos, SPNEGO and NTLM authentication tokens"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen = "0.62"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

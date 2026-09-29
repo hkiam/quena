@@ -951,6 +951,17 @@ table.kv {
   border-collapse: collapse;
   width: 100%;
 }
+.auth-token {
+  margin: 6px 0;
+}
+.auth-token .auth-token {
+  margin-left: 14px;
+}
+.auth-token table.kv td:first-child {
+  width: 190px;
+  white-space: nowrap;
+  word-break: normal;
+}
 table.kv td,
 table.kv th {
   border: none;

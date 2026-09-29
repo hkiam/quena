@@ -457,6 +457,12 @@ async fn plugins_rescan(core: State<'_, Core>) -> R<Vec<quena_plugin_host::Plugi
 }
 
 #[tauri::command]
+async fn plugins_inspect_header(core: State<'_, Core>, name: String, value: String) -> R<Vec<quena_plugin_host::HeaderInspection>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.plugin_inspect_header(&name, &value))).await
+}
+
+#[tauri::command]
 async fn plugins_reveal(core: State<'_, Core>) -> R<()> {
     let d = core.plugin_dir();
     let _ = std::fs::create_dir_all(&d);
@@ -667,6 +673,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         plugins_list,
         plugin_set_enabled,
         plugins_rescan,
+        plugins_inspect_header,
         plugins_reveal,
         script_get,
         script_set,

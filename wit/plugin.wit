@@ -38,6 +38,51 @@ interface decoder {
     }
 }
 
+/// Decodes single header values, e.g. `Authorization: Negotiate <token>`.
+/// Added in API 1 without changing `decoder`, so existing plugins keep working.
+interface header-inspector {
+    record info {
+        /// Stable id, e.g. `io.github.hkiam.auth-tokens`.
+        id: string,
+        name: string,
+        version: string,
+        /// Title shown above the decoded value.
+        tab: string,
+    }
+
+    enum node-kind {
+        /// Heading of a (nested) block.
+        section,
+        /// `name: value` row of the enclosing section.
+        field,
+        /// Explanatory text for the enclosing section.
+        note,
+        /// Preformatted text (e.g. a hex dump) with `name` as its caption.
+        code,
+    }
+
+    /// One line of the result. WIT has no recursive types, so the tree is
+    /// flattened in document order; `depth` is the nesting level (0 = top).
+    record node {
+        depth: u8,
+        kind: node-kind,
+        name: string,
+        value: string,
+    }
+
+    get-info: func() -> info;
+
+    /// Confidence 0..=100 that `inspect` understands this header.
+    /// `name` is lower-case, `value` as sent on the wire.
+    detect: func(name: string, value: string) -> u8;
+
+    inspect: func(name: string, value: string) -> result<list<node>, string>;
+}
+
 world plugin {
     export decoder;
+}
+
+world header-plugin {
+    export header-inspector;
 }

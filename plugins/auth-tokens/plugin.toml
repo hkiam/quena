@@ -1,0 +1,9 @@
+id = "io.github.hkiam.auth-tokens"
+name = "Kerberos / NTLM"
+version = "0.0.1"
+api_version = "1"
+wasm = "auth_tokens.wasm"
+description = "Decodes Negotiate/NTLM/Kerberos tokens (SPNEGO, Kerberos AP-REQ/AP-REP/KRB-ERROR, NTLM Type 1-3) in authentication headers."
+
+[header_inspector]
+headers = ["authorization", "proxy-authorization", "www-authenticate", "proxy-authenticate"]

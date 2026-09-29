@@ -17,7 +17,7 @@ export function PluginsPanel() {
             <th>Name</th>
             <th>Version</th>
             <th>Status</th>
-            <th>Content types</th>
+            <th>Applies to</th>
           </tr>
         </thead>
         <tbody>
@@ -41,7 +41,7 @@ export function PluginsPanel() {
               </td>
               <td>{p.version}</td>
               <td>{p.status}</td>
-              <td className="mono small">{p.mimeTypes.join(", ")}</td>
+              <td className="mono small">{p.kind === "headerInspector" ? `Headers: ${p.headers.join(", ") || "all"}` : p.mimeTypes.join(", ")}</td>
             </tr>
           ))}
         </tbody>

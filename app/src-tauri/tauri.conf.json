@@ -73,7 +73,8 @@
       }
     },
     "resources": {
-      "../../plugins/dist/fast-infoset": "plugins/fast-infoset"
+      "../../plugins/dist/fast-infoset": "plugins/fast-infoset",
+      "../../plugins/dist/auth-tokens": "plugins/auth-tokens"
     },
     "fileAssociations": [
       {

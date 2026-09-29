@@ -1,10 +1,11 @@
 // Smaller inspectors: WebForms, Auth, Cookies, Caching, Image, WebView,
 // Transformer, Raw, JSON and XML trees.
 import { useEffect, useMemo, useState } from "react";
-import { bodyUrl, type Detail, type Part, type Variant } from "../api";
+import { api, bodyUrl, type Detail, type HeaderInspection, type Part, type Variant } from "../api";
 import { fmtBytes, fmtInt, headerValue, latin1ToUtf8 } from "../lib/format";
 import { b64decode, parseCookies, parseQuery, rawResponseHead, requestLine } from "../lib/http";
 import { loadText } from "../lib/bodytext";
+import { nodesToTree, type InspectSection } from "../lib/inspect";
 import { BodyText } from "./BodyText";
 import { get } from "../store";
 import { parseXml } from "../lib/xml";
@@ -148,6 +149,68 @@ function authValue(v: string): React.ReactNode {
   }
 }
 
+function InspectSectionView({ s }: { s: InspectSection }) {
+  return (
+    <div className="auth-token">
+      {s.title && <b>{s.title}</b>}
+      {s.fields.length > 0 && <Table rows={s.fields} />}
+      {s.notes.map((n, i) => (
+        <div key={i} className="muted">
+          {n}
+        </div>
+      ))}
+      {s.children.map((c, i) => (
+        <InspectSectionView key={i} s={c} />
+      ))}
+      {s.code.map((c, i) => (
+        <details key={i}>
+          <summary>{c.caption}</summary>
+          <pre>{c.text}</pre>
+        </details>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A header value as seen by the header inspector plugins (e.g. Kerberos / NTLM);
+ * `fallback` is shown while they run and when none applies.
+ */
+function PluginHeader({ name, value, fallback }: { name: string; value: string; fallback: React.ReactNode }) {
+  const [res, setRes] = useState<HeaderInspection[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setRes(null);
+    api
+      .pluginsInspectHeader(name, value)
+      .then((r) => alive && setRes(r))
+      .catch(() => alive && setRes([]));
+    return () => {
+      alive = false;
+    };
+  }, [name, value]);
+  const ok = (res ?? []).filter((r) => !r.error);
+  const failed = (res ?? []).filter((r) => r.error);
+  return (
+    <>
+      {ok.length === 0 && fallback}
+      {ok.map((r) => (
+        <div key={r.pluginId}>
+          <div className="muted small">Plugin: {r.tab}</div>
+          {nodesToTree(r.nodes).map((s, i) => (
+            <InspectSectionView key={i} s={s} />
+          ))}
+        </div>
+      ))}
+      {failed.map((r) => (
+        <div key={r.pluginId} className="err small">
+          Plugin {r.tab}: {r.error}
+        </div>
+      ))}
+    </>
+  );
+}
+
 export function AuthView({ detail, part }: { detail: Detail; part: Part }) {
   const h = part === "request" ? detail.request.headers : detail.response?.headers ?? [];
   const names = part === "request" ? ["authorization", "proxy-authorization"] : ["www-authenticate", "proxy-authenticate"];
@@ -155,12 +218,15 @@ export function AuthView({ detail, part }: { detail: Detail; part: Part }) {
   return (
     <div className="scroll pad">
       {found.length === 0 && <div className="muted">No {part === "request" ? "Authorization" : "WWW-Authenticate"} headers are present.</div>}
-      {found.map(([k, v], i) => (
-        <div key={i} className="auth-item">
-          <h4>{k}</h4>
-          {part === "request" ? authValue(latin1ToUtf8(v)) : <pre>{latin1ToUtf8(v)}</pre>}
-        </div>
-      ))}
+      {found.map(([k, v], i) => {
+        const value = latin1ToUtf8(v);
+        return (
+          <div key={i} className="auth-item">
+            <h4>{k}</h4>
+            <PluginHeader name={k} value={value} fallback={part === "request" ? authValue(value) : <pre>{value}</pre>} />
+          </div>
+        );
+      })}
     </div>
   );
 }
