@@ -7,6 +7,16 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Added
+- Portable edition for Windows (`Quena_<version>_x64-portable.zip`, xcopy deployment): unzip
+  anywhere and start `Quena.exe`; settings, sessions, rules, the root certificate and the web
+  view's own data stay in `quena-data` next to it.
+
+### Changed
+- In portable mode (a `portable` file or `quena-data` folder next to the executable, on every
+  platform) the web view's cache and storage move into the data folder as well, and bundled
+  plugins are found in a `plugins` folder beside the executable.
+
 ## [0.1.0] — 2026-09-29
 
 First public release of Quena, a local HTTP(S) debugging proxy for macOS, Windows and Linux:

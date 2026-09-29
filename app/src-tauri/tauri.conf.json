@@ -26,7 +26,8 @@
         "minWidth": 900,
         "minHeight": 560,
         "dragDropEnabled": false,
-        "zoomHotkeysEnabled": true
+        "zoomHotkeysEnabled": true,
+        "create": false
       }
     ],
     "security": {

@@ -62,13 +62,16 @@ fn main() {
         })
         .setup(move |app| {
             let handle = app.handle().clone();
-            // Bundled plugins live in the app resources; dev builds use plugins/dist.
+            // Bundled plugins live in the app resources, or next to the executable in a
+            // portable folder; dev builds use plugins/dist.
+            let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
             let bundled = app
                 .path()
                 .resource_dir()
                 .ok()
                 .map(|d| d.join("plugins"))
                 .filter(|d| d.exists())
+                .or_else(|| exe_dir.map(|d| d.join("plugins")).filter(|d| d.exists()))
                 .or_else(|| Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist")).filter(|d| d.exists()));
             if let Err(e) = core.init_plugins(bundled) {
                 tracing::error!(target: "quena", "plugin host: {e:#}");
@@ -85,15 +88,22 @@ fn main() {
                     });
                 }
             }
-            #[cfg(windows)]
-            if let Some(w) = app.get_webview_window("main") {
-                disable_browser_accelerators(&w);
-            }
             let m = menu::build(&handle)?;
             app.set_menu(m)?;
             app.on_menu_event(|app, ev| {
                 let _ = app.emit("menu", ev.id().0.clone());
             });
+            // The main window is created here (not from the config) so that a portable
+            // installation keeps the web view's own data (cache, local storage) beside the
+            // app as well, instead of in the user profile.
+            let cfg = app.config().app.windows.iter().find(|w| w.label == "main").cloned().ok_or("no main window in tauri.conf.json")?;
+            let mut builder = tauri::WebviewWindowBuilder::from_config(&handle, &cfg)?;
+            if core.paths.is_portable() {
+                builder = builder.data_directory(core.paths.data.join("webview"));
+            }
+            let _w = builder.build()?;
+            #[cfg(windows)]
+            disable_browser_accelerators(&_w);
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -1,0 +1,27 @@
+Quena — portable edition for Windows (x64)
+===========================================
+
+No installation: copy this folder anywhere (USB stick, network share, C:\Tools\Quena)
+and start Quena.exe. Remove it by deleting the folder.
+
+Everything Quena stores stays in the "quena-data" folder next to Quena.exe: settings,
+captured sessions, mock rules, the rules script, the root certificate and the web view's
+own data. The empty file "portable" switches this on; delete it (and quena-data) to use
+the normal per-user location instead.
+
+What still touches the machine, and only when you use it:
+- "Act as system proxy" (Settings -> Connections, on by default) points the Windows proxy
+  of the current user to Quena and restores it when Quena quits, or on the next start
+  after a crash.
+- "Trust root certificate" adds Quena's certificate to the current user's certificate
+  store. Remove it again under Capture -> HTTPS Settings before you leave a machine.
+- Passwords saved for automatic authentication go to the Windows Credential Manager of
+  the current user; they do not travel with the folder.
+
+Requirements: Windows 10 or 11 with the Microsoft Edge WebView2 Runtime (part of
+Windows 11 and of current Windows 10; otherwise https://developer.microsoft.com/microsoft-edge/webview2/).
+
+The build is not signed yet, so SmartScreen may ask for confirmation
+(More info -> Run anyway).
+
+https://github.com/hkiam/quena

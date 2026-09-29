@@ -102,6 +102,27 @@ jobs:
           # AppImage tools run without FUSE on the runner.
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: npm exec --prefix app/ui -- tauri build
+      - name: Portable ZIP (Windows, xcopy deployment)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $conf = Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $out = "target/release/bundle/portable"
+          $dir = "$out/Quena"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item target/release/quena.exe "$dir/Quena.exe"
+          # Same resources as the installers (bundled plugins).
+          foreach ($r in $conf.bundle.resources.PSObject.Properties) {
+            $src = Join-Path app/src-tauri $r.Name
+            $dst = Join-Path $dir $r.Value
+            New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+            Copy-Item -Recurse $src $dst
+          }
+          New-Item -ItemType File "$dir/portable" | Out-Null
+          Copy-Item app/src-tauri/windows/PORTABLE.txt "$dir/README-portable.txt"
+          Copy-Item LICENSE, NOTICE $dir
+          Compress-Archive -Path $dir -DestinationPath "$out/Quena_$($conf.version)_x64-portable.zip" -Force
+          Get-ChildItem -Recurse $dir | Select-Object FullName, Length
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
@@ -111,6 +132,7 @@ jobs:
             target/release/bundle/dmg/*.dmg
             target/release/bundle/nsis/*.exe
             target/release/bundle/msi/*.msi
+            target/release/bundle/portable/*.zip
             target/release/bundle/deb/*.deb
             target/release/bundle/rpm/*.rpm
             target/release/bundle/appimage/*.AppImage

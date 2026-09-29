@@ -183,7 +183,14 @@ Quena listens on **port 8866** by default. Layout: Quena's own arrangement by de
 
 Download the installer for your platform from the
 [Releases](https://github.com/hkiam/quena/releases) page: macOS (`.dmg`, Apple Silicon), Windows
-(`.exe` / `.msi`) and Linux (`.deb`, `.rpm`, AppImage).
+(`.exe` / `.msi`, or the **portable ZIP**) and Linux (`.deb`, `.rpm`, AppImage).
+
+**Windows portable (xcopy):** unzip `Quena_<version>_x64-portable.zip` anywhere — a USB stick,
+a share, `C:\Tools` — and start `Quena.exe`. No installation and no admin rights; everything
+Quena stores stays in the `quena-data` folder beside it. Only what you use touches the machine:
+the system proxy (restored on quit), a trusted root certificate, and saved passwords (Windows
+Credential Manager). Needs the Edge WebView2 Runtime, which Windows 11 and current Windows 10
+include.
 
 The packages are not signed with a paid certificate or notarized yet. On macOS, open
 *System Settings → Privacy & Security* after the first launch attempt and choose *Open Anyway*;
