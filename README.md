@@ -181,9 +181,13 @@ Quena listens on **port 8866** by default. Layout: Quena's own arrangement by de
 
 ### Install
 
-Pre-built installers for macOS (`.dmg`), Windows (`.exe`, NSIS / `.msi`) and Linux (`.deb`,
-`.rpm`, AppImage) will be published on the [Releases](https://github.com/hkiam/quena/releases) page.
-Until the first release, build from source.
+Download the installer for your platform from the
+[Releases](https://github.com/hkiam/quena/releases) page: macOS (`.dmg`, Apple Silicon), Windows
+(`.exe` / `.msi`) and Linux (`.deb`, `.rpm`, AppImage).
+
+The packages are not signed with a paid certificate or notarized yet. On macOS, open
+*System Settings → Privacy & Security* after the first launch attempt and choose *Open Anyway*;
+on Windows, SmartScreen may ask you to confirm (*More info → Run anyway*).
 
 ### Build from source
 

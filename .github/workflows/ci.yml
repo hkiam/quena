@@ -131,6 +131,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes=$(awk "/^## \[${GITHUB_REF_NAME#v}\]/{f=1;next} /^## \[/{f=0} f" CHANGELOG.md)
+          notes=$(awk "/^## \[${GITHUB_REF_NAME#v}\]/{f=1;next} /^## /{f=0} f" CHANGELOG.md)
           gh release create "$GITHUB_REF_NAME" --draft --prerelease \
             --title "Quena $GITHUB_REF_NAME" --notes "$notes" $(find dist -type f)
