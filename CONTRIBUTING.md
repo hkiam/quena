@@ -91,6 +91,20 @@ Also keep in mind:
 - Add or update tests for behaviour changes.
 - Match the style of the surrounding code (comments, naming, idioms).
 - Describe *what* changed and *why*; screenshots help for UI changes.
+- Add a line to [`CHANGELOG.md`](CHANGELOG.md) under `## [Unreleased]` for every change users
+  notice (feature, fix, changed behaviour or file format, security, platform support).
+
+## Changelog and releases
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); Quena uses
+[Semantic Versioning](https://semver.org/).
+
+- Entries go under `## [Unreleased]`, grouped as *Added*, *Changed*, *Fixed*, *Removed* and
+  *Security*: one bullet per change, written for users, naming contributors.
+- To release: move the `[Unreleased]` entries into `## [x.y.z] — YYYY-MM-DD` (keep an empty
+  `[Unreleased]` above it), update the compare links at the bottom, run
+  `tools/release/version.sh x.y.z`, commit, and push the tag `vx.y.z`. CI builds all packages
+  and creates a draft pre-release whose notes are that changelog section.
 
 ## License
 
