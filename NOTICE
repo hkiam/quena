@@ -1,0 +1,12 @@
+Piper
+Copyright 2026 Maik Hofmann and Piper contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Piper is an independent project and is not affiliated with, endorsed by, or
+connected to Progress Software Corporation. "Fiddler" is a trademark of its
+respective owner and is used only to describe familiarity and compatibility.
+
+Third-party components are used under their own permissive licenses
+(MIT, Apache-2.0, BSD, ISC, Zlib and similar); see Cargo.lock and
+app/ui/package-lock.json for the full dependency list.

@@ -2,7 +2,11 @@
 """Turn the Piper artwork (rounded square on black) into a 1024x1024 source
 icon with transparent corners, then run `tauri icon` for all platforms.
 
-usage: tools/icon/make_icon.py path/to/artwork.png
+usage: tools/icon/make_icon.py path/to/artwork.png [--threshold N] [--radius F]
+
+  --threshold  brightness (0-255) above which a pixel counts as artwork (default 24)
+  --radius     corner radius of the mask as a fraction of the side (default 0.225);
+               use a value >= the artwork's own corner radius so no background shows
 """
 import subprocess
 import sys
@@ -14,10 +18,10 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "app/src-tauri/icons"
 
 
-def main(src: str) -> None:
+def main(src: str, threshold: int = 24, radius: float = 0.225) -> None:
     im = Image.open(src).convert("RGBA")
     # Bounding box of the non-black artwork.
-    gray = im.convert("L").point(lambda v: 255 if v > 24 else 0)
+    gray = im.convert("L").point(lambda v: 255 if v > threshold else 0)
     bbox = gray.getbbox() or (0, 0, im.width, im.height)
     art = im.crop(bbox)
     side = max(art.size)
@@ -27,7 +31,7 @@ def main(src: str) -> None:
     scale = 4
     big = side * scale
     mask = Image.new("L", (big, big), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, big - 1, big - 1), radius=int(big * 0.225), fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, big - 1, big - 1), radius=int(big * radius), fill=255)
     mask = mask.resize((side, side), Image.LANCZOS)
     alpha = ImageChops.multiply(sq.getchannel("A"), mask)
     sq.putalpha(alpha)
@@ -64,4 +68,11 @@ def main(src: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("artwork")
+    ap.add_argument("--threshold", type=int, default=24)
+    ap.add_argument("--radius", type=float, default=0.225)
+    a = ap.parse_args()
+    main(a.artwork, a.threshold, a.radius)

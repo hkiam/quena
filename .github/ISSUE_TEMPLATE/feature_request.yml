@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an idea or a Fiddler feature you miss
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should it look and behave? If Fiddler has it, how does it work there?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

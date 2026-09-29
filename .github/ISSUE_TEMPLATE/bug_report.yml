@@ -1,0 +1,45 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **do not** post security vulnerabilities here — see SECURITY.md.
+        Remove cookies, tokens and other secrets from anything you attach.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Enable HTTPS decryption
+        2. curl -x http://127.0.0.1:8866 https://example.com
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Piper version or commit
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options: [macOS, Windows, Linux]
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: From View → Log, if relevant.
+      render: text
