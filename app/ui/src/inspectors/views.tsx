@@ -355,17 +355,19 @@ export function RawView({ detail, part, wrap }: { detail: Detail; part: Part; wr
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const head = part === "request" ? [requestLine(detail), ...detail.request.headers.map(([k, v]) => `${k}: ${latin1ToUtf8(v)}`)].join("\n") : detail.response ? rawResponseHead(detail).trimEnd() : "";
   if (part === "response" && !detail.response) return <div className="placeholder">No response</div>;
+  const textBody = info.len > 0 && (info.isText || info.variants.includes("decoded"));
+  // Without a text body the head gets the whole pane; the binary hint is one line below it.
   return (
-    <div className="rawview">
-      <pre className="raw-head">{head}</pre>
-      {info.len > 0 &&
-        (info.isText || info.variants.includes("decoded") ? (
-          <div className="raw-body">
-            <BodyText id={detail.summary.id} part={part} info={info} variant="raw" highlight={false} wrap={wrap} />
-          </div>
-        ) : (
-          <div className="placeholder">Binary body ({fmtBytes(info.len)}) – see HexView</div>
-        ))}
+    <div className={textBody ? "rawview" : "rawview head-only"}>
+      <pre className="raw-head">
+        {head}
+        {info.len > 0 && !textBody && <span className="raw-binary">{`\n\nBinary body (${fmtBytes(info.len)}) – see HexView`}</span>}
+      </pre>
+      {textBody && (
+        <div className="raw-body">
+          <BodyText id={detail.summary.id} part={part} info={info} variant="raw" highlight={false} wrap={wrap} />
+        </div>
+      )}
     </div>
   );
 }

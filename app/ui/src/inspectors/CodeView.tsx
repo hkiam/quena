@@ -41,7 +41,7 @@ function langExt(l: Lang): Extension {
 }
 
 const theme = EditorView.theme({
-  "&": { height: "100%", fontSize: "12px", backgroundColor: "var(--panel-bg)", color: "var(--fg)" },
+  "&": { height: "100%", fontSize: "13px", backgroundColor: "var(--panel-bg)", color: "var(--fg)" },
   ".cm-scroller": { fontFamily: "var(--mono)", lineHeight: "1.45" },
   ".cm-gutters": { backgroundColor: "var(--gutter-bg)", color: "var(--muted)", borderRight: "1px solid var(--border)" },
   ".cm-activeLine": { backgroundColor: "var(--active-line)" },
