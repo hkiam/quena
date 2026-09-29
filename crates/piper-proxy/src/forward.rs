@@ -512,6 +512,18 @@ async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &
             return error_response(StatusCode::BAD_GATEWAY, "Response aborted in Piper");
         }
     }
+    // Bandwidth simulation: an optional fixed latency before the response, and a
+    // byte-rate cap applied to the streamed body.
+    if cfg.throttle_latency_ms > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(cfg.throttle_latency_ms)).await;
+    }
+    let throttle = |b: ProxyBody| -> ProxyBody {
+        if cfg.throttle_bps > 0 {
+            crate::body::Throttle::new(b, cfg.throttle_bps).boxed()
+        } else {
+            b
+        }
+    };
     let mode = hooks.response_mode(view, req_head, &resp_head);
     if mode == Mode::Buffer || !cfg.stream {
         if mode == Mode::Buffer {
@@ -548,7 +560,7 @@ async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &
             (resp_head, body)
         };
         let len = body.len();
-        let out = build_client_response(&head, StoredStream::new(body).boxed(), Some(len));
+        let out = build_client_response(&head, throttle(StoredStream::new(body).boxed()), Some(len));
         live.update(|d| {
             d.summary.state = if aborted { SessionState::Aborted } else { SessionState::Done };
             d.timers.client_begin_response = Some(now_us());
@@ -598,7 +610,7 @@ async fn deliver_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &
         }),
     );
     live.update(|d| d.timers.client_begin_response = Some(now_us()));
-    let body = Tee::new(incoming, shared.recorder.clone(), key, times).boxed();
+    let body = throttle(Tee::new(incoming, shared.recorder.clone(), key, times).boxed());
     let mut out = Response::from_parts(parts, body);
     strip_hop_by_hop(out.headers_mut());
     out

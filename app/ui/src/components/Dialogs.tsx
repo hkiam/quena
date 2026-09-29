@@ -433,6 +433,15 @@ function OptionsDialog() {
               <span>PAC URL or file</span>
               <input placeholder="empty = use system PAC; or http://…/proxy.pac, file path" value={s.proxy.pacUrl} onChange={(e) => up((x) => (x.proxy.pacUrl = e.target.value))} />
             </div>
+            <div className="f-sep">Bandwidth simulation</div>
+            <div className="f-row">
+              <span>Throttle (kbit/s)</span>
+              <input type="number" min={0} placeholder="0 = unlimited" value={s.throttleKbps} onChange={(e) => up((x) => (x.throttleKbps = Math.max(0, Number(e.target.value))))} />
+            </div>
+            <div className="f-row">
+              <span>Added latency (ms)</span>
+              <input type="number" min={0} value={s.throttleLatencyMs} onChange={(e) => up((x) => (x.throttleLatencyMs = Math.max(0, Number(e.target.value))))} />
+            </div>
           </>
         )}
         {tab === "https" && (

@@ -65,6 +65,21 @@ pub struct HttpsSettings {
     pub enable_http2: bool,
     /// Hosts for which HTTP/2 is downgraded to HTTP/1.1.
     pub http2_downgrade_hosts: String,
+    /// Client certificates (mTLS) presented to matching upstream hosts.
+    #[serde(default)]
+    pub client_certs: Vec<ClientCert>,
+}
+
+/// A client certificate (mTLS) for hosts matching `host` (glob).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ClientCert {
+    /// Host pattern this certificate is presented to (e.g. `*.corp.example`).
+    pub host: String,
+    /// Path to the certificate chain (PEM).
+    pub cert_path: String,
+    /// Path to the private key (PEM). May be the same file as the chain.
+    pub key_path: String,
 }
 
 impl Default for HttpsSettings {
@@ -77,6 +92,7 @@ impl Default for HttpsSettings {
             ignore_cert_errors_hosts: String::new(),
             enable_http2: true,
             http2_downgrade_hosts: String::new(),
+            client_certs: Vec::new(),
         }
     }
 }
@@ -105,6 +121,12 @@ pub struct Settings {
     pub auth: AuthSettings,
     /// Enable the JavaScript rules script (M14).
     pub scripting_enabled: bool,
+    /// Simulated bandwidth cap in kilobits/s (0 = unlimited).
+    #[serde(default)]
+    pub throttle_kbps: u64,
+    /// Extra latency added before each response, in milliseconds (0 = none).
+    #[serde(default)]
+    pub throttle_latency_ms: u64,
     /// Opaque UI preferences (column layout, splitters …).
     pub ui: serde_json::Value,
 }
@@ -125,6 +147,8 @@ impl Default for Settings {
             offer_recovery: true,
             auth: AuthSettings::default(),
             scripting_enabled: false,
+            throttle_kbps: 0,
+            throttle_latency_ms: 0,
             ui: serde_json::Value::Null,
         }
     }

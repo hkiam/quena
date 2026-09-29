@@ -211,7 +211,11 @@ impl AppCore {
         let old = std::mem::replace(&mut *self.settings.write(), s.clone());
         s.save(&self.paths.settings).context("save settings")?;
         self.capture().bodies.set_config(s.bodies.to_config());
-        if old.proxy != s.proxy || old.https != s.https {
+        if old.proxy != s.proxy
+            || old.https != s.https
+            || old.throttle_kbps != s.throttle_kbps
+            || old.throttle_latency_ms != s.throttle_latency_ms
+        {
             if let Some(e) = self.engine() {
                 e.reconfigure(self)?;
             }

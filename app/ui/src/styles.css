@@ -1647,3 +1647,33 @@ pre {
   padding: 6px 4px;
   border-bottom: 1px solid var(--border);
 }
+
+/* Bandwidth section separator in Options */
+.f-sep {
+  margin: 10px 0 4px;
+  font-weight: 600;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+/* Client certificate (mTLS) rows */
+.cc-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.cc-row .cc-host {
+  flex: 1;
+  min-width: 0;
+}
+.cc-row .cc-file {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-row .cc-del {
+  color: var(--muted);
+}

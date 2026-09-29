@@ -91,6 +91,10 @@ pub struct ProxyConfig {
     pub auto_auth_upstream: bool,
     /// Preferred scheme order.
     pub auth_prefer: Vec<piper_auth::Scheme>,
+    /// Simulated bandwidth cap in bytes/s for responses (0 = unlimited).
+    pub throttle_bps: u64,
+    /// Extra latency added before each response, in milliseconds.
+    pub throttle_latency_ms: u64,
 }
 
 impl Default for ProxyConfig {
@@ -117,6 +121,8 @@ impl Default for ProxyConfig {
             auto_auth_hosts: vec![],
             auto_auth_upstream: false,
             auth_prefer: vec![piper_auth::Scheme::Negotiate, piper_auth::Scheme::Ntlm, piper_auth::Scheme::Basic],
+            throttle_bps: 0,
+            throttle_latency_ms: 0,
         }
     }
 }

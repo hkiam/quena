@@ -92,6 +92,8 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, pac: Option<A
         auto_auth_hosts: split_list(&s.auth.hosts),
         auto_auth_upstream: s.auth.upstream,
         auth_prefer: parse_prefer(&s.auth.prefer),
+        throttle_bps: s.throttle_kbps.saturating_mul(1000) / 8,
+        throttle_latency_ms: s.throttle_latency_ms,
     }
 }
 
@@ -143,6 +145,7 @@ impl ProxyEngine {
             rules: RwLock::new(core.rules.clone()),
             pac: pac_slot,
         });
+        e.apply_client_certs(&s);
         Ok(e)
     }
 
@@ -226,7 +229,38 @@ impl ProxyEngine {
         let cfg = proxy_config(&s, detected, pac);
         self.state.lock().upstream = cfg.upstream.as_ref().map(|(h, p)| format!("{h}:{p}"));
         self.proxy.shared.recorder.set_lossless(s.lossless_recording);
+        self.apply_client_certs(&s);
         self.proxy.reconfigure(cfg).map_err(|e| anyhow!("{e}"))
+    }
+
+    /// Load client certificates (mTLS) from the configured PEM files into the
+    /// upstream TLS clients. Called on every (re)configure.
+    fn apply_client_certs(&self, s: &Settings) {
+        let tls = &self.proxy.shared.tls_clients;
+        tls.clear_client_certs();
+        for c in &s.https.client_certs {
+            if c.host.trim().is_empty() || c.cert_path.trim().is_empty() {
+                continue;
+            }
+            let chain = match std::fs::read_to_string(&c.cert_path) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(target: "piper", "client cert {} unreadable: {e}", c.cert_path);
+                    continue;
+                }
+            };
+            let key_path = if c.key_path.trim().is_empty() { &c.cert_path } else { &c.key_path };
+            let key = match std::fs::read_to_string(key_path) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(target: "piper", "client key {key_path} unreadable: {e}");
+                    continue;
+                }
+            };
+            if let Err(e) = tls.add_client_cert(&c.host, &chain, &key) {
+                tracing::warn!(target: "piper", "client cert for {} rejected: {e}", c.host);
+            }
+        }
     }
 }
 

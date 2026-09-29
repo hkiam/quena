@@ -1,6 +1,6 @@
 // Tools → HTTPS: decryption options and root certificate management.
 import { useEffect, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { save, open } from "@tauri-apps/plugin-dialog";
 import { api, type CaInfo } from "../api";
 import { say, set, useStore } from "../store";
 import { patchSettings } from "../settingsActions";
@@ -50,6 +50,46 @@ export function HttpsPanel() {
       <label className="f-check">
         <input type="checkbox" checked={h.enableHttp2} onChange={(e) => patchSettings((s) => (s.https.enableHttp2 = e.target.checked))} /> Enable HTTP/2
       </label>
+      <fieldset className="f-section">
+        <legend>Client certificates (mTLS)</legend>
+        <p className="muted small">Presented to matching upstream hosts. Cert and key are PEM files (may be the same file).</p>
+        {(h.clientCerts ?? []).map((c, i) => (
+          <div className="cc-row" key={i}>
+            <input
+              className="cc-host"
+              placeholder="host pattern e.g. *.corp.example"
+              defaultValue={c.host}
+              onBlur={(e) => patchSettings((s) => (s.https.clientCerts[i].host = e.target.value))}
+            />
+            <button
+              className="cc-file"
+              title={c.certPath || "choose certificate PEM"}
+              onClick={async () => {
+                const p = await open({ multiple: false, filters: [{ name: "PEM", extensions: ["pem", "crt", "cer", "key"] }] });
+                if (typeof p === "string") patchSettings((s) => (s.https.clientCerts[i].certPath = p));
+              }}
+            >
+              {c.certPath ? c.certPath.split("/").pop() : "Cert…"}
+            </button>
+            <button
+              className="cc-file"
+              title={c.keyPath || "choose key PEM (optional)"}
+              onClick={async () => {
+                const p = await open({ multiple: false, filters: [{ name: "PEM", extensions: ["pem", "key", "crt"] }] });
+                if (typeof p === "string") patchSettings((s) => (s.https.clientCerts[i].keyPath = p));
+              }}
+            >
+              {c.keyPath ? c.keyPath.split("/").pop() : "Key…"}
+            </button>
+            <button className="cc-del" title="Remove" onClick={() => patchSettings((s) => s.https.clientCerts.splice(i, 1))}>
+              ✕
+            </button>
+          </div>
+        ))}
+        <button onClick={() => patchSettings((s) => (s.https.clientCerts = [...(s.https.clientCerts ?? []), { host: "", certPath: "", keyPath: "" }]))}>
+          Add client certificate
+        </button>
+      </fieldset>
       <fieldset className="f-section">
         <legend>Root certificate</legend>
         {!ca ? (

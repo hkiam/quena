@@ -323,6 +323,7 @@ export interface Settings {
     ignoreCertErrorsHosts: string;
     enableHttp2: boolean;
     http2DowngradeHosts: string;
+    clientCerts: { host: string; certPath: string; keyPath: string }[];
   };
   bodies: {
     inlineLimitKb: number;
@@ -342,6 +343,8 @@ export interface Settings {
   offerRecovery: boolean;
   auth: AuthSettings;
   scriptingEnabled: boolean;
+  throttleKbps: number;
+  throttleLatencyMs: number;
   ui: unknown;
 }
 
