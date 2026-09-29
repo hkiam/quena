@@ -559,12 +559,14 @@ function LayoutChoice() {
   return (
     <div className="f-row layout-choice">
       <span>Layout</span>
-      <label className="f-check">
-        <input type="radio" name="layout-preset" checked={preset === "quena"} onChange={() => actions.applyLayoutPreset("quena")} /> Quena — list left, request and response side by side
-      </label>
-      <label className="f-check">
-        <input type="radio" name="layout-preset" checked={preset === "classic"} onChange={() => actions.applyLayoutPreset("classic")} /> Classic — dense list, request above response, more columns
-      </label>
+      <div className="layout-options">
+        <label className="f-check">
+          <input type="radio" name="layout-preset" checked={preset === "quena"} onChange={() => actions.applyLayoutPreset("quena")} /> Quena — list left, request and response side by side
+        </label>
+        <label className="f-check">
+          <input type="radio" name="layout-preset" checked={preset === "classic"} onChange={() => actions.applyLayoutPreset("classic")} /> Classic — dense list, request above response, more columns
+        </label>
+      </div>
     </div>
   );
 }

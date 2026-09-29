@@ -599,11 +599,27 @@ kbd,
     padding: 2px 6px;
   }
 }
+/* plain tab strips (settings, composer, device assistant) */
 .tabs-row {
   display: flex;
   flex-wrap: wrap;
-  background: var(--tab-bg);
+  gap: 2px;
+  padding: 0 6px;
   border-bottom: 1px solid var(--border);
+}
+.insp-tab {
+  padding: 7px 10px 6px;
+  white-space: nowrap;
+  color: var(--muted);
+  font-weight: 500;
+  box-shadow: inset 0 -2px 0 transparent;
+}
+.insp-tab:hover {
+  color: var(--fg);
+}
+.insp-tab.active {
+  color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 .insp-head {
   display: flex;
@@ -1924,13 +1940,15 @@ pre {
 
 /* Layout preset choice (Settings → General, first-run dialog) */
 .layout-choice {
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 4px 12px;
+  align-items: start;
+  margin-bottom: 8px;
 }
 .layout-choice > span {
-  min-width: 60px;
   padding-top: 2px;
+}
+.layout-options {
+  display: grid;
+  gap: 4px;
 }
 .layout-cards {
   display: grid;
