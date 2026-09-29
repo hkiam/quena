@@ -112,24 +112,31 @@ fn get_bypass(service: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Run `f` for every network service at once. Each `networksetup` call is its own process
+/// (~50 ms); a Mac often has 5–10 services (Wi-Fi, Ethernet adapters, VPNs, iPhone USB…),
+/// so doing them one after another made starting and stopping the capture take seconds.
+fn per_service<T: Send>(svcs: &[String], f: impl Fn(&str) -> T + Sync) -> Vec<T> {
+    std::thread::scope(|scope| {
+        let f = &f;
+        let handles: Vec<_> = svcs.iter().map(|s| scope.spawn(move || f(s))).collect();
+        handles.into_iter().map(|h| h.join().expect("networksetup worker")).collect()
+    })
+}
+
 pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<()> {
     let svcs = services()?;
     // Keep an existing backup (e.g. after a crash) – it holds the original state.
     if !backup.exists() {
-        let mut states = Vec::new();
-        for s in &svcs {
-            states.push(ServiceState {
-                service: s.clone(),
-                web: get_proxy("-getwebproxy", s)?,
-                secure: get_proxy("-getsecurewebproxy", s)?,
-                bypass: get_bypass(s),
-            });
-        }
+        let states = per_service(&svcs, |s| -> Result<ServiceState> {
+            Ok(ServiceState { service: s.to_string(), web: get_proxy("-getwebproxy", s)?, secure: get_proxy("-getsecurewebproxy", s)?, bypass: get_bypass(s) })
+        })
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
         let b = Backup { port, services: states };
         crate::write_atomic(backup, &serde_json::to_vec_pretty(&b).expect("backup json"))?;
     }
     let p = port.to_string();
-    for s in &svcs {
+    per_service(&svcs, |s| -> Result<()> {
         run("/usr/sbin/networksetup", &["-setwebproxy", s, "127.0.0.1", &p])?;
         run("/usr/sbin/networksetup", &["-setsecurewebproxy", s, "127.0.0.1", &p])?;
         if !bypass.is_empty() {
@@ -137,7 +144,10 @@ pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<(
             args.extend(bypass.iter().map(|b| b.as_str()));
             let _ = run("/usr/sbin/networksetup", &args);
         }
-    }
+        Ok(())
+    })
+    .into_iter()
+    .collect::<Result<Vec<_>>>()?;
     tracing::info!(target: "quena::platform", "system proxy set to 127.0.0.1:{port} for {} service(s)", svcs.len());
     Ok(())
 }
@@ -151,7 +161,7 @@ pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
             // settings, but we must not leave the Mac pointing at a proxy that is gone.
             tracing::error!(target: "quena::platform", "system proxy backup unreadable ({e}); turning off proxies that point to this Mac");
             if let Ok(svcs) = services() {
-                for s in &svcs {
+                per_service(&svcs, |s| {
                     for (get, state) in [("-getwebproxy", "-setwebproxystate"), ("-getsecurewebproxy", "-setsecurewebproxystate")] {
                         if let Ok((true, host, _)) = get_proxy(get, s) {
                             if host == "127.0.0.1" || host == "localhost" {
@@ -159,7 +169,7 @@ pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
                             }
                         }
                     }
-                }
+                });
             }
             let _ = std::fs::remove_file(backup);
             return Ok(true);
@@ -167,8 +177,10 @@ pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
     };
     // Best effort per service: a service that no longer exists (VPN, USB adapter) must
     // not stop the others from being restored.
-    let mut failures = Vec::new();
-    for s in &b.services {
+    let names: Vec<String> = b.services.iter().map(|s| s.service.clone()).collect();
+    let failures: Vec<String> = per_service(&names, |name| {
+        let mut failures = Vec::new();
+        let Some(s) = b.services.iter().find(|x| x.service == name) else { return failures };
         let restore = |set: &str, state: &str, v: &(bool, String, u16)| -> Result<()> {
             if !v.1.is_empty() && v.2 != 0 && !(v.1 == "127.0.0.1" && v.2 == b.port) {
                 run("/usr/sbin/networksetup", &[set, &s.service, &v.1, &v.2.to_string()])?;
@@ -188,7 +200,11 @@ pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
             args.extend(s.bypass.iter().map(|x| x.as_str()));
         }
         let _ = run("/usr/sbin/networksetup", &args);
-    }
+        failures
+    })
+    .into_iter()
+    .flatten()
+    .collect();
     let _ = std::fs::remove_file(backup);
     if failures.is_empty() {
         tracing::info!(target: "quena::platform", "system proxy restored");

@@ -301,7 +301,9 @@ impl AppCore {
             visible: cap.index.view_len(),
             jobs_active: self.jobs.active_count(),
             used_bytes: stats.used_bytes,
-            free_bytes: stats.free_bytes,
+            // Rounded to 64 MB: the exact value changes with every write, which would send a
+            // status event (and re-render the toolbar and status bar) four times a second.
+            free_bytes: stats.free_bytes.map(|b| b & !((64u64 << 20) - 1)),
             recording_suspended: stats.recording_suspended,
             filter_active: self.filters.read().enabled || !self.quick_filter.read().is_empty(),
             capture_dir: cap.dir.display().to_string(),
