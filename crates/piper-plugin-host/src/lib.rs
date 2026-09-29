@@ -131,11 +131,22 @@ impl PluginHost {
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(|e| anyhow!("{e}"))?;
         let e2 = engine.clone();
+        // The deadline is counted in epoch ticks, so the ticker must follow wall-clock
+        // time: `sleep(TICK)` can take several times longer on a loaded machine, which
+        // would silently stretch the call timeout. Catch up on missed ticks instead.
         std::thread::Builder::new()
             .name("piper-wasm-epoch".into())
-            .spawn(move || loop {
-                std::thread::sleep(TICK);
-                e2.increment_epoch();
+            .spawn(move || {
+                let start = std::time::Instant::now();
+                let mut ticks = 0u64;
+                loop {
+                    std::thread::sleep(TICK);
+                    let due = (start.elapsed().as_millis() / TICK.as_millis()) as u64;
+                    while ticks < due {
+                        e2.increment_epoch();
+                        ticks += 1;
+                    }
+                }
             })
             .context("epoch ticker")?;
         let host = Arc::new(PluginHost {
