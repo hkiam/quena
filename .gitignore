@@ -5,3 +5,6 @@ dist/
 *.log
 /app/ui/.vite
 /app/src-tauri/gen
+
+# Local exports (e.g. "Save as PDF" of the docs)
+/*.pdf
