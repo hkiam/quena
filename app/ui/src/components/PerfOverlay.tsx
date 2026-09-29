@@ -24,6 +24,10 @@ export function PerfOverlay() {
         IPC p50 {s.ipcP50.toFixed(1)} / <span className={bad(s.ipcP99, 100)}>p99 {s.ipcP99.toFixed(1)} ms</span> · long frames {s.longFrames}
       </div>
       <div>
+        long tasks <span className={bad(s.longTasks, 0.5)}>{s.longTasks}</span>
+        {s.maxTaskMs > 0 && <> · max <span className={bad(s.maxTaskMs, 50)}>{s.maxTaskMs.toFixed(0)} ms</span></>}
+      </div>
+      <div>
         rows {total} · v{version}
       </div>
       {s.lastIpc.map((i, k) => (
