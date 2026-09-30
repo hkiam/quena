@@ -76,7 +76,9 @@
     },
     "resources": {
       "../../plugins/dist/fast-infoset": "plugins/fast-infoset",
-      "../../plugins/dist/auth-tokens": "plugins/auth-tokens"
+      "../../plugins/dist/auth-tokens": "plugins/auth-tokens",
+      "../../plugins/dist/jwt": "plugins/jwt",
+      "../../plugins/dist/graphql": "plugins/graphql"
     },
     "fileAssociations": [
       {

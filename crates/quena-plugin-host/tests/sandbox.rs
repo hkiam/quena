@@ -124,3 +124,28 @@ fn compiled_plugins_are_cached() {
     h.decode(idx, Some("text/x-rot13"), &mut &b"Uryyb"[..], &mut out, &|| false).unwrap();
     assert_eq!(out, b"Hello");
 }
+
+/// JWT header inspector (with the sandbox's wall clock for relative dates) and GraphQL decoder.
+#[test]
+fn jwt_and_graphql_plugins() {
+    let Some(h) = host() else { return };
+    if !h.list().iter().any(|p| p.id == "io.github.hkiam.jwt") || !h.list().iter().any(|p| p.id == "io.github.hkiam.graphql") {
+        eprintln!("jwt/graphql plugins not built – run plugins/build.sh");
+        return;
+    }
+    // {"alg":"HS256","typ":"JWT"} . {"sub":"42","exp":4102444800} (2100-01-01) . 32-byte signature
+    let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsImV4cCI6NDEwMjQ0NDgwMH0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let r = h.inspect_header("Authorization", &format!("Bearer {jwt}"));
+    let r = r.iter().find(|r| r.plugin_id == "io.github.hkiam.jwt").expect("jwt inspection");
+    assert!(r.error.is_none(), "{r:#?}");
+    assert!(r.nodes.iter().any(|n| n.name == "exp (Expiration time)" && n.value.starts_with("2100-01-01 00:00:00 UTC") && n.value.contains("valid for")), "{r:#?}");
+    assert!(h.inspect_header("Cookie", &format!("theme=dark; access_token={jwt}")).iter().any(|r| r.plugin_id == "io.github.hkiam.jwt"));
+
+    let body = br#"{"operationName":"Me","query":"query Me { me { name } }","variables":{}}"#;
+    let c = h.candidates(Some("application/json"), body);
+    assert_eq!(c.first().map(|x| x.1.as_str()), Some("GraphQL"), "{c:?}");
+    let mut out = Vec::new();
+    h.decode(c[0].0, Some("application/json"), &mut &body[..], &mut out, &|| false).unwrap();
+    let out = String::from_utf8(out).unwrap();
+    assert!(out.starts_with("Operation: query Me\n\n--- Query ---\nquery Me {\n  me {\n    name\n  }\n}\n"), "{out}");
+}

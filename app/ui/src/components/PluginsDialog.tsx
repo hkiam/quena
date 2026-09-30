@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { forgetInspectorHeaders } from "../inspectors/views";
 import { api, type PluginInfo } from "../api";
 import { say } from "../store";
 
@@ -30,6 +31,7 @@ export function PluginsPanel() {
                   disabled={!!p.error}
                   onChange={async (e) => {
                     await api.pluginSetEnabled(p.id, e.target.checked);
+                    forgetInspectorHeaders();
                     setList(await api.pluginsList());
                   }}
                 />
@@ -50,6 +52,7 @@ export function PluginsPanel() {
       <div className="btn-row">
         <button
           onClick={async () => {
+            forgetInspectorHeaders();
             setList(await api.pluginsRescan());
             say("Plugins rescanned");
           }}

@@ -72,6 +72,8 @@ jobs:
             plugins/fast-infoset
             plugins/rot13-test
             plugins/evil-test
+            plugins/jwt
+            plugins/graphql
       - uses: actions/setup-node@v4
         with:
           node-version: 22

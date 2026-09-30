@@ -176,7 +176,9 @@ function InspectSectionView({ s }: { s: InspectSection }) {
  * A header value as seen by the header inspector plugins (e.g. Kerberos / NTLM);
  * `fallback` is shown while they run and when none applies.
  */
-function PluginHeader({ name, value, fallback }: { name: string; value: string; fallback: React.ReactNode }) {
+/** One header in the Auth view, decoded by the header-inspector plugins that recognise it.
+ *  An `optional` header (cookie, token header …) only shows when a plugin found something. */
+function PluginHeader({ name, value, fallback, optional }: { name: string; value: string; fallback: React.ReactNode; optional?: boolean }) {
   const [res, setRes] = useState<HeaderInspection[] | null>(null);
   useEffect(() => {
     let alive = true;
@@ -189,10 +191,12 @@ function PluginHeader({ name, value, fallback }: { name: string; value: string; 
       alive = false;
     };
   }, [name, value]);
-  const ok = (res ?? []).filter((r) => !r.error);
+  const ok = (res ?? []).filter((r) => !r.error && r.nodes.length);
   const failed = (res ?? []).filter((r) => r.error);
+  if (optional && !ok.length && !failed.length) return null;
   return (
-    <>
+    <div className="auth-item">
+      <h4>{name}</h4>
       {ok.length === 0 && fallback}
       {ok.map((r) => (
         <div key={r.pluginId}>
@@ -207,26 +211,48 @@ function PluginHeader({ name, value, fallback }: { name: string; value: string; 
           Plugin {r.tab}: {r.error}
         </div>
       ))}
-    </>
+    </div>
   );
+}
+
+// Header names the enabled header-inspector plugins look at (besides the auth headers).
+let inspectorHeaders: Promise<Set<string>> | null = null;
+export function forgetInspectorHeaders() {
+  inspectorHeaders = null;
+}
+function useInspectorHeaders(): Set<string> {
+  const [names, setNames] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let alive = true;
+    inspectorHeaders ??= api
+      .pluginsList()
+      .then((l) => new Set(l.filter((p) => p.kind === "headerInspector" && p.enabled).flatMap((p) => p.headers.map((h) => h.toLowerCase()))))
+      .catch(() => new Set<string>());
+    inspectorHeaders.then((n) => alive && setNames(n));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return names;
 }
 
 export function AuthView({ detail, part }: { detail: Detail; part: Part }) {
   const h = part === "request" ? detail.request.headers : detail.response?.headers ?? [];
   const names = part === "request" ? ["authorization", "proxy-authorization"] : ["www-authenticate", "proxy-authenticate"];
+  const extra = useInspectorHeaders();
   const found = h.filter(([k]) => names.includes(k.toLowerCase()));
+  // Tokens elsewhere (JWT in a cookie or an X-Access-Token header …), shown when recognised.
+  const more = h.filter(([k]) => !names.includes(k.toLowerCase()) && extra.has(k.toLowerCase()));
   return (
     <div className="scroll pad">
       {found.length === 0 && <div className="muted">No {part === "request" ? "Authorization" : "WWW-Authenticate"} headers are present.</div>}
       {found.map(([k, v], i) => {
         const value = latin1ToUtf8(v);
-        return (
-          <div key={i} className="auth-item">
-            <h4>{k}</h4>
-            <PluginHeader name={k} value={value} fallback={part === "request" ? authValue(value) : <pre>{value}</pre>} />
-          </div>
-        );
+        return <PluginHeader key={i} name={k} value={value} fallback={part === "request" ? authValue(value) : <pre>{value}</pre>} />;
       })}
+      {more.map(([k, v], i) => (
+        <PluginHeader key={`m${i}`} name={k} value={latin1ToUtf8(v)} fallback={null} optional />
+      ))}
     </div>
   );
 }

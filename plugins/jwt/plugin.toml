@@ -1,0 +1,14 @@
+id = "io.github.hkiam.jwt"
+name = "JWT"
+version = "0.0.1"
+api_version = "1"
+wasm = "jwt.wasm"
+description = "Decodes JSON Web Tokens (JWS/JWE) in Bearer/DPoP authorization, cookies and token headers: header, claims with dates and expiry. Signatures are not verified."
+
+[header_inspector]
+headers = [
+  "authorization", "proxy-authorization", "cookie", "set-cookie", "dpop",
+  "x-access-token", "x-auth-token", "x-id-token", "x-jwt-assertion", "x-forwarded-access-token",
+  "x-amzn-oidc-data", "x-amzn-oidc-accesstoken", "x-goog-iap-jwt-assertion", "cf-access-jwt-assertion",
+  "x-ms-token-aad-id-token", "x-ms-token-aad-access-token",
+]

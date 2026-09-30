@@ -1,0 +1,10 @@
+id = "io.github.hkiam.graphql"
+name = "GraphQL"
+version = "0.0.1"
+api_version = "1"
+wasm = "graphql.wasm"
+description = "Shows GraphQL requests (application/graphql, JSON with query/variables/operationName, batches, persisted queries) with the query pretty-printed, and GraphQL JSON responses with errors first."
+
+[decoder]
+mime_types = ["application/graphql", "application/x-graphql", "application/graphql-response+json", "application/graphql+json"]
+extensions = ["graphql", "gql"]
