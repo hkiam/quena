@@ -1,0 +1,8 @@
+id = "io.github.hkiam.webdiag"
+name = "Diagnostics"
+version = "0.1.0"
+api_version = "1"
+wasm = "webdiag.wasm"
+description = "Analyses a capture and reports prioritised findings with evidence: slow and large requests, duplicates, N+1 and polling patterns, retries, errors, authentication, caching, cookies, connection reuse, OData queries, and how sensitive the traffic is to latency and bandwidth."
+
+[analyzer]

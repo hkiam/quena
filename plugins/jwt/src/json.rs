@@ -1,5 +1,5 @@
 //! Minimal JSON reader and pretty printer (no dependencies, keeps key order).
-//! The same file is used by the `jwt` and `graphql` plugins.
+//! The same file is used by the `jwt`, `graphql` and `webdiag` plugins.
 //!
 //! Malformed input never panics; nesting is limited. In lenient mode a document
 //! cut off at the end (a truncated body) is closed and reported as `truncated`.

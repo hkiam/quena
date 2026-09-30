@@ -79,10 +79,97 @@ interface header-inspector {
     inspect: func(name: string, value: string) -> result<list<node>, string>;
 }
 
+/// Analyses a whole capture (or a selection) and returns a diagnostic report.
+/// Added in API 1 without changing the other interfaces.
+///
+/// The host streams the sessions in batches (time order) into one `run`; `finish`
+/// returns the report as JSON (schema: plugins/webdiag/REPORT.md). Header values that
+/// carry secrets are redacted by the host before they reach the plugin.
+interface analyzer {
+    record info {
+        /// Stable id, e.g. `io.github.hkiam.webdiag`.
+        id: string,
+        name: string,
+        version: string,
+        /// Title of the report view.
+        title: string,
+    }
+
+    /// Session timers in microseconds since the Unix epoch; durations in milliseconds.
+    record timers {
+        client-begin-request: option<u64>,
+        client-done-request: option<u64>,
+        server-connect-start: option<u64>,
+        server-connected: option<u64>,
+        server-begin-request: option<u64>,
+        server-done-request: option<u64>,
+        server-got-first-byte: option<u64>,
+        server-done-response: option<u64>,
+        client-done-response: option<u64>,
+        dns-ms: option<u32>,
+        tcp-connect-ms: option<u32>,
+        tls-handshake-ms: option<u32>,
+    }
+
+    record session {
+        id: u64,
+        /// `http`, `tunnel` or `websocket`.
+        kind: string,
+        /// Start in microseconds since the Unix epoch.
+        started: u64,
+        duration-ms: option<u32>,
+        method: string,
+        /// Absolute URL (scheme, host, path, query).
+        url: string,
+        host: string,
+        /// `HTTP/1.1`, `HTTP/2`, … as captured.
+        version: string,
+        /// 0 if there was no response.
+        status: u16,
+        /// Connect failure, timeout, reset, abort … as reported by the proxy.
+        error: option<string>,
+        /// Body sizes: as transferred (wire) and decoded.
+        request-bytes: u64,
+        response-bytes: u64,
+        response-decoded-bytes: u64,
+        content-type: string,
+        /// Allow-listed headers in wire order; secrets redacted (see REPORT.md).
+        request-headers: list<tuple<string, string>>,
+        response-headers: list<tuple<string, string>>,
+        timers: timers,
+        client-connection: option<u64>,
+        /// Whether the upstream connection was reused (false also when unknown).
+        server-connection-reused: bool,
+        /// Upstream TLS version, e.g. `TLSv1.3`.
+        tls-version: option<string>,
+        process: string,
+        /// Fingerprints of the bodies (none when not computed, e.g. too large).
+        request-body-hash: option<u64>,
+        response-body-hash: option<u64>,
+    }
+
+    get-info: func() -> info;
+
+    /// Profiles and default options as JSON, for the UI (schema: REPORT.md).
+    describe: func(lang: string) -> string;
+
+    resource run {
+        /// `options` as JSON: profile, thresholds, network profiles, language.
+        constructor(options: string);
+        push: func(batch: list<session>) -> result<_, string>;
+        /// The report as JSON.
+        finish: func() -> result<string, string>;
+    }
+}
+
 world plugin {
     export decoder;
 }
 
 world header-plugin {
     export header-inspector;
+}
+
+world analyzer-plugin {
+    export analyzer;
 }
