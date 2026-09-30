@@ -26,8 +26,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux builds on the oldest supported Ubuntu so the .deb/AppImage run on older glibc.
-        os: [macos-latest, windows-latest, ubuntu-22.04]
+        include:
+          # One universal app for Apple Silicon and Intel Macs.
+          - os: macos-latest
+            rust-targets: wasm32-wasip2,aarch64-apple-darwin,x86_64-apple-darwin
+            tauri-target: universal-apple-darwin
+            out: target/universal-apple-darwin
+          - os: windows-latest
+            rust-targets: wasm32-wasip2
+            out: target
+          # Linux builds on the oldest supported Ubuntu so the .deb/AppImage run on older glibc.
+          - os: ubuntu-22.04
+            rust-targets: wasm32-wasip2
+            out: target
+          - os: ubuntu-22.04-arm
+            rust-targets: wasm32-wasip2
+            out: target
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +60,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          targets: wasm32-wasip2
+          targets: ${{ matrix.rust-targets }}
       - uses: Swatinem/rust-cache@v2
         with:
           # One cache per build profile: tag builds (release) and pushes (ci) compile the
@@ -114,10 +128,12 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         shell: bash
         run: |
+          args=()
+          [ -n "${{ matrix.tauri-target }}" ] && args+=(--target "${{ matrix.tauri-target }}")
           if [ "$BUILD_PROFILE" = release ]; then
-            npm exec --prefix app/ui -- tauri build
+            npm exec --prefix app/ui -- tauri build "${args[@]}"
           else
-            npm exec --prefix app/ui -- tauri build -- --profile "$BUILD_PROFILE"
+            npm exec --prefix app/ui -- tauri build "${args[@]}" -- --profile "$BUILD_PROFILE"
           fi
       - name: Portable ZIP (Windows, xcopy deployment)
         if: runner.os == 'Windows'
@@ -143,16 +159,16 @@ jobs:
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: quena-${{ runner.os }}
+          name: quena-${{ runner.os }}-${{ runner.arch }}
           if-no-files-found: error
           path: |
-            target/${{ env.BUILD_PROFILE }}/bundle/dmg/*.dmg
-            target/${{ env.BUILD_PROFILE }}/bundle/nsis/*.exe
-            target/${{ env.BUILD_PROFILE }}/bundle/msi/*.msi
-            target/${{ env.BUILD_PROFILE }}/bundle/portable/*.zip
-            target/${{ env.BUILD_PROFILE }}/bundle/deb/*.deb
-            target/${{ env.BUILD_PROFILE }}/bundle/rpm/*.rpm
-            target/${{ env.BUILD_PROFILE }}/bundle/appimage/*.AppImage
+            ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/dmg/*.dmg
+            ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/nsis/*.exe
+            ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/msi/*.msi
+            ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/portable/*.zip
+            ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/deb/*.deb
+            ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/rpm/*.rpm
+            ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/appimage/*.AppImage
 
   release:
     name: draft release

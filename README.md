@@ -182,8 +182,9 @@ Quena listens on **port 8866** by default. Layout: Quena's own arrangement by de
 ### Install
 
 Download the installer for your platform from the
-[Releases](https://github.com/hkiam/quena/releases) page: macOS (`.dmg`, Apple Silicon), Windows
-(`.exe` / `.msi`, or the **portable ZIP**) and Linux (`.deb`, `.rpm`, AppImage).
+[Releases](https://github.com/hkiam/quena/releases) page: macOS (`.dmg`, universal for Apple Silicon and
+Intel), Windows (`.exe` / `.msi`, or the **portable ZIP**) and Linux (`.deb`, `.rpm`, AppImage for
+x86_64 and arm64).
 
 **Windows portable (xcopy):** unzip `Quena_<version>_x64-portable.zip` anywhere — a USB stick,
 a share, `C:\Tools` — and start `Quena.exe`. No installation and no admin rights; everything
@@ -303,7 +304,7 @@ are safe to run on untrusted, huge payloads. The bundled
 | Process attribution       | ✅               | ✅                           | ✅ own processes (`/proc`)               |
 | Single sign-on auth       | ✅ Kerberos      | ✅ NTLM + Kerberos (SSPI)     | ✅ Kerberos (GSSAPI, `kinit`)²           |
 | Credentials storage       | ✅ Keychain      | ✅ Credential Manager         | ✅ Secret Service (GNOME Keyring, KWallet)³ |
-| Packages                  | `.dmg`           | NSIS `.exe`, `.msi`          | `.deb`, `.rpm`, AppImage                |
+| Packages                  | `.dmg` (universal) | NSIS `.exe`, `.msi`          | `.deb`, `.rpm`, AppImage (x86_64, arm64)  |
 | Continuous integration    | ✅               | ✅                           | ✅ Ubuntu 22.04                          |
 
 On Linux, Quena uses these optional tools when they are installed (the `.deb`/`.rpm` recommend them):
