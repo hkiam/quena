@@ -20,8 +20,11 @@ for (const sel of fill) for (const e of document.querySelectorAll(sel)) {
   // Padding and borders are intended space; measure against the content box.
   const cs = getComputedStyle(e);
   const px = (v) => parseFloat(v) || 0;
-  const gh = Math.round(box.bottom - px(cs.paddingBottom) - px(cs.borderBottomWidth) - bottom);
-  const gw = Math.round(box.right - px(cs.paddingRight) - px(cs.borderRightWidth) - right);
+  // Classic scrollbars (Windows) take space inside the box too; overlay scrollbars don't.
+  const barV = Math.max(0, e.offsetWidth - e.clientWidth - px(cs.borderLeftWidth) - px(cs.borderRightWidth));
+  const barH = Math.max(0, e.offsetHeight - e.clientHeight - px(cs.borderTopWidth) - px(cs.borderBottomWidth));
+  const gh = Math.round(box.bottom - px(cs.paddingBottom) - px(cs.borderBottomWidth) - barH - bottom);
+  const gw = Math.round(box.right - px(cs.paddingRight) - px(cs.borderRightWidth) - barV - right);
   // Scrollable containers may be short of content on purpose; only report real layout gaps.
   const scrolls = /(auto|scroll)/.test(cs.overflowY);
   if ((gh > 3 && !scrolls) || gw > 3) gaps.push({ el: name(e), w: gw, h: gh, box: [Math.round(box.width), Math.round(box.height)] });
