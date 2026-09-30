@@ -1,2 +1,3 @@
 # Build dependencies of the user manual (MkDocs + Material theme).
 mkdocs-material==9.7.7
+mkdocs==1.6.1

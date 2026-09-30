@@ -153,8 +153,7 @@ jobs:
           # Edge WebDriver in the version of the installed WebView2 runtime.
           ver=$(pwsh -NoProfile -Command "(Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv")
           echo "WebView2 $ver"
-          curl -fsSL -o edgedriver.zip "https://msedgedriver.microsoft.com/$ver/edgedriver_win64.zip" \
-            || curl -fsSL -o edgedriver.zip "https://msedgedriver.azureedge.net/$ver/edgedriver_win64.zip"
+          curl -fsSL --retry 3 -o edgedriver.zip "https://msedgedriver.microsoft.com/$ver/edgedriver_win64.zip"
           unzip -q -o edgedriver.zip -d "$RUNNER_TEMP/edgedriver"
           EDGEDRIVER="$RUNNER_TEMP/edgedriver/msedgedriver.exe" app/e2e/run.sh "target/$BUILD_PROFILE/quena.exe"
       - name: Portable ZIP (Windows, xcopy deployment)

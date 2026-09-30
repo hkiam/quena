@@ -66,6 +66,49 @@ contain breaking changes (settings, file formats, plugin API).
 - Inspector view tabs show as many views as fit the width; *More* only holds the ones that do
   not fit, and the views are ordered by how well they fit the content.
 
+### Fixed
+- Diagnostics:
+  - A single sign-on round trip is no longer reported as a redirect loop.
+  - Polling during an outage is no longer a "retry storm".
+  - Data timestamps are no longer dropped as cache busters.
+  - Requests still open at capture end are neither failures nor sequential chains.
+  - A session-wide correlation id no longer merges separate actions.
+  - Transfer-time estimates agree between rules and include packet loss.
+  - Slow critical endpoints are never cut from the list.
+  - Large captures stay fast (500 000 sessions in about 2 s); the authentication check is
+    linear.
+  - A cancelled or older run can no longer replace a newer report, and "Remove all" clears
+    the report.
+- Diagnostics tab:
+  - It keeps the chosen finding and a running analysis across tab switches.
+  - It notices enabled or disabled plugins.
+  - Filters are reset for a new report.
+  - Markdown exports escape text from the traffic.
+- *Structure*: the "(this path)" row selects exactly that path; all open levels refresh in
+  one pass and less often.
+- Map Local serves large files without blocking the proxy and answers `500` instead of a
+  truncated file when reading fails.
+- Dropped archives: temporary copies are removed even when an import fails or is
+  cancelled, left-overs at startup; drops are limited to 8 GiB and need free disk space.
+- GraphQL formatting stops at a size limit instead of growing without bound; JWT dates given
+  in milliseconds are recognised.
+- Language switch: nothing changes when the choice cannot be saved; *Exit* is translated.
+
+### Security
+- *Copy as PowerShell* / *cURL*: a crafted HTTP method or typographic quotes in a header or
+  body could make the pasted command run other programs. Methods are quoted
+  (`-CustomMethod` for non-standard ones), all PowerShell quote characters escaped, control
+  characters written explicitly; duplicate header names are merged.
+- Map Local verifies the opened file itself (no symlink swap between check and open), and
+  `prefix:` rules that name only an origin no longer match look-alike hosts or other ports
+  (`https://prod.example.com` ≠ `https://prod.example.com.other.net`).
+- Map Remote can remove `Cookie` and `Authorization` when the request goes to another host
+  (`*nocreds`; on by default in *Add mapping… → Map Remote*).
+- Diagnostics: credentials in URLs (tokens, codes, signatures, passwords, long query values),
+  in `Location`/`Referer`, nameless cookies and several cookies in one `Set-Cookie` value are
+  redacted before the analyzer sees them; saved reports are read only from regular `.json`
+  files.
+
 ## [0.1.1] — 2026-09-30
 
 Faster start and capture switching, more platforms, and more robustness. Packages are still

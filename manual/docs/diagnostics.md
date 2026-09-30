@@ -84,6 +84,14 @@ resolved or changed in severity.
 ## Privacy
 
 The plugin sees only what it needs: selected headers, sizes, timers and fingerprints of the
-bodies. Token and cookie values are removed before the data reaches the plugin
-(`Authorization: Bearer <812 bytes>`, cookie names only), and reports contain no bodies.
-Markdown and AI exports still contain URLs and host names — check them before you share.
+bodies — never the bodies themselves. Credentials are replaced by their size before the data
+reaches the plugin:
+
+* `Authorization`, `Proxy-Authorization`: only the scheme remains (`Bearer <812 bytes>`);
+  cookie values are removed (`Cookie` keeps the names, `Set-Cookie` the attributes).
+* In URLs and in `Location` and `Referer`: user names and passwords, query parameters that
+  carry tokens, codes, signatures, keys or passwords (`access_token`, `code`, `sig`,
+  `X-Amz-Signature` …) and every other query value longer than 64 bytes.
+
+URL paths, host names and OData query options are kept, so reports, Markdown and AI exports
+still contain them — check exports before you share them.

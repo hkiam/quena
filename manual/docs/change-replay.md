@@ -141,6 +141,21 @@ prefix:https://prod.example.com/api/   →   https://staging.example.com/api/
 The rest of the path and the query are kept: `…/api/users?id=1` goes to
 `https://staging.example.com/api/users?id=1`. The `Host` header follows the target.
 
+A prefix that is only an origin (`https://prod.example.com`) matches that origin exactly —
+not `https://prod.example.com.other.net` or another port.
+
+**Credentials.** By default the request is forwarded as it is, cookies and
+`Authorization` included. When the target is another host (or http instead of https), the
+form's option *Remove credentials (Cookie, Authorization) when the host changes* — on by
+default — appends ` *nocreds` to the action:
+
+```text
+prefix:https://prod.example.com/api/   →   https://staging.example.com/api/ *nocreds
+```
+
+Then `Cookie`, `Authorization` and `Proxy-Authorization` are not sent to the other host, so
+production credentials don't end up on a test server.
+
 ### Map Local
 
 Serve a folder on your disk under a URL prefix — for example to try local builds of static
