@@ -8,6 +8,7 @@
 //!   files and can be regenerated at any time.
 
 mod body;
+pub mod charset;
 pub mod decode;
 pub mod lines;
 pub mod pretty;

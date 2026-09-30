@@ -15,6 +15,8 @@ brotli.workspace = true
 zstd.workspace = true
 serde.workspace = true
 memchr = "2"
+# Charset detection and decoding (WHATWG labels), the same library browsers use.
+encoding_rs = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

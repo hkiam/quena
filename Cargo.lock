@@ -3434,6 +3434,7 @@ name = "quena-body"
 version = "0.1.1"
 dependencies = [
  "brotli 8.0.4",
+ "encoding_rs",
  "flate2",
  "libc",
  "memchr",
