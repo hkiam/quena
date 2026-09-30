@@ -29,6 +29,7 @@ tracing.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 percent-encoding = "2"
+sys-locale = "0.3"
 parking_lot.workspace = true
 
 [target.'cfg(unix)'.dependencies]

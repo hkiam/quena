@@ -14,6 +14,7 @@ const PluginsPanel = lazy(() => import("./PluginsDialog").then((m) => ({ default
 const RulesEditor = lazy(() => import("./RulesEditor").then((m) => ({ default: m.RulesEditor })));
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { currentLang, t } from "../i18n";
 
 function Modal({ title, children, onClose, wide, footer }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean; footer?: React.ReactNode }) {
   return (
@@ -389,6 +390,7 @@ function OptionsDialog() {
           <>
             <LayoutChoice />
             <ThemeChoice />
+            <LanguageChoice />
             <RememberViewsOption />
             <label className="f-check">
               <input type="checkbox" checked={s.proxy.captureOnStartup} onChange={(e) => up((x) => (x.proxy.captureOnStartup = e.target.checked))} /> Capture traffic on startup
@@ -567,11 +569,34 @@ function ThemeChoice() {
   };
   return (
     <div className="f-row layout-choice">
-      <span>Theme</span>
+      <span>{t("Theme")}</span>
       <div className="f-inline">
-        {(["system", "light", "dark"] as const).map((t) => (
-          <label key={t} className="f-check">
-            <input type="radio" name="theme" checked={theme === t} onChange={() => pick(t)} /> {t === "system" ? "Like the system" : t === "light" ? "Light" : "Dark"}
+        {(["system", "light", "dark"] as const).map((k) => (
+          <label key={k} className="f-check">
+            <input type="radio" name="theme" checked={theme === k} onChange={() => pick(k)} /> {k === "system" ? t("Like the system") : k === "light" ? t("Light") : t("Dark")}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** UI language (Settings → General). Switching saves the choice and reloads the UI. */
+function LanguageChoice() {
+  const pref = useStore((st) => st.layout.language ?? "system");
+  const pick = async (l: "system" | "en" | "de") => {
+    set((st) => ({ layout: { ...st.layout, language: l } }));
+    await api.saveUiPrefs({ layout: get().layout }).catch(() => {});
+    const lang = await api.setLanguage(l).catch(() => currentLang());
+    if (lang !== currentLang()) location.reload();
+  };
+  return (
+    <div className="f-row layout-choice">
+      <span>{t("Language")}</span>
+      <div className="f-inline">
+        {(["system", "en", "de"] as const).map((l) => (
+          <label key={l} className="f-check">
+            <input type="radio" name="language" checked={pref === l} onChange={() => void pick(l)} /> {l === "system" ? t("Like the system") : l === "en" ? "English" : "Deutsch"}
           </label>
         ))}
       </div>

@@ -100,6 +100,8 @@ export interface Layout {
   responseTab: string;
   /** Colour theme: follow the OS, or force light/dark. */
   theme?: "system" | "light" | "dark";
+  /** UI language: follow the OS, or English/German (switching reloads the UI). */
+  language?: "system" | "en" | "de";
   /** Keep the chosen inspector view per request/response and kind of content. */
   rememberViews?: boolean;
   /** `request:json` → `syntaxview`, `response:soap` → `xml`, … */
@@ -125,6 +127,7 @@ export const DEFAULT_LAYOUT: Layout = {
   responseTab: "headers",
   rememberViews: true,
   theme: "system",
+  language: "system",
   viewByType: {},
   preset: "quena",
   presetChosen: false,

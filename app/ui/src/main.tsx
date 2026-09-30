@@ -1,10 +1,16 @@
 import { createRoot } from "react-dom/client";
-import { App } from "./App";
-import { AppCrash, ErrorBoundary } from "./components/ErrorBoundary";
+import { api, isTauri } from "./api";
+import { setLang } from "./i18n";
 import "./styles.css";
 
-createRoot(document.getElementById("root")!).render(
-  <ErrorBoundary name="app" fallback={(e) => <AppCrash error={e} />}>
-    <App />
-  </ErrorBoundary>,
-);
+// The language is set before the UI modules load, so their constants are translated too.
+async function start() {
+  if (isTauri) setLang((await api.uiLanguage().catch(() => "en")) === "de" ? "de" : "en");
+  const [{ App }, { AppCrash, ErrorBoundary }] = await Promise.all([import("./App"), import("./components/ErrorBoundary")]);
+  createRoot(document.getElementById("root")!).render(
+    <ErrorBoundary name="app" fallback={(e) => <AppCrash error={e} />}>
+      <App />
+    </ErrorBoundary>,
+  );
+}
+void start();

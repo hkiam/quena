@@ -143,6 +143,22 @@ async fn structure_ids(core: State<'_, Core>, host: String, path: String) -> R<V
     blocking(move || Ok(core.structure_ids(&host, &path))).await
 }
 
+/// Language of the UI: the saved preference resolved to "en" or "de".
+#[tauri::command]
+async fn ui_language(core: State<'_, Core>) -> R<String> {
+    Ok(crate::i18n::resolve(&crate::i18n::saved_pref(&core.settings().ui)).to_string())
+}
+
+/// Switch the native menu to the language of a preference ("system", "en", "de").
+#[tauri::command]
+async fn set_language(app: tauri::AppHandle, pref: String) -> R<String> {
+    let lang = crate::i18n::resolve(&pref);
+    crate::i18n::set(lang);
+    let m = crate::menu::build(&app).map_err(e)?;
+    app.set_menu(m).map_err(e)?;
+    Ok(lang.to_string())
+}
+
 #[tauri::command]
 async fn mark(core: State<'_, Core>, ids: Vec<SessionId>, color: Option<MarkColor>) -> R<()> {
     let core = core.inner().clone();
@@ -693,6 +709,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         export_archive,
         import_archive,
         timers,
+        ui_language,
+        set_language,
         structure,
         structure_ids,
         drop_chunk,

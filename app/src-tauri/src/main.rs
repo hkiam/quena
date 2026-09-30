@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod i18n;
 mod menu;
 mod protocol;
 
@@ -71,6 +72,7 @@ fn main() {
                     });
                 }
             }
+            i18n::set(i18n::resolve(&i18n::saved_pref(&core.settings().ui)));
             let m = menu::build(&handle)?;
             app.set_menu(m)?;
             app.on_menu_event(|app, ev| {

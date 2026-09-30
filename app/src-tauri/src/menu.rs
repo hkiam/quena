@@ -5,24 +5,25 @@
 //! handled in the web view when the session list has focus, not here.
 
 use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use crate::i18n::tr;
 use tauri::{AppHandle, Wry};
 
 fn item(app: &AppHandle, id: &str, text: &str, accel: Option<&str>) -> tauri::Result<MenuItem<Wry>> {
-    MenuItem::with_id(app, id, text, true, accel)
+    MenuItem::with_id(app, id, tr(text), true, accel)
 }
 
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let sep = || PredefinedMenuItem::separator(app);
     let about = PredefinedMenuItem::about(
         app,
-        Some("About Quena"),
+        Some(tr("About Quena")),
         Some(AboutMetadata { name: Some("Quena".into()), version: Some(env!("CARGO_PKG_VERSION").into()), copyright: Some("© 2026 Maik Hofmann".into()), ..Default::default() }),
     )?;
 
     #[cfg(target_os = "macos")]
     let app_menu = Submenu::with_items(
         app,
-        "Quena",
+        tr("Quena"),
         true,
         &[
             &about,
@@ -41,7 +42,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
     let file = Submenu::with_items(
         app,
-        "File",
+        tr("File"),
         true,
         &[
             &item(app, "file.new-viewer", "New Viewer", None)?,
@@ -50,7 +51,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &sep()?,
             &Submenu::with_items(
                 app,
-                "Save",
+                tr("Save"),
                 true,
                 &[
                     &item(app, "file.save-all", "All Sessions…", Some("CmdOrCtrl+S"))?,
@@ -61,13 +62,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             )?,
             &Submenu::with_items(
                 app,
-                "Import Sessions",
+                tr("Import Sessions"),
                 true,
                 &[&item(app, "file.import-har", "HTTP Archive (HAR)…", None)?, &item(app, "file.import-saz", "SAZ Archive…", None)?],
             )?,
             &Submenu::with_items(
                 app,
-                "Export Sessions",
+                tr("Export Sessions"),
                 true,
                 &[
                     &item(app, "file.export-har", "HTTP Archive (HAR)…", None)?,
@@ -84,7 +85,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
     let edit = Submenu::with_items(
         app,
-        "Edit",
+        tr("Edit"),
         true,
         &[
             &PredefinedMenuItem::undo(app, None)?,
@@ -97,7 +98,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &sep()?,
             &Submenu::with_items(
                 app,
-                "Copy Session",
+                tr("Copy Session"),
                 true,
                 &[
                     &item(app, "edit.copy-url", "URL", None)?,
@@ -112,7 +113,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             )?,
             &Submenu::with_items(
                 app,
-                "Remove",
+                tr("Remove"),
                 true,
                 &[
                     &item(app, "edit.remove-selected", "Selected Sessions", None)?,
@@ -122,7 +123,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             )?,
             &Submenu::with_items(
                 app,
-                "Mark",
+                tr("Mark"),
                 true,
                 &[
                     &item(app, "edit.mark-red", "Red", None)?,
@@ -143,16 +144,16 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
     let capture = Submenu::with_items(
         app,
-        "Capture",
+        tr("Capture"),
         true,
         &[
-            &CheckMenuItem::with_id(app, "file.capture", "Capture Traffic", true, false, Some("F12"))?,
+            &CheckMenuItem::with_id(app, "file.capture", tr("Capture Traffic"), true, false, Some("F12"))?,
             &item(app, "tools.https", "HTTPS Settings…", None)?,
             &item(app, "tools.connect-device", "Connect Device…", None)?,
             &sep()?,
             &Submenu::with_items(
                 app,
-                "Breakpoints",
+                tr("Breakpoints"),
                 true,
                 &[
                     &item(app, "rules.bp-before", "Before Requests", Some("F11"))?,
@@ -169,7 +170,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
     let tools = Submenu::with_items(
         app,
-        "Tools",
+        tr("Tools"),
         true,
         &[
             #[cfg(not(target_os = "macos"))]
@@ -183,7 +184,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
     let view = Submenu::with_items(
         app,
-        "View",
+        tr("View"),
         true,
         &[
             &item(app, "view.palette", "Command Palette…", Some("CmdOrCtrl+K"))?,
@@ -199,7 +200,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &sep()?,
             &Submenu::with_items(
                 app,
-                "Hide in List",
+                tr("Hide in List"),
                 true,
                 &[
                     &item(app, "rules.hide-connects", "Tunnels (CONNECT)", None)?,
@@ -216,7 +217,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &sep()?,
             &Submenu::with_items(
                 app,
-                "Developer",
+                tr("Developer"),
                 true,
                 &[
                     &item(app, "dev.mock-1k", "Generate 1,000 mock sessions", None)?,
@@ -237,7 +238,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
     let help = Submenu::with_items(
         app,
-        "Help",
+        tr("Help"),
         true,
         &[
             &item(app, "help.quickexec", "Command Syntax", None)?,
