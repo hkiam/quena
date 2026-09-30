@@ -53,21 +53,30 @@ const PLUGIN_TABLE = `
         return range.getClientRects().length <= 1;
       }),
       applies: cell('.pl-applies').textContent.trim().length,
+      // Plugins that failed to load (e.g. the deliberately broken test plugins) have no info.
+      error: !!r.querySelector('.pl-name .err'),
     };
   });`;
 export async function checkPluginsDialog(d, assert) {
   await d.exec(`window.__quena.menu("tools.plugins")`);
+  try {
+    await checkPluginsTable(d, assert);
+  } finally {
+    // Never leave the dialog open for the following tests.
+    await d.keys(["Escape"]);
+  }
+}
+async function checkPluginsTable(d, assert) {
   await d.waitFor(".plugins-table tbody tr", { timeout: 10000 });
   for (const [width, height] of [[1000, 700], [1600, 1000]]) {
     await d.cmd("POST", d.s("/window/rect"), { width, height });
     await new Promise((r) => setTimeout(r, 400));
     const rows = await d.exec(PLUGIN_TABLE);
     assert.ok(rows.length >= 4, `plugins: ${JSON.stringify(rows)}`);
-    for (const r of rows) {
+    for (const r of rows.filter((x) => !x.error)) {
       assert.ok(r.nameWidth >= 120, `name column squeezed at ${width}px: ${JSON.stringify(r)}`);
       assert.ok(r.oneLine && r.versionFits && r.statusFits, `version/status wrap at ${width}px: ${JSON.stringify(r)}`);
       assert.ok(r.applies > 0, `"Applies to" empty: ${JSON.stringify(r)}`);
     }
   }
-  await d.keys(["Escape"]);
 }

@@ -5,6 +5,12 @@ import { say } from "../store";
 import { plural, t } from "../i18n";
 
 const CHUNK = 4 << 20;
+
+// What happened to the last drop, for end-to-end tests (window.__quenaDrop).
+function trace(step: string, detail?: unknown) {
+  const w = window as unknown as { __quenaDrop?: { step: string; detail?: string }[] };
+  (w.__quenaDrop ??= []).push({ step, detail: detail === undefined ? undefined : String(detail) });
+}
 const ARCHIVE = /\.(saz|har|zip|json)$/i;
 
 export const isArchiveName = (name: string) => ARCHIVE.test(name);
@@ -27,8 +33,11 @@ export async function importDropped(files: File[]) {
   for (const f of ok) {
     try {
       say(t("Loading {path}", { path: f.name }));
+      trace("send", `${f.name} ${f.size}`);
       await send(f);
+      trace("sent");
     } catch (e) {
+      trace("error", e);
       say(`${f.name}: ${e}`, "error");
     }
   }
@@ -57,6 +66,7 @@ export function installFileDrop(): () => void {
     if (!depth) mark(false);
   };
   const drop = (e: DragEvent) => {
+    trace("drop", e.dataTransfer ? [...e.dataTransfer.types].join(",") + ` files=${e.dataTransfer.files.length}` : "no dataTransfer");
     if (!hasFiles(e)) return;
     e.preventDefault();
     depth = 0;

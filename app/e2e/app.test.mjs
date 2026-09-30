@@ -232,7 +232,10 @@ test("an archive dropped onto the window is loaded", async () => {
     const dt = new DataTransfer();
     dt.items.add(new File([arguments[0]], "dropped.har", { type: "application/json" }));
     for (const type of ["dragenter", "dragover", "drop"]) window.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));`, [text]);
-  await d.waitFor(".statusbar", { text: "9 sessions", timeout: 15000 });
+  await d.waitFor(".statusbar", { text: "9 sessions", timeout: 15000 }).catch(async (e) => {
+    const trace = await d.exec("return JSON.stringify(window.__quenaDrop || null)").catch(() => "?");
+    throw new Error(`${e.message}; drop trace: ${trace}`);
+  });
   assert.ok(!(await d.exec(`return document.body.classList.contains("file-drop")`)), "drop overlay still shown");
 });
 

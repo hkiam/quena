@@ -27,10 +27,21 @@ export class Driver {
   }
 
   async start(application, args = []) {
+    // On Windows the Edge WebDriver hands `args` to the WebView2 browser engine, not to the
+    // app, so archives are loaded through the app's test hook instead of argv.
+    const viaHook = process.platform === "win32";
     const v = await this.cmd("POST", "/session", {
-      capabilities: { alwaysMatch: { browserName: "wry", "tauri:options": { application, args } } },
+      capabilities: { alwaysMatch: { browserName: "wry", "tauri:options": { application, args: viaHook ? [] : args } } },
     });
     this.id = v.sessionId;
+    if (viaHook && args.length) {
+      const end = Date.now() + 20000;
+      while (!(await this.exec("return !!(window.__quena && window.__quena.load)").catch(() => false))) {
+        if (Date.now() > end) throw new Error("the app's test hook did not appear");
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      for (const a of args) await this.exec("return window.__quena.load(arguments[0]).then(() => true)", [a]);
+    }
   }
 
   async quit() {

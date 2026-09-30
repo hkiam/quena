@@ -15,7 +15,8 @@ function pluginsChanged() {
 function appliesTo(p: PluginInfo): string {
   if (p.kind === "analyzer") return t("The whole capture (Diagnostics tab)");
   if (p.kind === "headerInspector") return t("Headers: {list}", { list: p.headers.join(", ") || t("all") });
-  return p.mimeTypes.join(", ");
+  // A manifest without content types (e.g. a test plugin) applies to nothing by itself.
+  return p.mimeTypes.length ? p.mimeTypes.join(", ") : "—";
 }
 
 /** Status from the plugin host ("Enabled", "Disabled", "Error"), in the UI language. */

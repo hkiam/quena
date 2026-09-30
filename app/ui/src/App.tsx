@@ -30,6 +30,8 @@ function useBoot() {
     (window as unknown as { __quena?: object }).__quena = {
       menu: (id: string) => actions.menu(id),
       setLayout: (patch: Partial<Layout>) => set((s) => ({ layout: { ...s.layout, ...patch } })),
+      // Load an archive by path (on Windows the WebDriver cannot pass command-line arguments).
+      load: (path: string) => api.importArchive(path),
     };
     if (!isTauri) return;
     const unlisten: Promise<() => void>[] = [];
