@@ -105,6 +105,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                     &item(app, "edit.copy-headers", "Headers Only", None)?,
                     &item(app, "edit.copy-full", "Full Session", None)?,
                     &item(app, "edit.copy-curl", "As cURL", None)?,
+                    &item(app, "edit.copy-fetch", "As fetch (JavaScript)", None)?,
+                    &item(app, "edit.copy-powershell", "As PowerShell", None)?,
+                    &item(app, "edit.copy-python", "As Python requests", None)?,
                 ],
             )?,
             &Submenu::with_items(
@@ -192,6 +195,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "view.filters", "Filters", None)?,
             &item(app, "view.log", "Log", None)?,
             &item(app, "view.timeline", "Timeline", None)?,
+            &item(app, "view.structure", "Structure", None)?,
             &sep()?,
             &Submenu::with_items(
                 app,

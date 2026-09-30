@@ -4,7 +4,7 @@
 import { api, type Detail, type MarkColor, type SessionId, type Sort } from "./api";
 import { get, say, set, PRESETS, type LayoutPreset, type RightTab } from "./store";
 import { grid, idAtIndex, rowCache } from "./grid/SessionGrid";
-import { buildCurl, rawRequestText, rawResponseHead } from "./lib/http";
+import { buildCurl, buildFetch, buildPowerShell, buildPython, rawRequestText, rawResponseHead } from "./lib/http";
 import { fmtInt } from "./lib/format";
 
 const MARKS: MarkColor[] = ["red", "blue", "gold", "green", "orange", "purple"];
@@ -191,7 +191,7 @@ export const actions = {
     }
   },
 
-  async copySessions(kind: "url" | "summary" | "headers" | "full" | "curl") {
+  async copySessions(kind: "url" | "summary" | "headers" | "full" | "curl" | "fetch" | "powershell" | "python") {
     const ids = [...get().selection].sort((a, b) => a - b);
     if (!ids.length) return;
     const ds = await details(ids);
@@ -223,12 +223,17 @@ export const actions = {
         text = parts.join("\n\n------------------------------------------------------------------\n\n");
         break;
       }
-      case "curl": {
+      case "curl":
+      case "fetch":
+      case "powershell":
+      case "python": {
         const { loadText } = await import("./lib/bodytext");
+        const build = { curl: buildCurl, fetch: buildFetch, powershell: buildPowerShell, python: buildPython }[kind];
         const out: string[] = [];
         for (const d of ds.slice(0, 50)) {
-          const body = d.requestBody.len > 0 && d.requestBody.len < 1 << 20 ? await loadText(d.summary.id, "request", d.requestBody, 1 << 20) : null;
-          out.push(buildCurl(d, body));
+          // Text bodies up to 1 MB are inlined; binary or larger ones are referenced as a file.
+          const body = d.requestBody.len > 0 && d.requestBody.len < 1 << 20 && d.requestBody.isText ? await loadText(d.summary.id, "request", d.requestBody, 1 << 20) : null;
+          out.push(build(d, body));
         }
         text = out.join("\n\n");
         break;

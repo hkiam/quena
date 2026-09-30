@@ -396,6 +396,14 @@ impl SessionIndex {
         }
     }
 
+    /// Visit the visible rows in view order (read lock held – keep the callback cheap).
+    pub fn for_each_view(&self, mut f: impl FnMut(&SessionSummary)) {
+        let g = self.inner.read();
+        for &p in &g.view {
+            f(&g.rows[p as usize]);
+        }
+    }
+
     /// Oldest ids beyond the most recent `keep` (for "Keep: N sessions").
     pub fn ids_beyond(&self, keep: usize) -> Vec<SessionId> {
         let g = self.inner.read();

@@ -68,6 +68,23 @@ function cellText(r: SessionSummary, key: ColumnKey): string {
   }
 }
 
+/** Slow and large responses stand out in the Duration and Size columns. */
+const SLOW_MS = 1000;
+const VERY_SLOW_MS = 5000;
+const LARGE_BYTES = 1 << 20;
+const VERY_LARGE_BYTES = 10 << 20;
+function outlier(r: SessionSummary, key: ColumnKey, p: Palette): string | null {
+  if (key === "duration" && r.durationMs != null) {
+    if (r.durationMs >= VERY_SLOW_MS) return p.tones.err.fg;
+    if (r.durationMs >= SLOW_MS) return p.tones.warn.fg;
+  }
+  if (key === "body" && r.kind !== "tunnel") {
+    if (r.responseBodyLen >= VERY_LARGE_BYTES) return p.tones.err.fg;
+    if (r.responseBodyLen >= LARGE_BYTES) return p.tones.warn.fg;
+  }
+  return null;
+}
+
 class Ellipsis {
   private cache = new Map<string, string>();
   fit(ctx: CanvasRenderingContext2D, text: string, width: number, font: string): string {
@@ -148,6 +165,13 @@ export class GridController {
         if (s.gridNonce !== prev.gridNonce) {
           rowCache.clear();
           this.schedule();
+        }
+        if (s.layout.theme !== prev.layout.theme) {
+          // The document's theme attribute is applied in an effect; read colours after it.
+          requestAnimationFrame(() => {
+            this.pal = readPalette(scroller);
+            this.schedule();
+          });
         }
         if (s.layout.preset !== prev.layout.preset) {
           ROW_H = rowHeightFor(s.layout.preset);
@@ -336,7 +360,7 @@ export class GridController {
           ctx.font = font;
         } else {
           const t = this.ell.fit(ctx, cellText(r, c.key), c.width - 8, font);
-          ctx.fillStyle = fg;
+          ctx.fillStyle = sel ? fg : (outlier(r, c.key, p) ?? fg);
           if (c.align === "right") {
             ctx.textAlign = "right";
             ctx.fillText(t, x + c.width - 4, y + ROW_H / 2 + 0.5);

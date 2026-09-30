@@ -1,12 +1,13 @@
 import { lazy, Suspense } from "react";
 import type { LucideIcon } from "lucide-react";
-import { ChartColumn, ChartGantt, Filter, ScanSearch, ScrollText, Send, Zap } from "lucide-react";
+import { ChartColumn, ChartGantt, Filter, FolderTree, ScanSearch, ScrollText, Send, Zap } from "lucide-react";
 import { set, useStore, type RightTab } from "../store";
 import { Inspectors } from "../inspectors/Inspectors";
 import { StatisticsPanel } from "./Statistics";
 import { FiltersPanel } from "./Filters";
 import { LogPanel } from "./Log";
 import { TimelinePanel } from "./Timeline";
+import { StructurePanel } from "./Structure";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 
 const AutoResponderPanel = lazy(() => import("./AutoResponder"));
@@ -18,6 +19,7 @@ const TABS: [RightTab, string, LucideIcon][] = [
   ["autoresponder", "Mock Rules", Zap],
   ["filters", "Filters", Filter],
   ["timeline", "Timeline", ChartGantt],
+  ["structure", "Structure", FolderTree],
   ["statistics", "Statistics", ChartColumn],
   ["log", "Log", ScrollText],
 ];
@@ -51,6 +53,7 @@ export function RightPane() {
             {tab === "filters" && <FiltersPanel />}
             {tab === "log" && <LogPanel />}
             {tab === "timeline" && <TimelinePanel />}
+            {tab === "structure" && <StructurePanel />}
             <Suspense fallback={<div className="placeholder">Loading…</div>}>
               {tab === "autoresponder" && <AutoResponderPanel />}
               {tab === "composer" && <ComposerPanel />}

@@ -19,6 +19,7 @@ pub mod plugins;
 pub mod rules;
 pub mod settings;
 pub mod stats;
+pub mod structure;
 
 use anyhow::{Context, Result, anyhow};
 use dto::*;
@@ -38,6 +39,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use quena_jobs::JobInfo;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionTimers {
+    pub id: SessionId,
+    pub timers: quena_model::Timers,
+}
 
 /// Receives events for the UI (implemented by the Tauri shell).
 pub trait EventSink: Send + Sync {
@@ -636,6 +643,12 @@ impl AppCore {
     pub fn summaries(&self, ids: &[SessionId]) -> Vec<quena_model::SessionSummary> {
         let cap = self.capture();
         ids.iter().take(5000).filter_map(|id| cap.index.get(*id)).collect()
+    }
+
+    /// Timers of sessions for the waterfall (at most 500).
+    pub fn timers(&self, ids: &[SessionId]) -> Vec<SessionTimers> {
+        let cap = self.capture();
+        ids.iter().take(500).filter_map(|id| cap.detail(*id).map(|d| SessionTimers { id: *id, timers: d.timers })).collect()
     }
 }
 

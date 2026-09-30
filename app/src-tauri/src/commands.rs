@@ -126,6 +126,24 @@ async fn summaries(core: State<'_, Core>, ids: Vec<SessionId>) -> R<Vec<quena_mo
 }
 
 #[tauri::command]
+async fn timers(core: State<'_, Core>, ids: Vec<SessionId>) -> R<Vec<quena_app_core::SessionTimers>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.timers(&ids))).await
+}
+
+#[tauri::command]
+async fn structure(core: State<'_, Core>, host: Option<String>, prefix: String) -> R<quena_app_core::structure::TreeLevel> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.structure(host.as_deref(), &prefix))).await
+}
+
+#[tauri::command]
+async fn structure_ids(core: State<'_, Core>, host: String, path: String) -> R<Vec<SessionId>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.structure_ids(&host, &path))).await
+}
+
+#[tauri::command]
 async fn mark(core: State<'_, Core>, ids: Vec<SessionId>, color: Option<MarkColor>) -> R<()> {
     let core = core.inner().clone();
     blocking(move || {
@@ -364,6 +382,22 @@ async fn export_archive(core: State<'_, Core>, ids: Vec<SessionId>, path: String
 async fn import_archive(core: State<'_, Core>, path: String) -> R<u64> {
     let core = core.inner().clone();
     blocking(move || core.import_archive(path.into()).map_err(e)).await
+}
+
+/// One chunk of a file dropped onto the window (raw body; name, offset etc. in headers).
+#[tauri::command]
+async fn drop_chunk(core: State<'_, Core>, request: tauri::ipc::Request<'_>) -> R<Option<u64>> {
+    let h = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let id = h("quena-drop-id");
+    let name = percent_encoding::percent_decode_str(&h("quena-drop-name")).decode_utf8_lossy().into_owned();
+    let offset: u64 = h("quena-drop-offset").parse().map_err(|_| "invalid drop offset".to_string())?;
+    let last = h("quena-drop-last") == "1";
+    let data = match request.body() {
+        tauri::ipc::InvokeBody::Raw(b) => b.clone(),
+        _ => return Err("expected raw bytes".into()),
+    };
+    let core = core.inner().clone();
+    blocking(move || core.drop_chunk(&id, &name, offset, &data, last).map_err(e)).await
 }
 
 #[tauri::command]
@@ -658,6 +692,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         parse_curl,
         export_archive,
         import_archive,
+        timers,
+        structure,
+        structure_ids,
+        drop_chunk,
         take_open_files,
         write_text_file,
         ar_get,

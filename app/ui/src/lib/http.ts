@@ -78,3 +78,52 @@ export function b64decode(s: string): string {
     return "(invalid base64)";
   }
 }
+
+/** Request headers worth reproducing in a snippet (no hop-by-hop or computed ones). */
+function snippetHeaders(d: Detail): [string, string][] {
+  return d.request.headers.filter(([k]) => !SKIP_CURL.has(k.toLowerCase()) && !k.startsWith(":")).map(([k, v]) => [k, latin1ToUtf8(v)]);
+}
+
+/** JavaScript `fetch` (browser DevTools console or Node 18+). */
+export function buildFetch(d: Detail, body: string | null): string {
+  const opts: string[] = [`  method: ${JSON.stringify(d.request.method)},`];
+  const hs = snippetHeaders(d);
+  if (hs.length) opts.push(`  headers: {\n${hs.map(([k, v]) => `    ${JSON.stringify(k)}: ${JSON.stringify(v)},`).join("\n")}\n  },`);
+  if (body != null && body.length) opts.push(`  body: ${JSON.stringify(body)},`);
+  else if (d.requestBody.len > 0) opts.push(`  // body: ${d.requestBody.len} bytes (binary or large, not included)`);
+  return `await fetch(${JSON.stringify(d.request.url)}, {\n${opts.join("\n")}\n});`;
+}
+
+function psq(s: string): string {
+  return `'${s.replace(/'/g, "''")}'`;
+}
+
+/** PowerShell `Invoke-WebRequest`. */
+export function buildPowerShell(d: Detail, body: string | null): string {
+  const hs = snippetHeaders(d);
+  const ct = hs.find(([k]) => k.toLowerCase() === "content-type")?.[1];
+  const ua = hs.find(([k]) => k.toLowerCase() === "user-agent")?.[1];
+  // Content-Type and User-Agent must go through their own parameters.
+  const rest = hs.filter(([k]) => !["content-type", "user-agent"].includes(k.toLowerCase()));
+  const lines = [`Invoke-WebRequest -Uri ${psq(d.request.url)} -Method ${d.request.method}`];
+  if (rest.length) lines.push(`  -Headers @{\n${rest.map(([k, v]) => `    ${psq(k)} = ${psq(v)}`).join("\n")}\n  }`);
+  if (ct) lines.push(`  -ContentType ${psq(ct)}`);
+  if (ua) lines.push(`  -UserAgent ${psq(ua)}`);
+  if (body != null && body.length) lines.push(`  -Body ${psq(body)}`);
+  else if (d.requestBody.len > 0) lines.push(`  -InFile ${psq(`body-${d.summary.id}.bin`)}`);
+  return lines.join(" `\n");
+}
+
+/** Python `requests`. */
+export function buildPython(d: Detail, body: string | null): string {
+  const hs = snippetHeaders(d);
+  const lines = ["import requests", ""];
+  lines.push(`response = requests.request(`);
+  lines.push(`    ${JSON.stringify(d.request.method)},`);
+  lines.push(`    ${JSON.stringify(d.request.url)},`);
+  if (hs.length) lines.push(`    headers={\n${hs.map(([k, v]) => `        ${JSON.stringify(k)}: ${JSON.stringify(v)},`).join("\n")}\n    },`);
+  if (body != null && body.length) lines.push(`    data=${JSON.stringify(body)}.encode("utf-8"),`);
+  else if (d.requestBody.len > 0) lines.push(`    data=open(${JSON.stringify(`body-${d.summary.id}.bin`)}, "rb"),`);
+  lines.push(`)`, `print(response.status_code, response.text[:500])`);
+  return lines.join("\n");
+}

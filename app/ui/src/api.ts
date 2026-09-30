@@ -122,6 +122,14 @@ export interface HeaderInspection {
   error: string | null;
 }
 
+export interface TreeNode {
+  name: string;
+  count: number;
+  errors: number;
+  bytes: number;
+  hasChildren: boolean;
+}
+
 export interface Timers {
   clientConnected?: number | null;
   clientBeginRequest?: number | null;
@@ -598,6 +606,13 @@ export const api = {
   caExport: (path: string, der: boolean) => invoke<void>("ca_export", { path, der }),
   exportArchive: (ids: SessionId[], path: string) => invoke<number>("export_archive", { ids, path }),
   importArchive: (path: string) => invoke<number>("import_archive", { path }),
+  dropChunk: (id: string, name: string, offset: number, data: Uint8Array, last: boolean) =>
+    tauriInvoke<number | null>("drop_chunk", data, {
+      headers: { "quena-drop-id": id, "quena-drop-name": encodeURIComponent(name), "quena-drop-offset": String(offset), "quena-drop-last": last ? "1" : "0" },
+    }),
+  timers: (ids: SessionId[]) => invoke<{ id: SessionId; timers: Timers }[]>("timers", { ids }),
+  structure: (host: string | null, prefix: string) => invoke<{ nodes: TreeNode[]; truncated: boolean }>("structure", { host, prefix }),
+  structureIds: (host: string, path: string) => invoke<SessionId[]>("structure_ids", { host, path }),
   takeOpenFiles: () => invoke<string[]>("take_open_files"),
   writeTextFile: (path: string, text: string) => invoke<void>("write_text_file", { path, text }),
   arGet: () => invoke<ArState>("ar_get"),

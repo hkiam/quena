@@ -388,6 +388,7 @@ function OptionsDialog() {
         {tab === "general" && (
           <>
             <LayoutChoice />
+            <ThemeChoice />
             <RememberViewsOption />
             <label className="f-check">
               <input type="checkbox" checked={s.proxy.captureOnStartup} onChange={(e) => up((x) => (x.proxy.captureOnStartup = e.target.checked))} /> Capture traffic on startup
@@ -558,6 +559,26 @@ function TextDialog({ title, text }: { title: string; text: string }) {
 }
 
 /** Layout preset picker (Settings → General and the first-run dialog). Applies immediately. */
+function ThemeChoice() {
+  const theme = useStore((st) => st.layout.theme ?? "system");
+  const pick = (t: "system" | "light" | "dark") => {
+    set((st) => ({ layout: { ...st.layout, theme: t } }));
+    actions.saveLayout();
+  };
+  return (
+    <div className="f-row layout-choice">
+      <span>Theme</span>
+      <div className="f-inline">
+        {(["system", "light", "dark"] as const).map((t) => (
+          <label key={t} className="f-check">
+            <input type="radio" name="theme" checked={theme === t} onChange={() => pick(t)} /> {t === "system" ? "Like the system" : t === "light" ? "Light" : "Dark"}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Remember the inspector view per kind of content (Settings → General). */
 function RememberViewsOption() {
   const on = useStore((st) => st.layout.rememberViews ?? true);

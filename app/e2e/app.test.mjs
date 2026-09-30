@@ -181,6 +181,38 @@ test("layout fills the window at small and large sizes, side by side and stacked
   assert.deepEqual(problems, [], "unused space in the layout");
 });
 
+test("structure: hosts and paths as a tree, a click selects the sessions below", async () => {
+  await d.exec(`window.__quena.menu("view.structure")`);
+  const host = await d.waitFor(".st-row", { text: "soap.example.com" });
+  await d.click(host);
+  await d.waitFor(".insp-url", { text: "soap.example.com/shop/" });
+  await d.click(await d.findIn(host, ".st-chev").then((c) => c[0]));
+  const shop = await d.waitFor(".st-row", { text: (t) => t.startsWith("shop/") });
+  await d.click(await d.findIn(shop, ".st-chev").then((c) => c[0]));
+  await d.waitFor(".st-row", { text: "GetCustomer" });
+});
+
+test("timeline: a waterfall of the selected sessions", async () => {
+  await selectRow(1);
+  await d.keys(["Control", "a"]);
+  await d.exec(`window.__quena.menu("view.timeline")`);
+  await d.waitFor(".tl-row", { text: "GetOrder" });
+  const bars = await d.findAll(".tl-track .tl-seg, .tl-track .tl-bar");
+  assert.ok(bars.length >= 4, `bars: ${bars.length}`);
+  await d.exec(`window.__quena.menu("view.inspectors")`);
+});
+
+test("an archive dropped onto the window is loaded", async () => {
+  const fs = await import("node:fs");
+  const text = fs.readFileSync(har, "utf8");
+  await d.exec(`
+    const dt = new DataTransfer();
+    dt.items.add(new File([arguments[0]], "dropped.har", { type: "application/json" }));
+    for (const type of ["dragenter", "dragover", "drop"]) window.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));`, [text]);
+  await d.waitFor(".statusbar", { text: "9 sessions", timeout: 15000 });
+  assert.ok(!(await d.exec(`return document.body.classList.contains("file-drop")`)), "drop overlay still shown");
+});
+
 test("no view crashed", async () => {
   assert.equal((await d.findAll(".view-error")).length, 0, "an inspector shows 'This view failed'");
   assert.equal((await d.findAll(".app-crash")).length, 0, "the app shows its crash screen");

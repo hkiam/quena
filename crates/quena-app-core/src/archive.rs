@@ -56,18 +56,75 @@ impl AppCore {
 
     /// Import an archive into the current session list.
     pub fn import_archive(self: &Arc<Self>, path: PathBuf) -> Result<JobId> {
+        let name = path.display().to_string();
+        self.import_file(path, name, false)
+    }
+
+    fn import_file(self: &Arc<Self>, path: PathBuf, name: String, remove_after: bool) -> Result<JobId> {
         let format = format_of(&path).ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
         let cap = self.capture();
-        let title = format!("Loading {}", path.display());
+        let title = format!("Loading {name}");
         Ok(self.jobs.submit(format!("import:{}", path.display()), title, Priority::Background, true, move |ctx| {
             let ids = match format {
                 ArchiveFormat::Saz => quena_formats::saz::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Har => quena_formats::har::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("cannot import cURL scripts".into())),
+            };
+            if remove_after {
+                let _ = std::fs::remove_file(&path);
             }
-            .map_err(|e| e.to_string())?;
-            tracing::info!(target: "quena", "loaded {} session(s) from {}", ids.len(), path.display());
+            let ids = ids.map_err(|e| e.to_string())?;
+            tracing::info!(target: "quena", "loaded {} session(s) from {name}", ids.len());
             Ok(())
         }))
+    }
+
+    /// Receive a file dropped onto the window, in chunks: the webview has the file's bytes but
+    /// not its path. `offset` must continue the chunks received so far; the last chunk starts
+    /// the import, and the temporary copy is removed once it is loaded.
+    pub fn drop_chunk(self: &Arc<Self>, id: &str, name: &str, offset: u64, data: &[u8], last: bool) -> Result<Option<JobId>> {
+        use std::io::Write;
+        if id.is_empty() || id.len() > 64 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return Err(anyhow!("invalid drop id"));
+        }
+        let ext = match format_of(std::path::Path::new(name)) {
+            Some(ArchiveFormat::Saz) => "saz",
+            Some(ArchiveFormat::Har) => "har",
+            _ => return Err(anyhow!("{name}: not an archive (use .saz or .har)")),
+        };
+        let dir = self.paths.data.join("dropped");
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{id}.{ext}"));
+        let mut f = if offset == 0 {
+            clean_stale(&dir);
+            std::fs::File::create(&path)?
+        } else {
+            let f = std::fs::OpenOptions::new().append(true).open(&path)?;
+            let have = f.metadata()?.len();
+            if have != offset {
+                drop(f);
+                let _ = std::fs::remove_file(&path);
+                return Err(anyhow!("{name}: chunk at {offset} does not follow {have} bytes"));
+            }
+            f
+        };
+        f.write_all(data)?;
+        drop(f);
+        if !last {
+            return Ok(None);
+        }
+        self.import_file(path, name.to_string(), true).map(Some)
+    }
+}
+
+/// Remove copies of dropped files left behind by an earlier run (crash, cancelled drop).
+fn clean_stale(dir: &std::path::Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let hour = std::time::Duration::from_secs(3600);
+    for e in rd.flatten() {
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > hour);
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
 }

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { FilterSettings, JobInfo, LogEntry, SessionId, Settings, Sort, Status } from "./api";
 
-export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline";
+export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "structure";
 
 export type ColumnKey =
   | "id"
@@ -98,6 +98,8 @@ export interface Layout {
   columns: ColumnConf[];
   requestTab: string;
   responseTab: string;
+  /** Colour theme: follow the OS, or force light/dark. */
+  theme?: "system" | "light" | "dark";
   /** Keep the chosen inspector view per request/response and kind of content. */
   rememberViews?: boolean;
   /** `request:json` → `syntaxview`, `response:soap` → `xml`, … */
@@ -122,6 +124,7 @@ export const DEFAULT_LAYOUT: Layout = {
   requestTab: "headers",
   responseTab: "headers",
   rememberViews: true,
+  theme: "system",
   viewByType: {},
   preset: "quena",
   presetChosen: false,

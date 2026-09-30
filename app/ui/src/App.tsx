@@ -10,6 +10,7 @@ import { SessionGrid } from "./grid/SessionGrid";
 import { RightPane } from "./panels/RightPane";
 import { get, restoreLayout, say, set, useStore, type Layout } from "./store";
 import { installGlobalKeys } from "./keys";
+import { installFileDrop } from "./lib/dropImport";
 
 async function importOpenFiles() {
   for (const path of await api.takeOpenFiles()) {
@@ -88,9 +89,11 @@ function useBoot() {
       void importOpenFiles();
     })();
     const uninstall = installGlobalKeys();
+    const uninstallDrop = installFileDrop();
     return () => {
       unlisten.forEach((p) => p.then((u) => u()));
       uninstall();
+      uninstallDrop();
     };
   }, []);
 }
@@ -123,8 +126,21 @@ function Splitter({ onDrag, vertical, min = [120, 120] }: { onDrag: (fraction: n
 
 export { Splitter };
 
+/** Apply the chosen theme to the document (CSS tokens switch on `data-theme`). */
+function useTheme() {
+  const theme = useStore((s) => s.layout.theme ?? "system");
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "system") delete root.dataset.theme;
+    else root.dataset.theme = theme;
+    // Title bar and native controls follow as well.
+    if (isTauri) import("@tauri-apps/api/window").then((w) => w.getCurrentWindow().setTheme(theme === "system" ? null : theme)).catch(() => {});
+  }, [theme]);
+}
+
 export function App() {
   useBoot();
+  useTheme();
   const leftWidth = useStore((s) => s.layout.leftWidth);
   const overlay = useStore((s) => s.overlay);
   if (!isTauri) {

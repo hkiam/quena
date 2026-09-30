@@ -34,6 +34,9 @@ export function sessionMenu(): MenuItem[] {
         { label: "Headers only", action: () => actions.copySessions("headers") },
         { label: "Full Session", action: () => actions.copySessions("full") },
         { label: "As cURL", action: () => actions.copySessions("curl") },
+        { label: "As fetch (JavaScript)", action: () => actions.copySessions("fetch") },
+        { label: "As PowerShell", action: () => actions.copySessions("powershell") },
+        { label: "As Python requests", action: () => actions.copySessions("python") },
       ],
     },
     {

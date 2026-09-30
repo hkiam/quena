@@ -12,6 +12,32 @@ contain breaking changes (settings, file formats, plugin API).
   response (e.g. SOAP → XML, JSON → Body, Fast Infoset → its plugin view). Until a view was
   chosen, the one that fits the content opens (SOAP, gRPC, WebSocket, images, form data …).
   On by default; *Settings → General → Inspector views* turns it off or forgets the choices.
+- JWT plugin: decodes JSON Web Tokens in `Authorization`/`Proxy-Authorization` (Bearer, DPoP),
+  cookies, `Set-Cookie` and common token headers: header (alg, typ, kid …), claims with the
+  registered ones explained, `exp`/`nbf`/`iat` as dates with "expired 3 h ago" / "valid for
+  12 min", and the signature algorithm (not verified). Encrypted tokens (JWE) show their header.
+  Shown in the *Auth* view next to Kerberos/NTLM (no extra tab); the Auth view now also lists
+  tokens a plugin recognises in cookies and token headers.
+- GraphQL plugin: requests (`application/graphql` or JSON with `query`/`variables`/
+  `operationName`, batches, persisted queries) with the operation and the query pretty-printed,
+  and GraphQL JSON responses with the errors first.
+- Drop `.saz` or `.har` archives onto the window to load them.
+- *Timeline* shows a waterfall: request, DNS, connect, TLS, send, wait (time to first byte)
+  and receive per session, with the time of each phase in the tooltip.
+- *Structure* tab: the visible sessions as a tree of hosts and paths with counts and errors;
+  clicking a host or folder selects its sessions.
+- Theme choice in *Settings → General*: like the system, light or dark.
+- Slow and large responses stand out in the session list: duration over 1 s / 5 s and body
+  size over 1 MB / 10 MB are shown in amber / red.
+- *Copy as* fetch (JavaScript), PowerShell (`Invoke-WebRequest`) and Python `requests`, next
+  to cURL.
+- Map Remote: *Mock Rules → Add mapping… → Map Remote* forwards everything under a URL
+  prefix to another server (`prefix:https://prod…/api/` → `https://staging…/api/`), keeping
+  the rest of the path and the query; the session comment names the original URL.
+- Map Local: *Add mapping… → Map Local* serves a folder under a URL prefix (`dir:/folder`
+  action): `index.html` for folders, Content-Type by extension, a clear 404 for missing files;
+  paths that would leave the folder (`..`, encoded `%2e%2e`, symlinks outside) are refused.
+- Mock Rules match `prefix:` for URLs that start with a given text.
 
 ### Changed
 - Inspector view tabs show as many views as fit the width; *More* only holds the ones that do

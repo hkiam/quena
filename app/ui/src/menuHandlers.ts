@@ -21,6 +21,12 @@ export async function handleMenu(id: string) {
       return actions.copySessions("full");
     case "edit.copy-curl":
       return actions.copySessions("curl");
+    case "edit.copy-fetch":
+      return actions.copySessions("fetch");
+    case "edit.copy-powershell":
+      return actions.copySessions("powershell");
+    case "edit.copy-python":
+      return actions.copySessions("python");
     case "edit.remove-selected":
       return actions.removeSelected();
     case "edit.remove-unselected":
@@ -87,6 +93,8 @@ export async function handleMenu(id: string) {
       return actions.showTab("log");
     case "view.timeline":
       return actions.showTab("timeline");
+    case "view.structure":
+      return actions.showTab("structure");
     case "view.stacked":
       set((s) => ({ layout: { ...s.layout, stacked: true } }));
       return actions.saveLayout();
