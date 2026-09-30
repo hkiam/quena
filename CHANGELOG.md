@@ -7,6 +7,14 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-09-30
+
+Faster start and capture switching, more platforms, and more robustness. Packages are still
+not signed with a paid certificate (see the notes for 0.1.0).
+- macOS: one universal `.dmg` for Apple Silicon and Intel.
+- Windows: installer (`.exe` / `.msi`) or the portable `Quena_0.1.1_x64-portable.zip`.
+- Linux: `.deb`, `.rpm` and AppImage for x86_64 and arm64.
+
 ### Added
 - macOS builds are universal (Apple Silicon and Intel); Linux packages for arm64 (aarch64)
   in addition to x86_64.
@@ -141,5 +149,6 @@ Internal test build (not tagged) — an early preview for trying Quena on macOS 
 - Client certificates (mTLS) per host; bandwidth and latency simulation.
 - SAZ (compatible with Fiddler Classic) and HAR 1.2 import/export; copy as cURL.
 
-[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/hkiam/quena/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/hkiam/quena/releases/tag/v0.1.0
