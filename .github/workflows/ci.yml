@@ -100,7 +100,8 @@ jobs:
         run: ./plugins/build.sh
       - name: Plugin tests
         shell: bash
-        run: cargo test --manifest-path plugins/auth-tokens/Cargo.toml
+        run: |
+          for p in auth-tokens jwt graphql; do cargo test --manifest-path plugins/$p/Cargo.toml; done
       - name: Rust tests
         run: cargo test --workspace --exclude quena-app --no-fail-fast
       - name: Linux desktop integration (GNOME proxy settings, NSS trust)
@@ -143,6 +144,18 @@ jobs:
           sudo apt-get install -y --no-install-recommends webkit2gtk-driver xvfb
           cargo install tauri-driver --locked
           xvfb-run -a -s "-screen 0 1920x1080x24" dbus-run-session -- app/e2e/run.sh "${{ matrix.out }}/$BUILD_PROFILE/quena"
+      - name: UI end-to-end tests (Windows, WebView2 via Edge WebDriver)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo install tauri-driver --locked
+          # Edge WebDriver in the version of the installed WebView2 runtime.
+          ver=$(pwsh -NoProfile -Command "(Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv")
+          echo "WebView2 $ver"
+          curl -fsSL -o edgedriver.zip "https://msedgedriver.microsoft.com/$ver/edgedriver_win64.zip" \
+            || curl -fsSL -o edgedriver.zip "https://msedgedriver.azureedge.net/$ver/edgedriver_win64.zip"
+          unzip -q -o edgedriver.zip -d "$RUNNER_TEMP/edgedriver"
+          EDGEDRIVER="$RUNNER_TEMP/edgedriver/msedgedriver.exe" app/e2e/run.sh "target/$BUILD_PROFILE/quena.exe"
       - name: Portable ZIP (Windows, xcopy deployment)
         if: runner.os == 'Windows'
         shell: pwsh
