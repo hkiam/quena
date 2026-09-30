@@ -190,6 +190,8 @@ export interface AppState {
   arNonce: number;
   /** Menu commands the active rules script registered (Quena.registerMenu). */
   scriptMenus: string[];
+  /** Capture is being switched on/off (the system proxy can take a moment). */
+  captureBusy: "starting" | "stopping" | null;
 }
 
 export const useStore = create<AppState>(() => ({
@@ -215,6 +217,7 @@ export const useStore = create<AppState>(() => ({
   composerLoad: null,
   arNonce: 0,
   scriptMenus: [],
+  captureBusy: null,
 }));
 
 export const set = useStore.setState;

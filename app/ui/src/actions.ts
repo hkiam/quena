@@ -240,11 +240,17 @@ export const actions = {
 
   // ---------------------------------------------------------------- capture
   async toggleCapture() {
+    if (get().captureBusy) return;
+    // Flip the switch right away; the core confirms through the status.
+    set({ captureBusy: get().status?.engine.capturing ? "stopping" : "starting" });
     try {
       const on = await api.toggleCapture();
+      set({ status: await api.status() });
       say(on ? "Capturing" : "Capture stopped");
     } catch (e) {
       say(String(e), "error");
+    } finally {
+      set({ captureBusy: null });
     }
   },
 

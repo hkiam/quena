@@ -20,12 +20,16 @@ function Btn({ icon: Icon, label, onClick, active, title, disabled, menu }: { ic
 /** The capture switch: a labelled toggle, the most important control in the window. */
 function CaptureSwitch() {
   const capturing = useStore((s) => s.status?.engine.capturing ?? false);
+  const busy = useStore((s) => s.captureBusy);
+  // While switching, show the state being switched to.
+  const on = busy ? busy === "starting" : capturing;
+  const label = busy === "starting" ? "Starting…" : busy === "stopping" ? "Stopping…" : capturing ? "Capturing" : "Paused";
   return (
-    <button className={`capture-switch ${capturing ? "on" : ""}`} title="Capture traffic (F12)" onClick={() => actions.toggleCapture()}>
+    <button className={`capture-switch ${on ? "on" : ""} ${busy ? "busy" : ""}`} title="Capture traffic (F12)" aria-busy={!!busy} onClick={() => actions.toggleCapture()}>
       <span className="cs-track">
         <span className="cs-knob" />
       </span>
-      <span className="cs-label">{capturing ? "Capturing" : "Paused"}</span>
+      <span className="cs-label">{label}</span>
     </button>
   );
 }

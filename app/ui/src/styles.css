@@ -323,6 +323,18 @@ button.primary {
 .capture-switch.on .cs-knob {
   left: 14px;
 }
+.capture-switch.busy {
+  opacity: 0.75;
+  cursor: progress;
+}
+.capture-switch.busy .cs-knob {
+  animation: cs-pulse 0.9s ease-in-out infinite;
+}
+@keyframes cs-pulse {
+  50% {
+    transform: scale(0.7);
+  }
+}
 .cmdfield {
   flex: 1;
   min-width: 160px;

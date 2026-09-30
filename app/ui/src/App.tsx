@@ -31,7 +31,12 @@ function useBoot() {
         set({ listVersion: e.version, listTotal: e.total, listCount: e.count }),
       ),
     );
-    unlisten.push(on<Status>("status", (s) => set({ status: s })));
+    unlisten.push(
+      on<Status>("status", (s) => {
+        // Capture started on its background thread after launch.
+        set(get().captureBusy === "starting" && s.engine.capturing ? { status: s, captureBusy: null } : { status: s });
+      }),
+    );
     unlisten.push(on<JobInfo[]>("jobs", (j) => set({ jobs: j })));
     unlisten.push(
       on<LogEntry[]>("log", (entries) => {
@@ -53,7 +58,13 @@ function useBoot() {
       const settings = await api.settingsGet();
       const ui = (settings.ui ?? {}) as { layout?: Partial<Layout> };
       const layout = restoreLayout(ui.layout);
-      set({ settings, layout, filters: await api.getFilters(), status: await api.status(), log: await api.logSince(0) });
+      const status = await api.status();
+      set({ settings, layout, filters: await api.getFilters(), status, log: await api.logSince(0) });
+      // Capture starts in the background after launch: show that instead of "Paused".
+      if (settings.proxy.captureOnStartup && !status.engine.capturing) {
+        set({ captureBusy: "starting" });
+        window.setTimeout(() => get().captureBusy === "starting" && set({ captureBusy: null }), 15000);
+      }
       // Load any script-registered menu commands (if scripting was left enabled).
       void actions.refreshScriptMenus();
       let recovering = false;
