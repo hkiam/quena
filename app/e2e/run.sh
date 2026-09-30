@@ -29,6 +29,11 @@ tauri-driver --port 4444 "${driver_args[@]}" > "$QUENA_DATA_DIR/tauri-driver.log
 driver=$!
 trap 'kill $driver 2>/dev/null; rm -rf "$QUENA_DATA_DIR"' EXIT
 for _ in $(seq 1 50); do curl -s http://127.0.0.1:4444/status >/dev/null && break; sleep 0.2; done
+if [ -n "${QUENA_SHOTS:-}" ]; then
+  # Screenshots for README and manual only (docs/screenshots).
+  node --test --test-reporter=spec "$here/screenshots.mjs"
+  exit
+fi
 node --test --test-reporter=spec "$here/app.test.mjs"
 # Diagnostics with the real analyzer plugin.
 settings en

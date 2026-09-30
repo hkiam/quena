@@ -67,6 +67,8 @@ contain breaking changes (settings, file formats, plugin API).
   not fit, and the views are ordered by how well they fit the content.
 
 ### Fixed
+- Inspector view tabs overflowed (and hid the pane titles) after coming back to *Inspect*
+  from another right-pane tab; they are measured again when the view shows.
 - Diagnostics:
   - A single sign-on round trip is no longer reported as a redirect loop.
   - Polling during an outage is no longer a "retry storm".

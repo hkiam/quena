@@ -6,7 +6,8 @@
 
 **The easy, intuitive — yet seriously powerful — HTTP(S) debugging proxy. On every desktop.**
 
-Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Linux.
+Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Linux.<br>
+**And it doesn't stop at showing your traffic: it diagnoses it.**
 
 [![CI](https://github.com/hkiam/quena/actions/workflows/ci.yml/badge.svg)](https://github.com/hkiam/quena/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -16,6 +17,7 @@ Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Li
 ![Status](https://img.shields.io/badge/status-early%20preview-yellow)
 
 [Why Quena?](#why-quena) ·
+[Diagnostics](#diagnostics) ·
 [Features](#features) ·
 [Screenshots](#screenshots) ·
 [Getting started](#getting-started) ·
@@ -25,7 +27,9 @@ Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Li
 
 <br>
 
-<img src="docs/screenshots/overview.png" alt="Quena main window: session list, request headers and pretty-printed JSON response side by side" width="920">
+<img src="docs/screenshots/diagnostics.png" alt="Quena Diagnostics: 68 sessions condensed to 5 critical findings and 8 warnings; the N+1 finding is open with its evidence, recommendations and its 30 sessions selected in the list" width="920">
+
+<sub>68 sessions in, 5 critical findings out — each with its evidence and the affected sessions one click away.</sub>
 
 </div>
 
@@ -41,6 +45,10 @@ and teams working across platforms, have had few free tools of that kind.
 Quena is an independent, open-source take on this kind of tool, with its own design, for
 **every desktop platform**:
 
+- **Diagnoses, not just displays.** Built-in *Diagnostics* turns thousands of sessions into a
+  short, prioritised list of findings — N+1 queries, redundant calls, retry storms, auth loops,
+  missing compression and caching, latency-sensitive request chains — each with its evidence,
+  its likely causes and what to do next. See [Diagnostics](#diagnostics).
 - **Easy to use.** Start Quena, and traffic appears. HTTPS decryption is one checkbox and one
   "Trust" click. No accounts, no cloud, no setup wizard marathon.
 - **Intuitive.** A keyboard-driven workspace with a command field and palette, Mock Rules, a
@@ -60,6 +68,69 @@ Quena is an independent, open-source take on this kind of tool, with its own des
 > Quena is an independent project. It is not affiliated with, endorsed by, or connected to
 > Progress Software Corporation or the Fiddler product family. *Fiddler* is a trademark of its
 > respective owner and is mentioned here only to describe familiarity and compatibility.
+
+---
+
+## Diagnostics
+
+A capture of a few minutes easily holds thousands of sessions. Finding out *what is wrong*
+with them usually takes experience and an afternoon. Quena's **Diagnostics** does the first
+pass for you and answers three questions for every finding:
+**what is conspicuous, why it matters, and where to look next.**
+
+```text
+10,000 sessions  →  3 critical · 12 warnings · 28 notes
+
+  ✖ N+1 request pattern: GET api.example.com/odata/Documents   50 requests, one per id
+  ✖ Authentication loop: GET erp.example.com/api/data          401, never answered
+  ✖ Retries after failures: POST api.example.com/orders        idempotency at risk
+  ▲ Latency-sensitive chain: “Open case”                        +4.4 s at 120 ms RTT (estimate)
+  ▲ Repeated identical requests: GET /api/permissions           31 % of all requests
+  ▲ Uncompressed responses: api.example.com                     ≈ 6 MB could be saved
+```
+
+- **Evidence first.** Every finding lists the measured facts, the threshold it was checked
+  against and the affected sessions — one click selects them in the list. No black box.
+- **Understands your protocols.** OData-aware duplicate and N+1 detection (`$filter`,
+  `$select`, `$expand`, paging), SOAP, REST; semantic duplicates that differ only in
+  parameter order, formatting or cache busters.
+- **Thinks in operations, not requests.** Sessions are grouped into user operations; the
+  critical path of each operation shows how much slower it gets on VPN, a weak WAN or mobile
+  networks — modelled per configurable network profile (RTT, bandwidth, packet loss) and
+  clearly marked as an estimate.
+- **Profiles for the question at hand:** full diagnostic, performance, troubleshooting,
+  authentication, network resilience, modernization.
+- **Focus on the application under test.** Narrow the analysis to a process, a target host
+  or a selection; Quena warns when mixed traffic of several applications would dilute the
+  result.
+- **Compare versions.** Save a report, change your application, capture again — Quena shows
+  which findings are new, resolved or changed, and how the key figures moved.
+- **Share it — or ask an AI.** Export as Markdown or JSON, or copy a prompt-ready version for
+  an AI assistant to explain causes and priorities.
+- **Local, deterministic, private.** The analysis runs in a sandboxed plugin on your machine;
+  the same capture always gives the same report. Tokens, cookie values and sensitive URL
+  parameters are removed before the analyzer sees the traffic.
+
+<table>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/diagnostics-latency.png" alt="A latency-sensitive request chain: 44 sequential requests with the estimated extra time per network profile">
+<p align="center"><sub><b>Network sensitivity</b> — the extra time of an operation on VPN, weak WAN or mobile networks</sub></p>
+</td>
+<td width="50%">
+<img src="docs/screenshots/diagnostics-dark.png" alt="Diagnostics in the dark theme with an authentication loop finding">
+<p align="center"><sub><b>Authentication</b> — loops, repeated NTLM/Kerberos handshakes, uncached tokens</sub></p>
+</td>
+</tr>
+</table>
+
+What it checks — timing and server time, sizes and compression, exact and semantic
+duplicates, redundant refreshes and double submits, N+1, polling, retries and retry storms,
+chatty operations, OData queries and paging, HTTP errors and connection failures,
+authentication, redirect chains and loops, cookies, caching, connection reuse, TLS versions,
+CORS preflights, latency and bandwidth sensitivity — is described in the
+[manual](https://hkiam.github.io/quena/diagnostics/). The analyzer is a plugin with a
+documented [contract](plugins/webdiag/REPORT.md), so you can add your own.
 
 ---
 
@@ -123,22 +194,32 @@ Quena is an independent, open-source take on this kind of tool, with its own des
 <table>
 <tr>
 <td width="50%">
-<img src="docs/screenshots/soap-inspector.png" alt="SOAP request: header table with topic tags and the SOAP inspector showing the parsed response">
-<p align="center"><sub><b>SOAP & XML</b> — pretty-printed, with auto-detected SOAP and Atom/OData inspectors</sub></p>
+<img src="docs/screenshots/overview.png" alt="Quena main window: session list, request headers and pretty-printed JSON response side by side">
+<p align="center"><sub><b>Inspect</b> — session list, headers and pretty-printed bodies side by side</sub></p>
 </td>
 <td width="50%">
-<img src="docs/screenshots/statistics.png" alt="Statistics for 13 selected sessions: timing, response codes, bytes by content type">
-<p align="center"><sub><b>Statistics</b> — timing, status codes and bytes by content type for any selection</sub></p>
+<img src="docs/screenshots/soap-inspector.png" alt="SOAP request: header table with topic tags and the SOAP inspector showing the parsed response">
+<p align="center"><sub><b>SOAP & XML</b> — pretty-printed, with auto-detected SOAP and Atom/OData inspectors</sub></p>
 </td>
 </tr>
 <tr>
 <td width="50%">
+<img src="docs/screenshots/statistics.png" alt="Statistics for 13 selected sessions: timing, response codes, bytes by content type">
+<p align="center"><sub><b>Statistics</b> — timing, status codes and bytes by content type for any selection</sub></p>
+</td>
+<td width="50%">
 <img src="docs/screenshots/scripting.png" alt="Rules Script editor with a JavaScript rules script and its console output">
 <p align="center"><sub><b>JavaScript rules</b> — hooks, custom menu and column, live console</sub></p>
 </td>
+</tr>
+<tr>
 <td width="50%">
 <img src="docs/screenshots/classic-layout.png" alt="Optional Classic layout: dense session list, request above response">
 <p align="center"><sub><b>Classic layout</b> — optional: denser list, request above response</sub></p>
+</td>
+<td width="50%">
+<img src="docs/screenshots/overview-dark.png" alt="Inspecting an OData JSON response in the dark theme">
+<p align="center"><sub><b>Dark theme</b> — or light, or like the system</sub></p>
 </td>
 </tr>
 </table>

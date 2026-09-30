@@ -2734,6 +2734,9 @@ body.file-drop #root::after {
 .diag-table th {
   color: var(--muted);
   font-weight: 600;
+  /* Long column titles ("Estimated extra time") wrap instead of widening the table. */
+  white-space: normal;
+  vertical-align: bottom;
 }
 .diag-table td.num {
   text-align: right;

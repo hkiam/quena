@@ -8,6 +8,8 @@ Open it with **View → Diagnostics** (or the stethoscope tab in the right pane)
 **Run**. The analysis runs locally in the bundled *webdiag* plugin; nothing leaves your
 machine.
 
+![The Diagnostics tab: summary, key figures and findings by severity; the N+1 finding is open with its evidence and recommendations](img/diagnostics.png)
+
 ## Choose what to analyse
 
 System-wide capture records everything — the browser, a chat client, an updater. Mixed
@@ -65,6 +67,8 @@ loss). Every finding names the threshold it was measured against.
 | Errors | HTTP errors per endpoint, connection failures by cause (DNS, TLS, refused, timeout, reset) |
 | Authentication | failing challenges and loops, repeated NTLM/Negotiate handshakes, uncached tokens |
 | HTTP | redirect chains and loops, cookie flags (`Secure`, `SameSite`, `HttpOnly`), caching headers, connection reuse, old TLS versions, CORS preflights |
+
+![A latency-sensitive request chain with the estimated extra time per network profile](img/diagnostics-latency.png)
 
 !!! note "Latency estimates"
     The sequential chain is an upper bound: requests that only happened to start after

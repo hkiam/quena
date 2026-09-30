@@ -2,9 +2,21 @@
 
 **Quena** is a local HTTP(S) debugging proxy for macOS, Windows and Linux. It records the
 traffic between your applications and the servers they talk to, and lets you inspect,
-change, replay and mock it.
+change, replay and mock it — **and it diagnoses it.**
 
 ![Quena main window: session list, request headers and pretty-printed JSON response side by side](img/overview.png)
+
+## Diagnostics: from thousands of sessions to what matters
+
+A capture of a few minutes easily holds thousands of sessions. **Diagnostics** does the first
+pass for you: it turns them into a short, prioritised list of findings — N+1 queries,
+redundant calls, retry storms, authentication loops, missing compression and caching,
+request chains that get slow on VPN or mobile networks — and answers for each one *what is
+conspicuous, why it matters and where to look next*, with the evidence one click away.
+
+![Diagnostics: 68 sessions condensed to 5 critical findings and 8 warnings; the N+1 finding is open, its 30 sessions are selected in the list](img/diagnostics.png)
+
+[Read more about Diagnostics →](diagnostics.md){ .md-button .md-button--primary }
 
 ## What you can do with it
 
@@ -16,6 +28,9 @@ change, replay and mock it.
   WebSocket, SSE, images and more. Multi-gigabyte bodies open instantly.
 - **Change and replay**: breakpoints and tampering, Mock Rules (including Map Remote and
   Map Local), a Composer with cURL import, and replay in several variants.
+- **Diagnose**: prioritised findings with evidence, profiles for performance, troubleshooting,
+  authentication, network resilience and modernization, estimates for slow networks, and
+  comparison of two captures — see [Diagnostics](diagnostics.md).
 - **Analyze**: statistics, a timing waterfall, a host/path tree, comparing two sessions,
   and Text Tools for quick encoding and decoding.
 - **Automate**: JavaScript rules scripts, WebAssembly plugins, automatic authentication
@@ -39,6 +54,7 @@ HTTPS decryption is opt-in, and saved passwords live in the operating system's s
 | find, sort, mark and filter sessions | [Session list](sessions.md) |
 | read requests and responses | [Inspect](inspect.md) |
 | change, mock or resend traffic | [Change and replay](change-replay.md) |
+| find out what is wrong with the traffic | [Diagnostics](diagnostics.md) |
 | look at timing, volumes and structure | [Analyze](analyze.md) |
 | exchange captures with colleagues | [Archives and copying](archives.md) |
 | automate with scripts or plugins | [Rules scripts](scripting.md), [Plugins](plugins.md) |
