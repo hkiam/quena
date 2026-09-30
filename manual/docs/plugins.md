@@ -44,7 +44,7 @@ A `plugin.toml` looks like this:
 ```toml
 id = "io.github.hkiam.fast-infoset"
 name = "Fast Infoset"
-version = "0.1.1"
+version = "0.1.2"
 api_version = "1"
 wasm = "fast_infoset.wasm"
 description = "Decodes Fast Infoset (binary XML, e.g. SOAP/FI) into XML."

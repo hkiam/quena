@@ -7,6 +7,21 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-09-30
+
+Diagnostics, a German user interface and correct character encodings everywhere — plus the
+fixes of a thorough review (including a security fix for *Copy as PowerShell/cURL*).
+Packages are still not signed with a paid certificate (see the notes for 0.1.0).
+- **Diagnostics** turns a capture into a short list of prioritised findings with evidence:
+  performance, duplicates and N+1, errors and authentication, character encodings, clocks,
+  and how sensitive each operation is to slow networks.
+- **German** user interface, including the menus (*Settings → General → Language*).
+- **Character encodings**: every view shows bodies in their real charset, with an override.
+- **Map Remote / Map Local**, drag & drop of archives, a timing waterfall, a host/path tree,
+  a theme choice, and a user manual.
+- macOS: one universal `.dmg`; Windows: installer (`.exe` / `.msi`) or the portable
+  `Quena_0.1.2_x64-portable.zip`; Linux: `.deb`, `.rpm` and AppImage for x86_64 and arm64.
+
 ### Added
 - Character encodings: every text view decodes bodies in their real charset (BOM, then the
   `Content-Type` charset, then `<?xml encoding>` / HTML `<meta>`, then the type's default) and
@@ -287,6 +302,7 @@ Internal test build (not tagged) — an early preview for trying Quena on macOS 
 - Client certificates (mTLS) per host; bandwidth and latency simulation.
 - SAZ (compatible with Fiddler Classic) and HAR 1.2 import/export; copy as cURL.
 
-[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/hkiam/quena/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/hkiam/quena/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/hkiam/quena/releases/tag/v0.1.0
