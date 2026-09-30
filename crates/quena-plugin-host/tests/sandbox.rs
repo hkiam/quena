@@ -149,3 +149,84 @@ fn jwt_and_graphql_plugins() {
     let out = String::from_utf8(out).unwrap();
     assert!(out.starts_with("Operation: query Me\n\n--- Query ---\nquery Me {\n  me {\n    name\n  }\n}\n"), "{out}");
 }
+
+/// Synthetic session for the analyzer: `n`-th request of a slow, repeated API call.
+fn analyzer_session(id: u64, started: u64, status: u16, duration_ms: u32) -> quena_plugin_host::AnalyzerSession {
+    use quena_plugin_host::{AnalyzerSession, AnalyzerTimers};
+    AnalyzerSession {
+        id,
+        kind: "http".into(),
+        started,
+        duration_ms: Some(duration_ms),
+        method: "GET".into(),
+        url: "https://api.example.test/odata/Cases(42)?$expand=Items".into(),
+        host: "api.example.test".into(),
+        version: "HTTP/1.1".into(),
+        status,
+        error: None,
+        request_bytes: 0,
+        response_bytes: 2_000_000,
+        response_decoded_bytes: 8_000_000,
+        content_type: "application/json".into(),
+        request_headers: vec![("Authorization".into(), "Bearer <812 bytes>".into()), ("Cookie".into(), "sid; theme".into())],
+        response_headers: vec![("Content-Type".into(), "application/json".into()), ("Cache-Control".into(), "no-store".into())],
+        timers: AnalyzerTimers {
+            client_begin_request: Some(started),
+            server_got_first_byte: Some(started + duration_ms as u64 * 900),
+            client_done_response: Some(started + duration_ms as u64 * 1000),
+            ..Default::default()
+        },
+        client_connection: Some(1),
+        server_connection_reused: false,
+        tls_version: Some("TLSv1.2".into()),
+        process: "browser:42".into(),
+        request_body_hash: None,
+        response_body_hash: Some(0x1234_5678_9abc_def0),
+    }
+}
+
+/// The diagnostics analyzer: describe, a run over synthetic sessions in batches, cancellation.
+#[test]
+fn webdiag_analyzer() {
+    let Some(h) = host() else { return };
+    let Some(p) = h.list().into_iter().find(|p| p.id == "io.github.hkiam.webdiag") else {
+        eprintln!("webdiag plugin not built – run plugins/build.sh");
+        return;
+    };
+    assert!(p.error.is_none(), "{p:#?}");
+    assert_eq!(p.kind, quena_plugin_host::PluginKind::Analyzer);
+    assert!(!p.tab.is_empty());
+    // Analyzers are neither body decoders nor header inspectors.
+    assert!(h.candidates(Some("application/json"), b"{}").iter().all(|c| c.0 != p.index));
+    assert!(h.inspect_header("Authorization", "Bearer x").iter().all(|r| r.plugin_id != p.id));
+    // …and decoders are no analyzers.
+    assert!(h.describe(index(&h, "io.github.hkiam.rot13-test"), "en").is_err());
+
+    let d: serde_json::Value = serde_json::from_str(&h.describe(p.index, "de").unwrap()).expect("describe is JSON");
+    assert!(d["profiles"].as_array().is_some_and(|a| !a.is_empty()), "{d:#}");
+    assert!(d["options"].is_object(), "{d:#}");
+
+    // 2 500 slow, duplicate, partly failing requests one after another, in two batches.
+    let t0 = 1_727_690_000_000_000u64;
+    let all: Vec<_> = (0..2500u64).map(|i| analyzer_session(i + 1, t0 + i * 3_000_000, if i % 10 == 0 { 500 } else { 200 }, 2500)).collect();
+    let mut batches = all.chunks(2000).map(|c| c.to_vec()).collect::<Vec<_>>().into_iter();
+    let t = Instant::now();
+    let report = h.analyze(p.index, r#"{"profile":"full","lang":"en"}"#, &mut || batches.next(), &|| false).unwrap();
+    eprintln!("webdiag: 2500 sessions in {:?}, report {} bytes", t.elapsed(), report.len());
+    let r: serde_json::Value = serde_json::from_str(&report).expect("report is JSON");
+    assert_eq!(r["schema"], 1, "{r:#}");
+    let findings = r["findings"].as_array().expect("findings");
+    assert!(!findings.is_empty(), "no findings: {r:#}");
+    assert!(findings.iter().all(|f| f["id"].is_string() && f["severity"].is_string()), "{findings:#?}");
+
+    // Cancelled before the first batch.
+    let mut once = vec![all[..10].to_vec()].into_iter();
+    let e = h.analyze(p.index, "{}", &mut || once.next(), &|| true).unwrap_err();
+    assert!(e.to_string().contains("cancelled"), "{e}");
+    // An empty run still reports.
+    let empty = h.analyze(p.index, "{}", &mut || None, &|| false).unwrap();
+    assert!(serde_json::from_str::<serde_json::Value>(&empty).is_ok(), "{empty}");
+    // Disabled analyzers do not run.
+    h.set_enabled("io.github.hkiam.webdiag", false).unwrap();
+    assert!(h.analyze(p.index, "{}", &mut || None, &|| false).is_err());
+}

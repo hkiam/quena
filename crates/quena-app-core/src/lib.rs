@@ -7,6 +7,7 @@ pub mod auth;
 pub mod bodies;
 pub mod ws;
 pub mod compose;
+pub mod diagnostics;
 pub mod dto;
 pub mod engine;
 pub mod find;
@@ -134,6 +135,8 @@ pub struct AppCore {
     pub(crate) mock: Mutex<Option<mock::MockHandle>>,
     pub(crate) searches: Mutex<std::collections::HashMap<JobId, Arc<Mutex<SearchResult>>>>,
     pub(crate) finds: Mutex<std::collections::HashMap<JobId, Arc<Mutex<find::FindResult>>>>,
+    /// Last diagnostics report (JSON).
+    pub(crate) diag_report: Mutex<Option<Arc<String>>>,
     started: Instant,
     shut_down: std::sync::atomic::AtomicBool,
     /// Serializes starting and stopping the capture (the startup thread and the UI can race).
@@ -164,6 +167,7 @@ impl AppCore {
             mock: Mutex::new(None),
             searches: Mutex::new(Default::default()),
             finds: Mutex::new(Default::default()),
+            diag_report: Mutex::new(None),
             started: Instant::now(),
             shut_down: std::sync::atomic::AtomicBool::new(false),
         });

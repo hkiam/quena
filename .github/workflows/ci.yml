@@ -74,6 +74,7 @@ jobs:
             plugins/evil-test
             plugins/jwt
             plugins/graphql
+            plugins/webdiag
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -101,7 +102,7 @@ jobs:
       - name: Plugin tests
         shell: bash
         run: |
-          for p in auth-tokens jwt graphql; do cargo test --manifest-path plugins/$p/Cargo.toml; done
+          for p in auth-tokens jwt graphql webdiag; do cargo test --manifest-path plugins/$p/Cargo.toml; done
       - name: Rust tests
         run: cargo test --workspace --exclude quena-app --no-fail-fast
       - name: Linux desktop integration (GNOME proxy settings, NSS trust)

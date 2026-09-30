@@ -421,6 +421,57 @@ async fn write_text_file(path: String, text: String) -> R<()> {
     blocking(move || std::fs::write(path, text).map_err(e)).await
 }
 
+/// Largest text file [`read_text_file`] loads (a saved diagnostics report for comparison).
+const MAX_TEXT_FILE: u64 = 64 << 20;
+
+#[tauri::command]
+async fn read_text_file(path: String) -> R<String> {
+    blocking(move || {
+        use std::io::Read;
+        let f = std::fs::File::open(&path).map_err(e)?;
+        let len = f.metadata().map_err(e)?.len();
+        if len > MAX_TEXT_FILE {
+            return Err(format!("{path}: file is larger than {} MB", MAX_TEXT_FILE >> 20));
+        }
+        let mut s = String::new();
+        // `take` also bounds a file that grows while it is read.
+        f.take(MAX_TEXT_FILE + 1).read_to_string(&mut s).map_err(e)?;
+        if s.len() as u64 > MAX_TEXT_FILE {
+            return Err(format!("{path}: file is larger than {} MB", MAX_TEXT_FILE >> 20));
+        }
+        Ok(s)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn diag_analyzers(core: State<'_, Core>) -> R<Vec<quena_app_core::diagnostics::DiagAnalyzer>> {
+    Ok(core.diag_analyzers())
+}
+
+#[tauri::command]
+async fn diag_describe(core: State<'_, Core>, index: u16, lang: String) -> R<String> {
+    let core = core.inner().clone();
+    blocking(move || core.diag_describe(index, &lang).map_err(e)).await
+}
+
+#[tauri::command]
+async fn diag_scope_options(core: State<'_, Core>) -> R<quena_app_core::diagnostics::DiagScopeOptions> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.diag_scope_options())).await
+}
+
+#[tauri::command]
+async fn diag_run(core: State<'_, Core>, index: u16, options: String, ids: Option<Vec<SessionId>>, filter: Option<quena_app_core::diagnostics::DiagFilter>) -> R<u64> {
+    let core = core.inner().clone();
+    blocking(move || core.diag_run(index, options, ids, filter.unwrap_or_default()).map_err(e)).await
+}
+
+#[tauri::command]
+async fn diag_report(core: State<'_, Core>) -> R<Option<String>> {
+    Ok(core.diag_report().map(|r| (*r).clone()))
+}
+
 use quena_app_core::rules::{AutoResponderState, BreakpointState, PausedInfo, Resume};
 
 fn rules(core: &Core) -> R<std::sync::Arc<quena_app_core::rules::Rules>> {
@@ -716,6 +767,12 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         drop_chunk,
         take_open_files,
         write_text_file,
+        read_text_file,
+        diag_analyzers,
+        diag_describe,
+        diag_run,
+        diag_scope_options,
+        diag_report,
         ar_get,
         ar_set,
         ar_add_sessions,

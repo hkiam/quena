@@ -3,7 +3,8 @@
 //! * discovery: `<dir>/<plugin>/plugin.toml` + component `.wasm`
 //! * API: `wit/plugin.wit`, versioned: body decoders (world `plugin`, streaming
 //!   sessions) and header inspectors (world `header-plugin`, one value per call);
-//!   the manifest section `[decoder]` / `[header_inspector]` selects the world
+//!   and analyzers (world `analyzer-plugin`, a whole capture streamed in batches);
+//!   the manifest section `[decoder]` / `[header_inspector]` / `[analyzer]` selects the world
 //! * isolation: fresh store per decoding run, no preopened directories,
 //!   no network, no environment, memory limit, execution deadline
 //! * a trapping or misbehaving plugin only fails its own run
@@ -34,6 +35,15 @@ mod header_world {
     });
 }
 
+mod analyzer_world {
+    wasmtime::component::bindgen!({
+        path: "../../wit/plugin.wit",
+        world: "analyzer-plugin",
+    });
+}
+
+use analyzer_world::exports::quena::plugin::analyzer::{Info as AnalyzerInfo, Session as WitSession, Timers as WitTimers};
+use analyzer_world::{AnalyzerPlugin, AnalyzerPluginPre};
 use decoder_world::exports::quena::plugin::decoder::{Info as DecoderInfo, Representation};
 use decoder_world::{Plugin, PluginPre};
 use header_world::exports::quena::plugin::header_inspector::{Info as HeaderInfo, NodeKind};
@@ -56,6 +66,10 @@ pub struct HeaderInspectorManifest {
     pub headers: Vec<String>,
 }
 
+/// `[analyzer]` section (no keys yet; an empty table marks the plugin as an analyzer).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AnalyzerManifest {}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Manifest {
     pub id: String,
@@ -66,6 +80,7 @@ pub struct Manifest {
     pub wasm: Option<String>,
     pub decoder: Option<DecoderManifest>,
     pub header_inspector: Option<HeaderInspectorManifest>,
+    pub analyzer: Option<AnalyzerManifest>,
     #[serde(default)]
     pub description: String,
 }
@@ -75,6 +90,100 @@ pub struct Manifest {
 pub enum PluginKind {
     Decoder,
     HeaderInspector,
+    Analyzer,
+}
+
+/// Session timers passed to an analyzer (mirrors `timers` of the `analyzer` interface):
+/// microseconds since the Unix epoch, durations in milliseconds.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyzerTimers {
+    pub client_begin_request: Option<u64>,
+    pub client_done_request: Option<u64>,
+    pub server_connect_start: Option<u64>,
+    pub server_connected: Option<u64>,
+    pub server_begin_request: Option<u64>,
+    pub server_done_request: Option<u64>,
+    pub server_got_first_byte: Option<u64>,
+    pub server_done_response: Option<u64>,
+    pub client_done_response: Option<u64>,
+    pub dns_ms: Option<u32>,
+    pub tcp_connect_ms: Option<u32>,
+    pub tls_handshake_ms: Option<u32>,
+}
+
+/// One session record for an analyzer (mirrors `session` of the `analyzer` interface), so
+/// callers do not depend on wasmtime types. Headers must already be allow-listed and
+/// redacted (plugins/webdiag/REPORT.md).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyzerSession {
+    pub id: u64,
+    /// `http`, `tunnel` or `websocket`.
+    pub kind: String,
+    pub started: u64,
+    pub duration_ms: Option<u32>,
+    pub method: String,
+    pub url: String,
+    pub host: String,
+    pub version: String,
+    pub status: u16,
+    pub error: Option<String>,
+    pub request_bytes: u64,
+    pub response_bytes: u64,
+    pub response_decoded_bytes: u64,
+    pub content_type: String,
+    pub request_headers: Vec<(String, String)>,
+    pub response_headers: Vec<(String, String)>,
+    pub timers: AnalyzerTimers,
+    pub client_connection: Option<u64>,
+    pub server_connection_reused: bool,
+    pub tls_version: Option<String>,
+    pub process: String,
+    pub request_body_hash: Option<u64>,
+    pub response_body_hash: Option<u64>,
+}
+
+impl From<AnalyzerSession> for WitSession {
+    fn from(s: AnalyzerSession) -> WitSession {
+        let t = s.timers;
+        WitSession {
+            id: s.id,
+            kind: s.kind,
+            started: s.started,
+            duration_ms: s.duration_ms,
+            method: s.method,
+            url: s.url,
+            host: s.host,
+            version: s.version,
+            status: s.status,
+            error: s.error,
+            request_bytes: s.request_bytes,
+            response_bytes: s.response_bytes,
+            response_decoded_bytes: s.response_decoded_bytes,
+            content_type: s.content_type,
+            request_headers: s.request_headers,
+            response_headers: s.response_headers,
+            timers: WitTimers {
+                client_begin_request: t.client_begin_request,
+                client_done_request: t.client_done_request,
+                server_connect_start: t.server_connect_start,
+                server_connected: t.server_connected,
+                server_begin_request: t.server_begin_request,
+                server_done_request: t.server_done_request,
+                server_got_first_byte: t.server_got_first_byte,
+                server_done_response: t.server_done_response,
+                client_done_response: t.client_done_response,
+                dns_ms: t.dns_ms,
+                tcp_connect_ms: t.tcp_connect_ms,
+                tls_handshake_ms: t.tls_handshake_ms,
+            },
+            client_connection: s.client_connection,
+            server_connection_reused: s.server_connection_reused,
+            tls_version: s.tls_version,
+            process: s.process,
+            request_body_hash: s.request_body_hash,
+            response_body_hash: s.response_body_hash,
+        }
+    }
 }
 
 /// One line of a header inspection (see `node` in `wit/plugin.wit`).
@@ -136,11 +245,15 @@ pub struct Limits {
     pub max_output: u64,
     /// Maximum text (names + values) of one header inspection.
     pub max_inspect_output: usize,
+    /// Wall-clock budget of an analyzer's `finish` (the report is built there).
+    pub finish_timeout: Duration,
+    /// Maximum size of an analyzer report (and of `describe`).
+    pub max_report: usize,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { memory: 512 << 20, call_timeout: Duration::from_secs(10), max_output: 16 << 30, max_inspect_output: 4 << 20 }
+        Limits { memory: 512 << 20, call_timeout: Duration::from_secs(10), max_output: 16 << 30, max_inspect_output: 4 << 20, finish_timeout: Duration::from_secs(60), max_report: 64 << 20 }
     }
 }
 
@@ -165,30 +278,20 @@ struct Loaded {
     info: Option<DecoderInfo>,
     /// Header inspector plugins.
     header: Option<(HeaderPluginPre<State>, HeaderInfo)>,
+    /// Analyzer plugins.
+    analyzer: Option<(AnalyzerPluginPre<State>, AnalyzerInfo)>,
     enabled: AtomicBool,
     error: Option<String>,
 }
 
 impl Loaded {
-    fn name(&self) -> String {
-        match (&self.info, &self.header) {
-            (Some(i), _) => i.name.clone(),
-            (_, Some((_, i))) => i.name.clone(),
-            _ => self.manifest.name.clone(),
-        }
-    }
-    fn version(&self) -> String {
-        match (&self.info, &self.header) {
-            (Some(i), _) => i.version.clone(),
-            (_, Some((_, i))) => i.version.clone(),
-            _ => self.manifest.version.clone(),
-        }
-    }
-    fn tab(&self) -> String {
-        match (&self.info, &self.header) {
-            (Some(i), _) => i.tab.clone(),
-            (_, Some((_, i))) => i.tab.clone(),
-            _ => self.manifest.name.clone(),
+    /// (name, version, tab) as reported by the plugin, or from the manifest if it failed to load.
+    fn labels(&self) -> (&str, &str, &str) {
+        match (&self.info, &self.header, &self.analyzer) {
+            (Some(i), _, _) => (&i.name, &i.version, &i.tab),
+            (_, Some((_, i)), _) => (&i.name, &i.version, &i.tab),
+            (_, _, Some((_, i))) => (&i.name, &i.version, &i.title),
+            _ => (&self.manifest.name, &self.manifest.version, &self.manifest.name),
         }
     }
 }
@@ -207,6 +310,10 @@ pub struct PluginHost {
 
 /// Ticks per call deadline (the ticker increments the epoch every 10 ms).
 const TICK: Duration = Duration::from_millis(10);
+
+fn ticks(d: Duration) -> u64 {
+    (d.as_millis() / TICK.as_millis()).max(1) as u64
+}
 
 impl PluginHost {
     /// `dirs`: plugin search paths; `state_dir`: where enable/disable state is kept.
@@ -337,8 +444,15 @@ impl PluginHost {
 
     fn load(&self, dir: &Path) -> Result<Loaded> {
         let manifest: Manifest = toml::from_str(&std::fs::read_to_string(dir.join("plugin.toml"))?).context("plugin.toml")?;
-        let kind = if manifest.header_inspector.is_some() { PluginKind::HeaderInspector } else { PluginKind::Decoder };
-        let mut l = Loaded { manifest: manifest.clone(), dir: dir.to_path_buf(), kind, pre: None, info: None, header: None, enabled: AtomicBool::new(true), error: None };
+        let kind = if manifest.analyzer.is_some() {
+            PluginKind::Analyzer
+        } else if manifest.header_inspector.is_some() {
+            PluginKind::HeaderInspector
+        } else {
+            PluginKind::Decoder
+        };
+        let mut l =
+            Loaded { manifest: manifest.clone(), dir: dir.to_path_buf(), kind, pre: None, info: None, header: None, analyzer: None, enabled: AtomicBool::new(true), error: None };
         if manifest.api_version != API_VERSION {
             l.error = Some(format!("unsupported API version {} (host supports {API_VERSION})", manifest.api_version));
             return Ok(l);
@@ -367,6 +481,12 @@ impl PluginHost {
                     let (mut store, plugin) = self.instantiate_header(&pre)?;
                     let info = plugin.quena_plugin_header_inspector().call_get_info(&mut store).map_err(|e| anyhow!("{e:#}"))?;
                     l.header = Some((pre, info));
+                }
+                PluginKind::Analyzer => {
+                    let pre = AnalyzerPluginPre::new(pre).map_err(|e| anyhow!("{e:#}"))?;
+                    let (mut store, plugin) = self.instantiate_analyzer(&pre)?;
+                    let info = plugin.quena_plugin_analyzer().call_get_info(&mut store).map_err(|e| anyhow!("{e:#}"))?;
+                    l.analyzer = Some((pre, info));
                 }
             }
             Ok(())
@@ -399,8 +519,14 @@ impl PluginHost {
         Ok((store, plugin))
     }
 
+    fn instantiate_analyzer(&self, pre: &AnalyzerPluginPre<State>) -> Result<(Store<State>, AnalyzerPlugin)> {
+        let mut store = self.store();
+        let plugin = pre.instantiate(&mut store).map_err(|e| anyhow!("{e:#}"))?;
+        Ok((store, plugin))
+    }
+
     fn deadline_ticks(&self) -> u64 {
-        (self.limits.call_timeout.as_millis() / TICK.as_millis()).max(1) as u64
+        ticks(self.limits.call_timeout)
     }
 
     pub fn list(&self) -> Vec<PluginInfo> {
@@ -410,15 +536,17 @@ impl PluginHost {
             .enumerate()
             .map(|(i, l)| {
                 let enabled = l.enabled.load(Ordering::Relaxed);
+                let (name, version, tab) = l.labels();
                 PluginInfo {
                     index: i as u16,
                     id: l.manifest.id.clone(),
-                    name: l.name(),
-                    version: l.version(),
-                    tab: l.tab(),
+                    name: name.to_string(),
+                    version: version.to_string(),
+                    tab: tab.to_string(),
                     output: match l.info.as_ref().map(|x| x.output) {
                         Some(Representation::Xml) => Output::Xml,
                         Some(Representation::Json) => Output::Json,
+                        _ if l.kind == PluginKind::Analyzer => Output::Json,
                         _ => Output::Text,
                     },
                     enabled,
@@ -572,5 +700,74 @@ impl PluginHost {
         }
         out.sort_by(|a, b| b.confidence.cmp(&a.confidence));
         out
+    }
+
+    /// Enabled, loaded analyzer plugin `index`.
+    fn analyzer(&self, index: u16) -> Result<(Arc<Loaded>, AnalyzerPluginPre<State>)> {
+        let l = self.get(index).ok_or_else(|| anyhow!("plugin {index} not found"))?;
+        if l.kind != PluginKind::Analyzer {
+            return Err(anyhow!("plugin {} is no analyzer", l.manifest.name));
+        }
+        if !l.enabled.load(Ordering::Relaxed) {
+            return Err(anyhow!("plugin {} is disabled", l.manifest.name));
+        }
+        let pre = match &l.analyzer {
+            Some((pre, _)) => pre.clone(),
+            None => return Err(anyhow!("plugin {} failed to load: {}", l.manifest.name, l.error.clone().unwrap_or_default())),
+        };
+        Ok((l, pre))
+    }
+
+    /// Profiles and default options of analyzer `index` as JSON (`describe` in REPORT.md).
+    pub fn describe(&self, index: u16, lang: &str) -> Result<String> {
+        let (_, pre) = self.analyzer(index)?;
+        let (mut store, plugin) = self.instantiate_analyzer(&pre)?;
+        let out = plugin.quena_plugin_analyzer().call_describe(&mut store, lang).map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
+        if out.len() > self.limits.max_report {
+            return Err(anyhow!("plugin output exceeds {} bytes", self.limits.max_report));
+        }
+        Ok(out)
+    }
+
+    /// One analyzer run: `run(options)`, a `push` per batch from `next_batch` (until it returns
+    /// `None`), then `finish` → the report JSON. Fresh store per run; the call deadline applies
+    /// to every call (`finish` gets [`Limits::finish_timeout`]). A plugin that traps, times out
+    /// or exceeds its memory only fails this run.
+    pub fn analyze(
+        &self,
+        index: u16,
+        options_json: &str,
+        next_batch: &mut dyn FnMut() -> Option<Vec<AnalyzerSession>>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<String> {
+        let (_, pre) = self.analyzer(index)?;
+        let (mut store, plugin) = self.instantiate_analyzer(&pre)?;
+        let a = plugin.quena_plugin_analyzer();
+        store.set_epoch_deadline(self.deadline_ticks());
+        let run = a.run().call_constructor(&mut store, options_json).map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
+        let result = (|| -> Result<String> {
+            loop {
+                if cancelled() {
+                    return Err(anyhow!("cancelled"));
+                }
+                let batch = next_batch();
+                // The batch source may stop early because of the cancellation.
+                if cancelled() {
+                    return Err(anyhow!("cancelled"));
+                }
+                let Some(batch) = batch else { break };
+                let batch: Vec<WitSession> = batch.into_iter().map(WitSession::from).collect();
+                store.set_epoch_deadline(self.deadline_ticks());
+                a.run().call_push(&mut store, run, &batch).map_err(|e| anyhow!("plugin trapped: {e:#}"))?.map_err(|e| anyhow!("{e}"))?;
+            }
+            store.set_epoch_deadline(ticks(self.limits.finish_timeout));
+            let report = a.run().call_finish(&mut store, run).map_err(|e| anyhow!("plugin trapped: {e:#}"))?.map_err(|e| anyhow!("{e}"))?;
+            if report.len() > self.limits.max_report {
+                return Err(anyhow!("plugin output exceeds {} bytes", self.limits.max_report));
+            }
+            Ok(report)
+        })();
+        let _ = run.resource_drop(&mut store);
+        result
     }
 }
