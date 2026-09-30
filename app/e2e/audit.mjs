@@ -26,9 +26,10 @@ for (const sel of fill) for (const e of document.querySelectorAll(sel)) {
   const scrolls = /(auto|scroll)/.test(cs.overflowY);
   if ((gh > 3 && !scrolls) || gw > 3) gaps.push({ el: name(e), w: gw, h: gh, box: [Math.round(box.width), Math.round(box.height)] });
 }
-// The canvas must cover the visible list area.
+// The canvas must cover the visible list area — the scroller's inner size: classic scrollbars
+// (Windows) take space of their own, overlay scrollbars (macOS, GTK) don't.
 const sc = document.querySelector('.grid-scroller'), cv = document.querySelector('.grid-canvas');
-if (sc && cv) { const a = r(sc), b = r(cv); if (a.height - b.height > 2 || a.width - b.width > 2) gaps.push({ el: 'grid-canvas vs scroller', w: Math.round(a.width - b.width), h: Math.round(a.height - b.height) }); }
+if (sc && cv) { const b = r(cv); const dh = sc.clientHeight - b.height, dw = sc.clientWidth - b.width; if (dh > 2 || dw > 2) gaps.push({ el: 'grid-canvas vs scroller', w: Math.round(dw), h: Math.round(dh) }); }
 return gaps;
 `;
 
