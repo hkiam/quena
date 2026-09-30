@@ -11,24 +11,39 @@ export function ViewTabs({ views, active, title, onSelect }: { views: string[]; 
   const [avail, setAvail] = useState(0);
   const [widths, setWidths] = useState<{ tabs: number[]; more: number; chrome: number } | null>(null);
 
-  // Natural width of every tab (and of the More button), measured off-screen with the same styles.
+  // Natural width of every tab (and of the More button), measured off-screen with the same
+  // styles. Measured again whenever the available width changes: while the Inspect tab is
+  // hidden (another right-pane tab is open) everything measures 0, and those widths must not
+  // be kept — otherwise all views "fit" and the strip overflows when Inspect shows again.
   const key = views.map(title).join("\u0000");
-  useLayoutEffect(() => {
+  const remeasure = () => {
     const m = measure.current;
     if (!m) return;
     const kids = [...m.children] as HTMLElement[];
     const tabs = kids.slice(0, views.length).map((k) => k.getBoundingClientRect().width);
+    if (!tabs.length || tabs.some((w) => w <= 0)) {
+      setWidths(null); // not laid out (hidden): measure again when visible
+      return;
+    }
     const more = kids[views.length]?.getBoundingClientRect().width ?? 60;
     const cs = getComputedStyle(m);
     const chrome = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
-    setWidths({ tabs, more, chrome });
+    setWidths((old) => (old && old.more === more && old.chrome === chrome && old.tabs.length === tabs.length && old.tabs.every((w, i) => w === tabs[i]) ? old : { tabs, more, chrome }));
+  };
+  const remeasureRef = useRef(remeasure);
+  remeasureRef.current = remeasure;
+  useLayoutEffect(() => {
+    remeasure();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
   useLayoutEffect(() => {
     const el = wrap.current;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => setAvail(Math.floor(e.contentRect.width)));
+    const ro = new ResizeObserver(([e]) => {
+      setAvail(Math.floor(e.contentRect.width));
+      remeasureRef.current();
+    });
     ro.observe(el);
     setAvail(Math.floor(el.getBoundingClientRect().width));
     return () => ro.disconnect();

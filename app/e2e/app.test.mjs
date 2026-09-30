@@ -202,6 +202,24 @@ test("timeline: a waterfall of the selected sessions", async () => {
   await d.exec(`window.__quena.menu("view.inspectors")`);
 });
 
+test("views still fit after coming back from another tab", async () => {
+  // Regression: while Inspect is hidden, tab widths measure 0; they must be measured again.
+  await selectRow(1);
+  for (const tab of ["view.structure", "view.statistics", "view.inspectors"]) {
+    await d.exec(`window.__quena.menu(${JSON.stringify(tab)})`);
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  await selectRow(2);
+  await new Promise((r) => setTimeout(r, 400));
+  const res = await d.exec(`
+    return [...document.querySelectorAll('.insp-pane')].map((pane) => {
+      const wrap = pane.querySelector('.view-tabs').getBoundingClientRect();
+      const segs = [...pane.querySelectorAll('.view-tabs > .segmented:not(.view-tabs-measure) .seg')].map((e) => e.getBoundingClientRect());
+      return { outside: segs.some((r) => r.left < wrap.left - 0.5 || r.right > wrap.right + 0.5), shown: segs.length };
+    });`);
+  assert.ok(res.every((p) => !p.outside && p.shown > 0), `view tabs overflow after a tab switch: ${JSON.stringify(res)}`);
+});
+
 test("an archive dropped onto the window is loaded", async () => {
   const fs = await import("node:fs");
   const text = fs.readFileSync(har, "utf8");
