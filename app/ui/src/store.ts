@@ -1,8 +1,9 @@
 import { create } from "zustand";
+import type { NetworkProfile } from "./lib/diagReport";
 import type { FilterSettings, JobInfo, LogEntry, SessionId, Settings, Sort, Status } from "./api";
 import { t } from "./i18n";
 
-export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "structure";
+export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "structure" | "diagnostics";
 
 export type ColumnKey =
   | "id"
@@ -111,6 +112,19 @@ export interface Layout {
   preset: LayoutPreset;
   /** The user picked a preset (first-run choice done). */
   presetChosen: boolean;
+  /** Diagnostics panel: last analyzer, profile, scope and option overrides. */
+  diag?: DiagPrefs;
+}
+
+export interface DiagPrefs {
+  analyzer?: string;
+  profile?: string;
+  scope?: "visible" | "selection";
+  /** Narrow the analysis to these processes / target hosts (empty = all). */
+  processes?: string[];
+  hosts?: string[];
+  /** Overrides of the analyzer's default options (merged with describe()). */
+  options?: Partial<{ slowMs: number; ttfbMs: number; largeResponseBytes: number; operationGapMs: number; networks: NetworkProfile[] }>;
 }
 
 type PresetParts = Pick<Layout, "leftWidth" | "inspectorSplit" | "stacked" | "columns">;

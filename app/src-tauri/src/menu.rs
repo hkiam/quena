@@ -197,6 +197,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "view.log", "Log", None)?,
             &item(app, "view.timeline", "Timeline", None)?,
             &item(app, "view.structure", "Structure", None)?,
+            &item(app, "view.diagnostics", "Diagnostics", None)?,
             &sep()?,
             &Submenu::with_items(
                 app,

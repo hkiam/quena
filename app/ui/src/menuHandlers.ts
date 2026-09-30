@@ -96,6 +96,8 @@ export async function handleMenu(id: string) {
       return actions.showTab("timeline");
     case "view.structure":
       return actions.showTab("structure");
+    case "view.diagnostics":
+      return actions.showTab("diagnostics");
     case "view.stacked":
       set((s) => ({ layout: { ...s.layout, stacked: true } }));
       return actions.saveLayout();

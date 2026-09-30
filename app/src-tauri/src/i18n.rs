@@ -89,6 +89,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Log" => "Protokoll",
         "Timeline" => "Zeitachse",
         "Structure" => "Struktur",
+        "Diagnostics" => "Diagnose",
         "Tunnels (CONNECT)" => "Tunnel (CONNECT)",
         "Image Requests" => "Bild-Requests",
         "304 Not Modified" => "304 Not Modified",

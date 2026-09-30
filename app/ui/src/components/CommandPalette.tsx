@@ -55,6 +55,7 @@ const COMMANDS: Cmd[] = [
   { id: "view.filters", label: t("Show Filters"), group: t("View") },
   { id: "view.timeline", label: t("Show Timeline"), group: t("View") },
   { id: "view.structure", label: t("Show Structure (hosts and paths)"), group: t("View") },
+  { id: "view.diagnostics", label: t("Show Diagnostics (analyze performance and errors)"), group: t("View") },
   { id: "view.statistics", label: t("Show Statistics"), group: t("View"), keys: "F7" },
   { id: "view.log", label: t("Show Log"), group: t("View") },
   { id: "view.stacked", label: t("Request above response"), group: t("View") },

@@ -35,7 +35,7 @@ export function fmtTime(us: number | null | undefined): string {
 export function fmtDateTime(us: number | null | undefined): string {
   if (!us) return "";
   const d = new Date(us / 1000);
-  return `${d.toLocaleDateString()} ${fmtTime(us)}`;
+  return `${d.toLocaleDateString(currentLang() === "de" ? "de-DE" : undefined)} ${fmtTime(us)}`;
 }
 
 export function fmtMs(ms: number | null | undefined): string {

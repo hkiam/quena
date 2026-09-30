@@ -10,6 +10,7 @@
 // "Datei wählen"); keep technical terms, shortcuts, commands and placeholders unchanged.
 import { components } from "./de/components";
 import { core } from "./de/core";
+import { diagnostics } from "./de/diagnostics";
 import { inspectors } from "./de/inspectors";
 import { panels } from "./de/panels";
 
@@ -18,4 +19,5 @@ export const de: Record<string, string> = {
   ...components,
   ...inspectors,
   ...panels,
+  ...diagnostics,
 };

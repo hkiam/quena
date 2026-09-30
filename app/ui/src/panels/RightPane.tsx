@@ -1,6 +1,6 @@
 import { lazy, Suspense, useLayoutEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
-import { ChartColumn, ChartGantt, Filter, FolderTree, ScanSearch, ScrollText, Send, Zap } from "lucide-react";
+import { ChartColumn, ChartGantt, Filter, FolderTree, ScanSearch, ScrollText, Send, Stethoscope, Zap } from "lucide-react";
 import { set, useStore, type RightTab } from "../store";
 import { Inspectors } from "../inspectors/Inspectors";
 import { StatisticsPanel } from "./Statistics";
@@ -13,6 +13,7 @@ import { t } from "../i18n";
 
 const AutoResponderPanel = lazy(() => import("./AutoResponder"));
 const ComposerPanel = lazy(() => import("./Composer"));
+const DiagnosticsPanel = lazy(() => import("./Diagnostics"));
 
 const TABS: [RightTab, string, LucideIcon][] = [
   ["inspectors", t("Inspect"), ScanSearch],
@@ -21,6 +22,7 @@ const TABS: [RightTab, string, LucideIcon][] = [
   ["filters", t("Filters"), Filter],
   ["timeline", t("Timeline"), ChartGantt],
   ["structure", t("Structure"), FolderTree],
+  ["diagnostics", t("Diagnostics"), Stethoscope],
   ["statistics", t("Statistics"), ChartColumn],
   ["log", t("Log"), ScrollText],
 ];
@@ -59,6 +61,7 @@ export function RightPane() {
             <Suspense fallback={<div className="placeholder">{t("Loading…")}</div>}>
               {tab === "autoresponder" && <AutoResponderPanel />}
               {tab === "composer" && <ComposerPanel />}
+              {tab === "diagnostics" && <DiagnosticsPanel />}
             </Suspense>
           </ErrorBoundary>
         )}

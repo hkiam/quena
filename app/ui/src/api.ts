@@ -650,6 +650,13 @@ export const api = {
   scriptClearLogs: () => invoke<void>("script_clear_logs"),
   scriptMenus: () => invoke<string[]>("script_menus"),
   scriptRunMenu: (index: number, ids: SessionId[]) => invoke<number>("script_run_menu", { index, ids }),
+  diagAnalyzers: () => invoke<{ index: number; id: string; name: string; title: string; version: string }[]>("diag_analyzers"),
+  diagDescribe: (index: number, lang: string) => invoke<string>("diag_describe", { index, lang }),
+  diagRun: (index: number, options: string, ids: number[] | null, filter: { processes: string[]; hosts: string[] }) =>
+    invoke<number>("diag_run", { index, options, ids, filter }),
+  diagScopeOptions: () => invoke<{ processes: [string, number][]; hosts: [string, number][] }>("diag_scope_options"),
+  diagReport: () => invoke<string | null>("diag_report"),
+  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
 };
 
 export interface ScriptState {

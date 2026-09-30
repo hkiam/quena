@@ -9,7 +9,7 @@ import { plural, t } from "./i18n";
 
 const MARKS: MarkColor[] = ["red", "blue", "gold", "green", "orange", "purple"];
 
-async function copyText(text: string) {
+export async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {

@@ -18,6 +18,9 @@ fi
 [ -n "${EDGEDRIVER:-}" ] && driver_args+=(--native-driver "$EDGEDRIVER")
 export QUENA_APP QUENA_DATA_DIR
 settings() {
+  # Each suite starts clean: the previous app was killed by the driver, which Quena rightly
+  # treats as a crash (it would offer to recover that capture).
+  find "$QUENA_DATA_DIR" -mindepth 1 -maxdepth 1 ! -name tauri-driver.log -exec rm -rf {} +
   echo '{"proxy":{"actAsSystemProxy":false,"port":0},"ui":{"layout":{"preset":"quena","presetChosen":true,"stacked":false,"language":"'"$1"'"}}}' > "$QUENA_DATA_DIR/settings.json"
 }
 settings en
@@ -27,6 +30,9 @@ driver=$!
 trap 'kill $driver 2>/dev/null; rm -rf "$QUENA_DATA_DIR"' EXIT
 for _ in $(seq 1 50); do curl -s http://127.0.0.1:4444/status >/dev/null && break; sleep 0.2; done
 node --test --test-reporter=spec "$here/app.test.mjs"
+# Diagnostics with the real analyzer plugin.
+settings en
+node --test --test-reporter=spec "$here/diagnostics.test.mjs"
 # The German UI: longer texts must not break the layout.
 settings de
 node --test --test-reporter=spec "$here/german.test.mjs"
