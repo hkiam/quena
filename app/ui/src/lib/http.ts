@@ -19,23 +19,50 @@ export function rawResponseHead(d: Detail): string {
   return lines.join("\r\n") + "\r\n\r\n";
 }
 
+/**
+ * Quote a string as one word for a POSIX-style shell (sh/bash/zsh). Everything
+ * inside '…' is literal (including `$`, backticks, `!`, `|`, newlines and
+ * non-ASCII); an embedded `'` becomes `'\''`. Control characters other than
+ * tab and newline are emitted as `$'\xHH'` pieces (bash/zsh ANSI-C quoting) so
+ * nothing invisible reaches the terminal; NUL cannot be carried by a shell
+ * argument at all and is dropped (bodies with NUL are referenced via @file).
+ */
 function shq(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
+  let out = "";
+  let lit = "";
+  const flush = () => {
+    if (lit) out += `'${lit.replace(/'/g, `'\\''`)}'`;
+    lit = "";
+  };
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    if (c === 0) continue;
+    if ((c < 0x20 && c !== 0x09 && c !== 0x0a) || c === 0x7f) {
+      flush();
+      out += `$'\\x${c.toString(16).padStart(2, "0")}'`;
+    } else lit += ch;
+  }
+  flush();
+  return out || "''";
 }
 
 const SKIP_CURL = new Set(["content-length", "host", "connection", "proxy-connection", "accept-encoding", "transfer-encoding"]);
 
+/** cURL for a POSIX-style shell (sh/bash/zsh); every value is shell-quoted. */
 export function buildCurl(d: Detail, body: string | null): string {
   const parts = ["curl"];
-  if (d.request.method !== "GET" || (body && d.request.method === "GET")) parts.push("-X", d.request.method);
-  parts.push(shq(d.request.url));
+  if (d.request.method !== "GET" || (body && d.request.method === "GET")) parts.push("-X " + shq(d.request.method));
+  // A leading "-" would make curl read the URL as an option.
+  if (d.request.url.startsWith("-")) parts.push("--url " + shq(d.request.url));
+  else parts.push(shq(d.request.url));
   for (const [k, v] of d.request.headers) {
     if (SKIP_CURL.has(k.toLowerCase()) || k.startsWith(":")) continue;
-    parts.push("-H", shq(`${k}: ${latin1ToUtf8(v)}`));
+    parts.push("-H " + shq(`${k}: ${latin1ToUtf8(v)}`));
   }
   if (d.request.headers.some(([k]) => k.toLowerCase() === "accept-encoding")) parts.push("--compressed");
-  if (body != null && body.length) parts.push("--data-binary", shq(body));
-  else if (d.requestBody.len > 0) parts.push("--data-binary", `@body-${d.summary.id}.bin`);
+  // A NUL cannot travel in a shell argument; such bodies go through the file like binary ones.
+  if (body != null && body.length && !body.includes("\0")) parts.push("--data-binary " + shq(body));
+  else if (d.requestBody.len > 0 || (body != null && body.length)) parts.push("--data-binary " + shq(`@body-${d.summary.id}.bin`));
   if (d.request.version === "HTTP/2") parts.push("--http2");
   return parts.join(" \\\n  ");
 }
@@ -84,28 +111,71 @@ function snippetHeaders(d: Detail): [string, string][] {
   return d.request.headers.filter(([k]) => !SKIP_CURL.has(k.toLowerCase()) && !k.startsWith(":")).map(([k, v]) => [k, latin1ToUtf8(v)]);
 }
 
+/**
+ * Snippet headers with repeated names (case-insensitive) merged into one entry,
+ * as dictionary/hashtable literals can hold each name only once. Values are
+ * joined with ", " (RFC 9110 list syntax), Cookie with "; ". The first
+ * spelling of the name is kept.
+ */
+function mergedHeaders(d: Detail): [string, string][] {
+  const out: [string, string][] = [];
+  const at = new Map<string, number>();
+  for (const [k, v] of snippetHeaders(d)) {
+    const lk = k.toLowerCase();
+    const i = at.get(lk);
+    if (i === undefined) {
+      at.set(lk, out.length);
+      out.push([k, v]);
+    } else out[i][1] += (lk === "cookie" ? "; " : ", ") + v;
+  }
+  return out;
+}
+
 /** JavaScript `fetch` (browser DevTools console or Node 18+). */
 export function buildFetch(d: Detail, body: string | null): string {
   const opts: string[] = [`  method: ${JSON.stringify(d.request.method)},`];
-  const hs = snippetHeaders(d);
+  const hs = mergedHeaders(d);
   if (hs.length) opts.push(`  headers: {\n${hs.map(([k, v]) => `    ${JSON.stringify(k)}: ${JSON.stringify(v)},`).join("\n")}\n  },`);
   if (body != null && body.length) opts.push(`  body: ${JSON.stringify(body)},`);
   else if (d.requestBody.len > 0) opts.push(`  // body: ${d.requestBody.len} bytes (binary or large, not included)`);
   return `await fetch(${JSON.stringify(d.request.url)}, {\n${opts.join("\n")}\n});`;
 }
 
+/**
+ * PowerShell string literal. Inside '…' only quote characters are special, and
+ * PowerShell accepts ASCII ' as well as U+2018 U+2019 U+201A U+201B as single
+ * quotes: all of them are doubled. Control characters other than tab/newline
+ * are spliced in as [char]N so the literal stays visible and paste-safe.
+ */
 function psq(s: string): string {
-  return `'${s.replace(/'/g, "''")}'`;
+  const q = (t: string) => `'${t.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`;
+  const pieces: string[] = [];
+  let lit = "";
+  for (const ch of s) {
+    const c = ch.codePointAt(0)!;
+    if ((c < 0x20 && c !== 0x09 && c !== 0x0a) || c === 0x7f) {
+      if (lit || !pieces.length) pieces.push(q(lit));
+      lit = "";
+      pieces.push(`[char]${c}`);
+    } else lit += ch;
+  }
+  if (lit || !pieces.length) pieces.push(q(lit));
+  return pieces.length === 1 ? pieces[0] : `(${pieces.join(" + ")})`;
 }
+
+/** Methods `Invoke-WebRequest -Method` takes by name (WebRequestMethod); anything else is -CustomMethod. */
+const PS_METHODS = /^(GET|HEAD|POST|PUT|DELETE|OPTIONS|PATCH|TRACE|MERGE)$/i;
 
 /** PowerShell `Invoke-WebRequest`. */
 export function buildPowerShell(d: Detail, body: string | null): string {
-  const hs = snippetHeaders(d);
+  const hs = mergedHeaders(d);
   const ct = hs.find(([k]) => k.toLowerCase() === "content-type")?.[1];
   const ua = hs.find(([k]) => k.toLowerCase() === "user-agent")?.[1];
   // Content-Type and User-Agent must go through their own parameters.
   const rest = hs.filter(([k]) => !["content-type", "user-agent"].includes(k.toLowerCase()));
-  const lines = [`Invoke-WebRequest -Uri ${psq(d.request.url)} -Method ${d.request.method}`];
+  const m = d.request.method;
+  const method = PS_METHODS.test(m) ? `-Method ${m.toUpperCase()}` : `-CustomMethod ${psq(m)}`;
+  const lines = [`Invoke-WebRequest -Uri ${psq(d.request.url)} ${method}`];
   if (rest.length) lines.push(`  -Headers @{\n${rest.map(([k, v]) => `    ${psq(k)} = ${psq(v)}`).join("\n")}\n  }`);
   if (ct) lines.push(`  -ContentType ${psq(ct)}`);
   if (ua) lines.push(`  -UserAgent ${psq(ua)}`);
@@ -114,9 +184,9 @@ export function buildPowerShell(d: Detail, body: string | null): string {
   return lines.join(" `\n");
 }
 
-/** Python `requests`. */
+/** Python `requests`. JSON string literals are valid Python string literals. */
 export function buildPython(d: Detail, body: string | null): string {
-  const hs = snippetHeaders(d);
+  const hs = mergedHeaders(d);
   const lines = ["import requests", ""];
   lines.push(`response = requests.request(`);
   lines.push(`    ${JSON.stringify(d.request.method)},`);
