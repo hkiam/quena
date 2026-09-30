@@ -4,7 +4,8 @@ use crate::AppCore;
 use crate::dto::*;
 use anyhow::{Result, anyhow};
 use parking_lot::Mutex;
-use quena_body::decode::{DeriveSpec, Progress, derive, variant_applies};
+use quena_body::decode::{DeriveSpec, Progress, derive, output_charset, variant_applies};
+use quena_body::text::Encoding;
 use quena_body::{Body, Variant};
 use quena_jobs::{JobCtx, JobId, JobStatus, Priority};
 use quena_model::{Headers, SessionId};
@@ -26,7 +27,7 @@ const VISIBLE_JOB_BYTES: u64 = 8 << 20;
 
 fn effective(spec: &DeriveSpec, v: Variant) -> Variant {
     match v {
-        Variant::Plugin(_) => v,
+        Variant::Plugin(_) | Variant::Text(_) => v,
         Variant::Pretty if variant_applies(spec, Variant::Pretty) => Variant::Pretty,
         Variant::Pretty | Variant::Decoded if variant_applies(spec, Variant::Decoded) => Variant::Decoded,
         _ => Variant::Raw,
@@ -48,11 +49,37 @@ impl AppCore {
         })
     }
 
-    /// Resolve (and start producing, if needed) a body variant.
+    /// Charset of a (decoded) body; cached once the prefix it is determined on is final.
+    fn charset_of(&self, src: &Body, spec: &DeriveSpec) -> &'static Encoding {
+        if let Some(e) = self.charsets.lock().get(&src.id()) {
+            return e;
+        }
+        let e = quena_body::text::detect_body(src, spec).encoding;
+        if src.is_complete() || src.len() >= quena_body::text::DETECT_PREFIX as u64 {
+            let mut c = self.charsets.lock();
+            if c.len() > 4096 {
+                c.clear();
+            }
+            c.insert(src.id(), e);
+        }
+        e
+    }
+
+    /// Resolve (and start producing, if needed) a body variant. The fourth value is the
+    /// charset of the variant's bytes when the variant fixes it (see [`output_charset`]).
     fn variant_body(&self, id: SessionId, part: Part, v: Variant) -> Result<(Body, Variant, Option<JobId>)> {
+        self.variant_body_cs(id, part, v).map(|r| (r.body, r.variant, r.job))
+    }
+
+    /// [`variant_body`] plus the charset fixed by the variant and the body's own charset.
+    fn variant_body_cs(&self, id: SessionId, part: Part, v: Variant) -> Result<Resolved> {
         let (src, headers) = self.body_source(id, part)?;
-        let spec = spec_of(&headers);
+        let mut spec = spec_of(&headers);
         let v = effective(&spec, v);
+        // Formatting depends on the charset (UTF-16 is transcoded first).
+        let detected = (v == Variant::Pretty).then(|| self.charset_of(&src, &spec));
+        spec.charset = detected;
+        let fixed = output_charset(&spec, v);
         let d = derive(&self.capture().bodies, &src, v, &spec)?;
         let key = format!("derive:{}:{}", src.id(), vname(v));
         let job = match d.work {
@@ -72,10 +99,26 @@ impl AppCore {
             }
             None => self.jobs.by_key(&key).filter(|j| matches!(j.status(), JobStatus::Queued | JobStatus::Running)).map(|j| j.id),
         };
-        Ok((d.body, v, job))
+        Ok(Resolved { body: d.body, variant: v, job, fixed, detected })
     }
 
-    fn view_of(&self, body: &Body, v: Variant, job: Option<JobId>) -> BodyView {
+    /// Charset to read a variant's text in: fixed by the variant, else the one the viewer
+    /// asks for (an override), else the body's own.
+    fn text_charset(&self, id: SessionId, part: Part, fixed: Option<&'static Encoding>, detected: Option<&'static Encoding>, requested: Option<&str>) -> &'static Encoding {
+        if let Some(f) = fixed {
+            return f;
+        }
+        if let Some(e) = requested.and_then(quena_body::charset::for_label).filter(|e| !quena_body::text::needs_transcoding(e)) {
+            return e;
+        }
+        let e = detected.or_else(|| {
+            let (src, headers) = self.body_source(id, part).ok()?;
+            Some(self.charset_of(&src, &spec_of(&headers)))
+        });
+        e.filter(|e| !quena_body::text::needs_transcoding(e)).unwrap_or(quena_body::text::UTF_8)
+    }
+
+    fn view_of(&self, body: &Body, v: Variant, job: Option<JobId>, fixed: Option<&'static Encoding>) -> BodyView {
         let cap = self.capture();
         let key = format!("derive:{}:{}", body.id(), vname(v));
         let error = self.jobs.by_key(&key).and_then(|j| j.snapshot().error);
@@ -91,12 +134,12 @@ impl AppCore {
             }
             None => (0, false, 0, None),
         };
-        BodyView { len: body.len(), complete: body.is_complete(), variant: v, job, line_job, lines, lines_done, scanned, error }
+        BodyView { len: body.len(), complete: body.is_complete(), variant: v, charset: fixed.map(|e| e.name().to_string()), job, line_job, lines, lines_done, scanned, error }
     }
 
     /// Open a body variant for line-based viewing: starts derivation and line indexing.
     pub fn body_open(&self, id: SessionId, part: Part, variant: Variant) -> Result<BodyView> {
-        let (body, v, job) = self.variant_body(id, part, variant)?;
+        let Resolved { body, variant: v, job, fixed, .. } = self.variant_body_cs(id, part, variant)?;
         let cap = self.capture();
         let (idx, created) = cap.bodies.line_index_or_create(body.id(), v);
         if created {
@@ -106,12 +149,14 @@ impl AppCore {
                 idx.build(&b, &CtxProgress(ctx)).map_err(|e| e.to_string())
             });
         }
-        Ok(self.view_of(&body, v, job))
+        Ok(self.view_of(&body, v, job, fixed))
     }
 
-    /// Read lines of a variant (after [`body_open`]).
-    pub fn body_lines(&self, id: SessionId, part: Part, variant: Variant, start: u64, count: usize) -> Result<LinesDto> {
-        let (body, v, job) = self.variant_body(id, part, variant)?;
+    /// Read lines of a variant (after [`body_open`]), decoded from `charset` (the viewer's
+    /// override; default the body's charset; ignored when the variant fixes it).
+    pub fn body_lines(&self, id: SessionId, part: Part, variant: Variant, start: u64, count: usize, charset: Option<&str>) -> Result<LinesDto> {
+        let Resolved { body, variant: v, job, fixed, detected } = self.variant_body_cs(id, part, variant)?;
+        let enc = self.text_charset(id, part, fixed, detected, charset);
         let cap = self.capture();
         let idx = match cap.bodies.line_index(body.id(), v) {
             Some(i) => i,
@@ -120,13 +165,13 @@ impl AppCore {
                 cap.bodies.line_index(body.id(), v).ok_or_else(|| anyhow!("no line index"))?
             }
         };
-        let lines = idx.read_lines(&body, start, count.min(5000))?;
-        Ok(LinesDto { start, lines, view: self.view_of(&body, v, job) })
+        let lines = idx.read_lines_as(&body, start, count.min(5000), enc)?;
+        Ok(LinesDto { start, lines, view: self.view_of(&body, v, job, fixed) })
     }
 
     /// Byte range of a variant (custom protocol handler, hex view, images).
     pub fn body_range(&self, id: SessionId, part: Part, variant: Variant, offset: u64, len: usize) -> Result<BodyRange> {
-        let (body, v, _) = self.variant_body(id, part, variant)?;
+        let Resolved { body, variant: v, fixed, .. } = self.variant_body_cs(id, part, variant)?;
         let data = body.read_range(offset, len.min(16 << 20))?;
         let (_, headers) = self.body_source(id, part)?;
         Ok(BodyRange {
@@ -135,6 +180,7 @@ impl AppCore {
             complete: body.is_complete(),
             content_type: headers.get("content-type").map(|s| s.to_string()),
             variant: v,
+            charset: fixed.map(|e| e.name()),
         })
     }
 
@@ -144,9 +190,11 @@ impl AppCore {
         Ok((body.len(), body.is_complete(), v))
     }
 
-    /// Streaming search inside a body variant. Results via [`search_result`].
-    pub fn body_search(&self, id: SessionId, part: Part, variant: Variant, needle: String, ignore_case: bool) -> Result<JobId> {
-        let (body, v, _) = self.variant_body(id, part, variant)?;
+    /// Streaming search inside a body variant, for text in the variant's charset (see
+    /// [`body_lines`]). Results via [`search_result`].
+    pub fn body_search(&self, id: SessionId, part: Part, variant: Variant, needle: String, ignore_case: bool, charset: Option<&str>) -> Result<JobId> {
+        let Resolved { body, variant: v, fixed, detected, .. } = self.variant_body_cs(id, part, variant)?;
+        let enc = self.text_charset(id, part, fixed, detected, charset);
         let prefix = format!("search:{}:{}", body.id(), vname(v));
         self.jobs.cancel_prefix(&prefix);
         let result = Arc::new(Mutex::new(SearchResult::default()));
@@ -162,7 +210,7 @@ impl AppCore {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
             let mut pending = Vec::new();
-            let res = quena_body::search::search(&body, needle.as_bytes(), ignore_case, 0, &CtxProgress(ctx), |off| {
+            let res = quena_body::search::search_text(&body, &needle, enc, ignore_case, 0, &CtxProgress(ctx), |off| {
                 pending.push(off);
                 if pending.len() >= 256 {
                     let mut r = r2.lock();
@@ -250,12 +298,25 @@ impl AppCore {
     }
 }
 
+/// A resolved body variant (see `variant_body_cs`).
+struct Resolved {
+    body: Body,
+    variant: Variant,
+    job: Option<JobId>,
+    /// Charset of the variant's bytes when the variant fixes it.
+    fixed: Option<&'static Encoding>,
+    /// The body's own charset, when it was determined for this variant.
+    detected: Option<&'static Encoding>,
+}
+
 pub struct BodyRange {
     pub data: Vec<u8>,
     pub total: u64,
     pub complete: bool,
     pub content_type: Option<String>,
     pub variant: Variant,
+    /// Charset of `data` when the variant fixes it (transcoded text: UTF-8).
+    pub charset: Option<&'static str>,
 }
 
 pub fn human(n: u64) -> String {

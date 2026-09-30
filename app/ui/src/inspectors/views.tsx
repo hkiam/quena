@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, bodyUrl, type Detail, type HeaderInspection, type Part, type Variant } from "../api";
 import { fmtBytes, fmtInt, headerValue, latin1ToUtf8 } from "../lib/format";
-import { b64decode, parseCookies, parseQuery, rawResponseHead, requestLine } from "../lib/http";
-import { loadText } from "../lib/bodytext";
+import { b64decode, formCharset, parseCookies, parseForm, parseQuery, rawResponseHead, requestLine } from "../lib/http";
+import { effectiveCharset, loadBody, textVariant } from "../lib/bodytext";
+import { CharsetPicker, useCharsetOverride } from "./CharsetPicker";
 import { nodesToTree, type InspectSection } from "../lib/inspect";
 import { BodyText } from "./BodyText";
 import { get } from "../store";
@@ -52,31 +53,40 @@ function Table({ rows, head = [t("Name"), t("Value")] }: { rows: (string | React
   );
 }
 
+/** A body as text in its charset (the user's override for this body applies). */
 function useBodyText(detail: Detail, part: Part, limit: number) {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
+  const [override] = useCharsetOverride(detail.summary.id, part);
   const [text, setText] = useState<string | null>(null);
+  const [bytes, setBytes] = useState<Uint8Array | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     setText(null);
+    setBytes(null);
     setError(null);
     if (info.len === 0) {
       setText("");
+      setBytes(new Uint8Array());
       return;
     }
     if (info.len > limit && !info.variants.includes("decoded")) {
       setText(null);
       return;
     }
-    loadText(detail.summary.id, part, info, limit).then(
-      (s) => alive && setText(s),
+    loadBody(detail.summary.id, part, info, limit, undefined, override).then(
+      (b) => {
+        if (!alive) return;
+        setText(b.text);
+        setBytes(b.bytes);
+      },
       (e) => alive && setError(t("Could not load the body: {error}", { error: String(e) })),
     );
     return () => {
       alive = false;
     };
-  }, [detail.summary.id, part, info.len, info.complete]);
-  return { text, info, error };
+  }, [detail.summary.id, part, info.len, info.complete, override]);
+  return { text, bytes, info, error };
 }
 
 export function WebFormsView({ detail }: { detail: Detail }) {
@@ -85,13 +95,20 @@ export function WebFormsView({ detail }: { detail: Detail }) {
     return i < 0 ? [] : parseQuery(detail.request.url.slice(i + 1));
   }, [detail.request.url]);
   const ct = headerValue(detail.request.headers, "content-type") ?? "";
-  const { text } = useBodyText(detail, "request", 1 << 20);
-  const form = ct.includes("x-www-form-urlencoded") && text ? parseQuery(text) : [];
+  const isForm = ct.toLowerCase().includes("x-www-form-urlencoded");
+  const { bytes } = useBodyText(detail, "request", 1 << 20);
+  const [override, setOverride] = useCharsetOverride(detail.summary.id, "request:form");
+  // Percent-encoded bytes are in the form's charset: declared, else _charset_, else UTF-8.
+  const declared = useMemo(() => (isForm && bytes ? formCharset(ct, bytes) : null), [isForm, ct, bytes]);
+  const form = useMemo(() => (isForm && bytes && declared ? parseForm(bytes, override ?? declared.name) : []), [isForm, bytes, declared, override]);
   return (
     <div className="scroll pad">
       <h4>QueryString</h4>
       {query.length ? <Table rows={query} /> : <div className="muted">{t("No query string")}</div>}
-      <h4>{t("Body")}</h4>
+      <div className="wf-head">
+        <h4>{t("Body")}</h4>
+        {isForm && declared && <CharsetPicker detected={declared} value={override} onChange={setOverride} />}
+      </div>
       {ct.includes("multipart/form-data") ? (
         <div className="muted">{t("multipart/form-data – see Plain Text / Raw ({size})", { size: fmtBytes(detail.requestBody.len) })}</div>
       ) : form.length ? (
@@ -380,6 +397,7 @@ export function TransformerView({ detail }: { detail: Detail }) {
 
 export function RawView({ detail, part, wrap }: { detail: Detail; part: Part; wrap: boolean }) {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
+  const [override] = useCharsetOverride(detail.summary.id, part);
   const head = part === "request" ? [requestLine(detail), ...detail.request.headers.map(([k, v]) => `${k}: ${latin1ToUtf8(v)}`)].join("\n") : detail.response ? rawResponseHead(detail).trimEnd() : "";
   if (part === "response" && !detail.response) return <div className="placeholder">{t("No response")}</div>;
   const textBody = info.len > 0 && (info.isText || info.variants.includes("decoded"));
@@ -392,7 +410,7 @@ export function RawView({ detail, part, wrap }: { detail: Detail; part: Part; wr
       </pre>
       {textBody && (
         <div className="raw-body">
-          <BodyText id={detail.summary.id} part={part} info={info} variant="raw" highlight={false} wrap={wrap} />
+          <BodyText id={detail.summary.id} part={part} info={info} variant={textVariant(info, "raw", override)} highlight={false} wrap={wrap} charset={effectiveCharset(info, override)} />
         </div>
       )}
     </div>

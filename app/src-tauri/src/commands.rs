@@ -194,15 +194,15 @@ async fn body_open(core: State<'_, Core>, id: SessionId, part: Part, variant: Va
 }
 
 #[tauri::command]
-async fn body_lines(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, start: u64, count: usize) -> R<LinesDto> {
+async fn body_lines(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, start: u64, count: usize, charset: Option<String>) -> R<LinesDto> {
     let core = core.inner().clone();
-    blocking(move || core.body_lines(id, part, variant, start, count).map_err(e)).await
+    blocking(move || core.body_lines(id, part, variant, start, count, charset.as_deref()).map_err(e)).await
 }
 
 #[tauri::command]
-async fn body_search(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, needle: String, ignore_case: bool) -> R<u64> {
+async fn body_search(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, needle: String, ignore_case: bool, charset: Option<String>) -> R<u64> {
     let core = core.inner().clone();
-    blocking(move || core.body_search(id, part, variant, needle, ignore_case).map_err(e)).await
+    blocking(move || core.body_search(id, part, variant, needle, ignore_case, charset.as_deref()).map_err(e)).await
 }
 
 #[tauri::command]

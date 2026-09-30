@@ -909,6 +909,36 @@ kbd,
 .tp-spacer {
   flex: 1;
 }
+/* Charset of a text view: "windows-1252 · header" and a menu to override it. */
+.cs-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.cs-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+.cs-select {
+  max-width: 11em;
+  font-size: 11px;
+}
+.wf-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wf-head h4 {
+  flex: 1;
+}
+.hv-ext {
+  color: var(--muted);
+  word-break: break-all;
+}
+.tw-charset {
+  align-self: flex-start;
+}
 .tp-body {
   min-height: 0;
   display: grid;

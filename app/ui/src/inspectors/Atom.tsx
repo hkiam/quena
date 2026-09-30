@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Detail, Part, Variant } from "../api";
 import { loadText } from "../lib/bodytext";
+import { useCharsetOverride } from "./CharsetPicker";
 import { parseXml } from "../lib/xml";
 import { fmtBytes, fmtInt } from "../lib/format";
 import { MoreRows } from "./views";
@@ -80,6 +81,7 @@ function readEntry(e: Element): Entry {
 export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const variant = sourceVariant(detail, part);
+  const [override] = useCharsetOverride(detail.summary.id, part);
   const [xml, setXml] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [sel, setSel] = useState(0);
@@ -92,14 +94,14 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
     setSel(0);
     setRows(ROWS);
     if (info.len > LIMIT && !variant.startsWith("plugin:")) return;
-    loadText(detail.summary.id, part, info, LIMIT, variant).then(
+    loadText(detail.summary.id, part, info, LIMIT, variant, override).then(
       (s) => alive && setXml(s),
       (e) => alive && setLoadErr(t("Could not load the body: {error}", { error: String(e) })),
     );
     return () => {
       alive = false;
     };
-  }, [detail.summary.id, part, variant, info.len]);
+  }, [detail.summary.id, part, variant, info.len, override]);
 
   const parsed = useMemo(() => {
     if (xml == null) return null;

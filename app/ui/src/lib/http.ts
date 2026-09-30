@@ -1,5 +1,6 @@
-import type { Detail } from "../api";
+import type { Charset, Detail } from "../api";
 import { latin1ToUtf8 } from "./format";
+import { CHARSETS, canonical, decodeBytes, sameCharset } from "./bodytext";
 
 export function requestLine(d: Detail): string {
   const r = d.request;
@@ -48,8 +49,22 @@ function shq(s: string): string {
 
 const SKIP_CURL = new Set(["content-length", "host", "connection", "proxy-connection", "accept-encoding", "transfer-encoding"]);
 
+/** Bytes as a bash/zsh ANSI-C string (`$'…'`): printable ASCII literally, the rest as \xHH. */
+function shBytes(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += b >= 0x20 && b < 0x7f && b !== 0x27 && b !== 0x5c ? String.fromCharCode(b) : `\\x${b.toString(16).padStart(2, "0")}`;
+  return `$'${s}'`;
+}
+
+/**
+ * The snippet builders take the body as text; `bytes` is given when that text is not what
+ * goes over the wire in UTF-8 (a windows-1252 body, a UTF-8 BOM, invalid sequences). The
+ * snippets then carry those exact bytes, so they send the same body as the session.
+ */
+type Bytes = Uint8Array | undefined;
+
 /** cURL for a POSIX-style shell (sh/bash/zsh); every value is shell-quoted. */
-export function buildCurl(d: Detail, body: string | null): string {
+export function buildCurl(d: Detail, body: string | null, bytes?: Bytes): string {
   const parts = ["curl"];
   if (d.request.method !== "GET" || (body && d.request.method === "GET")) parts.push("-X " + shq(d.request.method));
   // A leading "-" would make curl read the URL as an option.
@@ -61,12 +76,57 @@ export function buildCurl(d: Detail, body: string | null): string {
   }
   if (d.request.headers.some(([k]) => k.toLowerCase() === "accept-encoding")) parts.push("--compressed");
   // A NUL cannot travel in a shell argument; such bodies go through the file like binary ones.
-  if (body != null && body.length && !body.includes("\0")) parts.push("--data-binary " + shq(body));
+  if (bytes && bytes.length && !bytes.includes(0)) parts.push("--data-binary " + shBytes(bytes));
+  else if (!bytes && body != null && body.length && !body.includes("\0")) parts.push("--data-binary " + shq(body));
   else if (d.requestBody.len > 0 || (body != null && body.length)) parts.push("--data-binary " + shq(`@body-${d.summary.id}.bin`));
   if (d.request.version === "HTTP/2") parts.push("--http2");
   return parts.join(" \\\n  ");
 }
 
+const hex = (b: number) => (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x46) || (b >= 0x61 && b <= 0x66);
+
+/** Percent-decode bytes (`+` as space if `plus`). */
+function percentDecode(bytes: Uint8Array, plus: boolean): Uint8Array {
+  const out = new Uint8Array(bytes.length);
+  let n = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    if (b === 0x25 && i + 2 < bytes.length && hex(bytes[i + 1]) && hex(bytes[i + 2])) {
+      out[n++] = parseInt(String.fromCharCode(bytes[i + 1], bytes[i + 2]), 16);
+      i += 2;
+    } else out[n++] = b === 0x2b && plus ? 0x20 : b;
+  }
+  return out.subarray(0, n);
+}
+
+/** Percent-decode a string into bytes; characters outside ASCII count as their UTF-8 bytes. */
+function percentBytes(s: string, plus: boolean): Uint8Array {
+  return percentDecode(new TextEncoder().encode(s), plus);
+}
+
+/** Percent-decode text (`+` as space) whose bytes are in `charset`. */
+export function percentDecodeText(s: string, charset: string): string {
+  return decodeBytes(percentBytes(s, true), charset);
+}
+
+/** Percent-encode bytes like encodeURIComponent (which does it for UTF-8 only). */
+export function percentEncodeBytes(bytes: Uint8Array): string {
+  let out = "";
+  for (const b of bytes) out += /[A-Za-z0-9\-_.!~*'()]/.test(String.fromCharCode(b)) && b < 0x80 ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, "0")}`;
+  return out;
+}
+
+/** Percent-encoded bytes as text: UTF-8, or windows-1252 when they are not valid UTF-8
+ * (legacy pages encode query strings in their own charset). */
+function utf8OrLegacy(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return decodeBytes(bytes, "windows-1252");
+  }
+}
+
+/** Name/value pairs of a query string. */
 export function parseQuery(q: string): [string, string][] {
   if (!q) return [];
   return q
@@ -75,15 +135,45 @@ export function parseQuery(q: string): [string, string][] {
     .filter(Boolean)
     .map((kv) => {
       const i = kv.indexOf("=");
-      const dec = (s: string) => {
-        try {
-          return decodeURIComponent(s.replace(/\+/g, " "));
-        } catch {
-          return s;
-        }
-      };
+      const dec = (s: string) => utf8OrLegacy(percentBytes(s, true));
       return i < 0 ? [dec(kv), ""] : [dec(kv.slice(0, i)), dec(kv.slice(i + 1))];
     });
+}
+
+/**
+ * Name/value pairs of an application/x-www-form-urlencoded body (WHATWG URL §5.1, on the
+ * bytes): percent-decoded bytes are text in the form's charset, which the page chose when it
+ * submitted the form.
+ */
+export function parseForm(body: Uint8Array, charset: string): [string, string][] {
+  const out: [string, string][] = [];
+  let start = 0;
+  const piece = (a: number, b: number) => decodeBytes(percentDecode(body.subarray(a, b), true), charset);
+  for (let i = 0; i <= body.length; i++) {
+    if (i < body.length && body[i] !== 0x26) continue;
+    if (i > start) {
+      let eq = body.indexOf(0x3d, start);
+      if (eq < 0 || eq > i) eq = i;
+      out.push([piece(start, eq), eq < i ? piece(eq + 1, i) : ""]);
+    }
+    start = i + 1;
+  }
+  return out;
+}
+
+/** The charset of a form body: the Content-Type's charset parameter, else a `_charset_` field
+ * (HTML §4.10.21.8), else UTF-8. */
+export function formCharset(contentType: string, body: Uint8Array): Charset {
+  const header = /;\s*charset\s*=\s*"?([^";\s]+)/i.exec(contentType)?.[1];
+  if (header && canonical(header)) return { name: canonicalName(header), source: "header", header };
+  const field = parseForm(body, "utf-8").find(([k]) => k === "_charset_")?.[1];
+  if (field && canonical(field)) return { name: canonicalName(field), source: "document", document: field };
+  return { name: "UTF-8", source: "default" };
+}
+
+/** Display name of a charset label: as in the override menu, else the WHATWG name. */
+function canonicalName(label: string): string {
+  return CHARSETS.find((c) => sameCharset(c, label)) ?? canonical(label) ?? label;
 }
 
 export function parseCookies(v: string): [string, string][] {
@@ -97,13 +187,33 @@ export function parseCookies(v: string): [string, string][] {
     });
 }
 
-export function b64decode(s: string): string {
+/**
+ * Base64 (or base64url) to text. Without a charset: UTF-8 (JWT, RFC 7617 `charset="UTF-8"`),
+ * or ISO-8859-1/windows-1252 when the bytes are not valid UTF-8 (legacy Basic credentials).
+ */
+export function b64decode(s: string, charset?: string): string {
+  let bytes: Uint8Array;
   try {
     const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "="));
-    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+    bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
   } catch {
     return "(invalid base64)";
   }
+  return charset ? decodeBytes(bytes, charset) : utf8OrLegacy(bytes);
+}
+
+/**
+ * Parameters in the RFC 8187 form `name*=charset'language'percent-encoded` (e.g.
+ * `filename*=UTF-8''%E2%82%AC%20rates.pdf` in Content-Disposition), decoded.
+ */
+export function extParams(value: string): { name: string; value: string; language: string }[] {
+  const out: { name: string; value: string; language: string }[] = [];
+  for (const m of value.matchAll(/(?:^|;)\s*([!#$&+.^_`|~0-9A-Za-z-]+)\*\s*=\s*([^';\s]*)'([^']*)'([^;\s]*)/g)) {
+    const cs = m[2] || "UTF-8";
+    if (!canonical(cs)) continue;
+    out.push({ name: m[1], language: m[3], value: decodeBytes(percentBytes(m[4], false), cs) });
+  }
+  return out;
 }
 
 /** Request headers worth reproducing in a snippet (no hop-by-hop or computed ones). */
@@ -132,11 +242,12 @@ function mergedHeaders(d: Detail): [string, string][] {
 }
 
 /** JavaScript `fetch` (browser DevTools console or Node 18+). */
-export function buildFetch(d: Detail, body: string | null): string {
+export function buildFetch(d: Detail, body: string | null, bytes?: Bytes): string {
   const opts: string[] = [`  method: ${JSON.stringify(d.request.method)},`];
   const hs = mergedHeaders(d);
   if (hs.length) opts.push(`  headers: {\n${hs.map(([k, v]) => `    ${JSON.stringify(k)}: ${JSON.stringify(v)},`).join("\n")}\n  },`);
-  if (body != null && body.length) opts.push(`  body: ${JSON.stringify(body)},`);
+  if (bytes && bytes.length) opts.push(`  body: new Uint8Array([${bytes.join(", ")}]),`);
+  else if (body != null && body.length) opts.push(`  body: ${JSON.stringify(body)},`);
   else if (d.requestBody.len > 0) opts.push(`  // body: ${d.requestBody.len} bytes (binary or large, not included)`);
   return `await fetch(${JSON.stringify(d.request.url)}, {\n${opts.join("\n")}\n});`;
 }
@@ -167,7 +278,7 @@ function psq(s: string): string {
 const PS_METHODS = /^(GET|HEAD|POST|PUT|DELETE|OPTIONS|PATCH|TRACE|MERGE)$/i;
 
 /** PowerShell `Invoke-WebRequest`. */
-export function buildPowerShell(d: Detail, body: string | null): string {
+export function buildPowerShell(d: Detail, body: string | null, bytes?: Bytes): string {
   const hs = mergedHeaders(d);
   const ct = hs.find(([k]) => k.toLowerCase() === "content-type")?.[1];
   const ua = hs.find(([k]) => k.toLowerCase() === "user-agent")?.[1];
@@ -179,20 +290,29 @@ export function buildPowerShell(d: Detail, body: string | null): string {
   if (rest.length) lines.push(`  -Headers @{\n${rest.map(([k, v]) => `    ${psq(k)} = ${psq(v)}`).join("\n")}\n  }`);
   if (ct) lines.push(`  -ContentType ${psq(ct)}`);
   if (ua) lines.push(`  -UserAgent ${psq(ua)}`);
-  if (body != null && body.length) lines.push(`  -Body ${psq(body)}`);
+  if (bytes && bytes.length) lines.push(`  -Body ([byte[]](${bytes.join(",")}))`);
+  else if (body != null && body.length) lines.push(`  -Body ${psq(body)}`);
   else if (d.requestBody.len > 0) lines.push(`  -InFile ${psq(`body-${d.summary.id}.bin`)}`);
   return lines.join(" `\n");
 }
 
 /** Python `requests`. JSON string literals are valid Python string literals. */
-export function buildPython(d: Detail, body: string | null): string {
+/** Bytes as a Python bytes literal. */
+function pyBytes(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += b >= 0x20 && b < 0x7f && b !== 0x22 && b !== 0x5c ? String.fromCharCode(b) : `\\x${b.toString(16).padStart(2, "0")}`;
+  return `b"${s}"`;
+}
+
+export function buildPython(d: Detail, body: string | null, bytes?: Bytes): string {
   const hs = mergedHeaders(d);
   const lines = ["import requests", ""];
   lines.push(`response = requests.request(`);
   lines.push(`    ${JSON.stringify(d.request.method)},`);
   lines.push(`    ${JSON.stringify(d.request.url)},`);
   if (hs.length) lines.push(`    headers={\n${hs.map(([k, v]) => `        ${JSON.stringify(k)}: ${JSON.stringify(v)},`).join("\n")}\n    },`);
-  if (body != null && body.length) lines.push(`    data=${JSON.stringify(body)}.encode("utf-8"),`);
+  if (bytes && bytes.length) lines.push(`    data=${pyBytes(bytes)},`);
+  else if (body != null && body.length) lines.push(`    data=${JSON.stringify(body)}.encode("utf-8"),`);
   else if (d.requestBody.len > 0) lines.push(`    data=open(${JSON.stringify(`body-${d.summary.id}.bin`)}, "rb"),`);
   lines.push(`)`, `print(response.status_code, response.text[:500])`);
   return lines.join("\n");

@@ -51,3 +51,48 @@ pub fn search(
     }
     Ok(hits)
 }
+
+/// Find text in a body whose bytes are in `enc` (the needle is encoded in that charset, so
+/// "Grüße" finds `Gr\xfc\xdfe` in a windows-1252 body). A needle the charset cannot represent
+/// has no hits. `enc` must be ASCII compatible (other charsets are searched in their
+/// transcoded `Text` variant, which is UTF-8).
+pub fn search_text(
+    body: &Body,
+    needle: &str,
+    enc: &'static encoding_rs::Encoding,
+    ignore_case: bool,
+    from: u64,
+    p: &dyn Progress,
+    on_hit: impl FnMut(u64) -> bool,
+) -> Result<u64> {
+    match crate::text::encode_needle(needle, enc) {
+        Some(n) => search(body, &n, ignore_case, from, p, on_hit),
+        None => Ok(0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decode::NoProgress;
+    use crate::store::{BodyConfig, BodyStore};
+
+    #[test]
+    fn text_in_its_charset() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        let body = store.store_bytes(b"Viele Gr\xfc\xdfe aus K\xf6ln");
+        let hits = |needle: &str, enc| {
+            let mut h = vec![];
+            search_text(&body, needle, enc, true, 0, &NoProgress, |o| {
+                h.push(o);
+                true
+            })
+            .unwrap();
+            h
+        };
+        assert_eq!(hits("grüße", encoding_rs::WINDOWS_1252), vec![6]);
+        assert_eq!(hits("Grüße", encoding_rs::UTF_8), Vec::<u64>::new());
+        assert_eq!(hits("€", encoding_rs::ISO_8859_2), Vec::<u64>::new());
+    }
+}

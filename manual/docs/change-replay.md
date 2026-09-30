@@ -34,6 +34,12 @@ Click **▶ Execute** (or press `Enter` in the URL field). Options:
 To load a recorded request, drag a session from the list onto the Composer, or right-click
 → *Replay → Replay from Composer*.
 
+A loaded body is shown in its charset (see [Character encodings](inspect.md#character-encodings)).
+As long as you do not change the text, the original bytes are sent. Edited text is sent in
+the charset the `Content-Type` declares, else in the charset it was shown in, else UTF-8.
+If it contains characters that charset cannot represent (an emoji in a Latin-1 form), it is
+sent as UTF-8 and the `Content-Type` gets `charset=utf-8`, so the declaration stays true.
+
 ## Breakpoints and tampering
 
 A breakpoint pauses a session so you can look at it and change it — before the request
@@ -59,7 +65,9 @@ lists the active breakpoints and the number of paused sessions.
 
 Paused sessions are marked red in the list. Select one: the inspector shows a breakpoint
 bar and the paused part becomes editable — **headers** as text, and the **body** as text or
-replaced by a file. `Content-Length` is fixed automatically.
+replaced by a file. `Content-Length` is fixed automatically. An unchanged body is
+forwarded byte for byte; an edited one is encoded like in the Composer (declared charset,
+else the one it was shown in; UTF-8 with an adjusted `Content-Type` if it does not fit).
 
 | Button | Effect |
 |---|---|

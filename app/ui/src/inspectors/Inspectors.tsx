@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type Detail, type Part, type Variant } from "../api";
 import { fmtBytes, fmtInt } from "../lib/format";
-import { set, useStore } from "../store";
+import { get, set, useStore } from "../store";
 import { Splitter } from "../App";
 import { HeadersView } from "./HeadersView";
 import { BodyText } from "./BodyText";
@@ -21,6 +21,8 @@ import { ViewTabs } from "./ViewTabs";
 import { defaultView, orderViews, viewFamily } from "./viewChoice";
 import { methodPill, statusPill } from "../grid/style";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { CharsetPicker, useCharsetOverride } from "./CharsetPicker";
+import { effectiveCharset, textVariant } from "../lib/bodytext";
 import { t } from "../i18n";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
@@ -116,9 +118,12 @@ function TextPane({ detail, part, syntax }: { detail: Detail; part: Part; syntax
   const [wrap, setWrap] = useState(!syntax);
   const [pretty, setPretty] = useState(syntax);
   const info = part === "request" ? detail.requestBody : detail.responseBody;
+  const [override, setOverride] = useCharsetOverride(detail.summary.id, part);
   if (part === "response" && !detail.response) return <div className="placeholder">{t("No response yet")}</div>;
   if (!info.len) return <div className="placeholder">{info.complete ? t("No body") : t("Waiting for body…")}</div>;
-  const v = bodyVariant(detail, part, decode, pretty);
+  const want = bodyVariant(detail, part, decode, pretty);
+  const text = info.isText || want !== "raw";
+  const v = text && info.charset ? textVariant(info, want, override) : want;
   return (
     <div className="textpane">
       <EncodedBanner detail={detail} part={part} />
@@ -133,14 +138,15 @@ function TextPane({ detail, part, syntax }: { detail: Detail; part: Part; syntax
         )}
         <span className="muted">
           {fmtBytes(info.len)}
-          {info.truncated ? ` ${t("(truncated)")}` : ""} · {VARIANT_LABELS[v] ?? v}
+          {info.truncated ? ` ${t("(truncated)")}` : ""} · {VARIANT_LABELS[v.startsWith("text:") ? "decoded" : v] ?? v}
         </span>
         <span className="tp-spacer" />
+        {text && info.charset && <CharsetPicker detected={info.charset} value={override} onChange={setOverride} />}
         <button onClick={() => actions.menu(part === "request" ? "file.save-request-body" : "file.save-response-body")}>{t("Save…")}</button>
       </div>
       <div className="tp-body">
-        {info.isText || v !== "raw" ? (
-          <BodyText id={detail.summary.id} part={part} info={info} variant={v} highlight={syntax} wrap={wrap} />
+        {text ? (
+          <BodyText id={detail.summary.id} part={part} info={info} variant={v} highlight={syntax} wrap={wrap} charset={effectiveCharset(info, override)} />
         ) : (
           <div className="placeholder">
             {info.isImage
@@ -349,6 +355,11 @@ export function Inspectors() {
     return () => ro.disconnect();
   }, []);
   const stacked = stackedPref || narrow;
+  // Charsets chosen for a session's bodies apply until another session is shown.
+  const shownId = detail?.summary.id ?? null;
+  useEffect(() => {
+    if (get().charsetOverrides.id !== shownId) set({ charsetOverrides: { id: shownId, map: {} } });
+  }, [shownId]);
   const paused = pausedPart(detail);
   const [edits, setEdits] = useState<TamperEdits>({ head: null, body: null, file: null });
   const pausedKey = detail && paused ? `${detail.summary.id}:${paused}` : "";

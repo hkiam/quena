@@ -372,4 +372,7 @@ export const components: Record<string, string> = {
   Disabled: "Deaktiviert",
   "The whole capture (Diagnostics tab)": "Die ganze Aufnahme (Tab Diagnose)",
   "Enable {name}": "{name} aktivieren",
+  "The text cannot be encoded in {charset} here.": "Der Text lässt sich hier nicht in {charset} kodieren.",
+  "Charset of the text for Base64, URL encoding and hex": "Zeichensatz des Texts für Base64, URL-Kodierung und Hex",
+  "Charset": "Zeichensatz",
 };

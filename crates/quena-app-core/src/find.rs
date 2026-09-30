@@ -127,6 +127,10 @@ impl AppCore {
                                         continue;
                                     }
                                     let spec = spec_of(&h);
+                                    // Bodies are searched as text in their charset ("Grüße" finds
+                                    // the windows-1252 bytes; UTF-16 is decoded first).
+                                    let enc = quena_body::text::detect_body(&body, &spec).encoding;
+                                    let as_text = |data: &[u8]| quena_body::charset::decode(data, enc).0.into_owned();
                                     // Decoded search works on a bounded in-memory decode instead of
                                     // deriving (and caching) every matching body; an existing complete
                                     // cache entry is searched directly.
@@ -138,14 +142,12 @@ impl AppCore {
                                         _ => None,
                                     };
                                     let found = match (&decoded, &re) {
-                                        (Some(data), _) => text_hit(&String::from_utf8_lossy(data)),
-                                        (None, Some(re)) => {
-                                            let data = body.read_range(0, max as usize).unwrap_or_default();
-                                            re.is_match(&String::from_utf8_lossy(&data))
-                                        }
+                                        (Some(data), _) => text_hit(&as_text(data)),
+                                        (None, Some(_)) => text_hit(&as_text(&body.read_range(0, max as usize).unwrap_or_default())),
+                                        (None, None) if quena_body::text::needs_transcoding(enc) => text_hit(&as_text(&body.read_range(0, max as usize).unwrap_or_default())),
                                         (None, None) => {
                                             let mut f = false;
-                                            let _ = quena_body::search::search(&body, o.text.as_bytes(), !o.match_case, 0, &quena_body::decode::NoProgress, |_| {
+                                            let _ = quena_body::search::search_text(&body, &o.text, enc, !o.match_case, 0, &quena_body::decode::NoProgress, |_| {
                                                 f = true;
                                                 false
                                             });

@@ -134,6 +134,8 @@ pub struct AppCore {
     quick_filter: RwLock<String>,
     pub(crate) mock: Mutex<Option<mock::MockHandle>>,
     pub(crate) searches: Mutex<std::collections::HashMap<JobId, Arc<Mutex<SearchResult>>>>,
+    /// Charset per body id (decoded prefix examined once).
+    pub(crate) charsets: Mutex<std::collections::HashMap<u64, &'static quena_body::text::Encoding>>,
     pub(crate) finds: Mutex<std::collections::HashMap<JobId, Arc<Mutex<find::FindResult>>>>,
     /// Last diagnostics report (JSON) and the generation of the latest run.
     pub(crate) diag_report: Mutex<diagnostics::DiagSlot>,
@@ -167,6 +169,7 @@ impl AppCore {
             quick_filter: RwLock::new(String::new()),
             mock: Mutex::new(None),
             searches: Mutex::new(Default::default()),
+            charsets: Mutex::new(Default::default()),
             finds: Mutex::new(Default::default()),
             diag_report: Mutex::new(Default::default()),
             started: Instant::now(),

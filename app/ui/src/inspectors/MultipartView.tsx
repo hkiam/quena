@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { api, bodyUrl, fetchBody, type Detail, type Multipart, type Part } from "../api";
 import { fmtBytes } from "../lib/format";
-import { decodeText } from "../lib/bodytext";
+import { decodeBytes } from "../lib/bodytext";
+import { CharsetPicker, useCharsetOverride } from "./CharsetPicker";
 import { CodeView, langFor } from "./CodeView";
 import { save } from "@tauri-apps/plugin-dialog";
 import { say } from "../store";
@@ -42,19 +43,22 @@ export function MultipartView({ detail, part }: { detail: Detail; part: Part }) 
   }, [detail.summary.id, part]);
 
   const p = mp?.parts?.[sel];
+  // Each part has its own charset (its Content-Type, BOM, declaration) and its own override.
+  const [override, setOverride] = useCharsetOverride(detail.summary.id, `${part}:part${p?.index ?? sel}`);
+  const charset = override ?? p?.charset?.name ?? "UTF-8";
   useEffect(() => {
     let alive = true;
     setText(null);
     setPartErr(null);
     if (!p || !p.isText) return;
     fetchBody(detail.summary.id, part, "raw", p.offset, Math.min(p.len, 8 << 20)).then(
-      (r) => alive && setText(decodeText(r.data)),
+      (r) => alive && setText(decodeBytes(r.data, charset)),
       (e) => alive && setPartErr(String(e)),
     );
     return () => {
       alive = false;
     };
-  }, [detail.summary.id, part, p?.offset, p?.len, p?.isText]);
+  }, [detail.summary.id, part, p?.offset, p?.len, p?.isText, charset]);
 
   if (error) return <div className="placeholder">{t("Could not parse the parts: {error}", { error })}</div>;
   if (!mp) return <div className="placeholder">{t("Parsing…")}</div>;
@@ -92,6 +96,7 @@ export function MultipartView({ detail, part }: { detail: Detail; part: Part }) 
                 {p.contentType} · {fmtBytes(p.len)}
               </span>
               <span className="tp-spacer" />
+              {p.isText && p.charset && <CharsetPicker detected={p.charset} value={override} onChange={setOverride} />}
               <button
                 onClick={async () => {
                   const name = p.filename || p.name || `part-${p.index}`;

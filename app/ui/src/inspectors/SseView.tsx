@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, fetchBody, type Detail } from "../api";
 import { fmtBytes, fmtInt } from "../lib/format";
-import { decodeText } from "../lib/bodytext";
+import { decodeBytes } from "../lib/bodytext";
+import { useCharsetOverride } from "./CharsetPicker";
 import { useStore } from "../store";
 import { t } from "../i18n";
 
@@ -50,7 +51,10 @@ export function SseView({ detail }: { detail: Detail }) {
   const [error, setError] = useState<string | null>(null);
   const [show, setShow] = useState(SHOW);
   const version = useStore((s) => s.listVersion);
-  const seen = useRef({ id: -1, len: -1, complete: false });
+  const seen = useRef({ id: -1, len: -1, complete: false, charset: "" });
+  // Event streams are always UTF-8 (HTML §9.2.5); a charset chosen in Plain Text still applies.
+  const [override] = useCharsetOverride(detail.summary.id, "response");
+  const charset = override ?? "UTF-8";
   useEffect(() => {
     let alive = true;
     let busy = false;
@@ -64,11 +68,11 @@ export function SseView({ detail }: { detail: Detail }) {
         setTotal(v.len);
         // Re-parse only when the stream actually grew (the poll runs every 500 ms).
         const last = seen.current;
-        if (last.id === detail.summary.id && last.len === v.len && last.complete === v.complete) return;
+        if (last.id === detail.summary.id && last.len === v.len && last.complete === v.complete && last.charset === charset) return;
         const { data } = await fetchBody(detail.summary.id, "response", "raw", 0, Math.min(v.len, LIMIT));
         if (!alive) return;
-        seen.current = { id: detail.summary.id, len: v.len, complete: v.complete };
-        setEvents(parse(decodeText(data)).events);
+        seen.current = { id: detail.summary.id, len: v.len, complete: v.complete, charset };
+        setEvents(parse(decodeBytes(data, charset)).events);
         setError(null);
       } catch (e) {
         if (alive) setError(t("Could not load the event stream: {error}", { error: String(e) }));
@@ -84,7 +88,7 @@ export function SseView({ detail }: { detail: Detail }) {
       if (timer) clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail.summary.id, version]);
+  }, [detail.summary.id, version, charset]);
   useEffect(() => setShow(SHOW), [detail.summary.id]);
 
   const from = Math.max(0, events.length - show);

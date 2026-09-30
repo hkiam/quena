@@ -32,6 +32,8 @@ function useBoot() {
       setLayout: (patch: Partial<Layout>) => set((s) => ({ layout: { ...s.layout, ...patch } })),
       // Load an archive by path (on Windows the WebDriver cannot pass command-line arguments).
       load: (path: string) => api.importArchive(path),
+      // Select the session in row `i` of the list.
+      selectRow: async (i: number) => actions.selectIds(await api.viewIds(i, 1)),
     };
     if (!isTauri) return;
     const unlisten: Promise<() => void>[] = [];

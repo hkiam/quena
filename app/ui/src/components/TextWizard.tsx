@@ -1,6 +1,7 @@
 // Text Tools: quick encoders/decoders.
 import { useMemo, useState } from "react";
-import { b64decode } from "../lib/http";
+import { b64decode, percentDecodeText, percentEncodeBytes } from "../lib/http";
+import { CHARSETS, decodeBytes, encodeText } from "../lib/bodytext";
 import { t } from "../i18n";
 
 const OPS = [
@@ -38,21 +39,27 @@ const OP_LABELS: Record<Op, string> = {
   "UTF-8 bytes": t("UTF-8 bytes"),
 };
 
-function run(op: Op, s: string): string {
+/** Byte conversions (Base64, URL encoding, hex) use this charset for the text. */
+function run(op: Op, s: string, charset: string): string {
   const enc = new TextEncoder();
+  const bytes = () => {
+    const b = encodeText(s, charset);
+    if (!b) throw new Error(t("The text cannot be encoded in {charset} here.", { charset }));
+    return b;
+  };
   try {
     switch (op) {
       case "To Base64": {
         let bin = "";
-        enc.encode(s).forEach((b) => (bin += String.fromCharCode(b)));
+        bytes().forEach((b) => (bin += String.fromCharCode(b)));
         return btoa(bin);
       }
       case "From Base64":
-        return b64decode(s.trim());
+        return b64decode(s.trim(), charset);
       case "URLEncode":
-        return encodeURIComponent(s);
+        return percentEncodeBytes(bytes());
       case "URLDecode":
-        return decodeURIComponent(s.replace(/\+/g, " "));
+        return percentDecodeText(s, charset);
       case "HTML Encode":
         return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
       case "HTML Decode": {
@@ -61,10 +68,10 @@ function run(op: Op, s: string): string {
         return ta.value;
       }
       case "To Hex":
-        return [...enc.encode(s)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+        return [...bytes()].map((b) => b.toString(16).padStart(2, "0")).join(" ");
       case "From Hex": {
-        const bytes = s.replace(/0x/gi, "").replace(/[^0-9a-f]/gi, "").match(/../g) ?? [];
-        return new TextDecoder().decode(Uint8Array.from(bytes.map((h) => parseInt(h, 16))));
+        const hex = s.replace(/0x/gi, "").replace(/[^0-9a-f]/gi, "").match(/../g) ?? [];
+        return decodeBytes(Uint8Array.from(hex.map((h) => parseInt(h, 16))), charset);
       }
       case "JS String Escape":
         return JSON.stringify(s).slice(1, -1);
@@ -90,7 +97,8 @@ function run(op: Op, s: string): string {
 export function TextWizard({ initial }: { initial?: string }) {
   const [input, setInput] = useState(initial ?? "");
   const [op, setOp] = useState<Op>("From Base64");
-  const out = useMemo(() => run(op, input), [op, input]);
+  const [charset, setCharset] = useState("UTF-8");
+  const out = useMemo(() => run(op, input, charset), [op, input, charset]);
   return (
     <div className="textwizard">
       <textarea className="mono" rows={8} value={input} onChange={(e) => setInput(e.target.value)} placeholder={t("Input")} autoFocus />
@@ -101,6 +109,14 @@ export function TextWizard({ initial }: { initial?: string }) {
           </label>
         ))}
       </div>
+      <label className="f-check tw-charset" title={t("Charset of the text for Base64, URL encoding and hex")}>
+        {t("Charset")}{" "}
+        <select value={charset} onChange={(e) => setCharset(e.target.value)}>
+          {CHARSETS.map((c) => (
+            <option key={c}>{c}</option>
+          ))}
+        </select>
+      </label>
       <textarea className="mono" rows={8} value={out} readOnly placeholder={t("Output")} />
     </div>
   );

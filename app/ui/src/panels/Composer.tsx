@@ -1,9 +1,9 @@
 // Composer (F9): build a request from scratch or from a session.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, type ComposeRequest } from "../api";
 import { CodeView } from "../inspectors/CodeView";
-import { loadText } from "../lib/bodytext";
+import { loadBody, sameCharset } from "../lib/bodytext";
 import { fmtBytes, latin1ToUtf8 } from "../lib/format";
 import { say, useStore } from "../store";
 import { actions } from "../actions";
@@ -21,6 +21,9 @@ interface Draft {
   bodyFromSession: number | null;
   bodyFromSessionLen: number;
   bodyFile: string | null;
+  /** Charset the body text was loaded in (from a session); edits are encoded in the
+   * declared charset, else in this one. */
+  bodyCharset?: string | null;
 }
 
 const EMPTY: Draft = {
@@ -70,6 +73,8 @@ export default function ComposerPanel() {
   const [history, setHistory] = useState(loadHistory);
   const [over, setOver] = useState(false);
   const load = useStore((s) => s.composerLoad);
+  // The session whose body the text shows: sent byte for byte as long as the text is unchanged.
+  const loaded = useRef<{ id: number; text: string } | null>(null);
 
   useEffect(() => {
     try {
@@ -84,7 +89,9 @@ export default function ComposerPanel() {
     if (!det) return;
     const headers = det.request.headers.filter(([k]) => !k.startsWith(":")).map(([k, v]) => `${k}: ${latin1ToUtf8(v)}`).join("\n");
     const big = det.requestBody.len > INLINE_BODY_LIMIT || !det.requestBody.isText;
-    const body = big || det.requestBody.len === 0 ? "" : await loadText(id, "request", det.requestBody, INLINE_BODY_LIMIT, "raw");
+    const b = big || det.requestBody.len === 0 ? null : await loadBody(id, "request", det.requestBody, INLINE_BODY_LIMIT, "raw");
+    const body = b?.text ?? "";
+    loaded.current = b ? { id, text: body } : null;
     setD({
       method: det.request.method,
       url: det.request.url,
@@ -93,6 +100,8 @@ export default function ComposerPanel() {
       bodyFromSession: big && det.requestBody.len > 0 ? id : null,
       bodyFromSessionLen: det.requestBody.len,
       bodyFile: null,
+      // Transcoded text (UTF-16) came as UTF-8; edits go back in the body's own charset.
+      bodyCharset: b ? (det.requestBody.charset?.name ?? b.charset) : null,
     });
     setTab("parsed");
     say(t("Loaded #{id} into the Composer", { id }));
@@ -106,12 +115,16 @@ export default function ComposerPanel() {
   const execute = async (draft: Draft) => {
     setBusy(true);
     try {
+      // Unchanged text of a session body: send its original bytes (not the text re-encoded).
+      const orig = loaded.current;
+      const same = orig != null && draft.bodyFromSession == null && !draft.bodyFile && draft.body === orig.text;
       const req: ComposeRequest = {
         method: draft.method,
         url: draft.url,
         headers: draft.headers,
-        body: draft.body,
-        bodyFromSession: draft.bodyFromSession,
+        body: same ? "" : draft.body,
+        bodyCharset: draft.bodyCharset ?? null,
+        bodyFromSession: same ? orig.id : draft.bodyFromSession,
         bodyFile: draft.bodyFile,
         fixContentLength: fixLen,
       };
@@ -206,6 +219,12 @@ export default function ComposerPanel() {
           <textarea className="mono cmp-headers" value={d.headers} spellCheck={false} onChange={(e) => setD({ ...d, headers: e.target.value })} />
           <div className="cmp-label">
             {t("Request Body")}
+            {d.bodyCharset && !sameCharset(d.bodyCharset, "UTF-8") && d.bodyFromSession == null && !d.bodyFile && (
+              <span className="muted small" title={t("Edited text is sent in the charset of the Content-Type, else in this one. Characters it cannot represent make it UTF-8 (the Content-Type is adjusted).")}>
+                {" "}
+                · {t("shown as {charset}", { charset: d.bodyCharset })}
+              </span>
+            )}
             <span className="tp-spacer" />
             {d.bodyFromSession != null ? (
               <span className="muted">
@@ -240,7 +259,8 @@ export default function ComposerPanel() {
               onClick={async () => {
                 try {
                   const p = await api.parseCurl(raw);
-                  setD((x) => ({ ...x, method: p.method, url: p.url, headers: p.headers, body: p.body, bodyFromSession: null, bodyFile: null }));
+                  loaded.current = null;
+                  setD((x) => ({ ...x, method: p.method, url: p.url, headers: p.headers, body: p.body, bodyFromSession: null, bodyFile: null, bodyCharset: null }));
                   setTab("parsed");
                   say(t("Imported cURL command"));
                 } catch (err) {
@@ -258,7 +278,14 @@ export default function ComposerPanel() {
         <div className="scroll pad">
           {history.length === 0 && <div className="muted">{t("No requests issued yet.")}</div>}
           {history.map((h, i) => (
-            <div key={i} className="cmp-hist" onClick={() => setD(h)} onDoubleClick={() => execute(h)} title={t("Click to load, double-click to execute")}>
+            <div key={i} className="cmp-hist" onClick={() => {
+                loaded.current = null;
+                setD(h);
+              }}
+              onDoubleClick={() => {
+                loaded.current = null;
+                execute(h);
+              }} title={t("Click to load, double-click to execute")}>
               <b>{h.method}</b> {h.url} <span className="muted small">{new Date(h.at).toLocaleTimeString()}</span>
             </div>
           ))}

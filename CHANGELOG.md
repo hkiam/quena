@@ -8,6 +8,20 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- Character encodings: every text view decodes bodies in their real charset (BOM, then the
+  `Content-Type` charset, then `<?xml encoding>` / HTML `<meta>`, then the type's default) and
+  shows it ("windows-1252 · header") with a menu to view the body in another charset. UTF-16
+  bodies are formatted too; multipart parts and form data use their own charset; RFC 8187
+  `filename*=` parameters are shown decoded.
+- Diagnostics finds encoding problems: a declared charset that does not match the bytes
+  (“Grüße” → “Gr��e” or “GrÃ¼ÃŸe”), header, BOM and document declaration that disagree, text
+  without any charset, double-encoded UTF-8, characters already lost (`�`), JSON not in UTF-8,
+  unknown charset names, NUL bytes in text, and compressed data without (or with a broken)
+  `Content-Encoding`.
+- Diagnostics finds clock problems from the `Date` header: a server whose clock differs from
+  this computer (critical from 5 minutes, Kerberos' tolerance), this computer's own clock
+  being off (several unrelated sites agree), and servers behind one name with different
+  clocks.
 - **Diagnostics** (View → Diagnostics, bundled plugin *webdiag*): turns a capture into a short
   list of prioritised findings with evidence instead of thousands of sessions — slow requests
   and server time, large and uncompressed transfers, exact and semantic duplicates (OData
@@ -67,6 +81,13 @@ contain breaking changes (settings, file formats, plugin API).
   not fit, and the views are ordered by how well they fit the content.
 
 ### Fixed
+- Umlauts and other non-ASCII characters were shown as `�` in inspector bodies (and in JSON,
+  XML, SOAP, multipart, form data, the large-text view) when a body was not UTF-8; search
+  did not find them either.
+- Composer and breakpoint edits keep the body's charset (unedited bodies are sent byte for
+  byte); *Copy as* sends exactly the recorded bytes for bodies that are not UTF-8.
+- HAR import: a leftover `Content-Encoding` on a request whose text is already decoded is
+  dropped, so it is no longer reported as undecodable.
 - *Plugins* dialog: long "Applies to" lists squeezed the other columns to single characters;
   the columns keep their width, the Diagnostics plugin shows what it applies to, and status
   and column titles are translated.

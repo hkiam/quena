@@ -15,7 +15,7 @@ interface Chunk {
   lines: string[];
 }
 
-export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part: Part; variant: Variant; wrap: boolean }) {
+export function LargeTextView({ id, part, variant, wrap, charset }: { id: SessionId; part: Part; variant: Variant; wrap: boolean; charset?: string | null }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<BodyView | null>(null);
   const [chunk, setChunk] = useState<Chunk>({ start: 0, lines: [] });
@@ -63,6 +63,13 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
     };
   }, [id, part, variant]);
 
+  // Another charset: the lines read so far are stale, and so are search offsets.
+  useEffect(() => {
+    setChunk({ start: 0, lines: [] });
+    setHits([]);
+    setHitIdx(-1);
+  }, [charset]);
+
   // Load the window around the viewport.
   const load = useCallback(async () => {
     if (!view) return;
@@ -70,13 +77,13 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
     if (chunk.lines.length && need >= chunk.start && firstLine + visible <= chunk.start + chunk.lines.length && (view.linesDone || chunk.start + chunk.lines.length < view.lines - 1)) return;
     const my = ++req.current;
     try {
-      const r = await api.bodyLines(id, part, variant, need, WINDOW);
+      const r = await api.bodyLines(id, part, variant, need, WINDOW, charset);
       if (my !== req.current) return;
       setChunk({ start: r.start, lines: r.lines });
     } catch (e) {
       if (my === req.current) setError(String(e));
     }
-  }, [view, firstLine, visible, chunk, id, part, variant]);
+  }, [view, firstLine, visible, chunk, id, part, variant, charset]);
 
   useEffect(() => {
     load();
@@ -103,7 +110,7 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
     setHits([]);
     let job: Awaited<ReturnType<typeof api.bodySearch>>;
     try {
-      job = await api.bodySearch(id, part, variant, search, true);
+      job = await api.bodySearch(id, part, variant, search, true, charset);
     } catch (e) {
       setSearching(false);
       setError(t("Search failed: {error}", { error: String(e) }));

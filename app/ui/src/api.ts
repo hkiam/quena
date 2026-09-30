@@ -71,7 +71,20 @@ export interface ResponseHead {
   version: HttpVersion;
   headers: Headers;
 }
-export type Variant = "raw" | "decoded" | "pretty" | `plugin:${number}`;
+/** Body representations; `text:<charset>` is the decoded body transcoded from that charset
+ * to UTF-8 (for charsets the viewer cannot process byte-wise, like UTF-16). */
+export type Variant = "raw" | "decoded" | "pretty" | `plugin:${number}` | `text:${string}`;
+
+/** The charset of a text and where it came from (see quena_body::charset). */
+export interface Charset {
+  /** WHATWG name (UTF-8, windows-1252, UTF-16LE …). */
+  name: string;
+  source: "bom" | "header" | "document" | "default";
+  /** charset parameter of the Content-Type, as sent. */
+  header?: string;
+  /** Declaration inside the document (XML declaration, HTML meta), as written. */
+  document?: string;
+}
 export type Part = "request" | "response";
 
 export interface BodyInfo {
@@ -87,6 +100,8 @@ export interface BodyInfo {
   isImage: boolean;
   variants: Variant[];
   plugins: { variant: Variant; tab: string; confidence: number; output: "text" | "xml" | "json" }[];
+  /** Effective charset of a text body (null for binary bodies). */
+  charset: Charset | null;
 }
 
 export interface PluginInfo {
@@ -230,6 +245,8 @@ export interface BodyView {
   len: number;
   complete: boolean;
   variant: Variant;
+  /** Charset of the variant's bytes when the variant fixes it (UTF-8 for transcoded text). */
+  charset: string | null;
   job: number | null;
   lineJob: number | null;
   lines: number;
@@ -421,6 +438,8 @@ export interface ComposeRequest {
   url: string;
   headers: string;
   body: string;
+  /** Charset the body text was shown in (the text is encoded in the declared charset, else this one). */
+  bodyCharset?: string | null;
   bodyFromSession?: SessionId | null;
   bodyFile?: string | null;
   fixContentLength: boolean;
@@ -459,6 +478,8 @@ export interface Resume {
   action: "continue" | "breakOnResponse" | "abort" | "respond";
   headText?: string | null;
   bodyText?: string | null;
+  /** Charset the edited body text was shown in. */
+  bodyCharset?: string | null;
   bodyFile?: string | null;
   status?: number | null;
 }
@@ -494,6 +515,7 @@ export interface MultipartPart {
   len: number;
   isText: boolean;
   preview: string | null;
+  charset: Charset | null;
 }
 export interface Multipart {
   boundary: string;
@@ -572,10 +594,11 @@ export const api = {
   comment: (ids: SessionId[], text: string) => invoke<void>("comment", { ids, text }),
   detail: (id: SessionId) => invoke<Detail | null>("detail", { id }),
   bodyOpen: (id: SessionId, part: Part, variant: Variant) => invoke<BodyView>("body_open", { id, part, variant }),
-  bodyLines: (id: SessionId, part: Part, variant: Variant, start: number, count: number) =>
-    invoke<LinesDto>("body_lines", { id, part, variant, start, count }),
-  bodySearch: (id: SessionId, part: Part, variant: Variant, needle: string, ignoreCase: boolean) =>
-    invoke<number>("body_search", { id, part, variant, needle, ignoreCase }),
+  /** Lines of a variant, decoded from `charset` (default: the body's; ignored when the variant fixes it). */
+  bodyLines: (id: SessionId, part: Part, variant: Variant, start: number, count: number, charset?: string | null) =>
+    invoke<LinesDto>("body_lines", { id, part, variant, start, count, charset: charset ?? null }),
+  bodySearch: (id: SessionId, part: Part, variant: Variant, needle: string, ignoreCase: boolean, charset?: string | null) =>
+    invoke<number>("body_search", { id, part, variant, needle, ignoreCase, charset: charset ?? null }),
   searchResult: (job: number) => invoke<SearchResult | null>("search_result", { job }),
   saveBody: (id: SessionId, part: Part, variant: Variant, path: string) => invoke<number>("save_body", { id, part, variant, path }),
   findSessions: (options: FindOptions) => invoke<number>("find_sessions", { options }),
@@ -690,7 +713,7 @@ export async function fetchBody(
   offset: number,
   length: number,
   signal?: AbortSignal,
-): Promise<{ data: Uint8Array; total: number; complete: boolean }> {
+): Promise<{ data: Uint8Array; total: number; complete: boolean; charset: string | null }> {
   const t0 = performance.now();
   const end = offset + Math.max(0, length) - 1;
   const res = await fetch(bodyUrl(id, part, variant), {
@@ -703,6 +726,8 @@ export async function fetchBody(
     data: buf,
     total: Number(res.headers.get("X-Quena-Total") ?? buf.length),
     complete: res.headers.get("X-Quena-Complete") === "1",
+    // Set when the variant fixes the charset of its bytes (transcoded text: UTF-8).
+    charset: res.headers.get("X-Quena-Charset"),
   };
 }
 

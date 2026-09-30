@@ -14,6 +14,7 @@ pub mod lines;
 pub mod pretty;
 pub mod search;
 mod store;
+pub mod text;
 
 pub use body::{Body, BodyReader, BodyWriter};
 pub use store::{BodyConfig, BodyStore, PluginDecoders, StoreStats, Variant};
@@ -128,7 +129,7 @@ mod tests {
         enc.write_all(json).unwrap();
         let gz = enc.finish().unwrap();
         let body = store.store_bytes(&gz);
-        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: Some("application/json".into()) };
+        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: Some("application/json".into()), charset: None };
         let d = derive(&store, &body, Variant::Decoded, &spec).unwrap();
         (d.work.unwrap())(&NoProgress).unwrap();
         assert_eq!(d.body.read_range(0, 1000).unwrap(), json);
@@ -141,6 +142,38 @@ mod tests {
     }
 
     #[test]
+    fn utf16_is_transcoded_for_pretty_and_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        let json = "{\"gruß\":[\"Grüße 😀\",2]}";
+        let mut utf16: Vec<u8> = vec![0xFF, 0xFE];
+        utf16.extend(json.encode_utf16().flat_map(|u| u.to_le_bytes()));
+        let body = store.store_bytes(&utf16);
+        let mut spec = DeriveSpec { content_encoding: None, content_type: Some("application/json".into()), charset: None };
+        spec.charset = Some(text::detect_body(&body, &spec).encoding);
+        assert_eq!(spec.charset, Some(encoding_rs::UTF_16LE));
+        // Pretty: transcoded, then formatted; the output is UTF-8.
+        let p = derive(&store, &body, Variant::Pretty, &spec).unwrap();
+        (p.work.unwrap())(&NoProgress).unwrap();
+        let out = String::from_utf8(p.body.read_range(0, 1000).unwrap()).unwrap();
+        assert_eq!(out, "{\n  \"gruß\": [\n    \"Grüße 😀\",\n    2\n  ]\n}\n");
+        assert_eq!(decode::output_charset(&spec, Variant::Pretty), Some(encoding_rs::UTF_8));
+        // Text: transcoded as it is (BOM dropped).
+        let t = derive(&store, &body, Variant::Text(encoding_rs::UTF_16LE), &spec).unwrap();
+        (t.work.unwrap())(&NoProgress).unwrap();
+        assert_eq!(t.body.read_range(0, 1000).unwrap(), json.as_bytes());
+        assert_eq!(Variant::parse("text:utf-16le"), Some(Variant::Text(encoding_rs::UTF_16LE)));
+        assert_eq!(Variant::Text(encoding_rs::UTF_16LE).name(), "text:UTF-16LE");
+        // ASCII-compatible charsets keep their bytes: formatted windows-1252 stays windows-1252.
+        let latin = store.store_bytes(b"{\"a\":\"Gr\xfc\xdfe\"}");
+        let spec = DeriveSpec { content_encoding: None, content_type: Some("application/json; charset=windows-1252".into()), charset: Some(encoding_rs::WINDOWS_1252) };
+        let p = derive(&store, &latin, Variant::Pretty, &spec).unwrap();
+        (p.work.unwrap())(&NoProgress).unwrap();
+        assert_eq!(p.body.read_range(0, 1000).unwrap(), b"{\n  \"a\": \"Gr\xfc\xdfe\"\n}\n");
+        assert_eq!(decode::output_charset(&spec, Variant::Pretty), None);
+    }
+
+    #[test]
     fn bomb_protection() {
         let dir = tempfile::tempdir().unwrap();
         let store = BodyStore::open(dir.path(), BodyConfig { max_ratio: 100, ..Default::default() }).unwrap();
@@ -149,7 +182,7 @@ mod tests {
         enc.write_all(&zeros).unwrap();
         let gz = enc.finish().unwrap();
         let body = store.store_bytes(&gz);
-        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: None };
+        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: None, charset: None };
         let d = derive(&store, &body, Variant::Decoded, &spec).unwrap();
         let r = (d.work.unwrap())(&NoProgress);
         assert!(r.is_err());
@@ -185,7 +218,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
         let body = store.store_bytes(b"x");
-        let spec = DeriveSpec { content_encoding: Some(vec!["gzip"; 50].join(",")), content_type: None };
+        let spec = DeriveSpec { content_encoding: Some(vec!["gzip"; 50].join(",")), content_type: None, charset: None };
         assert!(!decode::variant_applies(&spec, Variant::Decoded));
         assert!(matches!(derive(&store, &body, Variant::Decoded, &spec), Err(BodyError::Unsupported(_))));
     }
@@ -198,7 +231,7 @@ mod tests {
         let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         enc.write_all(&data).unwrap();
         let body = store.store_bytes(&enc.finish().unwrap());
-        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: None };
+        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: None, charset: None };
         let d = derive(&store, &body, Variant::Decoded, &spec).unwrap();
         (d.work.unwrap())(&NoProgress).unwrap();
         assert!(d.body.is_truncated());

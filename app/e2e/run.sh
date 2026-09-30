@@ -38,6 +38,9 @@ node --test --test-reporter=spec "$here/app.test.mjs"
 # Diagnostics with the real analyzer plugin.
 settings en
 node --test --test-reporter=spec "$here/diagnostics.test.mjs"
+# Bodies in many character encodings.
+settings en
+node --test --test-reporter=spec "$here/encoding.test.mjs"
 # The German UI: longer texts must not break the layout.
 settings de
 node --test --test-reporter=spec "$here/german.test.mjs"

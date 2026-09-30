@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api, fetchBody, type BodyInfo, type Part, type SessionId, type Variant } from "../api";
 import { CodeView, langFor } from "./CodeView";
 import { LargeTextView } from "./LargeTextView";
-import { decodeText } from "../lib/bodytext";
+import { decodeBytes } from "../lib/bodytext";
 import { fmtBytes } from "../lib/format";
 import { t } from "../i18n";
 
@@ -18,6 +18,7 @@ export function BodyText({
   variant,
   highlight,
   wrap,
+  charset,
 }: {
   id: SessionId;
   part: Part;
@@ -25,6 +26,8 @@ export function BodyText({
   variant: Variant;
   highlight: boolean;
   wrap: boolean;
+  /** Charset of the variant's bytes (unless the variant fixes it, e.g. transcoded UTF-16). */
+  charset?: string | null;
 }) {
   const [state, setState] = useState<{ mode: "loading" | "small" | "large"; text?: string; note?: string }>({ mode: "loading" });
 
@@ -47,7 +50,7 @@ export function BodyText({
         }
         const r = await fetchBody(id, part, variant, 0, v.len, ctl.signal);
         if (!alive) return;
-        setState({ mode: "small", text: decodeText(r.data), note: v.error ?? undefined });
+        setState({ mode: "small", text: decodeBytes(r.data, r.charset ?? v.charset ?? charset), note: v.error ?? undefined });
       } catch (e) {
         if (alive && !(e instanceof DOMException)) setState({ mode: "small", text: "", note: String(e) });
       }
@@ -58,10 +61,10 @@ export function BodyText({
       ctl.abort();
       window.clearTimeout(timer);
     };
-  }, [id, part, variant, info.complete, info.len]);
+  }, [id, part, variant, info.complete, info.len, charset]);
 
   if (state.mode === "loading") return <div className="placeholder">{t("Loading {size}…", { size: fmtBytes(info.len) })}</div>;
-  if (state.mode === "large") return <LargeTextView id={id} part={part} variant={variant} wrap={wrap} />;
+  if (state.mode === "large") return <LargeTextView id={id} part={part} variant={variant} wrap={wrap} charset={charset} />;
   return (
     <div className="bodytext">
       {state.note && <div className="banner error">{state.note}</div>}

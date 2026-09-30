@@ -227,13 +227,13 @@ export const actions = {
       case "fetch":
       case "powershell":
       case "python": {
-        const { loadText } = await import("./lib/bodytext");
+        const { snippetBody } = await import("./lib/bodytext");
         const build = { curl: buildCurl, fetch: buildFetch, powershell: buildPowerShell, python: buildPython }[kind];
         const out: string[] = [];
         for (const d of ds.slice(0, 50)) {
-          // Text bodies up to 1 MB are inlined; binary or larger ones are referenced as a file.
-          const body = d.requestBody.len > 0 && d.requestBody.len < 1 << 20 && d.requestBody.isText ? await loadText(d.summary.id, "request", d.requestBody, 1 << 20) : null;
-          out.push(build(d, body));
+          // Text bodies up to 1 MB are inlined (as the bytes sent); binary or larger ones are referenced as a file.
+          const body = await snippetBody(d);
+          out.push(build(d, body?.text ?? null, body?.bytes));
         }
         text = out.join("\n\n");
         break;

@@ -23,6 +23,8 @@ pub struct Part {
     pub is_text: bool,
     /// Small text preview (decoded), if textual.
     pub preview: Option<String>,
+    /// Charset of a text part (its own Content-Type, BOM, declaration; see `quena_body::charset`).
+    pub charset: Option<crate::dto::CharsetDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -146,12 +148,14 @@ pub fn parse(body: &Body, content_type: &str) -> Multipart {
         let encoding = h.get("content-transfer-encoding").unwrap_or("").to_string();
         let part_len = plen.saturating_sub(2); // strip trailing CRLF that precedes the next boundary
         let is_text = is_textual(&ct);
-        let preview = if is_text {
+        let detected = is_text.then(|| {
+            let sample = body.read_range(body_start, quena_body::text::DETECT_PREFIX.min(part_len as usize)).unwrap_or_default();
+            quena_body::charset::detect(Some(&ct), &sample)
+        });
+        let preview = detected.as_ref().map(|d| {
             let data = body.read_range(body_start, PREVIEW.min(part_len as usize)).unwrap_or_default();
-            Some(String::from_utf8_lossy(&data).into_owned())
-        } else {
-            None
-        };
+            quena_body::charset::decode(&data, d.encoding).0.into_owned()
+        });
         out.parts.push(Part {
             index: idx,
             headers,
@@ -164,6 +168,7 @@ pub fn parse(body: &Body, content_type: &str) -> Multipart {
             len: part_len,
             is_text,
             preview,
+            charset: detected.as_ref().map(crate::dto::CharsetDto::from),
         });
     }
     if out.parts.is_empty() && out.error.is_none() {
@@ -280,6 +285,8 @@ mod tests {
         assert_eq!(m.parts[1].content_type, "image/png");
         assert_eq!(m.parts[1].content_id, "img@quena");
         assert!(!m.parts[1].is_text);
+        assert_eq!(m.parts[0].charset.as_ref().map(|c| (c.name.as_str(), c.source.as_str())), Some(("UTF-8", "header")));
+        assert!(m.parts[1].charset.is_none());
         // The image part body is exactly the bytes between headers and boundary.
         let img = b.read_range(m.parts[1].offset, m.parts[1].len as usize).unwrap();
         assert_eq!(img, b"\x89PNG\r\n\x00\x01\x02BINARYDATA");
@@ -297,6 +304,19 @@ mod tests {
         assert_eq!(m.parts[0].preview.as_deref(), Some("value1"));
         assert_eq!(m.parts[1].name, "file");
         assert_eq!(m.parts[1].filename, "a.txt");
+    }
+
+    #[test]
+    fn part_charset_from_its_content_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        let body = b"--X\r\nContent-Type: text/plain; charset=ISO-8859-1\r\n\r\nGr\xfc\xdfe\r\n--X\r\nContent-Type: text/plain\r\n\r\nGr\xc3\xbc\xc3\x9fe\r\n--X--\r\n".to_vec();
+        let b = store.store_bytes(&body);
+        let m = parse(&b, "multipart/mixed; boundary=X");
+        assert_eq!(m.parts[0].preview.as_deref(), Some("Grüße"));
+        assert_eq!(m.parts[0].charset.as_ref().map(|c| (c.name.as_str(), c.source.as_str(), c.header.as_deref())), Some(("windows-1252", "header", Some("ISO-8859-1"))));
+        assert_eq!(m.parts[1].preview.as_deref(), Some("Grüße"));
+        assert_eq!(m.parts[1].charset.as_ref().map(|c| c.name.as_str()), Some("UTF-8"));
     }
 
     #[test]

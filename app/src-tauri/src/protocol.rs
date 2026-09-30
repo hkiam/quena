@@ -67,13 +67,17 @@ pub fn handle(core: &AppCore, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let n = body.data.len() as u64;
     let mut b = Response::builder()
         .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-        .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, "Content-Range, X-Quena-Total, X-Quena-Complete, X-Quena-Variant")
+        .header(header::ACCESS_CONTROL_EXPOSE_HEADERS, "Content-Range, X-Quena-Total, X-Quena-Complete, X-Quena-Variant, X-Quena-Charset")
         .header(header::CONTENT_TYPE, ct)
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CACHE_CONTROL, "no-store")
         .header("X-Quena-Total", total.to_string())
         .header("X-Quena-Complete", if complete { "1" } else { "0" })
-        .header("X-Quena-Variant", format!("{:?}", body.variant).to_lowercase());
+        .header("X-Quena-Variant", body.variant.name());
+    // The bytes are in this charset regardless of the body's own (transcoded text).
+    if let Some(cs) = body.charset {
+        b = b.header("X-Quena-Charset", cs);
+    }
     if range.is_some() {
         b = b.status(StatusCode::PARTIAL_CONTENT).header(
             header::CONTENT_RANGE,

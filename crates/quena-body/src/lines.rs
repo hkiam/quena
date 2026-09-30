@@ -205,6 +205,14 @@ impl LineIndex {
 
     /// Read `count` lines starting at `start` (lossy UTF-8, trailing `\r\n` stripped).
     pub fn read_lines(&self, body: &Body, start: u64, count: usize) -> Result<Vec<String>> {
+        self.read_lines_as(body, start, count, encoding_rs::UTF_8)
+    }
+
+    /// Read `count` lines starting at `start`, decoded from `enc` (an ASCII-compatible charset;
+    /// others are transcoded to UTF-8 before indexing). Malformed sequences become U+FFFD, a
+    /// UTF-8 byte order mark at the start of the body is dropped.
+    pub fn read_lines_as(&self, body: &Body, start: u64, count: usize, enc: &'static encoding_rs::Encoding) -> Result<Vec<String>> {
+        let finish_line = |v: Vec<u8>, first: bool| finish_line(v, first, enc);
         let (offset, first_line) = {
             let s = self.st.read();
             if s.samples.is_empty() {
@@ -234,7 +242,7 @@ impl LineIndex {
                     skip -= 1;
                 } else {
                     cur.extend_from_slice(&chunk[last..end]);
-                    out.push(finish_line(std::mem::take(&mut cur)));
+                    out.push(finish_line(std::mem::take(&mut cur), start + out.len() as u64 == 0));
                 }
                 last = end;
                 out.len() < count
@@ -248,7 +256,8 @@ impl LineIndex {
             pos += n as u64;
         }
         if out.len() < count && !cur.is_empty() && skip == 0 {
-            out.push(finish_line(cur));
+            let first = start + out.len() as u64 == 0;
+            out.push(finish_line(cur, first));
         }
         Ok(out)
     }
@@ -293,14 +302,15 @@ impl LineIndex {
     }
 }
 
-fn finish_line(mut v: Vec<u8>) -> String {
+fn finish_line(mut v: Vec<u8>, first: bool, enc: &'static encoding_rs::Encoding) -> String {
     if v.last() == Some(&b'\n') {
         v.pop();
         if v.last() == Some(&b'\r') {
             v.pop();
         }
     }
-    String::from_utf8(v).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+    let bom = if first && enc == encoding_rs::UTF_8 && v.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
+    crate::text::decode_piece(&v[bom..], enc)
 }
 
 #[cfg(test)]
@@ -333,6 +343,16 @@ mod tests {
         assert_eq!(l, vec!["line 4998", "line 4999"]);
         let off = data.find("line 3000\n").unwrap() as u64 + 2;
         assert_eq!(idx.line_of_offset(&b, off).unwrap(), 3000);
+    }
+
+    #[test]
+    fn lines_in_their_charset() {
+        let data = b"\xEF\xBB\xBFline 1\nGr\xfc\xdfe\r\n";
+        let (_d, b) = body_of(data);
+        let idx = LineIndex::new();
+        idx.build(&b, &NoProgress).unwrap();
+        assert_eq!(idx.read_lines(&b, 0, 5).unwrap(), vec!["line 1", "Gr\u{fffd}\u{fffd}e"]);
+        assert_eq!(idx.read_lines_as(&b, 1, 5, encoding_rs::WINDOWS_1252).unwrap(), vec!["Grüße"]);
     }
 
     #[test]

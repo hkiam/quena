@@ -33,6 +33,11 @@ pub struct ComposeRequest {
     /// Body text (ignored when `body_from_session` or `body_file` is set).
     #[serde(default)]
     pub body: String,
+    /// Charset the body text was shown in (loaded from a session); the text is encoded in
+    /// the charset the Content-Type declares, else in this one, else UTF-8
+    /// (`quena_body::text::encode_edited`).
+    #[serde(default)]
+    pub body_charset: Option<String>,
     #[serde(default)]
     pub body_from_session: Option<SessionId>,
     #[serde(default)]
@@ -196,7 +201,11 @@ impl AppCore {
             }
             w.finish()
         } else {
-            cap.bodies.store_bytes(r.body.as_bytes())
+            let (bytes, content_type) = quena_body::text::encode_edited(&r.body, headers.get("content-type"), r.body_charset.as_deref());
+            if let Some(ct) = content_type {
+                headers.set("Content-Type", ct);
+            }
+            cap.bodies.store_bytes(&bytes)
         };
         if r.fix_content_length {
             headers.remove("transfer-encoding");

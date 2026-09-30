@@ -459,6 +459,10 @@ pub struct Resume {
     pub head_text: Option<String>,
     /// Replacement body text.
     pub body_text: Option<String>,
+    /// Charset the body text was shown in; the text is encoded in the charset the (edited)
+    /// Content-Type declares, else in this one, else UTF-8 (`quena_body::text::encode_edited`).
+    #[serde(default)]
+    pub body_charset: Option<String>,
     /// Replacement body from a file.
     pub body_file: Option<String>,
     /// For "respond": status code of a synthetic response.
@@ -808,7 +812,7 @@ impl Rules {
         let all: Vec<SessionId> = self.paused.lock().keys().copied().collect();
         let n = all.len();
         for id in all {
-            let _ = self.resume(id, Resume { action: "continue".into(), head_text: None, body_text: None, body_file: None, status: None });
+            let _ = self.resume(id, Resume { action: "continue".into(), head_text: None, body_text: None, body_charset: None, body_file: None, status: None });
         }
         n
     }
@@ -1063,10 +1067,10 @@ impl Rules {
         let r = if timeout > 0 {
             match tokio::time::timeout(Duration::from_secs(timeout), rx).await {
                 Ok(Ok(r)) => r,
-                _ => Resume { action: "continue".into(), head_text: None, body_text: None, body_file: None, status: None },
+                _ => Resume { action: "continue".into(), head_text: None, body_text: None, body_charset: None, body_file: None, status: None },
             }
         } else {
-            rx.await.unwrap_or(Resume { action: "continue".into(), head_text: None, body_text: None, body_file: None, status: None })
+            rx.await.unwrap_or(Resume { action: "continue".into(), head_text: None, body_text: None, body_charset: None, body_file: None, status: None })
         };
         drop(unpause);
         s.live.update(|d| {
@@ -1075,7 +1079,9 @@ impl Rules {
         r
     }
 
-    fn replacement_body(&self, r: &Resume) -> Option<Body> {
+    /// The replacement body for a resumed message with `headers` (edited text is encoded in the
+    /// message's charset; if it needs UTF-8 instead, the Content-Type in `headers` says so).
+    fn replacement_body(&self, r: &Resume, headers: &mut Headers) -> Option<Body> {
         let core = self.core()?;
         let cap = core.capture();
         if let Some(f) = &r.body_file {
@@ -1090,7 +1096,12 @@ impl Rules {
             }
             return Some(w.finish());
         }
-        r.body_text.as_ref().map(|t| cap.bodies.store_bytes(t.as_bytes()))
+        let text = r.body_text.as_ref()?;
+        let (bytes, content_type) = quena_body::text::encode_edited(text, headers.get("content-type"), r.body_charset.as_deref());
+        if let Some(ct) = content_type {
+            headers.set("Content-Type", ct);
+        }
+        Some(cap.bodies.store_bytes(&bytes))
     }
 }
 
@@ -1279,14 +1290,20 @@ impl Interceptor for Rules {
             // 2. Breakpoint before request
             if want_bp || this.bp_request(&s, &head) {
                 let r = this.clone().pause(s.clone(), "request", head.url.clone()).await;
-                let new_body = this.replacement_body(&r);
-                let new_head = r.head_text.as_ref().map(|t| {
+                let mut new_head = r.head_text.as_ref().map(|t| {
                     let (first, headers) = parse_head_text(t);
                     let mut parts = first.splitn(3, ' ');
                     let method = parts.next().unwrap_or(&head.method).to_string();
                     let url = parts.next().unwrap_or(&head.url).to_string();
                     RequestHead { method, url, version: head.version, headers }
                 });
+                let mut head_edit = new_head.as_ref().map(|h| h.headers.clone()).unwrap_or_else(|| head.headers.clone());
+                let new_body = this.replacement_body(&r, &mut head_edit);
+                if new_body.is_some() {
+                    // The body's charset may have changed the Content-Type.
+                    let h = new_head.get_or_insert_with(|| head.clone());
+                    h.headers = head_edit;
+                }
                 match r.action.as_str() {
                     "abort" => return RequestAction::Abort,
                     "respond" => {
@@ -1387,18 +1404,18 @@ impl Interceptor for Rules {
             if r.action == "abort" {
                 return ResponseAction::Abort;
             }
-            let body = this.replacement_body(&r);
+            let mut head = match &r.head_text {
+                Some(t) => {
+                    let (first, headers) = parse_head_text(t);
+                    let (v, status, reason) = quena_formats::raw::parse_status_line(&first);
+                    ResponseHead { status: if status == 0 { resp.status } else { status }, reason, version: v, headers }
+                }
+                None => resp.clone(),
+            };
+            let body = this.replacement_body(&r, &mut head.headers);
             match (&r.head_text, body) {
                 (None, None) => ResponseAction::Continue,
-                (head_text, body) => {
-                    let mut head = match head_text {
-                        Some(t) => {
-                            let (first, headers) = parse_head_text(t);
-                            let (v, status, reason) = quena_formats::raw::parse_status_line(&first);
-                            ResponseHead { status: if status == 0 { resp.status } else { status }, reason, version: v, headers }
-                        }
-                        None => resp.clone(),
-                    };
+                (_, body) => {
                     if let Some(b) = &body {
                         fix_length(&mut head.headers, b);
                     }

@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, type Detail, type Part, type Resume } from "../api";
 import { CodeView, langFor } from "./CodeView";
-import { loadText } from "../lib/bodytext";
+import { loadBody } from "../lib/bodytext";
+import { useCharsetOverride } from "./CharsetPicker";
 import { fmtBytes, latin1ToUtf8 } from "../lib/format";
 import { requestLine } from "../lib/http";
 import { say } from "../store";
@@ -32,21 +33,35 @@ export interface TamperEdits {
   head: string | null;
   body: string | null;
   file: string | null;
+  /** Charset the body text is shown in: an edited body is encoded in the declared charset,
+   * else in this one (the core switches to UTF-8 and says so in the Content-Type if the text
+   * does not fit). Unedited bodies are forwarded byte for byte. */
+  charset?: string | null;
 }
 
 export function TamperEditor({ detail, part, edits, setEdits }: { detail: Detail; part: Part; edits: TamperEdits; setEdits: (e: TamperEdits) => void }) {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const [body, setBody] = useState<string | null>(null);
+  const [charset, setCharset] = useState<string | null>(null);
+  const [override] = useCharsetOverride(detail.summary.id, part);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const editable = info.len <= EDIT_LIMIT && (info.isText || info.len === 0) && !info.contentEncoding;
   const initialHead = useRef(headText(detail, part));
   useEffect(() => {
     initialHead.current = headText(detail, part);
     setLoadErr(null);
-    if (editable && info.len) loadText(detail.summary.id, part, info, EDIT_LIMIT, "raw").then(setBody, (e) => setLoadErr(String(e)));
+    if (editable && info.len)
+      loadBody(detail.summary.id, part, info, EDIT_LIMIT, "raw", override).then(
+        (b) => {
+          setBody(b.text);
+          // Transcoded text (UTF-16) is shown from UTF-8; it goes back in the body's own charset.
+          setCharset(override ?? info.charset?.name ?? b.charset);
+        },
+        (e) => setLoadErr(String(e)),
+      );
     else setBody("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail.summary.id, part]);
+  }, [detail.summary.id, part, override]);
   return (
     <div className="tamper">
       <div className="tamper-label">{t("Headers (editable)")}</div>
@@ -80,7 +95,7 @@ export function TamperEditor({ detail, part, edits, setEdits }: { detail: Detail
           ) : body == null ? (
             <div className="placeholder">{t("Loading…")}</div>
           ) : (
-            <CodeView text={edits.body ?? body} editable lang={langFor(info.contentType)} onChange={(s) => setEdits({ ...edits, body: s })} />
+            <CodeView text={edits.body ?? body} editable lang={langFor(info.contentType)} onChange={(s) => setEdits({ ...edits, body: s, charset })} />
           )
         ) : (
           <div className="placeholder">
@@ -96,7 +111,7 @@ export function TamperBar({ detail, part, edits, onDone }: { detail: Detail; par
   const id = detail.summary.id;
   const resume = async (r: Resume) => {
     try {
-      await api.bpResume(id, { ...r, headText: r.headText ?? edits.head, bodyText: r.bodyText ?? edits.body, bodyFile: r.bodyFile ?? edits.file });
+      await api.bpResume(id, { ...r, headText: r.headText ?? edits.head, bodyText: r.bodyText ?? edits.body, bodyCharset: r.bodyText != null ? null : edits.charset ?? null, bodyFile: r.bodyFile ?? edits.file });
       onDone();
     } catch (e) {
       say(String(e), "error");

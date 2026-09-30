@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { Detail, Part } from "../api";
 import { latin1ToUtf8 } from "../lib/format";
-import { requestLine } from "../lib/http";
+import { extParams, requestLine } from "../lib/http";
 import { CodeView } from "./CodeView";
 import { plural, t } from "../i18n";
 
@@ -119,7 +119,15 @@ export function HeadersView({ detail, part }: { detail: Detail; part: Part }) {
             {rows.map((h, i) => (
               <tr key={i} title={t("Double-click to copy")} onDoubleClick={() => navigator.clipboard.writeText(`${h.k}: ${h.v}`)}>
                 <td className="hv-name">{h.k}</td>
-                <td className="hv-value">{h.v}</td>
+                <td className="hv-value">
+                  {h.v}
+                  {extParams(h.v).map((p, j) => (
+                    <div key={j} className="hv-ext" title={t("RFC 8187 encoded parameter, decoded")}>
+                      {p.name}* = {p.value}
+                      {p.language && <span className="muted"> ({p.language})</span>}
+                    </div>
+                  ))}
+                </td>
                 <td className="hv-tag">{h.t && <span className={`tag tag-${h.t}`} onClick={() => setFilter(TOPIC_LABEL[h.t!])}>{TOPIC_LABEL[h.t]}</span>}</td>
               </tr>
             ))}

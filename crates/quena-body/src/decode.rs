@@ -199,6 +199,20 @@ impl Write for RatioGuard<'_> {
 pub struct DeriveSpec {
     pub content_encoding: Option<String>,
     pub content_type: Option<String>,
+    /// Charset of the decoded text ([`crate::text::detect_body`]). `Pretty` transcodes text in a
+    /// charset that is not ASCII compatible (UTF-16) to UTF-8 before formatting; `None` formats
+    /// the bytes as they are.
+    pub charset: Option<&'static encoding_rs::Encoding>,
+}
+
+/// The charset of a variant's bytes when the variant fixes it (transcoded or plugin output:
+/// UTF-8); `None` when the bytes are in the body's own charset.
+pub fn output_charset(spec: &DeriveSpec, v: Variant) -> Option<&'static encoding_rs::Encoding> {
+    match v {
+        Variant::Text(_) | Variant::Plugin(_) => Some(encoding_rs::UTF_8),
+        Variant::Pretty if variant_applies(spec, Variant::Pretty) && spec.charset.is_some_and(crate::text::needs_transcoding) => Some(encoding_rs::UTF_8),
+        _ => None,
+    }
 }
 
 /// Result of [`derive`]: the (possibly still growing) body plus the work to
@@ -218,7 +232,7 @@ pub fn variant_applies(spec: &DeriveSpec, v: Variant) -> bool {
             .map(|ce| parse_encodings(ce).map(|e| !e.is_empty()).unwrap_or(false))
             .unwrap_or(false),
         Variant::Pretty => pretty::kind_for(spec.content_type.as_deref()).is_some(),
-        Variant::Plugin(_) => true,
+        Variant::Plugin(_) | Variant::Text(_) => true,
     }
 }
 
@@ -291,10 +305,16 @@ pub fn derive(store: &Arc<BodyStore>, source: &Body, v: Variant, spec: &DeriveSp
     let source = source.clone();
     let store2 = store.clone();
     let cfg = store.config();
+    let charset = spec.charset;
     let work = move |p: &dyn Progress| -> Result<()> {
         let id = source.id();
         let limits = (cfg.max_ratio, output_cap(&cfg, source.len()));
-        let r = run_derivation(&source, writer, &encodings, if v == Variant::Pretty { pretty_kind } else { None }, limits, p);
+        let transcode = match v {
+            Variant::Text(e) => Some(e),
+            Variant::Pretty => charset.filter(|e| crate::text::needs_transcoding(e)),
+            _ => None,
+        };
+        let r = run_derivation(&source, writer, &encodings, if v == Variant::Pretty { pretty_kind } else { None }, transcode, limits, p);
         if let Err(e) = &r {
             // Keep the partial output for errors (useful for inspection) but drop it when cancelled.
             if matches!(e, BodyError::Cancelled) {
@@ -316,6 +336,7 @@ fn run_derivation(
     writer: BodyWriter,
     encodings: &[Encoding],
     pretty_kind: Option<PrettyKind>,
+    transcode: Option<&'static encoding_rs::Encoding>,
     (max_ratio, max_output): (u64, u64),
     p: &dyn Progress,
 ) -> Result<()> {
@@ -327,6 +348,9 @@ fn run_derivation(
     let mut reader: Box<dyn Read> = Box::new(tracker);
     for e in encodings.iter().rev() {
         reader = wrap_decoder(reader, *e);
+    }
+    if let Some(enc) = transcode {
+        reader = Box::new(crate::text::Transcoder::new(reader, enc));
     }
     let consumed2 = consumed.clone();
     let input = move || consumed2.load(Ordering::Relaxed);

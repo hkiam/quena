@@ -71,6 +71,32 @@ The memory can be switched off, or cleared, in
 *Settings → General → Inspector views*. With it off, the last view chosen is used for every
 session.
 
+## Character encodings
+
+Text is shown in the character encoding (charset) the message is in, determined the way
+browsers do it:
+
+1. a byte order mark (UTF-8, UTF-16) at the start of the body;
+2. the `charset` of the `Content-Type` header;
+3. the document's own declaration — `<?xml … encoding="…"?>` in XML,
+   `<meta charset>` in HTML;
+4. the default of the type: UTF-8 for JSON and XML; other text is UTF-8 when it is valid
+   UTF-8, else windows-1252. `ISO-8859-1` and `latin1` mean windows-1252, as in browsers.
+
+The toolbar of *Plain Text* and *Body* shows the result, e.g. `windows-1252 · header`
+(where it came from: *BOM*, *header*, *document* or *default*). If characters look wrong —
+typically `�` for a body declared UTF-8 that is really Latin-1 — choose another charset in
+the menu next to it. The choice applies to that message's views (text, Raw, JSON, XML,
+SOAP, Atom, SSE, the large-body viewer and its search) until you select another session.
+*Parts* shows each multipart part in its own charset, with its own menu; *Form Data*
+decodes the fields in the form's charset (the `Content-Type` charset, else a `_charset_`
+field, else UTF-8).
+
+UTF-16 bodies are converted to UTF-8 for display and formatting; the recorded bytes are
+never changed (*Hex* and *Save…* show them as they are). *Find Sessions* and *Find in
+body* search the text in each body's charset. In *Headers*, parameters encoded after RFC
+8187 (`filename*=UTF-8''%E2%82%AC.pdf`) are shown decoded below the value.
+
 ## Large bodies
 
 Bodies are read from disk in windows, so even multi-gigabyte bodies open instantly:

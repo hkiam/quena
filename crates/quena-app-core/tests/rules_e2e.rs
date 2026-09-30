@@ -103,7 +103,7 @@ fn autoresponder_and_breakpoints() {
     assert_eq!(paused[0].phase, "request");
     let id = paused[0].id;
     let head = format!("GET http://127.0.0.1:{port}/hold HTTP/1.1\nHost: 127.0.0.1:{port}\nX-Tampered: yes\n");
-    rules.resume(id, Resume { action: "breakOnResponse".into(), head_text: Some(head), body_text: None, body_file: None, status: None }).unwrap();
+    rules.resume(id, Resume { action: "breakOnResponse".into(), head_text: Some(head), body_text: None, body_charset: None, body_file: None, status: None }).unwrap();
     // Now paused at the response.
     let t = Instant::now();
     let p = loop {
@@ -115,7 +115,7 @@ fn autoresponder_and_breakpoints() {
         std::thread::sleep(Duration::from_millis(20));
     };
     rules
-        .resume(p.id, Resume { action: "continue".into(), head_text: None, body_text: Some("tampered response".into()), body_file: None, status: None })
+        .resume(p.id, Resume { action: "continue".into(), head_text: None, body_text: Some("tampered response".into()), body_charset: None, body_file: None, status: None })
         .unwrap();
     let out = h.join().unwrap();
     assert_eq!(out, "tampered response");

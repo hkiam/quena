@@ -49,6 +49,9 @@ pub enum Variant {
     Pretty,
     /// Decoded by plugin `n` (output pretty printed if the plugin emits XML/JSON).
     Plugin(u16),
+    /// Decoded and transcoded from this charset to UTF-8 (for charsets that are not ASCII
+    /// compatible, like UTF-16, whose bytes the viewer cannot process line by line).
+    Text(&'static encoding_rs::Encoding),
 }
 
 impl Variant {
@@ -57,6 +60,7 @@ impl Variant {
             "raw" => Variant::Raw,
             "decoded" => Variant::Decoded,
             "pretty" => Variant::Pretty,
+            p if p.starts_with("text:") => Variant::Text(crate::charset::for_label(&p[5..])?),
             p => Variant::Plugin(p.strip_prefix("plugin:")?.parse().ok()?),
         })
     }
@@ -66,6 +70,7 @@ impl Variant {
             Variant::Decoded => "decoded".into(),
             Variant::Pretty => "pretty".into(),
             Variant::Plugin(n) => format!("plugin:{n}"),
+            Variant::Text(e) => format!("text:{}", e.name()),
         }
     }
     fn ext(self) -> String {
@@ -74,6 +79,7 @@ impl Variant {
             Variant::Decoded => "dec".into(),
             Variant::Pretty => "pretty".into(),
             Variant::Plugin(n) => format!("plugin{n}"),
+            Variant::Text(e) => format!("text-{}", e.name().to_ascii_lowercase()),
         }
     }
 }

@@ -271,4 +271,6 @@ export const panels: Record<string, string> = {
   "Method": "Methode",
   "Duration": "Dauer",
   "Started": "Gestartet",
+  "Edited text is sent in the charset of the Content-Type, else in this one. Characters it cannot represent make it UTF-8 (the Content-Type is adjusted).": "Bearbeiteter Text wird im Zeichensatz des Content-Type gesendet, sonst in diesem. Enthält er Zeichen, die dort fehlen, wird er als UTF-8 gesendet (der Content-Type wird angepasst).",
+  "shown as {charset}": "angezeigt als {charset}",
 };

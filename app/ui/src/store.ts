@@ -221,6 +221,9 @@ export interface AppState {
   captureBusy: "starting" | "stopping" | null;
   /** Visible width of the session list (the flexible column fills it). */
   gridWidth: number;
+  /** Charsets chosen by the user for the bodies of one session (`request`, `response`,
+   * `response:part3` …); belongs to session `id` and is dropped with the next session. */
+  charsetOverrides: { id: SessionId | null; map: Record<string, string> };
 }
 
 export const useStore = create<AppState>(() => ({
@@ -248,6 +251,7 @@ export const useStore = create<AppState>(() => ({
   scriptMenus: [],
   captureBusy: null,
   gridWidth: 0,
+  charsetOverrides: { id: null, map: {} },
 }));
 
 export const set = useStore.setState;

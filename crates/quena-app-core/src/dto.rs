@@ -85,6 +85,30 @@ pub struct BodyInfo {
     pub variants: Vec<Variant>,
     /// Decoder plugins that apply (tab title, confidence).
     pub plugins: Vec<PluginCandidate>,
+    /// Effective charset of a text body (determined on the decoded body).
+    pub charset: Option<CharsetDto>,
+}
+
+/// The charset a text is in and where that came from (see `quena_body::charset`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CharsetDto {
+    /// WHATWG name (`UTF-8`, `windows-1252`, `UTF-16LE` …).
+    pub name: String,
+    /// `bom` | `header` | `document` | `default`
+    pub source: String,
+    /// `charset` of the Content-Type as sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Declaration inside the document (XML declaration, HTML meta), as written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<String>,
+}
+
+impl From<&quena_body::charset::Detected> for CharsetDto {
+    fn from(d: &quena_body::charset::Detected) -> Self {
+        CharsetDto { name: d.name().to_string(), source: d.source.as_str().to_string(), header: d.header.clone(), document: d.document.clone() }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -101,6 +125,7 @@ pub fn spec_of(headers: &Headers) -> DeriveSpec {
     DeriveSpec {
         content_encoding: headers.get("content-encoding").map(|s| s.to_string()),
         content_type: headers.get("content-type").map(|s| s.to_string()),
+        charset: None,
     }
 }
 
@@ -150,6 +175,7 @@ impl BodyInfo {
         if variant_applies(&spec, Variant::Pretty) {
             variants.push(Variant::Pretty);
         }
+        let charset = is_text.then(|| CharsetDto::from(&quena_body::text::detect_body(body, &spec)));
         BodyInfo {
             body_id: body.id(),
             len: body.len(),
@@ -163,6 +189,7 @@ impl BodyInfo {
             is_text,
             variants,
             plugins: vec![],
+            charset,
         }
     }
 }
@@ -206,6 +233,9 @@ pub struct BodyView {
     pub len: u64,
     pub complete: bool,
     pub variant: Variant,
+    /// Charset of the variant's bytes when the variant fixes it (`UTF-8` for transcoded text
+    /// and plugin output); `null`: the body's own charset.
+    pub charset: Option<String>,
     /// Job producing the variant (if still running).
     pub job: Option<u64>,
     pub line_job: Option<u64>,
@@ -236,4 +266,42 @@ pub struct SearchResult {
 pub struct SearchHit {
     pub offset: u64,
     pub line: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quena_body::{BodyConfig, BodyStore};
+    use std::io::Write;
+
+    fn info(store: &std::sync::Arc<BodyStore>, bytes: &[u8], headers: &[(&str, &str)]) -> BodyInfo {
+        let h = Headers(headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
+        BodyInfo::build(&store.store_bytes(bytes), &h)
+    }
+
+    #[test]
+    fn body_info_reports_the_charset() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        let cs = |i: BodyInfo| i.charset.map(|c| (c.name, c.source, c.header, c.document));
+        // Header charset, on a gzip body: determined on the decoded bytes.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(b"Gr\xfc\xdfe").unwrap();
+        let i = info(&store, &gz.finish().unwrap(), &[("Content-Type", "text/plain; charset=ISO-8859-1"), ("Content-Encoding", "gzip")]);
+        assert_eq!(cs(i), Some(("windows-1252".into(), "header".into(), Some("ISO-8859-1".into()), None)));
+        // XML declaration.
+        let i = info(&store, b"<?xml version=\"1.0\" encoding=\"ISO-8859-15\"?><a>\xa4</a>", &[("Content-Type", "application/xml")]);
+        assert_eq!(cs(i), Some(("ISO-8859-15".into(), "document".into(), None, Some("ISO-8859-15".into()))));
+        // BOM.
+        let i = info(&store, &[0xFF, 0xFE, b'a', 0], &[("Content-Type", "text/plain")]);
+        assert_eq!(cs(i).map(|c| (c.0, c.1)), Some(("UTF-16LE".into(), "bom".into())));
+        // Default: valid UTF-8, else windows-1252.
+        assert_eq!(cs(info(&store, "Grüße".as_bytes(), &[("Content-Type", "text/plain")])).map(|c| c.0), Some("UTF-8".into()));
+        assert_eq!(cs(info(&store, b"Gr\xfc\xdfe", &[("Content-Type", "text/plain")])).map(|c| c.0), Some("windows-1252".into()));
+        // Binary bodies have none.
+        assert_eq!(cs(info(&store, b"\x89PNG\r\n", &[("Content-Type", "image/png")])), None);
+        // Serialised for the UI without empty fields.
+        let j = serde_json::to_value(info(&store, b"{}", &[("Content-Type", "application/json")]).charset).unwrap();
+        assert_eq!(j, serde_json::json!({ "name": "UTF-8", "source": "default" }));
+    }
 }

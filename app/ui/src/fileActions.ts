@@ -3,7 +3,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import { get, say } from "./store";
 import { buildCurl } from "./lib/http";
-import { loadText } from "./lib/bodytext";
+import { snippetBody } from "./lib/bodytext";
 import { plural, t } from "./i18n";
 
 const ARCHIVES = [
@@ -71,8 +71,8 @@ export async function handleFileMenu(id: string): Promise<boolean> {
       for (const sid of ids.slice(0, 500)) {
         const d = await api.detail(sid);
         if (!d || d.summary.kind === "tunnel") continue;
-        const body = d.requestBody.len && d.requestBody.len < 1 << 20 ? await loadText(sid, "request", d.requestBody, 1 << 20, "raw") : null;
-        parts.push(`# #${sid}`, buildCurl(d, body));
+        const body = await snippetBody(d);
+        parts.push(`# #${sid}`, buildCurl(d, body?.text ?? null, body?.bytes));
       }
       await api.writeTextFile(path, parts.join("\n\n") + "\n");
       say(t("cURL script written to {path}", { path }));
