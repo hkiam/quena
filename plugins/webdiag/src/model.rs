@@ -319,6 +319,9 @@ pub struct Operation {
     /// Indexes into `Ctx::sessions` (not ids), in start order.
     pub members: Vec<usize>,
     pub metrics: Vec<Metric>,
+    /// Recurring background requests (timers, polling), not a user action: per-operation
+    /// checks (N+1, chattiness, latency chains …) skip it.
+    pub background: bool,
 }
 
 // ------------------------------------------------------------------ options

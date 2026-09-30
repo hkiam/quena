@@ -5,9 +5,11 @@ use crate::model::Analyzer;
 
 pub mod patterns;
 pub mod request;
+pub mod scope;
 
 pub fn all() -> Vec<Box<dyn Analyzer>> {
     let mut v = request::all();
     v.extend(patterns::all());
+    v.extend(scope::all());
     v
 }

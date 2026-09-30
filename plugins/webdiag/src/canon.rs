@@ -163,12 +163,13 @@ fn odata_tokens(expr: &str) -> Vec<(bool, String)> {
             }
             s.push('\'');
             // guid'…', datetime'…', X'…' (OData v2 typed literals)
-            if let Some((false, prev)) = out.last() {
-                if prev.chars().all(|x: char| x.is_ascii_alphabetic()) && !ODATA_OPS.contains(&prev.to_ascii_lowercase().as_str()) {
-                    let p = out.pop().unwrap().1;
-                    out.push((true, format!("{p}{s}")));
-                    continue;
-                }
+            if let Some((false, prev)) = out.last()
+                && prev.chars().all(|x: char| x.is_ascii_alphabetic())
+                && !ODATA_OPS.contains(&prev.to_ascii_lowercase().as_str())
+            {
+                let p = out.pop().unwrap().1;
+                out.push((true, format!("{p}{s}")));
+                continue;
             }
             out.push((true, s));
         } else if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' || ch == '.' || ch == '-' || ch == ':' || ch == '/' {
@@ -193,7 +194,7 @@ fn odata_tokens(expr: &str) -> Vec<(bool, String)> {
 fn join_tokens(tokens: &[(bool, String)]) -> String {
     let mut s = String::new();
     for (i, (_, t)) in tokens.iter().enumerate() {
-        let word = |x: &str| x.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '\'' || c == '$' || c == '_');
+        let word = |x: &str| x.chars().next().is_some_and(|c| c.is_ascii_alphanumeric() || c == '\'' || c == '$' || c == '_' || c == '{');
         if i > 0 && word(t) && word(&tokens[i - 1].1) {
             s.push(' ');
         }
@@ -283,7 +284,7 @@ pub fn odata_options(url: &Url) -> Vec<(String, String)> {
 
 // ------------------------------------------------------------------ canonical / template
 
-fn query_string(pairs: &mut Vec<(String, String)>) -> String {
+fn query_string(pairs: &mut [(String, String)]) -> String {
     pairs.sort();
     pairs.iter().map(|(k, v)| if v.is_empty() { k.clone() } else { format!("{k}={v}") }).collect::<Vec<_>>().join("&")
 }
@@ -397,6 +398,57 @@ pub fn is_compressible(mime: &str) -> bool {
         )
 }
 
+// ------------------------------------------------------------------ helpers for pattern analysis
+
+/// Is this query parameter a cache buster (dropped by `canonical`)? Public form of the
+/// rule used by `canonical` and `template`.
+pub fn is_cache_buster(name: &str, value: &str) -> bool {
+    cache_buster(name, value)
+}
+
+/// Items of an OData list option (`$select`, `$expand`, `$orderby`), split at top-level
+/// commas (not inside parentheses or quotes), trimmed.
+pub fn odata_list(value: &str) -> Vec<String> {
+    split_list(value)
+}
+
+/// Shape of an OData `$expand` value: `(depth, items)`. Depth counts nesting through
+/// `Nav($expand=…)` options and navigation paths (`A/B`); items counts all navigation
+/// properties at all levels. `A,B($expand=C($expand=D))` → `(3, 4)`.
+pub fn odata_expand_shape(value: &str) -> (usize, usize) {
+    fn walk(v: &str, guard: usize) -> (usize, usize) {
+        if guard > 16 {
+            return (0, 0);
+        }
+        let (mut depth, mut items) = (0, 0);
+        for item in split_list(v) {
+            if item.is_empty() {
+                continue;
+            }
+            let (nav, opts) = match (item.find('('), item.ends_with(')')) {
+                (Some(o), true) => (&item[..o], &item[o + 1..item.len() - 1]),
+                _ => (item.as_str(), ""),
+            };
+            let path_depth = nav.split('/').filter(|x| !x.trim().is_empty()).count().max(1);
+            items += path_depth;
+            // Nested $expand inside the options: `$select=a;$expand=B(…)`.
+            let mut inner = (0, 0);
+            for o in opts.split(';') {
+                let o = o.trim();
+                if let Some((k, v)) = o.split_once('=')
+                    && k.trim().eq_ignore_ascii_case("$expand")
+                {
+                    inner = walk(v, guard + 1);
+                }
+            }
+            items += inner.1;
+            depth = depth.max(path_depth + inner.0);
+        }
+        (depth, items)
+    }
+    walk(value, 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,6 +486,7 @@ mod tests {
         let u = template("GET", "https://h/odata/Documents?$filter=Id eq 1002");
         assert_eq!(t.key, u.key);
         assert_eq!(t.vars, vec![("$filter".to_string(), "1001".to_string())]);
+        assert!(t.key.ends_with("$filter=Id eq {}"), "{}", t.key);
         assert_eq!(template("GET", "https://h/api/users/42/orders").key, template("GET", "https://h/api/users/7/orders").key);
         assert_eq!(template("GET", "https://h/odata/Cases(42)/Documents").key, template("GET", "https://h/odata/Cases(7)/Documents").key);
         assert_eq!(
@@ -460,12 +513,111 @@ mod tests {
     }
 
     #[test]
+    fn pattern_helpers() {
+        assert!(is_cache_buster("_", "1727690000123") && !is_cache_buster("page", "2"));
+        assert_eq!(odata_list("a, b($select=x,y),c"), vec!["a", "b($select=x,y)", "c"]);
+        assert_eq!(odata_expand_shape("A"), (1, 1));
+        assert_eq!(odata_expand_shape("A,B($expand=C($expand=D))"), (3, 4));
+        assert_eq!(odata_expand_shape("A/B/C"), (3, 3));
+        assert_eq!(odata_expand_shape("A($select=x;$expand=B,C)"), (2, 3));
+        assert_eq!(odata_expand_shape(""), (0, 0));
+        let _ = odata_expand_shape("((((($expand=(((");
+    }
+
+    #[test]
     fn never_panics() {
         for s in ["", "%", "%zz", "http://", "https://@/", "?&&=&", "$filter='", "http://h/x?$filter=(((", "http://h/x?$select=a,(b"] {
             let _ = canonical("GET", s, None);
             let _ = template("GET", s);
             let _ = endpoint("GET", s);
             let _ = odata_filter(s);
+        }
+    }
+}
+
+// ------------------------------------------------------------------ reference resolution
+
+/// `.` and `..` segments removed from an absolute path (query kept as is).
+fn remove_dots(p: &str) -> String {
+    let (path, query) = match p.find('?') {
+        Some(i) => (&p[..i], &p[i..]),
+        None => (p, ""),
+    };
+    let mut out: Vec<&str> = vec![];
+    let segs: Vec<&str> = path.split('/').skip(1).collect();
+    for (i, s) in segs.iter().enumerate() {
+        let last = i + 1 == segs.len();
+        match *s {
+            "." => {
+                if last {
+                    out.push("");
+                }
+            }
+            ".." => {
+                out.pop();
+                if last {
+                    out.push("");
+                }
+            }
+            x => out.push(x),
+        }
+    }
+    format!("/{}{}", out.join("/"), query)
+}
+
+/// Absolute URL of a `Location` value relative to the request URL (RFC 3986 reference
+/// resolution, simplified; the fragment is dropped).
+pub fn resolve(base: &str, location: &str) -> String {
+    let loc = location.trim();
+    let loc = loc.split('#').next().unwrap_or("");
+    if let Some(i) = loc.find("://")
+        && i > 0
+        && loc[..i].chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    {
+        return loc.to_string();
+    }
+    let Some(i) = base.find("://") else { return loc.to_string() };
+    let scheme = &base[..i];
+    let rest = base[i + 3..].split('#').next().unwrap_or("");
+    let auth_end = rest.find(['/', '?']).unwrap_or(rest.len());
+    let authority = &rest[..auth_end];
+    let path = rest[auth_end..].split('?').next().unwrap_or("");
+    let path = if path.is_empty() { "/" } else { path };
+    if loc.is_empty() {
+        return format!("{scheme}://{rest}");
+    }
+    if let Some(r) = loc.strip_prefix("//") {
+        return format!("{scheme}://{r}");
+    }
+    if loc.starts_with('/') {
+        return format!("{scheme}://{authority}{}", remove_dots(loc));
+    }
+    if loc.starts_with('?') {
+        return format!("{scheme}://{authority}{path}{loc}");
+    }
+    let dir = &path[..path.rfind('/').map(|i| i + 1).unwrap_or(1).min(path.len())];
+    format!("{scheme}://{authority}{}", remove_dots(&format!("{dir}{loc}")))
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    #[test]
+    fn resolves_locations() {
+        let b = "https://h.test/a/b/c?x=1";
+        assert_eq!(resolve(b, "https://o.test/z"), "https://o.test/z");
+        assert_eq!(resolve(b, "//o.test/z"), "https://o.test/z");
+        assert_eq!(resolve(b, "/z?q=1"), "https://h.test/z?q=1");
+        assert_eq!(resolve(b, "d"), "https://h.test/a/b/d");
+        assert_eq!(resolve(b, "../d"), "https://h.test/a/d");
+        assert_eq!(resolve(b, "./"), "https://h.test/a/b/");
+        assert_eq!(resolve(b, "?y=2"), "https://h.test/a/b/c?y=2");
+        assert_eq!(resolve(b, ""), "https://h.test/a/b/c?x=1");
+        assert_eq!(resolve("http://h.test", "login"), "http://h.test/login");
+        assert_eq!(resolve("http://h.test/x", "/../../y"), "http://h.test/y");
+        for (x, y) in [("", ""), ("://", "a"), ("http://", "../.."), ("x", "?")] {
+            let _ = resolve(x, y);
         }
     }
 }

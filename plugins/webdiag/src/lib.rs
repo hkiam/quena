@@ -199,6 +199,7 @@ impl Run {
                                 ("end", n(o.end as f64)),
                                 ("sessions", Value::Arr(o.members.iter().map(|&i| n(self.sessions[i].id as f64)).collect())),
                                 ("metrics", Value::Arr(o.metrics.iter().map(metric_json).collect())),
+                                ("background", Value::Bool(o.background)),
                             ])
                         })
                         .collect(),
