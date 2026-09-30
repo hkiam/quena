@@ -9,6 +9,8 @@ import path from "node:path";
 const app = process.env.QUENA_APP;
 const har = path.resolve(import.meta.dirname, "fixtures/two-sessions.har");
 const d = new Driver();
+// The visible view tabs of an inspector pane (not the hidden copy used for measuring).
+const VIEW_SEGS = ".view-tabs > .segmented:not(.view-tabs-measure) .seg";
 
 before(async () => {
   assert.ok(app, "QUENA_APP must point to the built quena binary");
@@ -17,7 +19,7 @@ before(async () => {
 after(() => d.quit());
 
 test("starts and lists the sessions of the HAR passed on the command line", async () => {
-  await d.waitFor(".statusbar", { text: "2 sessions", timeout: 20000 });
+  await d.waitFor(".statusbar", { text: "4 sessions", timeout: 20000 });
   await d.waitFor(".capture-switch");
 });
 
@@ -29,7 +31,7 @@ test("selecting a session shows its URL, headers and pretty JSON body", async ()
   await d.waitFor(".hv-table", { text: "quena-e2e" });
   // … and the response body, loaded lazily with the editor.
   const panes = await d.findAll(".insp-pane"); // request, response
-  for (const b of await d.findIn(panes[1], ".segmented .seg")) if ((await d.text(b)) === "Body") await d.click(b);
+  for (const b of await d.findIn(panes[1], VIEW_SEGS)) if ((await d.text(b)) === "Body") await d.click(b);
   await d.waitFor(".cm-content", { text: '"items"' });
 });
 
@@ -81,7 +83,7 @@ test("live traffic through the proxy appears in the list", async () => {
   });
   server.close();
   assert.equal(body, "hello from e2e");
-  await d.waitFor(".statusbar", { text: "3 sessions" });
+  await d.waitFor(".statusbar", { text: "5 sessions" });
 });
 
 test("command field: =403 selects the forbidden request", async () => {
@@ -96,6 +98,73 @@ test("capture switch toggles off and on", async () => {
   await d.waitFor(".capture-switch", { text: "Paused" });
   await d.click(await d.waitFor(".capture-switch"));
   await d.waitFor(".capture-switch", { text: "Capturing" });
+});
+
+const ROW = 24; // session list row height (Quena layout)
+const selectRow = async (n) => d.clickAt(await d.waitFor(".grid-canvas"), 80, 12 + ROW * (n - 1));
+const activeView = async (pane) => {
+  const panes = await d.findAll(".insp-pane");
+  for (const b of await d.findIn(panes[pane], `${VIEW_SEGS}.active`)) return d.text(b);
+  return null;
+};
+const chooseView = async (pane, label) => {
+  const panes = await d.findAll(".insp-pane");
+  for (const b of await d.findIn(panes[pane], VIEW_SEGS)) if ((await d.text(b)) === label) return d.click(b);
+  throw new Error(`view ${label} not shown directly in pane ${pane}`);
+};
+
+test("views: as many as fit are shown directly, More only holds the rest", async () => {
+  await d.exec(`window.__quena.setLayout({ stacked: true, leftWidth: 0.4 })`);
+  for (const [width, height] of [[1920, 1080], [1100, 700]]) {
+    await d.cmd("POST", d.s("/window/rect"), { width, height });
+    await selectRow(1);
+    await new Promise((r) => setTimeout(r, 400));
+    const res = await d.exec(`
+      const pane = document.querySelectorAll('.insp-pane')[1];
+      const wrap = pane.querySelector('.view-tabs').getBoundingClientRect();
+      const segs = [...pane.querySelectorAll('.view-tabs > .segmented:not(.view-tabs-measure) .seg')].map((e) => e.getBoundingClientRect());
+      const more = pane.querySelector('.view-tabs > .seg-more');
+      const all = pane.querySelectorAll('.view-tabs-measure .seg:not(.seg-more)').length;
+      const overlap = segs.some((r, i) => i && r.left < segs[i - 1].right - 0.5);
+      const outside = segs.some((r) => r.right > wrap.right + 0.5 || r.left < wrap.left - 0.5) || (more && more.getBoundingClientRect().right > wrap.right + 0.5);
+      return { shown: segs.length, all, more: !!more, overlap, outside, width: Math.round(wrap.width) };`);
+    assert.ok(!res.overlap && !res.outside, `tabs overlap or overflow at ${width}px: ${JSON.stringify(res)}`);
+    assert.equal(res.more, res.shown < res.all, `More must appear exactly when views are hidden: ${JSON.stringify(res)}`);
+    if (width === 1920) assert.ok(res.shown >= 10, `a wide pane should show most views directly: ${JSON.stringify(res)}`);
+  }
+  await d.exec(`window.__quena.setLayout({ stacked: false, leftWidth: 0.5 })`);
+  await d.cmd("POST", d.s("/window/rect"), { width: 1920, height: 1080 });
+});
+
+test("views: sensible default per content, and the choice is remembered per kind of content", async () => {
+  await d.exec(`window.__quena.setLayout({ viewByType: {}, rememberViews: true, stacked: true })`);
+  await selectRow(3); // SOAP
+  await d.waitFor(".insp-url", { text: "GetOrder" });
+  assert.equal(await activeView(1), "SOAP", "SOAP responses open in the SOAP view");
+  await selectRow(1); // JSON
+  await d.waitFor(".insp-url", { text: "v1/items" });
+  assert.equal(await activeView(1), "Body", "JSON responses open formatted");
+  // Choose XML for SOAP: every SOAP message now opens as XML, JSON keeps Body.
+  await selectRow(3);
+  await d.waitFor(".insp-url", { text: "GetOrder" });
+  await chooseView(1, "XML");
+  await selectRow(4);
+  await d.waitFor(".insp-url", { text: "GetCustomer" });
+  assert.equal(await activeView(1), "XML", "choice not remembered for SOAP");
+  await selectRow(1);
+  await d.waitFor(".insp-url", { text: "v1/items" });
+  assert.equal(await activeView(1), "Body", "JSON must not follow the SOAP choice");
+  // Request and response are remembered separately.
+  await selectRow(4);
+  await d.waitFor(".insp-url", { text: "GetCustomer" });
+  assert.equal(await activeView(0), "SOAP", "the request side keeps its own default");
+  // Turned off: the last view chosen applies everywhere (classic behaviour).
+  await d.exec(`window.__quena.setLayout({ rememberViews: false })`);
+  await chooseView(1, "Raw");
+  await selectRow(1);
+  await d.waitFor(".insp-url", { text: "v1/items" });
+  assert.equal(await activeView(1), "Raw");
+  await d.exec(`window.__quena.setLayout({ rememberViews: true, viewByType: {}, stacked: false })`);
 });
 
 test("layout fills the window at small and large sizes, side by side and stacked", async () => {

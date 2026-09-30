@@ -7,6 +7,16 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Added
+- Inspectors remember the chosen view per kind of content, separately for request and
+  response (e.g. SOAP → XML, JSON → Body, Fast Infoset → its plugin view). Until a view was
+  chosen, the one that fits the content opens (SOAP, gRPC, WebSocket, images, form data …).
+  On by default; *Settings → General → Inspector views* turns it off or forgets the choices.
+
+### Changed
+- Inspector view tabs show as many views as fit the width; *More* only holds the ones that do
+  not fit, and the views are ordered by how well they fit the content.
+
 ## [0.1.1] — 2026-09-30
 
 Faster start and capture switching, more platforms, and more robustness. Packages are still

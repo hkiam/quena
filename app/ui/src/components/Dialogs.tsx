@@ -388,6 +388,7 @@ function OptionsDialog() {
         {tab === "general" && (
           <>
             <LayoutChoice />
+            <RememberViewsOption />
             <label className="f-check">
               <input type="checkbox" checked={s.proxy.captureOnStartup} onChange={(e) => up((x) => (x.proxy.captureOnStartup = e.target.checked))} /> Capture traffic on startup
             </label>
@@ -557,6 +558,37 @@ function TextDialog({ title, text }: { title: string; text: string }) {
 }
 
 /** Layout preset picker (Settings → General and the first-run dialog). Applies immediately. */
+/** Remember the inspector view per kind of content (Settings → General). */
+function RememberViewsOption() {
+  const on = useStore((st) => st.layout.rememberViews ?? true);
+  const count = useStore((st) => Object.keys(st.layout.viewByType ?? {}).length);
+  const update = (patch: { rememberViews?: boolean; viewByType?: Record<string, string> }) => {
+    set((st) => ({ layout: { ...st.layout, ...patch } }));
+    actions.saveLayout();
+  };
+  return (
+    <div className="f-row layout-choice">
+      <span>Inspector views</span>
+      <div className="layout-options">
+        <label className="f-check">
+          <input type="checkbox" checked={on} onChange={(e) => update({ rememberViews: e.target.checked })} /> Remember the chosen view for each kind of content, separately for request and response
+          (e.g. SOAP → XML, JSON → Body)
+        </label>
+        {on && (
+          <div className="muted small">
+            {count ? `${count} remembered · ` : "Until you pick one, Quena opens the view that fits the content. "}
+            {count > 0 && (
+              <button className="linklike" onClick={() => update({ viewByType: {} })}>
+                Forget remembered views
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LayoutChoice() {
   const preset = useStore((st) => st.layout.preset);
   return (

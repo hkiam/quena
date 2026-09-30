@@ -27,7 +27,7 @@ await d.clickAt(await d.waitFor(".grid-canvas"), 80, 12);
 await d.waitFor(".insp-url", { text: "api.example.com" });
 // Response pane on Body, so the text/editor views are measured too.
 const panes = await d.findAll(".insp-pane");
-for (const b of await d.findIn(panes[1], ".segmented .seg")) if ((await d.text(b)) === "Body") await d.click(b);
+for (const b of await d.findIn(panes[1], ".view-tabs > .segmented:not(.view-tabs-measure) .seg")) if ((await d.text(b)) === "Body") await d.click(b);
 await d.waitFor(".cm-content", { text: "items" });
 const scenarios = [
   { name: "side", patch: { stacked: false, leftWidth: 0.5 } },

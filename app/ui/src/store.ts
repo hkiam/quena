@@ -98,6 +98,10 @@ export interface Layout {
   columns: ColumnConf[];
   requestTab: string;
   responseTab: string;
+  /** Keep the chosen inspector view per request/response and kind of content. */
+  rememberViews?: boolean;
+  /** `request:json` → `syntaxview`, `response:soap` → `xml`, … */
+  viewByType?: Record<string, string>;
   /** Arrangement preset the layout started from. */
   preset: LayoutPreset;
   /** The user picked a preset (first-run choice done). */
@@ -117,6 +121,8 @@ export const DEFAULT_LAYOUT: Layout = {
   ...PRESETS.quena,
   requestTab: "headers",
   responseTab: "headers",
+  rememberViews: true,
+  viewByType: {},
   preset: "quena",
   presetChosen: false,
 };

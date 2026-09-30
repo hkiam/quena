@@ -17,15 +17,13 @@ import { WebSocketView } from "./WebSocketView";
 import { SseView } from "./SseView";
 import { MultipartView, multipartCandidate } from "./MultipartView";
 import { GrpcView, grpcCandidate } from "./GrpcView";
-import { ChevronDown } from "lucide-react";
-import { showContextMenu } from "../components/ContextMenu";
+import { ViewTabs } from "./ViewTabs";
+import { defaultView, orderViews, viewFamily } from "./viewChoice";
 import { methodPill, statusPill } from "../grid/style";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
-/** Always-visible segments; everything else sits in the "More" menu. */
-const PRIMARY = new Set(["headers", "syntaxview", "imageview", "webview", "cookies", "raw", "websocket", "sse", "grpc", "multipart", "soap"]);
 const TITLES: Record<string, string> = {
   headers: "Headers",
   textview: "Plain Text",
@@ -170,8 +168,9 @@ function PluginView({ detail, part, variant, output }: { detail: Detail; part: P
 }
 
 function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tamper?: { edits: TamperEdits; setEdits: (e: TamperEdits) => void } }) {
-  let tab = useStore((s) => (part === "request" ? s.layout.requestTab : s.layout.responseTab));
-  if (part === "response" && detail?.summary.kind === "webSocket" && !["websocket", "headers", "raw"].includes(tab)) tab = "websocket";
+  const globalTab = useStore((s) => (part === "request" ? s.layout.requestTab : s.layout.responseTab));
+  const remember = useStore((s) => s.layout.rememberViews ?? true);
+  const viewByType = useStore((s) => s.layout.viewByType);
   const decode = useStore((s) => s.settings?.decode ?? true);
   const info0 = detail ? (part === "request" ? detail.requestBody : detail.responseBody) : null;
   const pluginTabs = (info0?.plugins ?? []).map((p) => ({ key: `plugin:${p.variant}`, title: p.tab, p }));
@@ -183,8 +182,27 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   const grpc = detail ? grpcCandidate(detail, part) : false;
   const special = [isWs ? "websocket" : "", isSse ? "sse" : "", grpc ? "grpc" : "", mp ? "multipart" : "", soap ? "soap" : "", atom ? "atom" : ""].filter(Boolean);
   const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...special, ...pluginTabs.map((t) => t.key)];
+  const family = detail ? viewFamily(detail, part, special, pluginTabs.map((t) => t.key)) : null;
+  const memoKey = family ? `${part}:${family}` : null;
+  // The view for this message: remembered for its kind of content, else a sensible default;
+  // with remembering off, the last view chosen anywhere (the classic behaviour).
+  let tab: string;
+  if (remember && memoKey && family) {
+    const chosen = viewByType?.[memoKey];
+    tab = chosen && tabs.includes(chosen) ? chosen : defaultView(family, part, tabs);
+  } else {
+    tab = globalTab;
+    if (part === "response" && detail?.summary.kind === "webSocket" && !["websocket", "headers", "raw"].includes(tab)) tab = "websocket";
+  }
+  if (detail && !tabs.includes(tab)) tab = "headers";
   const setTab = (t: string) => {
-    set((s) => ({ layout: { ...s.layout, [part === "request" ? "requestTab" : "responseTab"]: t } }));
+    set((s) => ({
+      layout: {
+        ...s.layout,
+        [part === "request" ? "requestTab" : "responseTab"]: t,
+        ...(remember && memoKey ? { viewByType: { ...(s.layout.viewByType ?? {}), [memoKey]: t } } : {}),
+      },
+    }));
     actions.saveLayout();
   };
   let content: React.ReactNode = <div className="placeholder">Select a session to inspect it.</div>;
@@ -267,50 +285,16 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
       }
     }
   }
-  const isImage = !!detail?.responseBody.isImage;
-  const isHtml = (detail?.responseBody.contentType ?? "").toLowerCase().includes("html");
-  const primary = tabs.filter(
-    (t) => (PRIMARY.has(t) && (t !== "imageview" || isImage) && (t !== "webview" || isHtml)) || t === tab,
-  );
-  // Content-specific views (SOAP, gRPC, WebSocket …) come right after Headers.
-  const rank = (t: string) => (t === "headers" ? 0 : special.includes(t) ? 1 : 2);
-  primary.sort((a, b) => rank(a) - rank(b));
-  const more = tabs.filter((t) => !primary.includes(t));
+  const views = orderViews(tabs, special, family);
   const title = (t: string) => TITLES[t] ?? pluginTabs.find((p) => p.key === t)?.title ?? t;
   const pill = part === "response" && detail ? statusPill(detail.summary) : null;
-  const segRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    segRef.current?.querySelector(".seg.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [tab, primary.length]);
   return (
     <div className="insp-pane">
       <div className="insp-head">
         <span className="insp-part">{part === "request" ? "Request" : "Response"}</span>
         {pill && <span className={`pill pill-${pill.tone}`}>{pill.text}</span>}
-        <div className="segmented" ref={segRef}>
-          {primary.map((t) => (
-            <button key={t} className={`seg ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-              {title(t)}
-            </button>
-          ))}
-        </div>
-        {more.length > 0 && (
-          <button
-            className="seg seg-more"
-            title="More views"
-            onClick={(e) => {
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              showContextMenu(
-                r.left,
-                r.bottom + 2,
-                more.map((t) => ({ label: title(t), action: () => setTab(t) })),
-              );
-            }}
-          >
-            More <ChevronDown size={11} />
-          </button>
-        )}
-    </div>
+        <ViewTabs views={views} active={tab} title={title} onSelect={setTab} />
+      </div>
       <div className="insp-content">
         <ErrorBoundary name={`${part} ${tab}`} resetKey={`${detail?.summary.id ?? ""}:${tab}:${tamper ? "tamper" : ""}`}>
           {content}

@@ -661,19 +661,33 @@ kbd,
   text-transform: uppercase;
   color: var(--muted);
 }
+.view-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
 .segmented {
   display: flex;
   gap: 1px;
   padding: 2px;
   border-radius: var(--radius);
   background: var(--tab-bg);
-  margin-left: auto;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  overflow: hidden;
+  flex: none;
 }
-.segmented::-webkit-scrollbar {
-  display: none;
+/* Off-screen copy used to measure the natural width of every tab. */
+.view-tabs-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
 }
 .seg-more {
   flex: none;
@@ -2120,4 +2134,15 @@ pre {
   background: var(--banner-err);
   padding: 8px;
   border-radius: var(--radius);
+}
+
+button.linklike {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+}
+button.linklike:hover {
+  text-decoration: underline;
 }
