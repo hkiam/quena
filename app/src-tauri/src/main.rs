@@ -42,6 +42,8 @@ fn main() {
     tracing::info!(target: "quena", "Quena {} started, data in {}", env!("CARGO_PKG_VERSION"), core.paths.data.display());
 
     install_signal_handlers(core.clone());
+    #[cfg(windows)]
+    watch_session_end(core.clone());
     // Archives given on the command line (Windows/Linux file associations use argv).
     let initial_files: Vec<String> = std::env::args_os().skip(1).filter_map(|a| archive_path(std::path::Path::new(&a))).collect();
     let exit_core = core.clone();
@@ -172,6 +174,67 @@ fn disable_browser_accelerators(w: &tauri::WebviewWindow) {
     });
     if let Err(e) = res {
         tracing::warn!(target: "quena", "webview not available: {e}");
+    }
+}
+
+/// Windows logoff / shutdown: GUI apps get `WM_QUERYENDSESSION`/`WM_ENDSESSION` and are then
+/// terminated, which may skip the normal exit path. Without a clean shutdown the user's
+/// proxy setting would keep pointing at Quena after the next login (no internet until
+/// Quena runs again). A hidden top-level window on its own thread receives these messages
+/// and runs the (idempotent) shutdown, which restores the system proxy.
+#[cfg(windows)]
+fn watch_session_end(core: Core) {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage, MSG, WM_ENDSESSION, WM_QUERYENDSESSION, WNDCLASSW, WS_OVERLAPPED,
+    };
+    static CORE: std::sync::OnceLock<Core> = std::sync::OnceLock::new();
+    let _ = CORE.set(core);
+    unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        match msg {
+            WM_QUERYENDSESSION => 1,
+            WM_ENDSESSION => {
+                if wparam != 0 {
+                    if let Some(c) = CORE.get() {
+                        tracing::info!(target: "quena", "Windows session ends; shutting down");
+                        c.shutdown();
+                    }
+                }
+                0
+            }
+            // SAFETY: default handling for every other message of our own window.
+            _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+        }
+    }
+    let spawned = std::thread::Builder::new().name("quena-session-end".into()).spawn(|| {
+        // SAFETY: plain Win32 window creation and message loop on this thread; the class
+        // name buffer outlives the window, and the window procedure only reads a static.
+        unsafe {
+            let class: Vec<u16> = "QuenaSessionEnd\0".encode_utf16().collect();
+            let instance = GetModuleHandleW(std::ptr::null());
+            let mut wc: WNDCLASSW = std::mem::zeroed();
+            wc.lpfnWndProc = Some(wndproc);
+            wc.hInstance = instance;
+            wc.lpszClassName = class.as_ptr();
+            if RegisterClassW(&wc) == 0 {
+                return;
+            }
+            // Never shown: hidden top-level windows still receive the session messages
+            // (message-only windows would not).
+            let hwnd = CreateWindowExW(0, class.as_ptr(), class.as_ptr(), WS_OVERLAPPED, 0, 0, 0, 0, std::ptr::null_mut(), std::ptr::null_mut(), instance, std::ptr::null());
+            if hwnd.is_null() {
+                return;
+            }
+            let mut msg: MSG = std::mem::zeroed();
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        tracing::warn!(target: "quena", "session-end watcher not started: {e}");
     }
 }
 

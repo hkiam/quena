@@ -103,7 +103,9 @@ where
     let mut client = Activity { inner: &mut client, last: last.clone() };
     let mut server = Activity { inner: &mut server, last: last.clone() };
     let mut idle = false;
+    let mut closing = shared.closing.subscribe();
     let r = tokio::select! {
+        _ = closing.changed() => Ok((0, 0)),
         r = tokio::io::copy_bidirectional(&mut client, &mut server) => r,
         _ = idle_watch(last.clone(), IDLE_TIMEOUT) => {
             idle = true;
@@ -133,6 +135,7 @@ pub fn websocket(shared: &Arc<Shared>, live: &Arc<LiveSession>, mut resp: Respon
     let (parts, _) = resp.into_parts();
     let shared = shared.clone();
     let live = live.clone();
+    let mut closing = shared.closing.subscribe();
     tokio::spawn(async move {
         let (c, s) = tokio::join!(client, server);
         match (c, s) {
@@ -181,6 +184,7 @@ pub fn websocket(shared: &Arc<Shared>, live: &Arc<LiveSession>, mut resp: Respon
                             (u.unwrap_or((0, Some("the client did not close its side".into()))), d, None)
                         }
                         _ = idle_watch(last.clone(), IDLE_TIMEOUT) => ((0, None), (0, None), Some(format!("closed after {} minutes without frames", IDLE_TIMEOUT.as_secs() / 60))),
+                    _ = closing.changed() => ((0, None), (0, None), Some("closed because the capture was stopped".into())),
                     }
                 };
                 drop(tx);

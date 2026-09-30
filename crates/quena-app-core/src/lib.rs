@@ -129,6 +129,8 @@ pub struct AppCore {
     pub(crate) finds: Mutex<std::collections::HashMap<JobId, Arc<Mutex<find::FindResult>>>>,
     started: Instant,
     shut_down: std::sync::atomic::AtomicBool,
+    /// Serializes starting and stopping the capture (the startup thread and the UI can race).
+    capture_switch: Mutex<()>,
 }
 
 impl AppCore {
@@ -149,6 +151,7 @@ impl AppCore {
             proxy_engine: RwLock::new(None),
             rules: Some(rules),
             plugin_host: RwLock::new(None),
+            capture_switch: Mutex::new(()),
             filters: RwLock::new(FilterSettings::default()),
             quick_filter: RwLock::new(String::new()),
             mock: Mutex::new(None),
@@ -315,6 +318,14 @@ impl AppCore {
     // --------------------------------------------------------------- capture
 
     pub fn start_capture(self: &Arc<Self>) -> Result<()> {
+        let _g = self.capture_switch.lock();
+        if self.engine().is_some_and(|e| e.status().capturing) {
+            return Ok(());
+        }
+        self.start_capture_locked()
+    }
+
+    fn start_capture_locked(self: &Arc<Self>) -> Result<()> {
         match self.engine() {
             Some(e) => e.start(self),
             None => Err(anyhow!("no capture engine installed")),
@@ -322,6 +333,11 @@ impl AppCore {
     }
 
     pub fn stop_capture(self: &Arc<Self>) -> Result<()> {
+        let _g = self.capture_switch.lock();
+        self.stop_capture_locked()
+    }
+
+    fn stop_capture_locked(self: &Arc<Self>) -> Result<()> {
         match self.engine() {
             Some(e) => e.stop(self),
             None => Ok(()),
@@ -329,11 +345,12 @@ impl AppCore {
     }
 
     pub fn toggle_capture(self: &Arc<Self>) -> Result<bool> {
+        let _g = self.capture_switch.lock();
         let on = self.engine().map(|e| e.status().capturing).unwrap_or(false);
         if on {
-            self.stop_capture()?;
+            self.stop_capture_locked()?;
         } else {
-            self.start_capture()?;
+            self.start_capture_locked()?;
         }
         Ok(!on)
     }

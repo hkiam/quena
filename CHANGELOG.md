@@ -7,7 +7,19 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Added
+- macOS builds are universal (Apple Silicon and Intel); Linux packages for arm64 (aarch64)
+  in addition to x86_64.
+- Requests the HTTP parser rejects (malformed request line or headers, too large heads) appear
+  as aborted sessions with the raw bytes received, instead of only a 400 to the client.
+
 ### Changed
+- The capture switch reacts immediately and shows "Starting…"/"Stopping…" while the system
+  proxy is being changed.
+- Stopping the capture also closes open client connections, tunnels and WebSockets (after the
+  request in flight), so nothing more is recorded.
+- WebSocket over HTTP/2 (RFC 8441) is no longer offered to browsers; they open WebSockets on a
+  separate HTTP/1.1 connection, which Quena records frame by frame.
 - Faster start: the window no longer waits for the capture to start (setting the system proxy,
   loading a PAC file), for plugins to compile or for the OS root certificates to load. Plugins
   are compiled once and cached (`plugin-cache` in the data folder); the UI's startup bundle is
@@ -17,6 +29,11 @@ contain breaking changes (settings, file formats, plugin API).
 - Portable mode (a `portable` file or `quena-data` folder beside the executable, on every
   platform) now keeps the web view's cache and storage in `quena-data` as well, and bundled
   plugins are found in a `plugins` folder next to the executable.
+
+### Fixed
+- Windows: logging off or shutting down while Quena runs restores the system proxy (it could
+  stay pointed at Quena until the next start, leaving the user without internet).
+- Starting the capture at launch and toggling it at the same moment could start it twice.
 
 ## [0.1.0] — 2026-09-29
 

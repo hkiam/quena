@@ -62,13 +62,86 @@ pub async fn handle_client(shared: Arc<Shared>, stream: TcpStream, peer: SocketA
     serve_h1(ctx, stream).await;
 }
 
+/// Bytes a client sent before its first request was parsed, kept so that a request hyper
+/// rejects as malformed can still be shown as a session.
+const MALFORMED_KEEP: usize = 16 * 1024;
+
+struct FirstBytes<S> {
+    inner: S,
+    seen: Arc<parking_lot::Mutex<Vec<u8>>>,
+    /// Cleared as soon as a request was parsed (only the first request is of interest).
+    active: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for FirstBytes<S> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let r = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if self.active.load(Ordering::Relaxed) {
+            let new = &buf.filled()[before..];
+            let mut seen = self.seen.lock();
+            let room = MALFORMED_KEEP.saturating_sub(seen.len());
+            seen.extend_from_slice(&new[..new.len().min(room)]);
+        }
+        r
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for FirstBytes<S> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+/// Record a request the HTTP parser rejected (hyper answered it with 400/431 itself).
+fn record_malformed(ctx: &ConnCtx, raw: Vec<u8>, err: &hyper::Error) {
+    let text = String::from_utf8_lossy(&raw[..raw.len().min(512)]).into_owned();
+    let mut words = text.split_whitespace();
+    let method: String = words.next().unwrap_or("?").chars().take(16).collect();
+    let target: String = words.next().unwrap_or("").chars().take(2048).collect();
+    let status = if err.is_parse_too_large() { 431 } else { 400 };
+    let now = now_us();
+    let capture = ctx.shared.capture();
+    let live = capture.begin(SessionKind::Http, |d| {
+        d.request = RequestHead { method, url: if target.is_empty() { "(malformed request)".into() } else { target }, version: HttpVersion::Http11, headers: Headers::new() };
+        d.connection.client_addr = Some(ctx.client_addr.to_string());
+        d.connection.client_conn_id = Some(ctx.conn_id);
+        d.timers.client_connected = Some(ctx.connected_at);
+        d.timers.client_begin_request = Some(now);
+        d.summary.client_ip = ctx.client_addr.ip().to_canonical().to_string();
+    });
+    live.set_request_body(capture.bodies.store_bytes(&raw));
+    let msg = format!("malformed request, rejected before forwarding: {err}");
+    live.update(move |d| {
+        d.response = Some(ResponseHead { status, reason: if status == 431 { "Request Header Fields Too Large".into() } else { "Bad Request".into() }, version: HttpVersion::Http11, headers: Headers::new() });
+        d.summary.state = SessionState::Aborted;
+        d.error = Some(msg);
+        d.timers.client_done_response = Some(now_us());
+    });
+    live.finish();
+}
+
 pub(crate) async fn serve_h1<I>(ctx: Arc<ConnCtx>, io: I)
 where
     I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let io = FirstBytes { inner: io, seen: seen.clone(), active: active.clone() };
     let c2 = ctx.clone();
+    let (a2, s2) = (active.clone(), seen.clone());
     let svc = service_fn(move |req: Request<Incoming>| {
         let ctx = c2.clone();
+        if a2.swap(false, Ordering::Relaxed) {
+            // A request was parsed: the raw bytes are not needed any more.
+            *s2.lock() = Vec::new();
+        }
         async move {
             if req.method() == http::Method::CONNECT {
                 // Boxed as `dyn Future + Send` to break the type recursion
@@ -79,17 +152,33 @@ where
             }
         }
     });
-    let r = hyper::server::conn::http1::Builder::new()
+    let mut closing = ctx.shared.closing.subscribe();
+    let conn = hyper::server::conn::http1::Builder::new()
         .timer(TokioTimer::new())
         .header_read_timeout(HEADER_READ_TIMEOUT)
         .preserve_header_case(true)
         .keep_alive(true)
         .max_buf_size(1 << 20)
         .serve_connection(TokioIo::new(io), svc)
-        .with_upgrades()
-        .await;
+        .with_upgrades();
+    tokio::pin!(conn);
+    // Capture stopped: finish the request in flight, then close the connection.
+    let r = tokio::select! {
+        r = conn.as_mut() => r,
+        _ = closing.changed() => {
+            conn.as_mut().graceful_shutdown();
+            conn.await
+        }
+    };
     if let Err(e) = r {
         tracing::debug!(target: "quena::proxy", "client connection {}: {e}", ctx.client_addr);
+        // The very first request could not be parsed: make it visible in the session list.
+        if (e.is_parse() || e.is_parse_too_large()) && active.load(Ordering::Relaxed) {
+            let raw = std::mem::take(&mut *seen.lock());
+            if !raw.is_empty() {
+                record_malformed(&ctx, raw, &e);
+            }
+        }
     }
 }
 
@@ -339,15 +428,25 @@ where
     if alpn.as_deref() == Some("h2") {
         let c2 = inner.clone();
         let svc = service_fn(move |req: Request<Incoming>| forward::handle(c2.clone(), req));
-        let r = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+        let mut closing = shared.closing.subscribe();
+        let conn = hyper::server::conn::http2::Builder::new(TokioExecutor::new())
             .timer(TokioTimer::new())
             // Detect dead h2 clients (sleeping laptops, dropped Wi-Fi).
             .keep_alive_interval(Some(Duration::from_secs(30)))
             .keep_alive_timeout(Duration::from_secs(20))
-            .enable_connect_protocol()
+            // No RFC 8441 (WebSocket over HTTP/2): without the extended CONNECT setting,
+            // browsers open WebSockets on a separate HTTP/1.1 connection, which Quena
+            // records frame by frame. Tunnelling them through h2 streams is not supported.
             .max_concurrent_streams(250)
-            .serve_connection(TokioIo::new(tls), svc)
-            .await;
+            .serve_connection(TokioIo::new(tls), svc);
+        tokio::pin!(conn);
+        let r = tokio::select! {
+            r = conn.as_mut() => r,
+            _ = closing.changed() => {
+                conn.as_mut().graceful_shutdown();
+                conn.await
+            }
+        };
         if let Err(e) = r {
             tracing::debug!(target: "quena::proxy", "h2 client connection: {e}");
         }

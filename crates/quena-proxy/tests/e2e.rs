@@ -275,4 +275,29 @@ fn client_disconnect_and_garbage_input() {
     }
     let (out, err) = curl(&env, &[&format!("http://{}/hello", env.http)]);
     assert_eq!(out, "hello world", "proxy unusable after garbage input: {err}");
+    // Requests the parser rejected show up as aborted sessions with the raw bytes.
+    env.capture.index.tick();
+    let bad = env.capture.index.find_all(|s| s.state == SessionState::Aborted && s.status >= 400);
+    assert!(!bad.is_empty(), "malformed requests are not visible");
+    let d = env.capture.detail(*bad.last().unwrap()).unwrap();
+    assert!(d.error.as_deref().unwrap_or("").contains("malformed"), "{:?}", d.error);
+}
+
+/// Stopping the capture closes open keep-alive connections, so nothing more is recorded.
+#[test]
+fn stop_closes_open_connections() {
+    use std::io::{Read, Write};
+    let env = setup();
+    let mut c = std::net::TcpStream::connect(env.proxy_addr).unwrap();
+    c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write!(c, "GET http://{}/hello HTTP/1.1\r\nHost: {}\r\n\r\n", env.http, env.http).unwrap();
+    let mut buf = [0u8; 4096];
+    let n = c.read(&mut buf).unwrap();
+    assert!(String::from_utf8_lossy(&buf[..n]).contains("hello world"));
+    env.proxy.stop();
+    // The idle keep-alive connection is closed by the proxy (EOF), well before any timeout.
+    let t = std::time::Instant::now();
+    let n = c.read(&mut buf).unwrap_or(0);
+    assert_eq!(n, 0, "connection still open after stop");
+    assert!(t.elapsed() < Duration::from_secs(5));
 }

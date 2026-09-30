@@ -219,6 +219,9 @@ pub struct Shared {
     /// Caps concurrent client connections so a flood (or a proxy loop) cannot exhaust
     /// file descriptors; excess connections are closed right away.
     pub conn_limit: Arc<tokio::sync::Semaphore>,
+    /// Bumped by `Proxy::stop`: open client connections, tunnels and WebSockets finish
+    /// what is in flight and close, so a stopped capture records nothing more.
+    pub closing: tokio::sync::watch::Sender<u64>,
 }
 
 impl Shared {
@@ -274,6 +277,7 @@ impl Proxy {
             listen: RwLock::new(vec![]),
             conn_ids: std::sync::atomic::AtomicU64::new(1),
             conn_limit: Arc::new(tokio::sync::Semaphore::new(MAX_CLIENT_CONNECTIONS)),
+            closing: tokio::sync::watch::channel(0).0,
         });
         Ok(Arc::new(Proxy { shared, rt, stop: RwLock::new(None) }))
     }
@@ -389,6 +393,7 @@ impl Proxy {
     }
 
     pub fn stop(&self) {
+        self.shared.closing.send_modify(|g| *g += 1);
         if let Some(tx) = self.stop.write().take() {
             let _ = tx.send(true);
             tracing::info!(target: "quena::proxy", "stopped listening");
