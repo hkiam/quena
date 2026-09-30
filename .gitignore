@@ -15,3 +15,6 @@ dist/
 # Private planning notes (kept locally, never published)
 /PLAN.md
 /traffic-workbench-plan.md
+
+# MkDocs output of the user manual (built locally)
+/manual/site/

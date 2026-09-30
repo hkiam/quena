@@ -179,6 +179,8 @@ Quena listens on **port 8866** by default. Layout: Quena's own arrangement by de
 
 ## Getting started
 
+Full manual: <https://hkiam.github.io/quena/>
+
 ### Install
 
 Download the installer for your platform from the

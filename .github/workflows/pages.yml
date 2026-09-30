@@ -1,0 +1,55 @@
+name: Manual
+
+# Builds the user manual (manual/) with MkDocs Material and publishes it to GitHub Pages.
+# The build always runs; the deploy job runs only once Pages is enabled for the
+# repository and the repository variable PAGES_ENABLED is set to "true".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "manual/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: manual/requirements.txt
+      - name: Install MkDocs
+        run: pip install -r manual/requirements.txt
+      - name: Build the manual
+        env:
+          # Material prints an informational banner about MkDocs 2.0 on every build.
+          NO_MKDOCS_2_WARNING: "true"
+        run: mkdocs build --strict -f manual/mkdocs.yml -d "${{ github.workspace }}/_site"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: vars.PAGES_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

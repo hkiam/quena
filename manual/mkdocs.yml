@@ -1,0 +1,90 @@
+site_name: Quena Manual
+site_description: User manual for Quena, the cross-platform HTTP(S) debugging proxy.
+site_author: Maik Hofmann
+site_url: https://hkiam.github.io/quena/
+repo_url: https://github.com/hkiam/quena
+repo_name: hkiam/quena
+edit_uri: ""
+copyright: Copyright &copy; 2026 Maik Hofmann and Quena contributors · Apache-2.0
+
+theme:
+  name: material
+  logo: img/logo.png
+  favicon: img/logo.png
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Follow the system
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - toc.follow
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home:
+      - index.md
+      - Install and first start: install.md
+  - Capture:
+      - Capturing traffic: capture.md
+      - HTTPS and devices: https.md
+  - Work with sessions:
+      - Session list: sessions.md
+      - Inspect: inspect.md
+      - Change and replay: change-replay.md
+      - Analyze: analyze.md
+      - Archives and copying: archives.md
+  - Advanced:
+      - Rules scripts: scripting.md
+      - Automatic authentication: authentication.md
+      - Client certificates and throttling: network.md
+      - Plugins: plugins.md
+  - Reference:
+      - Settings: settings.md
+      - Keyboard shortcuts: shortcuts.md
+      - Command and filter syntax: syntax.md
+      - Coming from Fiddler Classic: coming-from-fiddler.md
+      - Troubleshooting and FAQ: troubleshooting.md
