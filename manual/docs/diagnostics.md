@@ -67,6 +67,8 @@ loss). Every finding names the threshold it was measured against.
 | Errors | HTTP errors per endpoint, connection failures by cause (DNS, TLS, refused, timeout, reset) |
 | Authentication | failing challenges and loops, repeated NTLM/Negotiate handshakes, uncached tokens |
 | HTTP | redirect chains and loops, cookie flags (`Secure`, `SameSite`, `HttpOnly`), caching headers, connection reuse, old TLS versions, CORS preflights |
+| Character encoding | declared charset that does not match the bytes (“Grüße” → “Gr��e” or “GrÃ¼ÃŸe”), header, BOM and document declaration that disagree, text without any charset, double-encoded UTF-8, characters already lost (`�`), JSON not in UTF-8, unknown charset names, compressed data without (or with a broken) `Content-Encoding` |
+| Clocks | servers whose clock differs from this computer (Kerberos tolerates 5 minutes, token libraries often 60 s), this computer's own clock being off (several unrelated sites agree), servers behind one name with different clocks |
 
 ![A latency-sensitive request chain with the estimated extra time per network profile](img/diagnostics-latency.png)
 

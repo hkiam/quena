@@ -113,6 +113,46 @@ interface analyzer {
         tls-handshake-ms: option<u32>,
     }
 
+    /// Character encoding facts of a textual body (JSON, XML, HTML, text/*, forms …),
+    /// determined by the host from the first 256 KiB of the decoded body (REPORT.md). Only
+    /// facts leave the host, never body content.
+    record text-info {
+        /// `charset` of the Content-Type as sent (at most 64 bytes, else `<n bytes>`).
+        header-charset: option<string>,
+        /// WHATWG name the header label resolves to (`latin1` → `windows-1252`); none if
+        /// absent or unknown.
+        header-resolved: option<string>,
+        /// Declaration inside the document (`<?xml encoding>`, HTML `<meta charset>`), as
+        /// written (at most 64 bytes, else `<n bytes>`).
+        document-charset: option<string>,
+        document-resolved: option<string>,
+        /// Byte order mark: `UTF-8`, `UTF-16LE`, `UTF-16BE`.
+        bom: option<string>,
+        /// Effective charset (WHATWG name) and where it came from: `bom`, `header`,
+        /// `document` or `default` (BOM > header > document > default of the type).
+        effective: string,
+        source: string,
+        /// The header or the document names a charset the label table does not know.
+        unknown-label: bool,
+        /// Bytes examined (a prefix of the decoded body).
+        sampled: u64,
+        /// Any byte ≥ 0x80 (or UTF-16).
+        non-ascii: bool,
+        /// The sample is valid UTF-8 (a sequence cut at the sample end is allowed).
+        utf8-valid: bool,
+        /// Malformed sequences when decoding with the effective charset.
+        decode-errors: u32,
+        /// U+FFFD already present in the (valid) text.
+        replacement-chars: u32,
+        /// Traces of UTF-8 decoded as Latin-1/windows-1252 and encoded again (`Ã¼`).
+        double-encoded: u32,
+        /// NUL bytes (outside UTF-16).
+        nul-bytes: u32,
+        /// The decoded body starts with the magic bytes of a compressed stream: `gzip`,
+        /// `zstd` or `deflate`.
+        looks-compressed: option<string>,
+    }
+
     record session {
         id: u64,
         /// `http`, `tunnel` or `websocket`.
@@ -152,6 +192,15 @@ interface analyzer {
         /// Fingerprints of the bodies (none when not computed, e.g. too large).
         request-body-hash: option<u64>,
         response-body-hash: option<u64>,
+        /// Encoding facts of textual bodies (none for other types, empty or undecodable
+        /// bodies).
+        request-text: option<text-info>,
+        response-text: option<text-info>,
+        /// The Content-Encoding could not be decoded: `unsupported: <coding>` (a coding the
+        /// host does not know) or `invalid: <codings>: <error>` (corrupt data). None when
+        /// the body was stored truncated.
+        request-decoding-error: option<string>,
+        response-decoding-error: option<string>,
     }
 
     get-info: func() -> info;

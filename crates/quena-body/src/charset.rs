@@ -299,8 +299,15 @@ fn count_double_encoded(text: &str) -> u32 {
         let Some(&next) = it.peek() else { break };
         // Latin-1 continuation bytes 0x80–0xBF appear as U+0080–U+00BF, or in windows-1252 as
         // the punctuation it maps 0x80–0x9F to (€ ‚ ƒ „ … † ‡ ˆ ‰ Š ‹ Œ Ž ‘ ’ “ ” • – — ˜ ™ š › œ ž Ÿ).
-        let cont = ('\u{80}'..='\u{bf}').contains(&next) || "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ".contains(next);
-        if cont && (('\u{c2}'..='\u{df}').contains(&c) || ('\u{e2}'..='\u{ef}').contains(&c)) {
+        let latin1_cont = ('\u{80}'..='\u{bf}').contains(&next);
+        let cp1252_cont = "€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ".contains(next);
+        let lead = ('\u{c2}'..='\u{df}').contains(&c) || ('\u{e2}'..='\u{ef}').contains(&c);
+        // Quotes and dashes also follow real letters („Fuß“, „Grüße“ – ok): after punctuation-
+        // like continuations only the typical double-encoding leads count (Â, Ã for Latin-1
+        // letters, â for punctuation such as “ – €).
+        let typical_lead = matches!(c, '\u{c2}' | '\u{c3}' | '\u{c5}' | '\u{e2}');
+        let prose_punct = "‚„…‘’“”–—".contains(next);
+        if lead && (latin1_cont || (cp1252_cont && (typical_lead || !prose_punct))) {
             n += 1;
             it.next();
         }
@@ -364,6 +371,25 @@ fn literal_replacements(body: &[u8], enc: &'static Encoding) -> usize {
     }
 }
 
+/// WHATWG name a charset label resolves to (`latin1` → `windows-1252`), `None` if unknown.
+/// For comparing declarations: two labels that resolve to the same name do not conflict.
+pub fn resolved_name(label: &str) -> Option<&'static str> {
+    for_label(label).map(|e| e.name())
+}
+
+/// Magic bytes of a compressed stream at the start of a (decoded) body: `gzip`, `zstd` or
+/// `deflate` (zlib header). Brotli has no magic number and is not recognised.
+pub fn compressed_magic(prefix: &[u8]) -> Option<&'static str> {
+    match prefix {
+        [0x1f, 0x8b, 0x08, ..] => Some("gzip"),
+        [0x28, 0xb5, 0x2f, 0xfd, ..] => Some("zstd"),
+        // zlib: CM = 8, 32 K window, valid header checksum; only second bytes that never
+        // occur in text (0x5e would be `x^`).
+        [0x78, b @ (0x01 | 0x9c | 0xda), ..] if (0x7800u16 | *b as u16).is_multiple_of(31) => Some("deflate"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +447,9 @@ mod tests {
         let f = facts(Some("application/json"), "{\"a\":\"GrÃ¼ÃŸe â€“ ok\"}".as_bytes());
         assert_eq!(f.double_encoded, 3);
         assert_eq!(facts(Some("application/json"), "{\"a\":\"Grüße – ok, Ärger Äpfel\"}".as_bytes()).double_encoded, 0);
+        // Real text with a letter before a quote is no double encoding.
+        assert_eq!(facts(Some("text/plain; charset=utf-8"), "„Fuß“ und „Maß“, Öl‚ Über—Ende".as_bytes()).double_encoded, 0);
+        assert_eq!(facts(Some("text/plain; charset=utf-8"), "FuÃŸ, SchÃ¶n, â€žQuoteâ€œ".as_bytes()).double_encoded, 4);
         // Replacement characters in valid UTF-8.
         let f = facts(Some("text/plain; charset=utf-8"), "Gr\u{fffd}\u{fffd}e".as_bytes());
         assert_eq!((f.replacement_chars, f.decode_errors), (2, 0));
@@ -441,5 +470,20 @@ mod tests {
                 let _ = facts(ct, b);
             }
         }
+    }
+
+    #[test]
+    fn helpers_for_diagnostics() {
+        assert_eq!(resolved_name("latin1"), Some("windows-1252"));
+        assert_eq!(resolved_name(" UTF8 "), Some("UTF-8"));
+        assert_eq!(resolved_name("x-klingon"), None);
+        assert_eq!(compressed_magic(&[0x1f, 0x8b, 0x08, 0, 0]), Some("gzip"));
+        assert_eq!(compressed_magic(&[0x28, 0xb5, 0x2f, 0xfd]), Some("zstd"));
+        assert_eq!(compressed_magic(&[0x78, 0x9c, 1]), Some("deflate"));
+        assert_eq!(compressed_magic(&[0x78, 0xda]), Some("deflate"));
+        assert_eq!(compressed_magic(b"x^"), None); // `x^` is text, although a valid zlib header
+        assert_eq!(compressed_magic(b"{\"a\":1}"), None);
+        assert_eq!(compressed_magic(b""), None);
+        assert_eq!(compressed_magic(&[0x1f]), None);
     }
 }

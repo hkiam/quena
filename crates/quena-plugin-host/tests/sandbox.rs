@@ -152,7 +152,7 @@ fn jwt_and_graphql_plugins() {
 
 /// Synthetic session for the analyzer: `n`-th request of a slow, repeated API call.
 fn analyzer_session(id: u64, started: u64, status: u16, duration_ms: u32) -> quena_plugin_host::AnalyzerSession {
-    use quena_plugin_host::{AnalyzerSession, AnalyzerTimers};
+    use quena_plugin_host::{AnalyzerSession, AnalyzerTextInfo, AnalyzerTimers};
     AnalyzerSession {
         id,
         kind: "http".into(),
@@ -182,6 +182,19 @@ fn analyzer_session(id: u64, started: u64, status: u16, duration_ms: u32) -> que
         process: "browser:42".into(),
         request_body_hash: None,
         response_body_hash: Some(0x1234_5678_9abc_def0),
+        // Declared UTF-8, but the bytes are not (ENC-MISMATCH): the facts cross the WIT boundary.
+        response_text: Some(AnalyzerTextInfo {
+            header_charset: Some("utf-8".into()),
+            header_resolved: Some("UTF-8".into()),
+            effective: "UTF-8".into(),
+            source: "header".into(),
+            sampled: 4096,
+            non_ascii: true,
+            decode_errors: 12,
+            ..Default::default()
+        }),
+        request_decoding_error: (id % 100 == 0).then(|| "invalid: gzip: corrupt deflate stream".into()),
+        ..Default::default()
     }
 }
 
@@ -218,6 +231,9 @@ fn webdiag_analyzer() {
     let findings = r["findings"].as_array().expect("findings");
     assert!(!findings.is_empty(), "no findings: {r:#}");
     assert!(findings.iter().all(|f| f["id"].is_string() && f["severity"].is_string()), "{findings:#?}");
+    // Text facts and decoding errors reach the plugin.
+    assert!(findings.iter().any(|f| f["id"] == "ENC-MISMATCH"), "{findings:#?}");
+    assert!(findings.iter().any(|f| f["id"] == "ENC-DECODE"), "{findings:#?}");
 
     // Cancelled before the first batch.
     let mut once = vec![all[..10].to_vec()].into_iter();

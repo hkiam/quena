@@ -14,7 +14,7 @@ use anyhow::{Result, anyhow};
 use quena_body::Body;
 use quena_jobs::{JobCtx, JobId, Priority};
 use quena_model::{Headers, Micros, SessionDetail, SessionId, SessionKind};
-use quena_plugin_host::{AnalyzerSession, AnalyzerTimers, PluginKind};
+use quena_plugin_host::{AnalyzerSession, AnalyzerTextInfo, AnalyzerTimers, PluginKind};
 use quena_store::Capture;
 use serde::Serialize;
 use std::io::Read;
@@ -37,6 +37,13 @@ pub const HEADER_COUNT_LIMIT: usize = 256;
 pub const BATCH_BYTES: usize = 16 << 20;
 /// Query/fragment parameter values longer than this are replaced by their size.
 pub const URL_VALUE_LIMIT: usize = 64;
+/// Decoded bytes of a textual body examined for its encoding facts (REPORT.md).
+pub const TEXT_SAMPLE: usize = 256 << 10;
+/// Longest charset label passed as written; longer ones become `<n bytes>` (a label comes
+/// from the body and must not carry content out of the host).
+pub const LABEL_LIMIT: usize = 64;
+/// Longest decoding error message passed to an analyzer.
+pub const DECODING_ERROR_LIMIT: usize = 200;
 
 /// Headers passed to analyzers (lower case); everything else is dropped.
 pub const HEADER_ALLOW_LIST: &[&str] = &[
@@ -52,6 +59,8 @@ pub const HEADER_ALLOW_LIST: &[&str] = &[
     "content-length",
     "content-type",
     "cookie",
+    // Server time: clock-skew diagnostics compare it with the local receive time.
+    "date",
     "etag",
     "expires",
     "if-match",
@@ -435,7 +444,9 @@ pub fn redact_headers(h: &Headers) -> Vec<(String, String)> {
 /// Approximate size of a record in a batch (strings dominate).
 pub fn record_bytes(r: &AnalyzerSession) -> usize {
     let h: usize = r.request_headers.iter().chain(&r.response_headers).map(|(n, v)| n.len() + v.len() + 16).sum();
-    256 + r.url.len() + r.method.len() + r.host.len() + r.content_type.len() + r.process.len() + r.error.as_ref().map_or(0, |e| e.len()) + h
+    let opt = |o: &Option<String>| o.as_ref().map_or(0, |e| e.len());
+    let text: usize = [&r.request_text, &r.response_text].into_iter().flatten().map(|t| 160 + opt(&t.header_charset) + opt(&t.document_charset) + t.effective.len()).sum();
+    256 + r.url.len() + r.method.len() + r.host.len() + r.content_type.len() + r.process.len() + opt(&r.error) + h + text + opt(&r.request_decoding_error) + opt(&r.response_decoding_error)
 }
 
 // ------------------------------------------------------------------ bodies
@@ -472,16 +483,44 @@ pub fn fnv1a(data: &[u8]) -> u64 {
 /// they are not empty and at most `hash_limit`). With `need_len` false, decoding stops as
 /// soon as the fingerprint is out of reach. Undecodable bodies get no fingerprint.
 pub fn body_fingerprint(body: &Body, content_encoding: Option<&str>, hash_limit: u64, need_len: bool, cancelled: &dyn Fn() -> bool) -> (u64, Option<u64>) {
+    let s = body_scan(body, content_encoding, hash_limit, need_len, 0, cancelled);
+    (s.decoded, s.hash)
+}
+
+/// What one pass over a body yields ([`body_scan`]).
+#[derive(Debug, Default, PartialEq)]
+pub struct BodyScan {
+    /// Decoded bytes (see [`body_fingerprint`]).
+    pub decoded: u64,
+    pub hash: Option<u64>,
+    /// The first `prefix_limit` decoded bytes (for the encoding facts; never leaves the host).
+    pub prefix: Vec<u8>,
+    /// The Content-Encoding could not be decoded (REPORT.md: `unsupported: …` / `invalid: …`).
+    pub error: Option<String>,
+}
+
+/// [`body_fingerprint`] plus the first `prefix_limit` decoded bytes and the decoding error,
+/// in one pass. A body stored truncated or still incomplete reports no decoding error (its
+/// end is missing, not corrupt).
+pub fn body_scan(body: &Body, content_encoding: Option<&str>, hash_limit: u64, need_len: bool, prefix_limit: usize, cancelled: &dyn Fn() -> bool) -> BodyScan {
+    let mut out = BodyScan::default();
     if body.is_empty() {
-        return (0, None);
+        return out;
     }
     let encodings = match content_encoding.map(quena_body::decode::parse_encodings) {
         None => vec![],
         Some(Ok(e)) => e,
-        Some(Err(_)) => return (body.len(), None),
+        Some(Err(name)) => {
+            out.decoded = body.len();
+            out.error = Some(cap_text(format!("unsupported: {name}"), DECODING_ERROR_LIMIT));
+            return out;
+        }
     };
-    if encodings.is_empty() && body.len() > hash_limit {
-        return (body.len(), None);
+    // Plain bodies above the limit: the size is known, only the prefix is still read.
+    let hashing = !(encodings.is_empty() && body.len() > hash_limit);
+    if !hashing && prefix_limit == 0 {
+        out.decoded = body.len();
+        return out;
     }
     let mut reader = quena_body::decode::decoding_reader(Box::new(body.stream(0, false)), &encodings);
     let mut h = Fnv1a::default();
@@ -489,25 +528,92 @@ pub fn body_fingerprint(body: &Body, content_encoding: Option<&str>, hash_limit:
     let mut buf = vec![0u8; 64 * 1024];
     loop {
         if cancelled() {
-            return (n, None);
+            out.decoded = n;
+            return out;
         }
         match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(k) => {
+                if out.prefix.len() < prefix_limit {
+                    let take = k.min(prefix_limit - out.prefix.len());
+                    out.prefix.extend_from_slice(&buf[..take]);
+                }
                 if n + k as u64 <= hash_limit {
                     h.update(&buf[..k]);
                 }
                 n += k as u64;
-                if n > hash_limit && (!need_len || n >= DECODED_COUNT_LIMIT) {
-                    return (if need_len { n } else { 0 }, None);
+                let prefix_done = out.prefix.len() >= prefix_limit;
+                if !hashing && prefix_done {
+                    out.decoded = body.len();
+                    return out;
+                }
+                if n > hash_limit && prefix_done && (!need_len || n >= DECODED_COUNT_LIMIT) {
+                    out.decoded = if need_len { n } else { 0 };
+                    return out;
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             // Truncated or corrupt stream: report what was decoded, no fingerprint.
-            Err(_) => return (if n == 0 { body.len() } else { n }, None),
+            Err(e) => {
+                out.decoded = if n == 0 { body.len() } else { n };
+                if !encodings.is_empty() && !body.is_truncated() && body.is_complete() && !quena_body::is_cancelled(&e) {
+                    out.error = Some(cap_text(format!("invalid: {}: {e}", content_encoding.unwrap_or("").trim()), DECODING_ERROR_LIMIT));
+                }
+                return out;
+            }
         }
     }
-    (n, (n > 0 && n <= hash_limit).then(|| h.finish()))
+    out.decoded = n;
+    out.hash = (n > 0 && n <= hash_limit).then(|| h.finish());
+    out
+}
+
+/// `s` cut to at most `max` bytes (at a character boundary), marked with `…`.
+fn cap_text(s: String, max: usize) -> String {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
+}
+
+/// A charset label as written, or `<n bytes>` when it is longer than [`LABEL_LIMIT`] or not
+/// a plain token (a label is ASCII letters, digits and `-_.:()`).
+fn safe_label(l: Option<String>) -> Option<String> {
+    l.map(|l| {
+        let token = l.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.:()".contains(&b));
+        if l.len() <= LABEL_LIMIT && token { l } else { format!("<{} bytes>", l.len()) }
+    })
+}
+
+/// Encoding facts of a decoded body prefix with this Content-Type, if the type is textual.
+pub fn text_info(content_type: Option<&str>, prefix: &[u8]) -> Option<AnalyzerTextInfo> {
+    use quena_body::charset;
+    if prefix.is_empty() || !charset::is_textual(content_type) {
+        return None;
+    }
+    let f = charset::facts(content_type, prefix);
+    Some(AnalyzerTextInfo {
+        header_resolved: f.header.as_deref().and_then(charset::resolved_name).map(String::from),
+        document_resolved: f.document.as_deref().and_then(charset::resolved_name).map(String::from),
+        header_charset: safe_label(f.header),
+        document_charset: safe_label(f.document),
+        bom: f.bom,
+        effective: f.effective,
+        source: f.source.into(),
+        unknown_label: f.unknown_label,
+        sampled: f.sampled,
+        non_ascii: f.non_ascii,
+        utf8_valid: f.utf8_valid,
+        decode_errors: f.decode_errors,
+        replacement_chars: f.replacement_chars,
+        double_encoded: f.double_encoded,
+        nul_bytes: f.nul_bytes,
+        looks_compressed: charset::compressed_magic(prefix).map(String::from),
+    })
 }
 
 // ------------------------------------------------------------------ records
@@ -537,8 +643,16 @@ pub fn build_record(d: &SessionDetail, req: &Body, resp: &Body, cancelled: &dyn 
         redact_url(&if has_scheme(&d.request.url) { d.request.url.clone() } else { s.full_url() })
     };
     let url = cap_field(url, true);
-    let (_, req_hash) = body_fingerprint(req, d.request.headers.get("content-encoding"), REQUEST_HASH_LIMIT, false, cancelled);
-    let (resp_decoded, resp_hash) = body_fingerprint(resp, resp_headers.get("content-encoding"), RESPONSE_HASH_LIMIT, true, cancelled);
+    // One pass per body: size, fingerprint and (textual types) the prefix for the encoding
+    // facts. Only facts leave the host.
+    let req_ct = d.request.headers.get("content-type");
+    let resp_ct = resp_headers.get("content-type").or(Some(s.content_type.as_str()).filter(|c| !c.is_empty()));
+    let sample = |ct: Option<&str>| if quena_body::charset::is_textual(ct) { TEXT_SAMPLE } else { 0 };
+    let rq = body_scan(req, d.request.headers.get("content-encoding"), REQUEST_HASH_LIMIT, false, sample(req_ct), cancelled);
+    let rs = body_scan(resp, resp_headers.get("content-encoding"), RESPONSE_HASH_LIMIT, true, sample(resp_ct), cancelled);
+    let text = |ct: Option<&str>, b: &BodyScan| if b.error.is_none() { text_info(ct, &b.prefix) } else { None };
+    let (request_text, response_text) = (text(req_ct, &rq), text(resp_ct, &rs));
+    let (req_hash, resp_decoded, resp_hash) = (rq.hash, rs.decoded, rs.hash);
     AnalyzerSession {
         id: s.id,
         kind: kind_name(s.kind).into(),
@@ -576,6 +690,10 @@ pub fn build_record(d: &SessionDetail, req: &Body, resp: &Body, cancelled: &dyn 
         process: s.process.clone(),
         request_body_hash: req_hash,
         response_body_hash: resp_hash,
+        request_text,
+        response_text,
+        request_decoding_error: rq.error,
+        response_decoding_error: rs.error,
     }
 }
 
@@ -1114,6 +1232,86 @@ mod tests {
         assert!(scope_ids(&cap, None, &none).0.is_empty());
         let opts = scope_options(&cap);
         assert!(opts.processes.iter().any(|(p, n)| *p == proc_of(id) && *n >= 1), "{opts:?}");
+    }
+
+    /// A session with these bodies and content types (no Content-Encoding unless given).
+    fn text_session(cap: &Arc<Capture>, req: (&str, Option<&str>, &[u8]), resp: (&str, Option<&str>, &[u8])) -> AnalyzerSession {
+        let mut d = detail(SessionKind::Http, "https://api.test/v1/text", 1_000_000);
+        let hs = |ct: &str, ce: Option<&str>| {
+            let mut v = vec![("Content-Type", ct)];
+            if let Some(ce) = ce {
+                v.push(("Content-Encoding", ce));
+            }
+            headers(&v)
+        };
+        d.request.headers = hs(req.0, req.1);
+        d.response.as_mut().unwrap().headers = hs(resp.0, resp.1);
+        let id = cap.insert(d, cap.bodies.store_bytes(req.2), cap.bodies.store_bytes(resp.2));
+        record_of(cap, id, &|| false).unwrap()
+    }
+
+    #[test]
+    fn records_carry_text_facts_but_no_content() {
+        let (_d, cap) = capture();
+        // Request: form post in Latin-1 declared as UTF-8; response: gzipped JSON with a
+        // double-encoded umlaut and a replacement character.
+        let resp_json = "{\"name\":\"GrÃ¼ÃŸe SECRETWORD\",\"x\":\"a\u{fffd}b\"}";
+        let r = text_session(&cap, ("application/x-www-form-urlencoded; charset=utf-8", None, b"q=Gr\xfc\xdfe+SECRETWORD"), ("application/json", Some("gzip"), &gzip(resp_json.as_bytes())));
+        let q = r.request_text.clone().expect("request facts");
+        assert_eq!((q.header_charset.as_deref(), q.header_resolved.as_deref(), q.effective.as_str(), q.source.as_str()), (Some("utf-8"), Some("UTF-8"), "UTF-8", "header"));
+        assert_eq!((q.utf8_valid, q.non_ascii, q.decode_errors, q.sampled), (false, true, 2, 18));
+        let p = r.response_text.clone().expect("response facts");
+        assert_eq!((p.effective.as_str(), p.source.as_str(), p.double_encoded, p.replacement_chars, p.decode_errors), ("UTF-8", "default", 2, 1, 0));
+        assert_eq!((r.request_decoding_error.as_deref(), r.response_decoding_error.as_deref(), p.looks_compressed.as_deref()), (None, None, None));
+        // Only facts: no body text in the record.
+        assert!(!format!("{r:?}").contains("SECRETWORD"), "{r:?}");
+
+        // Non-textual types get no facts; XML declaration and header disagree.
+        let r = text_session(&cap, ("application/octet-stream", None, b"\xff\xfe"), ("text/xml; charset=ISO-8859-1", None, b"<?xml version=\"1.0\" encoding=\"UTF-8\"?><a>\xc3\xa4</a>"));
+        assert!(r.request_text.is_none());
+        let p = r.response_text.unwrap();
+        assert_eq!((p.header_resolved.as_deref(), p.document_charset.as_deref(), p.document_resolved.as_deref(), p.effective.as_str()), (Some("windows-1252"), Some("UTF-8"), Some("UTF-8"), "windows-1252"));
+
+        // Labels from the body are capped: a long or odd "label" does not leave the host.
+        let long = format!("<?xml version=\"1.0\" encoding=\"{}\"?><a/>", "SECRETWORD".repeat(10));
+        let r = text_session(&cap, ("text/plain", None, b""), ("application/xml", None, long.as_bytes()));
+        let p = r.response_text.unwrap();
+        assert_eq!((p.document_charset.as_deref(), p.unknown_label), (Some("<100 bytes>"), true));
+        let r = text_session(&cap, ("text/plain", None, b""), ("application/xml", None, b"<?xml version='1.0' encoding='a b=c'?><a/>"));
+        assert_eq!(r.response_text.unwrap().document_charset.as_deref(), Some("<5 bytes>"));
+        assert!(r.request_text.is_none(), "empty body: no facts");
+
+        // Compressed data without Content-Encoding.
+        let r = text_session(&cap, ("text/plain", None, b""), ("application/json", None, &gzip(b"{}")));
+        assert_eq!(r.response_text.unwrap().looks_compressed.as_deref(), Some("gzip"));
+
+        // Undecodable bodies: an error, no facts, no fingerprint.
+        let r = text_session(&cap, ("application/json", Some("gzip"), b"{\"not\":\"gzip\"}"), ("text/html", Some("x-custom"), b"<p>hi</p>"));
+        assert!(r.request_decoding_error.as_deref().is_some_and(|e| e.starts_with("invalid: gzip: ")), "{:?}", r.request_decoding_error);
+        assert_eq!(r.response_decoding_error.as_deref(), Some("unsupported: x-custom"));
+        assert!(r.request_text.is_none() && r.response_text.is_none() && r.request_body_hash.is_none());
+    }
+
+    #[test]
+    fn scans_sample_large_bodies_and_skip_truncated_ones() {
+        let (_d, cap) = capture();
+        let never = &|| false;
+        // A plain body above the hash limit: size known, no hash, but the prefix is read.
+        let big = "ä".repeat(300 << 10);
+        let body = cap.bodies.store_bytes(big.as_bytes());
+        let s = body_scan(&body, None, 1 << 10, true, TEXT_SAMPLE, never);
+        assert_eq!((s.decoded, s.hash, s.prefix.len(), s.error), (big.len() as u64, None, TEXT_SAMPLE, None));
+        let s = body_scan(&cap.bodies.store_bytes(&gzip(big.as_bytes())), Some("gzip"), 1 << 10, false, TEXT_SAMPLE, never);
+        assert_eq!((s.prefix.len(), s.hash), (TEXT_SAMPLE, None));
+        let f = text_info(Some("text/plain; charset=utf-8"), &s.prefix).unwrap();
+        assert_eq!((f.sampled, f.decode_errors, f.utf8_valid), (TEXT_SAMPLE as u64, 0, true));
+        // A truncated gzip body is not "invalid": its end is missing.
+        let gz = gzip(big.as_bytes());
+        let mut w = cap.bodies.writer_with_limit(gz.len() as u64 / 2);
+        let _ = std::io::Write::write(&mut w, &gz);
+        let cut = w.finish();
+        assert!(cut.is_truncated());
+        assert_eq!(body_scan(&cut, Some("gzip"), 1 << 20, true, TEXT_SAMPLE, never).error, None);
     }
 
     #[test]

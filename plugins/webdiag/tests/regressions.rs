@@ -251,6 +251,14 @@ fn r12_timing_500k() {
             x = x.status(503);
         }
         x = x.resp_h("set-cookie", &format!("c{}=<20 bytes>; Path=/", i % 30));
+        // Encoding facts on every body (most clean, some broken), as the host sends them.
+        let t = match i % 211 {
+            0 => webdiag::testkit::utf8_declared_latin1_sent(),
+            1 => webdiag::model::TextInfo { double_encoded: 3, non_ascii: true, ..webdiag::testkit::declared("utf-8", "UTF-8") },
+            2 => webdiag::testkit::latin1_declared_utf8_sent(),
+            _ => webdiag::model::TextInfo { non_ascii: i % 3 == 0, ..webdiag::testkit::text_facts("UTF-8", "default") },
+        };
+        x.response_text = Some(Box::new(t));
         s.push(x);
     }
     let whole = std::time::Instant::now();

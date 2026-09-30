@@ -194,7 +194,9 @@ pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, o: &HarOptions
         if !req_body.is_empty() {
             let ct = d.request.headers.get("content-type").unwrap_or("application/octet-stream").to_string();
             write!(w, ",\"postData\":{{\"mimeType\":{},\"text\":", jstr(&ct))?;
-            let text = is_text_type(&ct);
+            // A compressed request body is written as it was sent (base64), so the bytes and
+            // its Content-Encoding stay consistent on import.
+            let text = is_text_type(&ct) && d.request.headers.get("content-encoding").is_none();
             let (_, truncated) = write_stream_value(&mut w, decoded_reader(&req_body, &d.request.headers, false), text, o.max_body)?;
             if !text {
                 w.write_all(b",\"encoding\":\"base64\"")?;
@@ -439,10 +441,18 @@ fn to_session(cap: &Arc<Capture>, e: HarEntry) -> (SessionDetail, Body, Body) {
         version: HttpVersion::parse(&e.request.http_version).unwrap_or(HttpVersion::Http11),
         headers: req_headers,
     };
-    let req = match &e.request.post_data {
-        Some(p) => cap.bodies.store_bytes(&body_bytes(&p.text, p.encoding.as_deref())),
-        None => cap.bodies.store_bytes(&[]),
-    };
+    let req_bytes = e.request.post_data.as_ref().map(|p| body_bytes(&p.text, p.encoding.as_deref())).unwrap_or_default();
+    // Most HAR writers store the posted text decoded but keep the request's Content-Encoding;
+    // keep the header only if the stored bytes are encoded: they decode, or they carry a
+    // compression signature (then they are really corrupt, which diagnostics should see).
+    if let Some(ce) = d.request.headers.get("content-encoding").map(str::to_string) {
+        let encoded = !req_bytes.is_empty()
+            && (quena_body::decode::decode_bytes(&req_bytes, &ce, 1 << 16).is_ok() || quena_body::charset::compressed_magic(&req_bytes).is_some());
+        if !encoded {
+            d.request.headers.remove("content-encoding");
+        }
+    }
+    let req = cap.bodies.store_bytes(&req_bytes);
     let mut resp_headers = to_headers(&e.response.headers);
     resp_headers.0.retain(|(k, _)| !k.starts_with(':'));
     // HAR content is decoded: drop encoding headers so the stored body matches.
@@ -658,6 +668,43 @@ mod tests {
         assert_eq!(d.summary.comment, "hello");
         let (_, resp) = cap2.bodies_of(ids[0]).unwrap();
         assert_eq!(String::from_utf8(resp.read_range(0, 1000).unwrap()).unwrap(), "<p>Grüße \"quoted\"</p>");
+    }
+
+    #[test]
+    fn har_request_content_encoding_matches_the_stored_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let cap = Capture::open(dir.path().join("a"), BodyConfig::default(), true).unwrap();
+        // A HAR writer stored the posted text decoded but kept `Content-Encoding: gzip`.
+        let har = r#"{"log":{"version":"1.2","entries":[{"startedDateTime":"2026-09-30T10:00:00Z","time":5,
+            "request":{"method":"POST","url":"https://a.test/x","httpVersion":"HTTP/1.1","headers":[{"name":"Content-Encoding","value":"gzip"},{"name":"Content-Type","value":"application/json"}],
+              "postData":{"mimeType":"application/json","text":"{\"a\":1}"}},
+            "response":{"status":204,"statusText":"","httpVersion":"HTTP/1.1","headers":[],"content":{"size":0,"mimeType":""}},"timings":{}}]}}"#;
+        let path = dir.path().join("in.har");
+        std::fs::write(&path, har).unwrap();
+        let ids = import(&cap, &path, &NoProgress).unwrap();
+        let d = cap.detail(ids[0]).unwrap();
+        assert_eq!(d.request.headers.get("content-encoding"), None, "decoded text must not claim gzip");
+        // Our own export keeps a really compressed request body and its header together.
+        let gz = {
+            use std::io::Write;
+            let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            e.write_all(br#"{"b":2}"#).unwrap();
+            e.finish().unwrap()
+        };
+        let mut d2 = SessionDetail::default();
+        d2.request.method = "POST".into();
+        d2.request.url = "https://a.test/y".into();
+        d2.request.headers.push("Content-Type", "application/json");
+        d2.request.headers.push("Content-Encoding", "gzip");
+        let id = cap.insert(d2, cap.bodies.store_bytes(&gz), cap.bodies.store_bytes(&[]));
+        let out = dir.path().join("out.har");
+        export(&cap, &[id], &out, &HarOptions::default(), &NoProgress).unwrap();
+        let cap2 = Capture::open(dir.path().join("b"), BodyConfig::default(), true).unwrap();
+        let ids = import(&cap2, &out, &NoProgress).unwrap();
+        let d = cap2.detail(ids[0]).unwrap();
+        assert_eq!(d.request.headers.get("content-encoding"), Some("gzip"));
+        let (req, _) = cap2.bodies_of(ids[0]).unwrap();
+        assert_eq!(req.read_range(0, 1000).unwrap(), gz);
     }
 
     #[test]

@@ -42,7 +42,7 @@ mod analyzer_world {
     });
 }
 
-use analyzer_world::exports::quena::plugin::analyzer::{Info as AnalyzerInfo, Session as WitSession, Timers as WitTimers};
+use analyzer_world::exports::quena::plugin::analyzer::{Info as AnalyzerInfo, Session as WitSession, TextInfo as WitTextInfo, Timers as WitTimers};
 use analyzer_world::{AnalyzerPlugin, AnalyzerPluginPre};
 use decoder_world::exports::quena::plugin::decoder::{Info as DecoderInfo, Representation};
 use decoder_world::{Plugin, PluginPre};
@@ -111,6 +111,50 @@ pub struct AnalyzerTimers {
     pub tls_handshake_ms: Option<u32>,
 }
 
+/// Encoding facts of a textual body (mirrors `text-info` of the `analyzer` interface).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyzerTextInfo {
+    pub header_charset: Option<String>,
+    pub header_resolved: Option<String>,
+    pub document_charset: Option<String>,
+    pub document_resolved: Option<String>,
+    pub bom: Option<String>,
+    pub effective: String,
+    pub source: String,
+    pub unknown_label: bool,
+    pub sampled: u64,
+    pub non_ascii: bool,
+    pub utf8_valid: bool,
+    pub decode_errors: u32,
+    pub replacement_chars: u32,
+    pub double_encoded: u32,
+    pub nul_bytes: u32,
+    pub looks_compressed: Option<String>,
+}
+
+impl From<AnalyzerTextInfo> for WitTextInfo {
+    fn from(t: AnalyzerTextInfo) -> WitTextInfo {
+        WitTextInfo {
+            header_charset: t.header_charset,
+            header_resolved: t.header_resolved,
+            document_charset: t.document_charset,
+            document_resolved: t.document_resolved,
+            bom: t.bom,
+            effective: t.effective,
+            source: t.source,
+            unknown_label: t.unknown_label,
+            sampled: t.sampled,
+            non_ascii: t.non_ascii,
+            utf8_valid: t.utf8_valid,
+            decode_errors: t.decode_errors,
+            replacement_chars: t.replacement_chars,
+            double_encoded: t.double_encoded,
+            nul_bytes: t.nul_bytes,
+            looks_compressed: t.looks_compressed,
+        }
+    }
+}
+
 /// One session record for an analyzer (mirrors `session` of the `analyzer` interface), so
 /// callers do not depend on wasmtime types. Headers must already be allow-listed and
 /// redacted (plugins/webdiag/REPORT.md).
@@ -140,6 +184,10 @@ pub struct AnalyzerSession {
     pub process: String,
     pub request_body_hash: Option<u64>,
     pub response_body_hash: Option<u64>,
+    pub request_text: Option<AnalyzerTextInfo>,
+    pub response_text: Option<AnalyzerTextInfo>,
+    pub request_decoding_error: Option<String>,
+    pub response_decoding_error: Option<String>,
 }
 
 impl From<AnalyzerSession> for WitSession {
@@ -182,6 +230,10 @@ impl From<AnalyzerSession> for WitSession {
             process: s.process,
             request_body_hash: s.request_body_hash,
             response_body_hash: s.response_body_hash,
+            request_text: s.request_text.map(Into::into),
+            response_text: s.response_text.map(Into::into),
+            request_decoding_error: s.request_decoding_error,
+            response_decoding_error: s.response_decoding_error,
         }
     }
 }

@@ -18,6 +18,35 @@ pub struct Timers {
     pub tls_handshake_ms: Option<u32>,
 }
 
+/// Character encoding facts of a textual body, from the first 256 KiB of the decoded body
+/// (host side: `quena_body::charset::facts`; see `text-info` in the WIT and REPORT.md).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TextInfo {
+    /// `charset` of the Content-Type as sent, and the WHATWG name it resolves to.
+    pub header_charset: Option<String>,
+    pub header_resolved: Option<String>,
+    /// Declaration inside the document (XML declaration, HTML meta) and its WHATWG name.
+    pub document_charset: Option<String>,
+    pub document_resolved: Option<String>,
+    /// Byte order mark (`UTF-8`, `UTF-16LE`, `UTF-16BE`).
+    pub bom: Option<String>,
+    /// Effective charset (WHATWG name) and where it came from (`bom`, `header`,
+    /// `document`, `default`).
+    pub effective: String,
+    pub source: String,
+    pub unknown_label: bool,
+    /// Bytes examined.
+    pub sampled: u64,
+    pub non_ascii: bool,
+    pub utf8_valid: bool,
+    pub decode_errors: u32,
+    pub replacement_chars: u32,
+    pub double_encoded: u32,
+    pub nul_bytes: u32,
+    /// Magic bytes of a compressed stream at the start (`gzip`, `zstd`, `deflate`).
+    pub looks_compressed: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Kind {
     #[default]
@@ -54,6 +83,13 @@ pub struct Session {
     pub process: String,
     pub request_body_hash: Option<u64>,
     pub response_body_hash: Option<u64>,
+    /// Encoding facts of textual bodies (boxed: most sessions of a large capture carry
+    /// none or share the memory budget with their headers).
+    pub request_text: Option<Box<TextInfo>>,
+    pub response_text: Option<Box<TextInfo>>,
+    /// The Content-Encoding could not be decoded: `unsupported: …` / `invalid: …`.
+    pub request_decoding_error: Option<String>,
+    pub response_decoding_error: Option<String>,
 }
 
 fn header<'a>(h: &'a [(String, String)], name: &str) -> Option<&'a str> {

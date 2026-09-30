@@ -98,6 +98,7 @@ pub struct Prep {
     pub(crate) in_poll: OnceCell<Vec<bool>>,
     pub(crate) timer_driven: OnceCell<Vec<bool>>,
     pub(crate) nplus1: OnceCell<Vec<NPlus1>>,
+    pub(crate) encoding: OnceCell<crate::analyzers::encoding::Classified>,
 }
 
 impl Prep {
@@ -143,6 +144,7 @@ impl Prep {
             in_poll: OnceCell::new(),
             timer_driven: OnceCell::new(),
             nplus1: OnceCell::new(),
+            encoding: OnceCell::new(),
         };
         for (i, s) in sessions.iter().enumerate() {
             let mime = s.content_type.split(';').next().unwrap_or("").trim();

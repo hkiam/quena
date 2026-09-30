@@ -31,7 +31,7 @@ keep per-session work in `push` small and do at most O(n log n) work in `finish`
 * Headers: only this allow-list is passed (case-insensitive), in wire order:
   `accept-encoding, access-control-allow-origin, access-control-max-age,
   access-control-request-method, age, authorization, cache-control, connection,
-  content-encoding, content-length, content-type, cookie, etag, expires, if-match,
+  content-encoding, content-length, content-type, cookie, date, etag, expires, if-match,
   if-modified-since, if-none-match, keep-alive, last-modified, location, odata-version,
   origin, pragma, prefer, proxy-authenticate, proxy-authorization, range, content-range,
   referer, request-id, retry-after, set-cookie, soapaction, strict-transport-security,
@@ -77,6 +77,25 @@ keep per-session work in `push` small and do at most O(n log n) work in `finish`
   ones dropped); `error` at most 8 KiB.
 * `requestBodyHash` / `responseBodyHash`: 64-bit fingerprint of the decoded body, computed
   for bodies up to 1 MiB (request) / 8 MiB (response); `none` otherwise or for empty bodies.
+* `requestText` / `responseText` (`text-info`): character encoding facts of textual bodies
+  (`text/*`, JSON, XML, HTML, JavaScript, form posts, SVG — by the Content-Type of that
+  direction), computed by the host on the first 256 KiB of the decoded body with the same
+  rules as the display (`quena_body::charset`): BOM > `Content-Type` charset > in-document
+  declaration (`<?xml encoding>`, HTML `<meta charset>` in the first 1024 bytes) > default of
+  the type (JSON/XML UTF-8; other text UTF-8 if valid, else windows-1252). Fields:
+  `headerCharset` / `documentCharset` as written (at most 64 bytes of `A–Z a–z 0–9 -_.:()`,
+  otherwise `<n bytes>`) with `headerResolved` / `documentResolved` (WHATWG name, none if
+  unknown), `bom`, `effective` + `source` (`bom` | `header` | `document` | `default`),
+  `unknownLabel`, `sampled` (bytes examined; `262144` means the body was probably longer),
+  `nonAscii`, `utf8Valid`, `decodeErrors`, `replacementChars` (U+FFFD in valid text),
+  `doubleEncoded` (`Ã¤`-style traces), `nulBytes`, `looksCompressed` (`gzip` | `zstd` |
+  `deflate` magic bytes at the start of the decoded body). Only these facts leave the host,
+  never body content. None for other types, empty bodies and undecodable bodies.
+* `requestDecodingError` / `responseDecodingError`: the Content-Encoding could not be
+  decoded — `unsupported: <coding>` (not gzip, x-gzip, deflate, br, zstd, identity, or more
+  than 4 stacked codings) or `invalid: <Content-Encoding>: <error>` (corrupt data; at most
+  200 bytes). None for bodies stored truncated or still incomplete. HAR/SAZ imports store
+  response bodies decoded and drop the response `Content-Encoding`.
 * `responseDecodedBytes`: decoded size of the response body; decoding stops at 256 MiB
   (decompression bombs), so a value ≥ 256 MiB is a lower bound. Undecodable bodies report
   the stored size.
@@ -204,3 +223,23 @@ These describe the bundled analyzer, not the API; other analyzers may differ.
   throughput min(bandwidth, Mathis limit for the packet loss); the latency of a sequential
   chain adds the round trips of each step (plus TCP/TLS/DNS for new connections) times the
   RTT difference. Both are marked `estimate: true`.
+* **Encoding** (`ENC-*`, profiles troubleshooting and full; `ENC-JSON` and `ENC-MISSING`
+  also modernization): from `requestText` / `responseText` and the decoding errors. Each
+  body gets at most one verdict, the most specific: `ENC-DECODE` (undecodable
+  Content-Encoding; compressed data as text) > `ENC-BINARY` (NUL bytes) > `ENC-UNKNOWN`
+  (unknown label) > `ENC-DOUBLE` (double-encoded UTF-8, valid bytes) > `ENC-CONFLICT`
+  (BOM, header and document disagree; `latin1`/`ISO-8859-1` or UTF-16 byte orders are
+  equal) > `ENC-JSON` (JSON not in UTF-8) > `ENC-MISMATCH` (invalid sequences in the
+  declared/default charset, or a legacy charset declared for valid non-ASCII UTF-8) >
+  `ENC-MISSING` (non-ASCII `text/*` or form data without any declaration; not XML, JSON,
+  `text/event-stream`, `text/vtt`, `text/calendar`). `ENC-LOST` (U+FFFD in valid text) is
+  reported besides. Pure ASCII is never a mismatch. Keys: `RULE|direction|[variant|]subject`
+  — direction `request` or `response`; subject the endpoint (the host for `ENC-CONFLICT`,
+  `ENC-UNKNOWN`, `ENC-MISSING`); variants `not-utf8`, `invalid`, `utf8` (ENC-MISMATCH) and
+  `invalid`, `unsupported`, `compressed` (ENC-DECODE). Statements that depend on the whole
+  body (valid UTF-8) have medium confidence when a body filled the 256 KiB sample.
+* **Clocks**: the offset of a response is `Date + Age − local time of the first response
+  byte` (+0.5 s for the whole-second resolution of `Date`). `CLOCK-SKEW` per host from 30 s
+  (warning 60 s, critical 5 min), `CLOCK-LOCAL` when ≥ 3 unrelated sites agree on the same
+  offset (this computer's clock; then no per-host findings), `CLOCK-DRIFT` when uncached
+  responses of one host disagree by ≥ 30 s (10th–90th percentile, ≥ 5 responses).

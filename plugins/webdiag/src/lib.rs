@@ -366,14 +366,35 @@ pub fn describe(lang: &str) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod plugin {
-    use crate::model::{Kind, Session, Timers};
+    use crate::model::{Kind, Session, TextInfo, Timers};
 
     wit_bindgen::generate!({ path: "../../wit/plugin.wit", world: "analyzer-plugin" });
-    use exports::quena::plugin::analyzer::{Guest, GuestRun, Info, Session as WSession};
+    use exports::quena::plugin::analyzer::{Guest, GuestRun, Info, Session as WSession, TextInfo as WTextInfo};
 
     struct WebDiag;
 
     struct RunState(std::cell::RefCell<Option<crate::Run>>);
+
+    fn text(t: WTextInfo) -> Box<TextInfo> {
+        Box::new(TextInfo {
+            header_charset: t.header_charset,
+            header_resolved: t.header_resolved,
+            document_charset: t.document_charset,
+            document_resolved: t.document_resolved,
+            bom: t.bom,
+            effective: t.effective,
+            source: t.source,
+            unknown_label: t.unknown_label,
+            sampled: t.sampled,
+            non_ascii: t.non_ascii,
+            utf8_valid: t.utf8_valid,
+            decode_errors: t.decode_errors,
+            replacement_chars: t.replacement_chars,
+            double_encoded: t.double_encoded,
+            nul_bytes: t.nul_bytes,
+            looks_compressed: t.looks_compressed,
+        })
+    }
 
     fn convert(s: WSession) -> Session {
         let t = s.timers;
@@ -418,6 +439,10 @@ mod plugin {
             process: s.process,
             request_body_hash: s.request_body_hash,
             response_body_hash: s.response_body_hash,
+            request_text: s.request_text.map(text),
+            response_text: s.response_text.map(text),
+            request_decoding_error: s.request_decoding_error,
+            response_decoding_error: s.response_decoding_error,
         }
     }
 

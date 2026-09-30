@@ -176,7 +176,7 @@ fn sev_label<'a>(ctx: &Ctx, s: Severity) -> &'a str {
 }
 
 /// Keep the worst `MAX_PER_RULE` findings of one rule; summarise the rest in the last one.
-fn emit(ctx: &Ctx, out: &mut Vec<Finding>, mut list: Vec<Finding>) {
+pub(crate) fn emit(ctx: &Ctx, out: &mut Vec<Finding>, mut list: Vec<Finding>) {
     list.sort_by(|a, b| a.severity.cmp(&b.severity).then(b.score.cmp(&a.score)).then(a.key.cmp(&b.key)));
     if list.len() > MAX_PER_RULE {
         let rest = list.split_off(MAX_PER_RULE);
