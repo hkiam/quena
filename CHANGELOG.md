@@ -81,6 +81,9 @@ contain breaking changes (settings, file formats, plugin API).
   not fit, and the views are ordered by how well they fit the content.
 
 ### Fixed
+- Diagnostics and header inspectors (JWT, Kerberos/NTLM) opened right after start said no
+  plugin was installed while the plugins were still being compiled; they now show that
+  plugins are loading and update when they are ready.
 - Umlauts and other non-ASCII characters were shown as `�` in inspector bodies (and in JSON,
   XML, SOAP, multipart, form data, the large-text view) when a body was not UTF-8; search
   did not find them either.

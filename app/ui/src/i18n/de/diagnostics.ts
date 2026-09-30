@@ -153,4 +153,5 @@ export const diagnostics: Record<string, string> = {
   Troubleshooting: "Fehlersuche",
   CORS: "CORS",
   OData: "OData",
+  "Loading plugins…": "Plugins werden geladen…",
 };

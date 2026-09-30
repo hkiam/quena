@@ -62,6 +62,8 @@ export const PLUGINS_CHANGED = "quena:plugins-changed";
 interface DiagUi {
   analyzers: Analyzer[] | null;
   analyzersError: string | null;
+  /** Plugin loading (in the background after start) has finished. */
+  pluginsReady: boolean;
   /** By analyzer id and version (indexes change when plugins are enabled or disabled). */
   describe: Record<string, DiagDescribe>;
   /** The report text as fetched: a remount keeps the view state while it is unchanged. */
@@ -90,6 +92,7 @@ interface DiagUi {
 const useDiag = create<DiagUi>(() => ({
   analyzers: null,
   analyzersError: null,
+  pluginsReady: false,
   describe: {},
   text: null,
   raw: null,
@@ -147,10 +150,16 @@ async function fetchReport() {
 
 /** (Re)load the analyzer list; a failure keeps the previous list and shows the error. */
 function loadAnalyzers() {
-  api
-    .diagAnalyzers()
-    .then((a) => setDiag({ analyzers: a, analyzersError: null }))
-    .catch((e) => setDiag((s) => ({ analyzers: s.analyzers ?? [], analyzersError: String(e) })));
+  // Ask whether loading has finished first: a list fetched afterwards is final.
+  void api
+    .pluginsReady()
+    .catch(() => true)
+    .then((ready) =>
+      api
+        .diagAnalyzers()
+        .then((a) => setDiag({ analyzers: a, analyzersError: null, pluginsReady: ready }))
+        .catch((e) => setDiag((s) => ({ analyzers: s.analyzers ?? [], analyzersError: String(e), pluginsReady: ready }))),
+    );
 }
 
 /** The job has ended without a status we could see: take whatever report there is. */
@@ -375,6 +384,8 @@ export default function DiagnosticsPanel() {
   };
 
   if (!st.analyzers) return <div className="placeholder">{t("Loading…")}</div>;
+  // Plugins are still being compiled after start (the "plugins" event reloads the list).
+  if (!analyzer && !st.pluginsReady) return <div className="placeholder">{t("Loading plugins…")}</div>;
   if (!analyzer)
     return (
       <div className="placeholder diag-empty">

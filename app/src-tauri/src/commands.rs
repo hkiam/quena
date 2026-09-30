@@ -470,6 +470,12 @@ async fn diag_describe(core: State<'_, Core>, index: u16, lang: String) -> R<Str
     blocking(move || core.diag_describe(index, &lang).map_err(e)).await
 }
 
+/// Plugin loading has finished (it runs in the background after start).
+#[tauri::command]
+async fn plugins_ready(core: State<'_, Core>) -> R<bool> {
+    Ok(core.plugins_ready())
+}
+
 #[tauri::command]
 async fn diag_scope_options(core: State<'_, Core>) -> R<quena_app_core::diagnostics::DiagScopeOptions> {
     let core = core.inner().clone();
@@ -787,6 +793,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         diag_describe,
         diag_run,
         diag_scope_options,
+        plugins_ready,
         diag_report,
         ar_get,
         ar_set,

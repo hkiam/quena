@@ -679,6 +679,7 @@ export const api = {
   diagDescribe: (index: number, lang: string) => invoke<string>("diag_describe", { index, lang }),
   diagRun: (index: number, options: string, ids: number[] | null, filter: { processes: string[]; hosts: string[] }) =>
     invoke<number>("diag_run", { index, options, ids, filter }),
+  pluginsReady: () => invoke<boolean>("plugins_ready"),
   diagScopeOptions: () => invoke<{ processes: [string, number][]; hosts: [string, number][] }>("diag_scope_options"),
   diagReport: () => invoke<string | null>("diag_report"),
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),

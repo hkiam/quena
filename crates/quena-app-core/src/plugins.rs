@@ -26,8 +26,22 @@ impl PluginDecoders for Adapter {
 }
 
 impl AppCore {
-    /// Start the plugin host. `bundled` is the app's resource plugin dir.
+    /// Start the plugin host. `bundled` is the app's resource plugin dir. Compiling the
+    /// plugins takes a while on a cold cache, so this runs in the background; the `plugins`
+    /// event tells the UI when it is done (views that asked early reload their plugin lists).
     pub fn init_plugins(self: &Arc<Self>, bundled: Option<PathBuf>) -> Result<()> {
+        let r = self.start_plugin_host(bundled);
+        self.plugins_done.store(true, std::sync::atomic::Ordering::Release);
+        self.emit("plugins", serde_json::Value::Null);
+        r
+    }
+
+    /// Plugin loading has finished (the list of plugins is final until a rescan).
+    pub fn plugins_ready(&self) -> bool {
+        self.plugins_done.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn start_plugin_host(self: &Arc<Self>, bundled: Option<PathBuf>) -> Result<()> {
         let user = self.paths.data.join("plugins");
         let _ = std::fs::create_dir_all(&user);
         let mut dirs = vec![user];

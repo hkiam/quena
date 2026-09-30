@@ -130,6 +130,8 @@ pub struct AppCore {
     pub(crate) proxy_engine: RwLock<Option<Arc<engine::ProxyEngine>>>,
     pub rules: Option<Arc<rules::Rules>>,
     pub(crate) plugin_host: RwLock<Option<Arc<quena_plugin_host::PluginHost>>>,
+    /// Plugin loading has finished (successfully or not); see `plugins_ready`.
+    pub(crate) plugins_done: std::sync::atomic::AtomicBool,
     filters: RwLock<FilterSettings>,
     quick_filter: RwLock<String>,
     pub(crate) mock: Mutex<Option<mock::MockHandle>>,
@@ -164,6 +166,7 @@ impl AppCore {
             proxy_engine: RwLock::new(None),
             rules: Some(rules),
             plugin_host: RwLock::new(None),
+            plugins_done: std::sync::atomic::AtomicBool::new(false),
             capture_switch: Mutex::new(()),
             filters: RwLock::new(FilterSettings::default()),
             quick_filter: RwLock::new(String::new()),

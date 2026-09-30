@@ -41,7 +41,8 @@ const button = async (label) => {
 
 test("the analysis finds the planted problems", async () => {
   await d.exec(`window.__quena.menu("view.diagnostics")`);
-  const end = Date.now() + 10000;
+  // On a fresh data directory the plugins are compiled first (slow CI machines: seconds).
+  const end = Date.now() + 60000;
   let run;
   while (!(run = await button("Run")) && Date.now() < end) await new Promise((r) => setTimeout(r, 200));
   assert.ok(run, "Run button");

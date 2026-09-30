@@ -11,6 +11,7 @@ import { RightPane } from "./panels/RightPane";
 import { get, restoreLayout, say, set, useStore, type Layout } from "./store";
 import { installGlobalKeys } from "./keys";
 import { installFileDrop } from "./lib/dropImport";
+import { forgetInspectorHeaders } from "./inspectors/views";
 import { t } from "./i18n";
 
 async function importOpenFiles() {
@@ -56,6 +57,13 @@ function useBoot() {
       }),
     );
     unlisten.push(on<string>("menu", (id) => actions.menu(id)));
+    // Plugins finished loading in the background: views that asked early reload their lists.
+    unlisten.push(
+      on("plugins", () => {
+        forgetInspectorHeaders();
+        window.dispatchEvent(new Event("quena:plugins-changed"));
+      }),
+    );
     // Archives opened from the file manager / "Open With" while running.
     unlisten.push(on("open-files", () => void importOpenFiles()));
     unlisten.push(
