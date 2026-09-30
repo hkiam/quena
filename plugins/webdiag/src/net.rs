@@ -11,7 +11,9 @@
 //! [`TOLERANCE_US`] = 2 ms: `next.started + 2 ms ≥ prev.end()`). Sessions that started at
 //! the same instant are never chained, and neither are sessions separated by a pause of
 //! more than [`MAX_LINK_GAP_US`] = 500 ms (think time or a timer such as polling, not a
-//! data dependency). Its length is the number of *sequential levels*. Computed with a
+//! data dependency). Sessions without a known end (`Session::has_end`: still open at
+//! capture end, sparse imports) are left out: their length is unknown, and counting them
+//! as zero-length would chain them. Its length is the number of *sequential levels*. Computed with a
 //! dynamic programme over the sessions in start order and a segment tree (range maximum
 //! over end times): O(n log n).
 //!
@@ -35,7 +37,7 @@
 //! 1. the median `tcp_connect_ms` of the new upstream connections (a TCP handshake takes
 //!    one round trip), if any were measured;
 //! 2. otherwise 1 ms if the capture looks local: all hosts are loopback/private/`.local`,
-//!    or the median request took ≤ 5 ms;
+//!    or the median request (of those with a known end) took ≤ 5 ms;
 //! 3. otherwise 20 ms (a typical good WAN).
 //!
 //! A higher observed RTT gives a smaller Δ, so the defaults err on the conservative side.
@@ -48,6 +50,10 @@
 //! single TCP flow with packet loss `p > 0` is `MSS · 8 / RTT · C / √p` with
 //! MSS = 1460 bytes and C = 1.22 (RTT of the profile, at least 1 ms). Without loss the
 //! bandwidth alone limits. Slow start and parallel connections are ignored.
+//!
+//! [`transfer_estimate_ms`] adds one round trip of the profile (request out, first byte
+//! back): `RTT + transfer_ms`. All tables that estimate how long a transfer takes on a
+//! network profile use it, so the same bytes give the same estimate everywhere.
 use crate::model::{Network, Session};
 
 /// Two sessions are sequential if the second started at most this much before the first
@@ -116,11 +122,11 @@ impl MaxTree {
 /// The longest chain of sequential sessions among `members` (indexes into `sessions`),
 /// as session indexes in time order. Its length is the number of sequential levels.
 pub fn critical_path(sessions: &[Session], members: &[usize]) -> Vec<usize> {
-    let n = members.len();
-    if n == 0 {
+    let mut order: Vec<usize> = members.iter().copied().filter(|&i| sessions[i].has_end()).collect();
+    if order.is_empty() {
         return vec![];
     }
-    let mut order = members.to_vec();
+    let n = order.len();
     order.sort_by_key(|&i| (sessions[i].started, i));
     let end: Vec<u64> = order.iter().map(|&i| sessions[i].end()).collect();
     let mut ends = end.clone();
@@ -170,8 +176,8 @@ pub fn tls_round_trips(s: &Session) -> u32 {
     if !s.is_https() {
         return 0;
     }
-    match &s.tls_version {
-        Some(v) if v.contains("1.3") => 1,
+    match s.tls_version.as_deref().and_then(crate::util::tls_version) {
+        Some(v) if v >= (1, 3) => 1,
         _ => 2,
     }
 }
@@ -244,7 +250,7 @@ pub fn observed_rtt(sessions: &[Session], members: &[usize]) -> RttEstimate {
     }
     let http: Vec<&Session> = members.iter().map(|&i| &sessions[i]).filter(|s| s.is_http()).collect();
     let all_local = !http.is_empty() && http.iter().all(|s| is_local_host(&s.host));
-    let durations: Vec<f64> = http.iter().map(|s| s.duration_us() as f64 / 1000.0).collect();
+    let durations: Vec<f64> = http.iter().filter(|s| s.has_end()).map(|s| s.duration_us() as f64 / 1000.0).collect();
     let fast = !durations.is_empty() && crate::util::percentile(&durations, 50.0) <= 5.0;
     if all_local || fast {
         RttEstimate { ms: LOCAL_RTT_MS, source: RttSource::AssumedLocal }
@@ -275,6 +281,12 @@ pub fn throughput_bps(net: &Network) -> f64 {
 /// Time (ms) to transfer `bytes` on `net` (throughput only, no latency).
 pub fn transfer_ms(bytes: u64, net: &Network) -> f64 {
     bytes as f64 * 8.0 / throughput_bps(net) * 1000.0
+}
+
+/// Estimated time (ms) of a transfer of `bytes` on `net`: one round trip plus
+/// [`transfer_ms`] (see module docs).
+pub fn transfer_estimate_ms(bytes: u64, net: &Network) -> f64 {
+    net.rtt_ms + transfer_ms(bytes, net)
 }
 
 #[cfg(test)]
@@ -319,6 +331,20 @@ mod tests {
     }
 
     #[test]
+    fn sessions_without_end_are_not_chained() {
+        let s: Vec<Session> = (0..5)
+            .map(|i| {
+                let mut x = get(i, "https://h/x").at(i * 10);
+                x.duration_ms = None;
+                x.timers = Default::default();
+                x
+            })
+            .collect();
+        assert!(critical_path(&s, &[0, 1, 2, 3, 4]).is_empty());
+        assert_eq!(observed_rtt(&s, &[0, 1, 2, 3, 4]).source, RttSource::Assumed);
+    }
+
+    #[test]
     fn zero_length_sessions_at_same_instant_are_not_chained() {
         let s: Vec<Session> = (0..4).map(|i| get(i, "https://h/x").at(0).took(0)).collect();
         assert_eq!(critical_path(&s, &[0, 1, 2, 3]).len(), 1);
@@ -334,6 +360,8 @@ mod tests {
         let mut tls13 = get(3, "https://h/a").new_conn(0, 10, 10);
         tls13.tls_version = Some("TLSv1.3".into());
         assert_eq!(round_trips(&tls13), 1 + 1 + 1);
+        tls13.tls_version = Some("Tls13".into());
+        assert_eq!(tls_round_trips(&tls13), 1);
         assert_eq!(round_trips(&get(4, "http://h/a").new_conn(0, 10, 0)), 2);
     }
 

@@ -41,16 +41,25 @@ pub fn count(n: f64, lang: Lang) -> String {
     num(n, 0, lang)
 }
 
-/// 850 ms, 1.2 s, 2 min 5 s.
+/// 850 ms, 1.2 s, 12 s, 2 min 5 s. The unit is chosen after rounding (999.6 ms → 1.0 s,
+/// 59,999 ms → 1 min 0 s).
 pub fn ms(ms: f64, lang: Lang) -> String {
-    if ms < 1000.0 {
-        format!("{} ms", num(ms, 0, lang))
-    } else if ms < 60_000.0 {
-        format!("{} s", num(ms / 1000.0, if ms < 10_000.0 { 1 } else { 0 }, lang))
-    } else {
-        let s = (ms / 1000.0).round() as u64;
-        format!("{} min {} s", s / 60, s % 60)
+    if !ms.is_finite() {
+        return "–".into();
     }
+    if ms.round() < 1000.0 {
+        return format!("{} ms", num(ms, 0, lang));
+    }
+    let tenths = (ms / 100.0).round() / 10.0;
+    if tenths < 10.0 {
+        return format!("{} s", num(tenths, 1, lang));
+    }
+    let s = (ms / 1000.0).round();
+    if s < 60.0 {
+        return format!("{} s", num(s, 0, lang));
+    }
+    let s = s as u64;
+    format!("{} min {} s", s / 60, s % 60)
 }
 
 /// 980 B, 12.3 KB, 4.1 MB (1 KB = 1024 B).
@@ -82,6 +91,12 @@ mod tests {
         assert_eq!(ms(850.0, Lang::En), "850 ms");
         assert_eq!(ms(3800.0, Lang::De), "3,8 s");
         assert_eq!(ms(125_000.0, Lang::En), "2 min 5 s");
+        // The unit follows the rounded value.
+        assert_eq!(ms(999.4, Lang::En), "999 ms");
+        assert_eq!(ms(999.6, Lang::En), "1.0 s");
+        assert_eq!(ms(9_999.0, Lang::En), "10 s");
+        assert_eq!(ms(59_999.0, Lang::En), "1 min 0 s");
+        assert_eq!(ms(f64::INFINITY, Lang::En), "–");
         assert_eq!(bytes(820.0 * 1024.0, Lang::En), "820 KB");
         assert_eq!(bytes(38.2 * 1024.0 * 1024.0, Lang::De), "38,2 MB");
         assert_eq!(pct(0.31, Lang::En), "31 %");

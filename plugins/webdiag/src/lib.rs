@@ -10,6 +10,7 @@ pub mod json;
 pub mod model;
 pub mod net;
 pub mod ops;
+pub mod prep;
 pub mod profiles;
 pub mod testkit;
 pub mod util;
@@ -119,6 +120,10 @@ fn finding_json(f: &Finding) -> Value {
 pub struct Run {
     opts: Options,
     sessions: Vec<Session>,
+    /// At most this many sessions are analysed ([`MAX_SESSIONS`]).
+    limit: usize,
+    /// Sessions pushed beyond the limit (not analysed).
+    dropped: usize,
 }
 
 /// More sessions are not analysed (memory/time bound inside the sandbox).
@@ -126,12 +131,28 @@ pub const MAX_SESSIONS: usize = 500_000;
 
 impl Run {
     pub fn new(options: &str) -> Run {
-        Run { opts: parse_options(options), sessions: vec![] }
+        Run { opts: parse_options(options), sessions: vec![], limit: MAX_SESSIONS, dropped: 0 }
+    }
+
+    /// A run that analyses at most `limit` sessions (tests; the plugin uses [`MAX_SESSIONS`]).
+    pub fn with_limit(mut self, limit: usize) -> Run {
+        self.limit = limit;
+        self
     }
 
     pub fn push(&mut self, batch: impl IntoIterator<Item = Session>) {
-        let room = MAX_SESSIONS.saturating_sub(self.sessions.len());
-        self.sessions.extend(batch.into_iter().take(room));
+        for s in batch {
+            if self.sessions.len() < self.limit {
+                self.sessions.push(s);
+            } else {
+                self.dropped += 1;
+            }
+        }
+    }
+
+    /// Sessions that were pushed beyond [`MAX_SESSIONS`] and are not analysed.
+    pub fn dropped(&self) -> usize {
+        self.dropped
     }
 
     pub fn options(&self) -> &Options {
@@ -142,7 +163,7 @@ impl Run {
     pub fn analyse(&mut self) -> (Vec<Finding>, Vec<model::Operation>, Vec<Metric>) {
         self.sessions.sort_by_key(|s| (s.started, s.id));
         let ops = ops::segment(&self.sessions, &self.opts);
-        let ctx = Ctx { sessions: &self.sessions, ops: &ops, opts: &self.opts };
+        let ctx = Ctx::new(&self.sessions, &ops, &self.opts);
         let profile = self.opts.profile.as_str();
         let mut findings = vec![];
         for a in analyzers::all() {
@@ -150,8 +171,15 @@ impl Run {
                 a.run(&ctx, &mut findings);
             }
         }
+        if self.dropped > 0 {
+            findings.push(truncated_finding(&ctx, self.limit, self.dropped));
+        }
         findings.sort_by(|a, b| a.severity.cmp(&b.severity).then(b.score.cmp(&a.score)).then(a.key.cmp(&b.key)));
-        let metrics = capture_metrics(&ctx);
+        let mut metrics = capture_metrics(&ctx);
+        if self.dropped > 0 {
+            let label = ctx.l("Sessions not analysed (limit)", "Nicht analysierte Sessions (Grenze)").to_string();
+            metrics.push(Metric { label, ..Metric::new("notAnalysed", "", self.dropped as f64, Unit::Count) });
+        }
         (findings, ops, metrics)
     }
 
@@ -211,13 +239,49 @@ impl Run {
     }
 }
 
+/// SCOPE-LIMIT: the capture had more sessions than the limit ([`MAX_SESSIONS`]); only the
+/// first ones (in the order they were pushed) were analysed.
+fn truncated_finding(ctx: &Ctx, limit: usize, dropped: usize) -> Finding {
+    let analysed = ctx.sessions.len();
+    Finding::new(
+        "SCOPE-LIMIT",
+        "",
+        model::Severity::Info,
+        if ctx.de() {
+            format!("Nur die ersten {} Sessions wurden analysiert", ctx.fmt_count(analysed))
+        } else {
+            format!("Only the first {} sessions were analysed", ctx.fmt_count(analysed))
+        },
+        if ctx.de() {
+            format!("Die Aufzeichnung enthielt {} Sessions; die Analyse ist auf {} begrenzt, {} wurden nicht berücksichtigt.", ctx.fmt_count(analysed + dropped), ctx.fmt_count(limit), ctx.fmt_count(dropped))
+        } else {
+            format!("The capture held {} sessions; the analysis is limited to {}, so {} were left out.", ctx.fmt_count(analysed + dropped), ctx.fmt_count(limit), ctx.fmt_count(dropped))
+        },
+    )
+    .categories(&["scope"])
+    .score(100.0)
+    .threshold(format!("> {}", ctx.fmt_count(limit)))
+    .fact(ctx.l("Analysed sessions", "Analysierte Sessions"), ctx.fmt_count(analysed))
+    .fact(ctx.l("Sessions not analysed", "Nicht analysierte Sessions"), ctx.fmt_count(dropped))
+    .impact(ctx.l(
+        "Findings, counts and capture metrics describe only the analysed part; problems in the rest are not reported.",
+        "Befunde, Anzahlen und Kennzahlen beschreiben nur den analysierten Teil; Probleme im Rest werden nicht gemeldet.",
+    ))
+    .recommend(ctx.l(
+        "Narrow the analysis to the relevant time range, process or host so that it stays below the limit.",
+        "Die Analyse auf den relevanten Zeitraum, Prozess oder Host eingrenzen, damit sie unter der Grenze bleibt.",
+    ))
+}
+
 /// Key figures of the whole capture (always part of the report).
 fn capture_metrics(ctx: &Ctx) -> Vec<Metric> {
     let l = |en: &'static str, de: &'static str| ctx.l(en, de).to_string();
     let http: Vec<&Session> = ctx.http().collect();
     let bytes: u64 = http.iter().map(|s| s.request_bytes + s.response_bytes).sum();
     let errors = http.iter().filter(|s| s.status >= 400 || s.failed()).count();
-    let mut hosts: Vec<&str> = http.iter().map(|s| s.host.as_str()).collect();
+    let open = http.iter().filter(|s| s.incomplete()).count();
+    let p = ctx.prep();
+    let mut hosts: Vec<u32> = p.http.iter().map(|&i| p.host[i]).collect();
     hosts.sort_unstable();
     hosts.dedup();
     let from = ctx.sessions.first().map(|s| s.started).unwrap_or(0);
@@ -231,6 +295,9 @@ fn capture_metrics(ctx: &Ctx) -> Vec<Metric> {
         Metric { label: l("Errors and failures", "Fehler und Abbrüche"), ..Metric::new("errors", "", errors as f64, Unit::Count) },
         Metric { label: l("Operations", "Vorgänge"), ..Metric::new("operations", "", ctx.ops.len() as f64, Unit::Count) },
     ];
+    if open > 0 {
+        m.push(Metric { label: l("Still open at capture end", "Bei Aufzeichnungsende noch offen"), ..Metric::new("open", "", open as f64, Unit::Count) });
+    }
     if span_ms > 0.0 {
         m.push(Metric { label: l("Requests per second", "Requests pro Sekunde"), ..Metric::new("rate", "", http.len() as f64 / (span_ms / 1000.0), Unit::Rate) });
     }

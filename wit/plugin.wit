@@ -83,8 +83,10 @@ interface header-inspector {
 /// Added in API 1 without changing the other interfaces.
 ///
 /// The host streams the sessions in batches (time order) into one `run`; `finish`
-/// returns the report as JSON (schema: plugins/webdiag/REPORT.md). Header values that
-/// carry secrets are redacted by the host before they reach the plugin.
+/// returns the report as JSON (schema: plugins/webdiag/REPORT.md). Credentials in
+/// headers and URLs are redacted by the host before they reach the plugin (REPORT.md).
+/// Deadlines: 10 s per `push` and for the constructor, 60 s for `finish`; the report
+/// may be at most 64 MiB. A cancelled run is interrupted, even inside a call.
 interface analyzer {
     record info {
         /// Stable id, e.g. `io.github.hkiam.webdiag`.
@@ -119,7 +121,9 @@ interface analyzer {
         started: u64,
         duration-ms: option<u32>,
         method: string,
-        /// Absolute URL (scheme, host, path, query).
+        /// Absolute URL (scheme, host, path, query) with user info and sensitive or long
+        /// query/fragment values replaced by `%3Cn%20bytes%3E` (REPORT.md); at most
+        /// 8 KiB. Tunnels (`kind` = `tunnel`) carry the authority form `host:port`.
         url: string,
         host: string,
         /// `HTTP/1.1`, `HTTP/2`, … as captured.
@@ -128,12 +132,14 @@ interface analyzer {
         status: u16,
         /// Connect failure, timeout, reset, abort … as reported by the proxy.
         error: option<string>,
-        /// Body sizes: as transferred (wire) and decoded.
+        /// Body sizes: as transferred (wire) and decoded. `response-decoded-bytes` is a
+        /// lower bound above 256 MiB (decoding stops there).
         request-bytes: u64,
         response-bytes: u64,
         response-decoded-bytes: u64,
         content-type: string,
-        /// Allow-listed headers in wire order; secrets redacted (see REPORT.md).
+        /// Allow-listed headers in wire order (at most 256), secrets redacted, values
+        /// at most 8 KiB (see REPORT.md).
         request-headers: list<tuple<string, string>>,
         response-headers: list<tuple<string, string>>,
         timers: timers,

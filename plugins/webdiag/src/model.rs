@@ -74,6 +74,17 @@ impl Session {
     pub fn resp_headers<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         self.response_headers.iter().filter(move |(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
     }
+    /// The capture knows when the session ended (a duration or a response-end timer).
+    /// Sessions without one (still open at capture end, sparse imports) have no usable
+    /// timing: `end()` falls back to the start, so they must not count as zero-length
+    /// requests in timing statistics or dependency chains.
+    pub fn has_end(&self) -> bool {
+        self.duration_ms.is_some() || self.timers.client_done_response.is_some() || self.timers.server_done_response.is_some()
+    }
+    /// Still open at capture end: no response, no error and no end.
+    pub fn incomplete(&self) -> bool {
+        self.status == 0 && self.error.is_none() && !self.has_end()
+    }
     /// End in µs since the epoch (start + duration when the timers are missing).
     pub fn end(&self) -> u64 {
         self.timers
@@ -110,9 +121,10 @@ impl Session {
     pub fn mime(&self) -> String {
         self.content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase()
     }
-    /// Failed without a usable response (connect error, timeout, reset …).
+    /// Failed without a usable response (connect error, timeout, reset …). A session that
+    /// was still open at capture end ([`Session::incomplete`]) has not failed.
     pub fn failed(&self) -> bool {
-        self.error.is_some() || self.status == 0
+        self.error.is_some() || (self.status == 0 && self.has_end())
     }
 }
 
@@ -322,6 +334,11 @@ pub struct Operation {
     /// Recurring background requests (timers, polling), not a user action: per-operation
     /// checks (N+1, chattiness, latency chains …) skip it.
     pub background: bool,
+    /// The main request (`ops::main_request`): session index, the source of the label.
+    pub main: usize,
+    /// Critical path (`net::critical_path`): session indexes in time order; its length is
+    /// the `sequentialLevels` metric.
+    pub critical_path: Vec<usize>,
 }
 
 // ------------------------------------------------------------------ options
@@ -379,10 +396,31 @@ impl Default for Options {
 // ------------------------------------------------------------------ analysis context
 
 /// Everything an analyzer sees. `sessions` are sorted by start time.
+///
+/// Per-session derived data (canonical form, template, endpoint, host, MIME type …) is
+/// computed once per run, on first use, and shared by all analyzers: [`Ctx::prep`].
 pub struct Ctx<'a> {
     pub sessions: &'a [Session],
     pub ops: &'a [Operation],
     pub opts: &'a Options,
+    prep: std::cell::OnceCell<crate::prep::Prep>,
+}
+
+impl<'a> Ctx<'a> {
+    pub fn new(sessions: &'a [Session], ops: &'a [Operation], opts: &'a Options) -> Ctx<'a> {
+        Ctx { sessions, ops, opts, prep: std::cell::OnceCell::new() }
+    }
+    /// The shared per-run preparation (built on first use).
+    pub fn prep(&self) -> &crate::prep::Prep {
+        self.prep.get_or_init(|| crate::prep::Prep::build(self.sessions, self.ops))
+    }
+    /// Index of `s` in `sessions`; `s` must be an element of `sessions` (as every session
+    /// reached through the context is), so that per-session data of [`Ctx::prep`] applies.
+    pub fn index_of(&self, s: &Session) -> usize {
+        let i = (s as *const Session as usize).wrapping_sub(self.sessions.as_ptr() as usize) / std::mem::size_of::<Session>().max(1);
+        debug_assert!(i < self.sessions.len() && std::ptr::eq(&self.sessions[i], s), "session not from this context");
+        i
+    }
 }
 
 impl Ctx<'_> {
@@ -399,10 +437,6 @@ impl Ctx<'_> {
     /// HTTP sessions only (no tunnels / WebSocket frames), in start order.
     pub fn http(&self) -> impl Iterator<Item = &Session> {
         self.sessions.iter().filter(|s| s.is_http())
-    }
-    /// Operation containing session index `i`.
-    pub fn op_of(&self, i: usize) -> Option<&Operation> {
-        self.ops.iter().find(|o| o.members.binary_search(&i).is_ok())
     }
     pub fn fmt_ms(&self, ms: f64) -> String {
         crate::fmt::ms(ms, self.opts.lang)

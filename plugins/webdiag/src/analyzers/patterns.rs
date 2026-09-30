@@ -3,13 +3,13 @@
 //!
 //! | Rule | Looks for | Threshold |
 //! |---|---|---|
-//! | `DUP-EXACT` | identical GET/HEAD (method, raw URL, body hash) | ≥ 2; warning ≥ 5, critical: one URL ≥ 20× or ≥ 25 % of all requests |
-//! | `DUP-SUBMIT` | identical POST/PATCH within 5 s | ≥ 2 warning, ≥ 3 critical |
+//! | `DUP-EXACT` | identical GET/HEAD (method, raw URL, body hash), without static reloads (CACHE) | ≥ 2; warning ≥ 5, critical: one URL ≥ 20× or ≥ 25 % of all requests |
+//! | `DUP-SUBMIT` | identical POST/PATCH within 5 s of the group's first request | ≥ 2 warning, ≥ 3 critical |
 //! | `DUP-SEMANTIC` | same `canon::canonical`, different raw URL | ≥ 2 variants; warning ≥ 5 requests |
 //! | `DUP-REFRESH` | same GET reloaded within 30 s, response unchanged | ≥ 3 unchanged reloads; warning ≥ 10 |
 //! | `PAT-NPLUS1` | one `canon::template` varying in one position | ≥ 10 in an operation; critical ≥ 50 or ≥ 20 sequential |
 //! | `PAT-POLLING` | one template at a regular interval | ≥ 5, CV < 0.3, ≥ 1 s; warning < 5 s or ≥ 60 polls |
-//! | `PAT-RETRY` | same request again after a failure | within 30 s; critical: storm or non-idempotent |
+//! | `PAT-RETRY` | same request again after a failure (not polls of a healthy polling series) | within 30 s; critical: storm or non-idempotent |
 //! | `PAT-CHATTY` | operations with many requests | ≥ 50 or ≥ 20/s; critical ≥ 150 |
 //! | `ODATA-QUERY` / `ODATA-PAGING` | large unbounded/unselected OData queries; overlapping pages | ≥ 1 MiB |
 //! | `NET-LATENCY` | long sequential chains | ≥ 10 levels |
@@ -23,17 +23,17 @@
 //! request) are merged into one finding per main request (key = rule + main endpoint),
 //! describing the worst occurrence.
 //!
-//! The expensive per-session preparation (canonical form, template, operation index) is
-//! shared by all analyzers of one run through a per-thread cache ([`Prep`]), which
-//! `ops::segment` invalidates at the start of each run. Everything is O(n log n).
-use std::cell::{OnceCell, RefCell};
+//! The expensive per-session preparation (canonical form, template, endpoint, operation
+//! index) is shared by all analyzers of one run through `Ctx::prep` ([`Prep`]), and so are
+//! the polling series, retries, N+1 clusters and critical paths computed here. Everything
+//! is O(n log n).
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use crate::canon;
 use crate::model::{Analyzer, Confidence, Ctx, Finding, Network, Session, Severity};
 use crate::net;
 use crate::ops;
+use crate::prep::{NONE, Prep};
 use crate::util::{self, MAX_PER_RULE};
 
 pub fn all() -> Vec<Box<dyn Analyzer>> {
@@ -98,92 +98,8 @@ pub const HEAVY_BYTES: u64 = 10 << 20;
 
 // ------------------------------------------------------------------ shared preparation
 
-const NONE: u32 = u32::MAX;
-
-/// Per-session data shared by the analyzers of one run (see module docs).
-pub(crate) struct Prep {
-    key: (usize, usize, usize, usize),
-    /// Indexes of HTTP sessions, in start order.
-    http: Vec<usize>,
-    /// Operation index per session (`NONE` for non-HTTP).
-    op: Vec<u32>,
-    /// Interned `canon::canonical` (with request body hash) per session.
-    canon: Vec<u32>,
-    canon_str: Vec<String>,
-    /// Interned `canon::template` key and its variables per session.
-    tmpl: Vec<u32>,
-    tmpl_str: Vec<String>,
-    vars: Vec<Vec<(String, String)>>,
-    rtt: net::RttEstimate,
-    chains: OnceCell<Vec<Vec<usize>>>,
-    retries: OnceCell<Retries>,
-    polls: OnceCell<Vec<Poll>>,
-    in_poll: OnceCell<Vec<bool>>,
-    nplus1: OnceCell<Vec<NPlus1>>,
-}
-
-thread_local! {
-    static CACHE: RefCell<Option<Rc<Prep>>> = const { RefCell::new(None) };
-}
-
-/// Drop the shared preparation (called by `ops::segment` for every new run).
-pub(crate) fn invalidate_cache() {
-    CACHE.with(|c| *c.borrow_mut() = None);
-}
-
-fn intern(map: &mut HashMap<String, u32>, strs: &mut Vec<String>, s: String) -> u32 {
-    if let Some(&id) = map.get(&s) {
-        return id;
-    }
-    let id = strs.len() as u32;
-    strs.push(s.clone());
-    map.insert(s, id);
-    id
-}
-
-fn prep(ctx: &Ctx) -> Rc<Prep> {
-    let key = (ctx.sessions.as_ptr() as usize, ctx.sessions.len(), ctx.ops.as_ptr() as usize, ctx.ops.len());
-    if let Some(p) = CACHE.with(|c| c.borrow().as_ref().filter(|p| p.key == key).cloned()) {
-        return p;
-    }
-    let p = Rc::new(Prep::build(ctx, key));
-    CACHE.with(|c| *c.borrow_mut() = Some(p.clone()));
-    p
-}
-
+/// Lazily computed results in the shared per-run preparation (`prep::Prep`).
 impl Prep {
-    fn build(ctx: &Ctx, key: (usize, usize, usize, usize)) -> Prep {
-        let n = ctx.sessions.len();
-        let mut op = vec![NONE; n];
-        for (k, o) in ctx.ops.iter().enumerate().filter(|(_, o)| !o.background) {
-            for &m in &o.members {
-                if m < n {
-                    op[m] = k as u32;
-                }
-            }
-        }
-        let (mut cmap, mut tmap) = (HashMap::new(), HashMap::new());
-        let (mut canon_str, mut tmpl_str) = (vec![], vec![]);
-        let (mut canon, mut tmpl, mut vars) = (vec![NONE; n], vec![NONE; n], vec![vec![]; n]);
-        let mut http = vec![];
-        for (i, s) in ctx.sessions.iter().enumerate() {
-            if !s.is_http() {
-                continue;
-            }
-            http.push(i);
-            canon[i] = intern(&mut cmap, &mut canon_str, canon::canonical(&s.method, &s.url, s.request_body_hash));
-            let t = canon::template(&s.method, &s.url);
-            tmpl[i] = intern(&mut tmap, &mut tmpl_str, t.key);
-            vars[i] = t.vars;
-        }
-        let rtt = net::observed_rtt(ctx.sessions, &http);
-        Prep { key, http, op, canon, canon_str, tmpl, tmpl_str, vars, rtt, chains: OnceCell::new(), retries: OnceCell::new(), polls: OnceCell::new(), in_poll: OnceCell::new(), nplus1: OnceCell::new() }
-    }
-
-    /// Critical path per operation.
-    fn chains(&self, ctx: &Ctx) -> &Vec<Vec<usize>> {
-        self.chains.get_or_init(|| ctx.ops.iter().map(|o| net::critical_path(ctx.sessions, &o.members)).collect())
-    }
     fn retries(&self, ctx: &Ctx) -> &Retries {
         self.retries.get_or_init(|| find_retries(ctx, self))
     }
@@ -195,6 +111,20 @@ impl Prep {
         self.in_poll.get_or_init(|| {
             let mut v = vec![false; ctx.sessions.len()];
             for poll in self.polls(ctx) {
+                for &i in &poll.members {
+                    v[i] = true;
+                }
+            }
+            v
+        })
+    }
+    /// Per session: member of a polling series that started out healthy (its first poll
+    /// did not fail). Failures in such a series are polls that happened to hit an outage,
+    /// not retries; a series that starts with a failure may be a fixed-interval retry loop.
+    fn timer_driven(&self, ctx: &Ctx) -> &Vec<bool> {
+        self.timer_driven.get_or_init(|| {
+            let mut v = vec![false; ctx.sessions.len()];
+            for poll in self.polls(ctx).iter().filter(|x| !is_failure(&ctx.sessions[x.members[0]])) {
                 for &i in &poll.members {
                     v[i] = true;
                 }
@@ -259,10 +189,7 @@ fn set_op(f: Finding, ctx: &Ctx, k: u32) -> Finding {
 }
 /// Stable subject of an operation: the endpoint of its main request.
 fn op_subject(ctx: &Ctx, k: usize) -> String {
-    let o = &ctx.ops[k];
-    let main = ops::main_request(ctx.sessions, &o.members).unwrap_or(o.members[0]);
-    let s = &ctx.sessions[main];
-    canon::endpoint(&s.method, &s.url)
+    ctx.prep().endpoint_of(ctx.ops[k].main).to_string()
 }
 /// The network profile with the highest RTT (for "worst case" texts).
 fn worst_rtt_net<'a>(ctx: &Ctx<'a>) -> Option<&'a Network> {
@@ -391,15 +318,17 @@ impl Analyzer for DupExact {
         &["performance", "modernization"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
+        let p = ctx.prep();
         // Polling series are reported by PAT-POLLING; authentication challenges and failures
         // that are repeated are reported by AUTH-FAIL and PAT-RETRY.
         let in_poll = p.in_poll(ctx);
+        // Full reloads of static resources are reported by CACHE (reload).
+        let reloads = crate::analyzers::request::cache_reloads(ctx);
         let reported_elsewhere = |s: &Session| s.failed() || matches!(s.status, 401 | 407 | 408 | 429) || s.status >= 500;
-        let cand = p.http.iter().copied().filter(|&i| is_get(&ctx.sessions[i]) && !in_poll[i] && !reported_elsewhere(&ctx.sessions[i]));
+        let cand = p.http.iter().copied().filter(|&i| is_get(&ctx.sessions[i]) && !in_poll[i] && !reloads[i] && !reported_elsewhere(&ctx.sessions[i]));
         let exact = util::group_by(cand, |&i| {
             let s = &ctx.sessions[i];
-            (upper(&s.method), s.url.as_str(), s.request_body_hash)
+            (p.method[i], s.url.as_str(), s.request_body_hash)
         });
         // Aggregate the exact groups by canonical request.
         let dups = exact.into_iter().filter(|(_, v)| v.len() >= 2).map(|(_, v)| v);
@@ -430,7 +359,7 @@ impl Analyzer for DupExact {
             let occurrences = n_rep + groups.len();
             let mut f = Finding::new(
                 "DUP-EXACT",
-                &p.canon_str[c as usize],
+                &p.canon_str(c),
                 severity,
                 format!("{} {}", ctx.l("Repeated identical requests:", "Wiederholte identische Requests:"), util::short(&canon::endpoint(&first.method, &first.url), 80)),
                 if ctx.de() {
@@ -538,7 +467,7 @@ impl Analyzer for DupSubmit {
         &["troubleshooting", "resilience"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
+        let p = ctx.prep();
         // The body must be known: hashed, or empty.
         let cand = p.http.iter().copied().filter(|&i| {
             let s = &ctx.sessions[i];
@@ -546,17 +475,19 @@ impl Analyzer for DupSubmit {
         });
         let groups = util::group_by(cand, |&i| {
             let s = &ctx.sessions[i];
-            (upper(&s.method), s.url.as_str(), s.request_body_hash)
+            (p.method[i], s.url.as_str(), s.request_body_hash)
         });
         let mut clusters: Vec<Vec<usize>> = vec![];
         for (_, list) in groups {
             let mut cur: Vec<usize> = vec![];
             for &i in &list {
                 let s = &ctx.sessions[i];
-                let joins = cur.last().is_some_and(|&j| {
+                // The window is measured from the group's first request, so a group never
+                // spans more than 5 s.
+                let joins = cur.first().zip(cur.last()).is_some_and(|(&f, &j)| {
                     let prev = &ctx.sessions[j];
                     // After a failure it is a retry (PAT-RETRY), not a double submission.
-                    since_ms(prev.started, s.started) <= SUBMIT_WINDOW_MS && !is_failure(prev)
+                    since_ms(ctx.sessions[f].started, s.started) <= SUBMIT_WINDOW_MS && !is_failure(prev)
                 });
                 if !joins {
                     if cur.len() >= 2 {
@@ -570,12 +501,10 @@ impl Analyzer for DupSubmit {
                 clusters.push(cur);
             }
         }
-        let by_ep = util::group_by(clusters, |c| {
-            let s = &ctx.sessions[c[0]];
-            canon::endpoint(&s.method, &s.url)
-        });
+        let by_ep = util::group_by(clusters, |c| p.endpoint[c[0]]);
         let mut fs = vec![];
         for (ep, cl) in by_ep {
+            let ep = &p.endpoint_strs[ep as usize];
             let all: Vec<usize> = cl.iter().flatten().copied().collect();
             let largest = cl.iter().map(|c| c.len()).max().unwrap_or(0);
             let extra: usize = cl.iter().map(|c| c.len() - 1).sum();
@@ -588,9 +517,9 @@ impl Analyzer for DupSubmit {
             let query_like = ["graphql", "search", "query", "find", "$batch"].iter().any(|k| path.contains(k));
             let mut f = Finding::new(
                 "DUP-SUBMIT",
-                &ep,
+                ep,
                 if largest >= 3 { Severity::Critical } else { Severity::Warning },
-                format!("{} {}", ctx.l("Possible double submission:", "Mögliches doppeltes Absenden:"), util::short(&ep, 80)),
+                format!("{} {}", ctx.l("Possible double submission:", "Mögliches doppeltes Absenden:"), util::short(ep, 80)),
                 if ctx.de() {
                     format!(
                         "{} identische {}-Requests (gleiche URL und gleicher Body) wurden innerhalb von {} gesendet, in {} Gruppe(n); größte Gruppe: {}, kürzester Abstand {}.",
@@ -666,10 +595,11 @@ struct Diffs {
     cache_buster: usize,
 }
 
-fn classify_variant(base: &str, other: &str, d: &mut Diffs) {
+/// How URL variant `other` differs from `base`; each with the start of a session using it.
+fn classify_variant((base, base_start): (&str, u64), (other, other_start): (&str, u64), d: &mut Diffs) {
     let (a, b) = (canon::parse(base), canon::parse(other));
-    let busted = |u: &canon::Url| u.query.iter().any(|(k, v)| canon::is_cache_buster(k, v));
-    if busted(&a) || busted(&b) {
+    let busted = |u: &canon::Url, start: u64| u.query.iter().any(|(k, v)| canon::is_cache_buster_at(k, v, Some(start)));
+    if busted(&a, base_start) || busted(&b, other_start) {
         d.cache_buster += 1;
         return;
     }
@@ -694,7 +624,7 @@ impl Analyzer for DupSemantic {
         &["performance", "modernization"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
+        let p = ctx.prep();
         let cand = p.http.iter().copied().filter(|&i| is_get(&ctx.sessions[i]));
         let groups = util::group_by(cand, |&i| p.canon[i]);
         let mut fs = vec![];
@@ -706,10 +636,10 @@ impl Analyzer for DupSemantic {
             if variants.len() < 2 {
                 continue;
             }
-            let base = variants[0].0;
+            let base = (variants[0].0, ctx.sessions[variants[0].1[0]].started);
             let mut d = Diffs::default();
-            for (v, _) in &variants[1..] {
-                classify_variant(base, v, &mut d);
+            for (v, l) in &variants[1..] {
+                classify_variant(base, (v, ctx.sessions[l[0]].started), &mut d);
             }
             let first = &ctx.sessions[list[0]];
             let n = list.len();
@@ -723,12 +653,12 @@ impl Analyzer for DupSemantic {
             if d.cache_buster > 0 {
                 kinds.push(if ctx.de() { format!("Cache-Buster ({})", d.cache_buster) } else { format!("cache busters ({})", d.cache_buster) });
             }
-            let odata = canon::is_odata(&canon::parse(&first.url));
+            let odata = p.odata[list[0]];
             let wasted_ms: f64 = list[1..].iter().map(|&i| ms(&ctx.sessions[i])).sum();
             let rows: Vec<Vec<String>> = variants.iter().take(8).map(|(u, v)| vec![util::short(u, 140), ctx.fmt_count(v.len())]).collect();
             let mut f = Finding::new(
                 "DUP-SEMANTIC",
-                &p.canon_str[c as usize],
+                &p.canon_str(c),
                 if n >= 5 { Severity::Warning } else { Severity::Info },
                 format!("{} {}", ctx.l("Same request under different URLs:", "Gleicher Request unter verschiedenen URLs:"), util::short(&canon::endpoint(&first.method, &first.url), 80)),
                 if ctx.de() {
@@ -742,7 +672,7 @@ impl Analyzer for DupSemantic {
             .threshold(ctx.l("≥ 2 URL variants of one canonical request (warning from 5 requests)", "≥ 2 URL-Varianten eines kanonischen Requests (Warnung ab 5 Requests)"))
             .fact(ctx.l("Requests", "Requests"), ctx.fmt_count(n))
             .fact(ctx.l("URL variants", "URL-Varianten"), ctx.fmt_count(variants.len()))
-            .fact(ctx.l("Canonical form", "Kanonische Form"), util::short(&p.canon_str[c as usize], 160))
+            .fact(ctx.l("Canonical form", "Kanonische Form"), util::short(&p.canon_str(c), 160))
             .fact(ctx.l("Time of redundant requests (sum)", "Zeit der überflüssigen Requests (Summe)"), ctx.fmt_ms(wasted_ms))
             .table(vec![ctx.l("URL variant", "URL-Variante").into(), ctx.l("Requests", "Requests").into()], rows)
             .impact(ctx.l(
@@ -801,7 +731,7 @@ impl Analyzer for DupRefresh {
         &["performance"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
+        let p = ctx.prep();
         let in_poll = p.in_poll(ctx);
         let cand = p.http.iter().copied().filter(|&i| ctx.sessions[i].method.eq_ignore_ascii_case("GET"));
         let groups = util::group_by(cand, |&i| p.canon[i]);
@@ -841,7 +771,7 @@ impl Analyzer for DupRefresh {
             let span = since_ms(first.started, ctx.sessions[*all.last().unwrap()].started);
             let mut f = Finding::new(
                 "DUP-REFRESH",
-                &p.canon_str[c as usize],
+                &p.canon_str(c),
                 if reloads.len() >= 10 { Severity::Warning } else { Severity::Info },
                 format!("{} {}", ctx.l("Redundant refresh:", "Überflüssiges Neuladen:"), util::short(&canon::endpoint(&first.method, &first.url), 80)),
                 if ctx.de() {
@@ -896,7 +826,7 @@ impl Analyzer for DupRefresh {
 // ================================================================== PAT-NPLUS1
 
 /// One N+1 cluster: requests of one template in one operation, varying in one position.
-struct NPlus1 {
+pub(crate) struct NPlus1 {
     tmpl: u32,
     op: u32,
     members: Vec<usize>,
@@ -906,10 +836,7 @@ struct NPlus1 {
 }
 
 fn find_nplus1(ctx: &Ctx, p: &Prep) -> Vec<NPlus1> {
-    let cand = p.http.iter().copied().filter(|&i| {
-        let s = &ctx.sessions[i];
-        p.op[i] != NONE && !p.vars[i].is_empty() && !canon::is_static(&s.mime(), &s.url)
-    });
+    let cand = p.http.iter().copied().filter(|&i| p.op[i] != NONE && !p.vars[i].is_empty() && !p.is_static[i]);
     let groups = util::group_by(cand, |&i| (p.op[i], p.tmpl[i]));
     let mut out = vec![];
     for ((op, tmpl), list) in groups {
@@ -972,7 +899,7 @@ impl Analyzer for NPlusOne {
         &["performance", "modernization", "resilience"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
+        let p = ctx.prep();
         let by_tmpl = util::group_by(p.nplus1(ctx).iter(), |c| c.tmpl);
         let mut fs = vec![];
         for (t, clusters) in by_tmpl {
@@ -985,10 +912,10 @@ impl Analyzer for NPlusOne {
             let wall = since_ms(sessions[0].started, sessions.iter().map(|s| s.end()).max().unwrap_or(0));
             let sequential = worst.levels * 2 >= n;
             let first = sessions[0];
-            let odata = canon::is_odata(&canon::parse(&first.url));
+            let odata = p.odata[worst.members[0]];
             let severity = if n >= NPLUS1_CRITICAL || worst.levels >= NPLUS1_SEQ_CRITICAL { Severity::Critical } else { Severity::Warning };
             let var = var_name(ctx, &worst.var);
-            let template = &p.tmpl_str[t as usize];
+            let template = &p.tmpl_strs[t as usize];
             let mode = match (sequential, ctx.de()) {
                 (true, true) => "überwiegend nacheinander",
                 (true, false) => "mostly one after another",
@@ -1089,7 +1016,7 @@ impl Analyzer for NPlusOne {
 // ================================================================== PAT-POLLING
 
 /// One polling series: a template requested at a regular interval.
-struct Poll {
+pub(crate) struct Poll {
     tmpl: u32,
     members: Vec<usize>,
     interval_ms: f64,
@@ -1149,7 +1076,7 @@ impl Analyzer for Polling {
         &["performance", "modernization", "resilience"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
+        let p = ctx.prep();
         let by_tmpl = util::group_by(p.polls(ctx).iter(), |x| x.tmpl);
         let mut fs = vec![];
         for (t, series) in by_tmpl {
@@ -1174,7 +1101,7 @@ impl Analyzer for Polling {
             let per_hour = 3_600_000.0 / period.max(1.0);
             let mut f = Finding::new(
                 "PAT-POLLING",
-                &p.tmpl_str[t as usize],
+                &p.tmpl_strs[t as usize],
                 severity,
                 if ctx.de() {
                     format!("Polling alle {}: {}", ctx.fmt_ms(period), util::short(&canon::endpoint(&first.method, &first.url), 80))
@@ -1256,7 +1183,7 @@ impl Analyzer for Polling {
 // ================================================================== PAT-RETRY
 
 /// One retry sequence: a failed request and its repetitions.
-struct RetrySeq {
+pub(crate) struct RetrySeq {
     /// Session indexes: the first failure, then every retry.
     attempts: Vec<usize>,
     recovered: bool,
@@ -1266,14 +1193,17 @@ struct RetrySeq {
     ra_seen: usize,
 }
 
-struct Retries {
+pub(crate) struct Retries {
     seqs: Vec<RetrySeq>,
     /// The densest 10 s window of retries, if it holds ≥ `RETRY_STORM_BURST`.
     storm: Option<Vec<usize>>,
 }
 
 fn find_retries(ctx: &Ctx, p: &Prep) -> Retries {
-    let groups = util::group_by(p.http.iter().copied(), |&i| p.canon[i]);
+    // Polls of a healthy polling series keep their rhythm through an outage: they are not
+    // retries (PAT-POLLING reports them).
+    let timer = p.timer_driven(ctx);
+    let groups = util::group_by(p.http.iter().copied().filter(|&i| !timer[i]), |&i| p.canon[i]);
     let mut seqs = vec![];
     for (_, list) in groups {
         if list.len() < 2 {
@@ -1341,14 +1271,12 @@ impl Analyzer for Retry {
         &["troubleshooting", "resilience"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
+        let p = ctx.prep();
         let r = p.retries(ctx);
-        let by_ep = util::group_by(r.seqs.iter(), |s| {
-            let x = &ctx.sessions[s.attempts[0]];
-            canon::endpoint(&x.method, &x.url)
-        });
+        let by_ep = util::group_by(r.seqs.iter(), |s| p.endpoint[s.attempts[0]]);
         let mut fs = vec![];
         for (ep, seqs) in by_ep {
+            let ep = &p.endpoint_strs[ep as usize];
             let all: Vec<usize> = seqs.iter().flat_map(|s| s.attempts.iter().copied()).collect();
             let retries: usize = seqs.iter().map(|s| s.attempts.len() - 1).sum();
             let max_retries = seqs.iter().map(|s| s.attempts.len() - 1).max().unwrap_or(0);
@@ -1372,12 +1300,12 @@ impl Analyzer for Retry {
             let median_gap = util::percentile(&gaps, 50.0);
             let mut f = Finding::new(
                 "PAT-RETRY",
-                &ep,
+                ep,
                 severity,
                 if storm {
-                    format!("{} {}", ctx.l("Retry storm:", "Wiederholungssturm:"), util::short(&ep, 80))
+                    format!("{} {}", ctx.l("Retry storm:", "Wiederholungssturm:"), util::short(ep, 80))
                 } else {
-                    format!("{} {}", ctx.l("Retries after failures:", "Wiederholungen nach Fehlern:"), util::short(&ep, 80))
+                    format!("{} {}", ctx.l("Retries after failures:", "Wiederholungen nach Fehlern:"), util::short(ep, 80))
                 },
                 if ctx.de() {
                     format!(
@@ -1463,7 +1391,7 @@ impl Analyzer for Retry {
         }
         if let Some(storm) = &r.storm {
             let span = since_ms(ctx.sessions[storm[0]].started, ctx.sessions[*storm.last().unwrap()].started);
-            let mut eps: Vec<String> = storm.iter().map(|&i| canon::endpoint(&ctx.sessions[i].method, &ctx.sessions[i].url)).collect();
+            let mut eps: Vec<String> = storm.iter().map(|&i| p.endpoint_of(i).to_string()).collect();
             eps.sort();
             eps.dedup();
             out.push(
@@ -1508,7 +1436,7 @@ impl Analyzer for Chatty {
         &["performance", "modernization", "resilience"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
+        let p = ctx.prep();
         // Polling series are timer-driven, not part of the operation's chattiness.
         let in_poll = p.in_poll(ctx);
         let members: Vec<Vec<usize>> = ctx.ops.iter().map(|o| o.members.iter().copied().filter(|&i| !in_poll[i]).collect()).collect();
@@ -1530,7 +1458,7 @@ impl Analyzer for Chatty {
         for c in p.nplus1(ctx) {
             *n1_per_op.entry(c.op).or_default() += c.members.len();
         }
-        let chains = p.chains(ctx);
+        let chains: Vec<&Vec<usize>> = ctx.ops.iter().map(|o| &o.critical_path).collect();
         let mut fs = vec![];
         for (subj, k, all_ops) in by_subject(ctx, cands) {
             let o = &ctx.ops[k];
@@ -1619,9 +1547,9 @@ impl Analyzer for ODataQuery {
         &["performance", "modernization"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
-        self.queries(ctx, &p, out);
-        self.paging(ctx, &p, out);
+        let p = ctx.prep();
+        self.queries(ctx, p, out);
+        self.paging(ctx, p, out);
     }
 }
 
@@ -1644,8 +1572,11 @@ impl ODataQuery {
             if size < ODATA_LARGE_BYTES {
                 continue;
             }
+            if !p.odata[i] {
+                continue;
+            }
             let u = canon::parse(&s.url);
-            if !canon::is_odata(&u) || !is_collection_get(&u) {
+            if !is_collection_get(&u) {
                 continue;
             }
             let o = canon::odata_options(&u);
@@ -1654,9 +1585,10 @@ impl ODataQuery {
             let expand = o.iter().find(|(n, _)| n == "$expand").map(|(_, v)| canon::odata_expand_shape(v)).unwrap_or((0, 0));
             qs.push(Q { i, unbounded: !has("$top") && !has("$skiptoken") && !max_page, no_select: !has("$select"), expand, size });
         }
-        let groups = util::group_by(qs, |q| canon::endpoint(&ctx.sessions[q.i].method, &ctx.sessions[q.i].url));
+        let groups = util::group_by(qs, |q| p.endpoint[q.i]);
         let mut fs = vec![];
         for (ep, list) in groups {
+            let ep = &p.endpoint_strs[ep as usize];
             let unbounded = list.iter().filter(|q| q.unbounded).count();
             let no_select = list.iter().filter(|q| q.no_select).count();
             let deep = list.iter().filter(|q| q.expand.0 >= ODATA_EXPAND_DEPTH || q.expand.1 >= ODATA_EXPAND_ITEMS).count();
@@ -1686,9 +1618,9 @@ impl ODataQuery {
             let idx: Vec<usize> = list.iter().map(|q| q.i).collect();
             let mut f = Finding::new(
                 "ODATA-QUERY",
-                &ep,
+                ep,
                 severity,
-                format!("{} {}", ctx.l("Large OData query:", "Große OData-Abfrage:"), util::short(&ep, 80)),
+                format!("{} {}", ctx.l("Large OData query:", "Große OData-Abfrage:"), util::short(ep, 80)),
                 if ctx.de() {
                     format!("{} Abfrage(n) lieferten große Ergebnisse (bis {}, zusammen {}): {}.", ctx.fmt_count(list.len()), ctx.fmt_bytes(largest as f64), ctx.fmt_bytes(total as f64), issues.join(", "))
                 } else {
@@ -1751,7 +1683,8 @@ impl ODataQuery {
         let mut pages = vec![];
         for &i in &p.http {
             let s = &ctx.sessions[i];
-            if !s.method.eq_ignore_ascii_case("GET") {
+            // Cheap pre-check before parsing: paged OData requests carry `$top`.
+            if !s.method.eq_ignore_ascii_case("GET") || !p.odata[i] || !(s.url.contains("$top") || s.url.to_ascii_lowercase().contains("%24top")) {
                 continue;
             }
             let u = canon::parse(&s.url);
@@ -1803,8 +1736,7 @@ impl ODataQuery {
             }
             affected.sort_unstable();
             affected.dedup();
-            let s = &ctx.sessions[list[0].2];
-            hits.push((canon::endpoint(&s.method, &s.url), Hit { op, sessions: affected, repeated, overlapping, pages: list.len() }));
+            hits.push((p.endpoint_of(list[0].2).to_string(), Hit { op, sessions: affected, repeated, overlapping, pages: list.len() }));
         }
         let by_ep = util::group_by(hits, |h| h.0.clone());
         let mut fs = vec![];
@@ -1863,8 +1795,8 @@ impl Analyzer for NetLatency {
         &["performance", "resilience", "modernization"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
-        let chains = p.chains(ctx);
+        let p = ctx.prep();
+        let chains: Vec<&Vec<usize>> = ctx.ops.iter().map(|o| &o.critical_path).collect();
         let cands: Vec<(usize, f64)> = (0..ctx.ops.len()).filter(|&k| !ctx.ops[k].background).filter(|&k| chains[k].len() >= LATENCY_MIN_LEVELS).map(|k| (k, chains[k].len() as f64)).collect();
         let mut fs = vec![];
         for (subj, k, all_ops) in by_subject(ctx, cands) {
@@ -1968,14 +1900,16 @@ impl Analyzer for NetLatency {
 /// NET-BANDWIDTH: large transfers and heavy operations, transfer time per network profile.
 struct NetBandwidth;
 
+/// Estimated transfer times per network profile (`net::transfer_estimate_ms`: one round
+/// trip plus bytes over the effective throughput, the same model as PERF-LARGE-REQ/-RESP).
 fn transfer_table(ctx: &Ctx, largest: u64, total: u64) -> (Vec<String>, Vec<Vec<String>>, f64) {
     let cols = vec![
         ctx.l("Network", "Netz").into(),
         ctx.l("Bandwidth", "Bandbreite").into(),
         ctx.l("Loss", "Verlust").into(),
         ctx.l("Effective throughput", "Effektiver Durchsatz").into(),
-        ctx.l("Largest transfer", "Größte Übertragung").into(),
-        ctx.l("All transfers", "Alle Übertragungen").into(),
+        ctx.l("Largest transfer (estimated)", "Größte Übertragung (geschätzt)").into(),
+        ctx.l("All transfers (estimated)", "Alle Übertragungen (geschätzt)").into(),
     ];
     let mut worst: f64 = 0.0;
     let rows = ctx
@@ -1983,7 +1917,7 @@ fn transfer_table(ctx: &Ctx, largest: u64, total: u64) -> (Vec<String>, Vec<Vec<
         .networks
         .iter()
         .map(|n| {
-            let t = net::transfer_ms(largest, n);
+            let t = net::transfer_estimate_ms(largest, n);
             worst = worst.max(t);
             vec![
                 n.name.clone(),
@@ -1991,7 +1925,7 @@ fn transfer_table(ctx: &Ctx, largest: u64, total: u64) -> (Vec<String>, Vec<Vec<
                 format!("{} %", crate::fmt::num(n.loss_pct, 1, ctx.opts.lang)),
                 fmt_mbps(ctx, net::throughput_bps(n)),
                 ctx.fmt_ms(t),
-                ctx.fmt_ms(net::transfer_ms(total, n)),
+                ctx.fmt_ms(net::transfer_estimate_ms(total, n)),
             ]
         })
         .collect();
@@ -2042,16 +1976,17 @@ impl Analyzer for NetBandwidth {
         &["performance", "resilience"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
-        let plain = |s: &Session| canon::is_compressible(&s.mime()) && s.resp_header("content-encoding").is_none_or(|v| v.trim().eq_ignore_ascii_case("identity"));
+        let p = ctx.prep();
+        let plain = |i: usize| canon::is_compressible(p.mime_of(i)) && ctx.sessions[i].resp_header("content-encoding").is_none_or(|v| v.trim().eq_ignore_ascii_case("identity"));
         // 1. Large single transfers, per endpoint.
         let large = p.http.iter().copied().filter(|&i| {
             let s = &ctx.sessions[i];
             s.response_bytes >= ctx.opts.large_response_bytes || s.request_bytes >= ctx.opts.large_request_bytes
         });
-        let groups = util::group_by(large, |&i| canon::endpoint(&ctx.sessions[i].method, &ctx.sessions[i].url));
+        let groups = util::group_by(large, |&i| p.endpoint[i]);
         let mut fs = vec![];
         for (ep, list) in groups {
+            let ep = &p.endpoint_strs[ep as usize];
             let largest = list.iter().map(|&i| bytes(&ctx.sessions[i])).max().unwrap_or(0);
             let total: u64 = list.iter().map(|&i| bytes(&ctx.sessions[i])).sum();
             let observed = list.iter().map(|&i| ms(&ctx.sessions[i])).fold(0.0, f64::max);
@@ -2059,9 +1994,9 @@ impl Analyzer for NetBandwidth {
             let upload = list.iter().any(|&i| ctx.sessions[i].request_bytes >= ctx.opts.large_request_bytes);
             let f = Finding::new(
                 "NET-BANDWIDTH",
-                &ep,
+                ep,
                 transfer_severity(worst),
-                format!("{} {}", ctx.l("Bandwidth-sensitive transfer:", "Bandbreitenempfindliche Übertragung:"), util::short(&ep, 80)),
+                format!("{} {}", ctx.l("Bandwidth-sensitive transfer:", "Bandbreitenempfindliche Übertragung:"), util::short(ep, 80)),
                 if ctx.de() {
                     format!("{} {} übertrugen bis zu {} (zusammen {}); gemessen dauerte der längste {}.", ctx.fmt_count(list.len()), if upload { "Requests (auch Uploads)" } else { "Requests" }, ctx.fmt_bytes(largest as f64), ctx.fmt_bytes(total as f64), ctx.fmt_ms(observed))
                 } else {
@@ -2079,7 +2014,7 @@ impl Analyzer for NetBandwidth {
             .fact(ctx.l("Longest as captured", "Längste gemessen"), ctx.fmt_ms(observed))
             .table(cols, rows)
             .sessions(ids(ctx, &list));
-            let mut f = Self::common(ctx, f, list.iter().any(|&i| plain(&ctx.sessions[i])));
+            let mut f = Self::common(ctx, f, list.iter().any(|&i| plain(i)));
             let op = p.op[list[0]];
             if list.iter().all(|&i| p.op[i] == op) {
                 f = set_op(f, ctx, op);
@@ -2097,7 +2032,7 @@ impl Analyzer for NetBandwidth {
             let total = op_bytes(k);
             let largest = o.members.iter().map(|&i| bytes(&ctx.sessions[i])).max().unwrap_or(0);
             let (cols, rows, _) = transfer_table(ctx, largest, total);
-            let worst = ctx.opts.networks.iter().map(|n| net::transfer_ms(total, n)).fold(0.0, f64::max);
+            let worst = ctx.opts.networks.iter().map(|n| net::transfer_estimate_ms(total, n)).fold(0.0, f64::max);
             let f = Finding::new(
                 "NET-BANDWIDTH",
                 &format!("op:{subj}"),
@@ -2116,7 +2051,7 @@ impl Analyzer for NetBandwidth {
             .table(cols, rows)
             .operation(&o.id)
             .sessions(ops_sessions(ctx, &all_ops));
-            let f = Self::common(ctx, f, o.members.iter().any(|&i| plain(&ctx.sessions[i]) && ctx.sessions[i].response_bytes >= 100 * 1024));
+            let f = Self::common(ctx, f, o.members.iter().any(|&i| plain(i) && ctx.sessions[i].response_bytes >= 100 * 1024));
             fs.push(similar_fact(ctx, f, &all_ops));
         }
         // Distinct "more" key from the per-endpoint findings.
@@ -2145,8 +2080,8 @@ impl Analyzer for NetResilience {
         &["resilience"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let p = prep(ctx);
-        let chains = p.chains(ctx);
+        let p = ctx.prep();
+        let chains: Vec<&Vec<usize>> = ctx.ops.iter().map(|o| &o.critical_path).collect();
         let nops = ctx.ops.len();
         let mut retries = vec![0usize; nops];
         for s in &p.retries(ctx).seqs {
@@ -2173,7 +2108,7 @@ impl Analyzer for NetResilience {
             let mut fx: Vec<(String, String)> = vec![];
             let levels = chains[k].len();
             if levels >= LATENCY_MIN_LEVELS {
-                let extra = worst_rtt.map(|n| net::extra_latency_ms(net::chain_round_trips(ctx.sessions, &chains[k]), &p.rtt, n)).unwrap_or(0.0);
+                let extra = worst_rtt.map(|n| net::extra_latency_ms(net::chain_round_trips(ctx.sessions, chains[k]), &p.rtt, n)).unwrap_or(0.0);
                 fx.push((
                     ctx.l("Sequential chain", "Sequenzielle Kette").into(),
                     if ctx.de() {
@@ -2185,7 +2120,7 @@ impl Analyzer for NetResilience {
             }
             let total: u64 = o.members.iter().map(|&i| bytes(&ctx.sessions[i])).sum();
             if total >= HEAVY_BYTES {
-                let t = slow.map(|n| net::transfer_ms(total, n)).unwrap_or(0.0);
+                let t = slow.map(|n| net::transfer_estimate_ms(total, n)).unwrap_or(0.0);
                 fx.push((
                     ctx.l("Large transfers", "Große Übertragungen").into(),
                     if ctx.de() {

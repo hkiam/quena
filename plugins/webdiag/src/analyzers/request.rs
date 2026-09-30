@@ -42,13 +42,13 @@ impl Analyzer for SlowRequests {
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let limit = ctx.opts.slow_ms;
-        let slow = ctx.http().filter(|s| !s.failed() && s.duration_us() as f64 / 1000.0 > limit);
-        let mut groups = util::group_by(slow, |s| canon::endpoint(&s.method, &s.url));
-        // Worst total time first.
-        let total = |v: &[&crate::model::Session]| v.iter().map(|s| s.duration_us() as f64 / 1000.0).sum::<f64>();
-        groups.sort_by(|a, b| total(&b.1).total_cmp(&total(&a.1)));
-        for (endpoint, list) in groups.into_iter().take(MAX_PER_RULE) {
-            let times: Vec<f64> = list.iter().map(|s| s.duration_us() as f64 / 1000.0).collect();
+        let slow = ctx.http().filter(|s| !s.failed() && s.has_end() && ms(s) > limit);
+        let total = |v: &[&Session]| v.iter().map(|s| ms(s)).sum::<f64>();
+        // Worst first (severity, then total time as the score): `emit` keeps the most
+        // important ones and summarises the rest.
+        let mut findings = vec![];
+        for (endpoint, list) in util::group_by(slow, |s| endpoint(ctx, s)) {
+            let times: Vec<f64> = list.iter().map(|s| ms(s)).collect();
             let worst = times.iter().cloned().fold(0.0, f64::max);
             let median = util::percentile(&times, 50.0);
             // Where the time went: server (TTFB) or transfer (download).
@@ -58,9 +58,9 @@ impl Analyzer for SlowRequests {
             let n = list.len();
             let mut f = Finding::new(
                 "PERF-SLOW",
-                &endpoint,
+                endpoint,
                 severity,
-                format!("{} {}", ctx.l("Slow requests:", "Langsame Requests:"), util::short(&endpoint, 80)),
+                format!("{} {}", ctx.l("Slow requests:", "Langsame Requests:"), util::short(endpoint, 80)),
                 if ctx.de() {
                     format!("{} Request(s) dauerten länger als {} (Median {}, max. {}).", ctx.fmt_count(n), ctx.fmt_ms(limit), ctx.fmt_ms(median), ctx.fmt_ms(worst))
                 } else {
@@ -90,8 +90,9 @@ impl Analyzer for SlowRequests {
                 }
                 None => f = f.confidence(Confidence::Medium).recommend(ctx.l("Check the server and the network for this endpoint.", "Server und Netz für diesen Endpunkt prüfen.")),
             }
-            out.push(f.next_step(ctx.l("Open the slowest session and compare its timeline phases.", "Die langsamste Session öffnen und ihre Zeitachsen-Phasen vergleichen.")));
+            findings.push(f.next_step(ctx.l("Open the slowest session and compare its timeline phases.", "Die langsamste Session öffnen und ihre Zeitachsen-Phasen vergleichen.")));
         }
+        emit(ctx, out, findings);
     }
 }
 
@@ -105,13 +106,27 @@ fn ratio(a: usize, b: usize) -> f64 {
     if b == 0 { 0.0 } else { a as f64 / b as f64 }
 }
 
+// Per-session derived values come from the shared per-run cache (`Ctx::prep`); these
+// helpers look them up for a session of the context.
+
 /// Host of a session, lower-case (from the URL when the host field is empty).
-fn host(s: &Session) -> String {
-    if s.host.is_empty() { canon::parse(&s.url).host } else { s.host.to_ascii_lowercase() }
+fn host<'a>(ctx: &'a Ctx, s: &Session) -> &'a str {
+    ctx.prep().host_of(ctx.index_of(s))
 }
 
-fn endpoint(s: &Session) -> String {
-    canon::endpoint(&s.method, &s.url)
+/// `canon::endpoint` of a session.
+fn endpoint<'a>(ctx: &'a Ctx, s: &Session) -> &'a str {
+    ctx.prep().endpoint_of(ctx.index_of(s))
+}
+
+/// `Session::mime`.
+fn mime<'a>(ctx: &'a Ctx, s: &Session) -> &'a str {
+    ctx.prep().mime_of(ctx.index_of(s))
+}
+
+/// `canon::url_key` of a session (canonical URL without method and body).
+fn url_key_of<'a>(ctx: &'a Ctx, s: &Session) -> &'a str {
+    ctx.prep().url_key_of(ctx.index_of(s))
 }
 
 /// Decoded response size (wire size when the decoded size is unknown).
@@ -183,16 +198,32 @@ fn mbit(ctx: &Ctx, mbps: f64) -> String {
     format!("{} Mbit/s", crate::fmt::num(mbps, if mbps < 10.0 { 1 } else { 0 }, ctx.opts.lang))
 }
 
-/// Modelled time to transfer `bytes` once per network profile (one round trip plus bandwidth).
+/// Modelled time to transfer `bytes` once per network profile: one round trip plus the
+/// bytes over the effective throughput (bandwidth, limited by packet loss: `net`), the
+/// same model as NET-BANDWIDTH.
 fn transfer_table(ctx: &Ctx, bytes: f64) -> (Vec<String>, Vec<Vec<String>>) {
-    let cols = vec![ctx.l("Network", "Netz").to_string(), "RTT".into(), ctx.l("Bandwidth", "Bandbreite").to_string(), ctx.l("Estimated transfer time", "Geschätzte Übertragungszeit").to_string()];
+    let cols = vec![
+        ctx.l("Network", "Netz").to_string(),
+        "RTT".into(),
+        ctx.l("Bandwidth", "Bandbreite").to_string(),
+        ctx.l("Loss", "Verlust").to_string(),
+        ctx.l("Effective throughput", "Effektiver Durchsatz").to_string(),
+        ctx.l("Estimated transfer time", "Geschätzte Übertragungszeit").to_string(),
+    ];
     let rows = ctx
         .opts
         .networks
         .iter()
         .map(|n| {
-            let t = n.rtt_ms + bytes * 8.0 / (n.mbps * 1_000_000.0) * 1000.0;
-            vec![n.name.clone(), ctx.fmt_ms(n.rtt_ms), mbit(ctx, n.mbps), ctx.fmt_ms(t)]
+            let t = crate::net::transfer_estimate_ms(bytes.max(0.0) as u64, n);
+            vec![
+                n.name.clone(),
+                ctx.fmt_ms(n.rtt_ms),
+                mbit(ctx, n.mbps),
+                format!("{} %", crate::fmt::num(n.loss_pct, 1, ctx.opts.lang)),
+                mbit(ctx, crate::net::throughput_bps(n) / 1e6),
+                ctx.fmt_ms(t),
+            ]
         })
         .collect();
     (cols, rows)
@@ -229,15 +260,15 @@ impl Analyzer for ServerTime {
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let limit = ctx.opts.ttfb_ms;
         // All requests per endpoint and those with timers, for the share of slow ones.
-        let mut per_endpoint: HashMap<String, (usize, usize)> = HashMap::new();
+        let mut per_endpoint: HashMap<&str, (usize, usize)> = HashMap::new();
         for s in ctx.http().filter(|s| !s.failed()) {
-            let e = per_endpoint.entry(endpoint(s)).or_default();
+            let e = per_endpoint.entry(endpoint(ctx, s)).or_default();
             e.0 += 1;
             e.1 += s.ttfb_ms().is_some() as usize;
         }
         let slow = ctx.http().filter(|s| !s.failed() && s.ttfb_ms().is_some_and(|t| t > limit));
         let mut list = vec![];
-        for (ep, v) in util::group_by(slow, |s| endpoint(s)) {
+        for (ep, v) in util::group_by(slow, |s| endpoint(ctx, s)) {
             let ttfb: Vec<f64> = v.iter().filter_map(|s| s.ttfb_ms()).collect();
             let median = util::percentile(&ttfb, 50.0);
             let worst = ttfb.iter().cloned().fold(0.0, f64::max);
@@ -250,9 +281,9 @@ impl Analyzer for ServerTime {
             let severity = if median >= limit * TTFB_CRITICAL_FACTOR { Severity::Critical } else { Severity::Warning };
             let mut f = Finding::new(
                 "PERF-TTFB",
-                &ep,
+                ep,
                 severity,
-                format!("{} {}", ctx.l("High server time (TTFB):", "Hohe Serverzeit (TTFB):"), util::short(&ep, 80)),
+                format!("{} {}", ctx.l("High server time (TTFB):", "Hohe Serverzeit (TTFB):"), util::short(ep, 80)),
                 if ctx.de() {
                     format!(
                         "{} von {} Request(s) warteten länger als {} auf das erste Byte der Response (Median {}, max. {}).",
@@ -339,7 +370,7 @@ impl Analyzer for LargeRequests {
         let limit = ctx.opts.large_request_bytes;
         let large = ctx.http().filter(|s| s.request_bytes >= limit);
         let mut list = vec![];
-        for (ep, v) in util::group_by(large, |s| endpoint(s)) {
+        for (ep, v) in util::group_by(large, |s| endpoint(ctx, s)) {
             let sizes: Vec<f64> = v.iter().map(|s| s.request_bytes as f64).collect();
             let median = util::percentile(&sizes, 50.0);
             let worst = sizes.iter().cloned().fold(0.0, f64::max);
@@ -352,9 +383,9 @@ impl Analyzer for LargeRequests {
             let (cols, rows) = transfer_table(ctx, median);
             let mut f = Finding::new(
                 "PERF-LARGE-REQ",
-                &ep,
+                ep,
                 severity,
-                format!("{} {}", ctx.l("Large request bodies:", "Große Request-Bodys:"), util::short(&ep, 80)),
+                format!("{} {}", ctx.l("Large request bodies:", "Große Request-Bodys:"), util::short(ep, 80)),
                 if ctx.de() {
                     format!("{} Request(s) sendeten mindestens {} (Median {}, max. {}, insgesamt {}).", ctx.fmt_count(n), ctx.fmt_bytes(limit as f64), ctx.fmt_bytes(median), ctx.fmt_bytes(worst), ctx.fmt_bytes(total))
                 } else {
@@ -422,24 +453,24 @@ impl Analyzer for LargeResponses {
         let limit = ctx.opts.large_response_bytes;
         let large = ctx.http().filter(|s| decoded(s) >= limit);
         let mut list = vec![];
-        for (ep, v) in util::group_by(large, |s| endpoint(s)) {
+        for (ep, v) in util::group_by(large, |s| endpoint(ctx, s)) {
             let sizes: Vec<f64> = v.iter().map(|s| decoded(s) as f64).collect();
             let median = util::percentile(&sizes, 50.0);
             let worst = sizes.iter().cloned().fold(0.0, f64::max);
             let total: f64 = sizes.iter().sum();
             let wire: Vec<f64> = v.iter().map(|s| if s.response_bytes > 0 { s.response_bytes as f64 } else { decoded(s) as f64 }).collect();
             let wire_total: f64 = wire.iter().sum();
-            let types = top(v.iter().map(|s| s.mime()).filter(|m| !m.is_empty()));
-            let odata = v.iter().any(|s| canon::is_odata(&canon::parse(&s.url)));
-            let uncompressed = v.iter().any(|s| canon::is_compressible(&s.mime()) && s.resp_header("content-encoding").is_none());
+            let types = top(v.iter().map(|s| mime(ctx, s).to_string()).filter(|m| !m.is_empty()));
+            let odata = v.iter().any(|s| ctx.prep().odata[ctx.index_of(s)]);
+            let uncompressed = v.iter().any(|s| canon::is_compressible(mime(ctx, s)) && s.resp_header("content-encoding").is_none());
             let n = v.len();
             let severity = if worst >= limit as f64 * LARGE_CRITICAL_FACTOR { Severity::Critical } else { Severity::Warning };
             let (cols, rows) = transfer_table(ctx, util::percentile(&wire, 50.0));
             let mut f = Finding::new(
                 "PERF-LARGE-RESP",
-                &ep,
+                ep,
                 severity,
-                format!("{} {}", ctx.l("Large responses:", "Große Responses:"), util::short(&ep, 80)),
+                format!("{} {}", ctx.l("Large responses:", "Große Responses:"), util::short(ep, 80)),
                 if ctx.de() {
                     format!("{} Response(s) waren mindestens {} groß (Median {}, max. {}, insgesamt {}).", ctx.fmt_count(n), ctx.fmt_bytes(limit as f64), ctx.fmt_bytes(median), ctx.fmt_bytes(worst), ctx.fmt_bytes(total))
                 } else {
@@ -532,31 +563,31 @@ impl Analyzer for Compression {
                 && s.status != 304
                 && !s.method.eq_ignore_ascii_case("HEAD")
                 && d >= COMPRESS_MIN_BYTES
-                && canon::is_compressible(&s.mime())
+                && canon::is_compressible(mime(ctx, s))
                 && no_encoding(s.resp_header("content-encoding"))
                 && (s.response_bytes == 0 || s.response_bytes as f64 >= d as f64 * COMPRESS_WIRE_RATIO)
         });
-        for (h, v) in util::group_by(plain, |s| host(s)) {
+        for (h, v) in util::group_by(plain, |s| host(ctx, s)) {
             let n = v.len();
             let size: f64 = v.iter().map(|s| decoded(s) as f64).sum();
-            let saving: f64 = v.iter().map(|s| decoded(s) as f64 * saving_ratio(&s.mime())).sum();
+            let saving: f64 = v.iter().map(|s| decoded(s) as f64 * saving_ratio(mime(ctx, s))).sum();
             let no_ae = v.iter().filter(|s| no_encoding(s.req_header("accept-encoding"))).count();
             let wire_unknown = v.iter().any(|s| s.response_bytes == 0);
-            let mut eps: Vec<(String, Vec<&Session>)> = util::group_by(v.iter().copied(), |s| endpoint(s));
-            let ep_saving = |l: &[&Session]| l.iter().map(|s| decoded(s) as f64 * saving_ratio(&s.mime())).sum::<f64>();
-            eps.sort_by(|a, b| ep_saving(&b.1).total_cmp(&ep_saving(&a.1)).then(a.0.cmp(&b.0)));
+            let mut eps: Vec<(&str, Vec<&Session>)> = util::group_by(v.iter().copied(), |s| endpoint(ctx, s));
+            let ep_saving = |l: &[&Session]| l.iter().map(|s| decoded(s) as f64 * saving_ratio(mime(ctx, s))).sum::<f64>();
+            eps.sort_by(|a, b| ep_saving(&b.1).total_cmp(&ep_saving(&a.1)).then(a.0.cmp(b.0)));
             let rows: Vec<Vec<String>> = eps
                 .iter()
                 .take(8)
                 .map(|(e, l)| vec![util::short(e, 80), ctx.fmt_count(l.len()), ctx.fmt_bytes(l.iter().map(|s| decoded(s) as f64).sum()), ctx.fmt_bytes(ep_saving(l))])
                 .collect();
-            let types = top(v.iter().map(|s| s.mime()));
+            let types = top(v.iter().map(|s| mime(ctx, s).to_string()));
             let severity = if saving >= COMPRESS_WARN_SAVING { Severity::Warning } else { Severity::Info };
             let mut f = Finding::new(
                 "PERF-COMPRESS",
-                &h,
+                h,
                 severity,
-                format!("{} {}", ctx.l("Uncompressed responses:", "Unkomprimierte Responses:"), util::short(&h, 80)),
+                format!("{} {}", ctx.l("Uncompressed responses:", "Unkomprimierte Responses:"), util::short(h, 80)),
                 if ctx.de() {
                     format!("{} komprimierbare Response(s) von {} ({}) wurden ohne Content-Encoding übertragen.", ctx.fmt_count(n), h, ctx.fmt_bytes(size))
                 } else {
@@ -613,15 +644,15 @@ impl Analyzer for Compression {
                 && s.req_header("content-type").is_some_and(|c| canon::is_compressible(c.split(';').next().unwrap_or("").trim().to_ascii_lowercase().as_str()))
                 && no_encoding(s.req_header("content-encoding"))
         });
-        for (h, v) in util::group_by(plain_req, |s| host(s)) {
+        for (h, v) in util::group_by(plain_req, |s| host(ctx, s)) {
             let size: f64 = v.iter().map(|s| s.request_bytes as f64).sum();
-            let eps = top(v.iter().map(|s| endpoint(s)));
+            let eps = top(v.iter().map(|s| endpoint(ctx, s).to_string()));
             list.push(
                 Finding::new(
                     "PERF-COMPRESS",
                     &format!("request|{h}"),
                     Severity::Info,
-                    format!("{} {}", ctx.l("Uncompressed request bodies:", "Unkomprimierte Request-Bodys:"), util::short(&h, 80)),
+                    format!("{} {}", ctx.l("Uncompressed request bodies:", "Unkomprimierte Request-Bodys:"), util::short(h, 80)),
                     if ctx.de() {
                         format!("{} Request(s) an {} sendeten zusammen {} komprimierbaren Inhalt ohne Content-Encoding.", ctx.fmt_count(v.len()), h, ctx.fmt_bytes(size))
                     } else {
@@ -734,15 +765,15 @@ impl Analyzer for HttpErrors {
         &["troubleshooting"]
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
-        let mut statuses: HashMap<String, HashMap<u16, usize>> = HashMap::new();
+        let mut statuses: HashMap<&str, HashMap<u16, usize>> = HashMap::new();
         for s in ctx.http().filter(|s| s.status > 0) {
-            *statuses.entry(endpoint(s)).or_default().entry(s.status).or_default() += 1;
+            *statuses.entry(endpoint(ctx, s)).or_default().entry(s.status).or_default() += 1;
         }
         let errors = ctx.http().filter(|s| {
             s.status >= 400 && !matches!(s.status, 401 | 403 | 407) && !(s.status == 404 && canon::parse(&s.url).path.to_ascii_lowercase().ends_with("/favicon.ico"))
         });
         let mut list = vec![];
-        for ((ep, code), v) in util::group_by(errors, |s| (endpoint(s), s.status)) {
+        for ((ep, code), v) in util::group_by(errors, |s| (endpoint(ctx, s), s.status)) {
             let n = v.len();
             let dist = statuses.get(&ep).cloned().unwrap_or_default();
             let all: usize = dist.values().sum::<usize>().max(n);
@@ -765,7 +796,7 @@ impl Analyzer for HttpErrors {
                 "ERR-HTTP",
                 &format!("{ep}|{code}"),
                 severity,
-                format!("HTTP {code}: {}", util::short(&ep, 80)),
+                format!("HTTP {code}: {}", util::short(ep, 80)),
                 if ctx.de() {
                     format!("{} von {} Request(s) an {} endeten mit HTTP {} ({}).", ctx.fmt_count(n), ctx.fmt_count(all), ep, code, ctx.fmt_pct(share))
                 } else {
@@ -814,9 +845,9 @@ impl Analyzer for HttpErrors {
 
 // ------------------------------------------------------------------ NET-FAIL
 
-/// Failures of a host from this share of its requests are critical …
+/// Failures of one error class from this share of a host's requests are critical …
 const NETFAIL_CRIT_SHARE: f64 = 0.05;
-/// … if there are at least this many.
+/// … if the class has at least this many.
 const NETFAIL_CRIT_MIN: usize = 3;
 
 /// Error class of a failed session from its error text (case-insensitive).
@@ -898,25 +929,28 @@ impl Analyzer for NetFailures {
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let relevant = || ctx.sessions.iter().filter(|s| s.kind != Kind::WebSocket);
-        let mut per_host: HashMap<String, (usize, usize)> = HashMap::new();
+        let mut per_host: HashMap<&str, (usize, usize)> = HashMap::new();
         for s in relevant() {
-            let e = per_host.entry(host(s)).or_default();
+            let e = per_host.entry(host(ctx, s)).or_default();
             e.0 += 1;
             e.1 += s.failed() as usize;
         }
         let mut list = vec![];
-        for ((h, class), v) in util::group_by(relevant().filter(|s| s.failed()), |s| (host(s), error_class(s))) {
+        for ((h, class), v) in util::group_by(relevant().filter(|s| s.failed()), |s| (host(ctx, s), error_class(s))) {
             let n = v.len();
             let (all, failed) = per_host.get(&h).copied().unwrap_or((n, n));
             let share = ratio(failed, all);
-            let severity = if share >= NETFAIL_CRIT_SHARE && failed >= NETFAIL_CRIT_MIN && class != "aborted" {
+            // Severity by this class alone: one failure of a class does not become critical
+            // because the host also failed in other ways.
+            let class_share = ratio(n, all);
+            let severity = if class_share >= NETFAIL_CRIT_SHARE && n >= NETFAIL_CRIT_MIN && class != "aborted" {
                 Severity::Critical
             } else if class == "aborted" {
                 Severity::Info
             } else {
                 Severity::Warning
             };
-            let durations: Vec<f64> = v.iter().filter(|s| s.duration_ms.is_some() || s.timers.client_done_response.is_some()).map(|s| ms(s)).collect();
+            let durations: Vec<f64> = v.iter().filter(|s| s.has_end()).map(|s| ms(s)).collect();
             let messages = top(v.iter().filter_map(|s| s.error.as_deref()).map(|e| util::short(e.trim(), 80)));
             let tunnels = v.iter().filter(|s| s.kind == Kind::Tunnel).count();
             let (hyp, rec) = class_hint(ctx, class);
@@ -925,7 +959,7 @@ impl Analyzer for NetFailures {
                 "NET-FAIL",
                 &format!("{h}|{class}"),
                 severity,
-                format!("{} ({}): {}", ctx.l("Connection failures", "Verbindungsfehler"), label, util::short(&h, 80)),
+                format!("{} ({}): {}", ctx.l("Connection failures", "Verbindungsfehler"), label, util::short(h, 80)),
                 if ctx.de() {
                     format!("{} Request(s) an {} erhielten keine Antwort ({}); insgesamt scheiterten {} von {} Requests an diesen Host ({}).", ctx.fmt_count(n), h, label, ctx.fmt_count(failed), ctx.fmt_count(all), ctx.fmt_pct(share))
                 } else {
@@ -933,14 +967,15 @@ impl Analyzer for NetFailures {
                 },
             )
             .categories(&["errors", "network"])
-            .score(util::scale(n as f64, 0.0, 50.0) * 0.5 + share.min(1.0) * 50.0)
+            .score(util::scale(n as f64, 0.0, 50.0) * 0.5 + class_share.min(1.0) * 50.0)
             .threshold(if ctx.de() {
-                format!("kritisch ab {} der Requests eines Hosts (mind. {})", ctx.fmt_pct(NETFAIL_CRIT_SHARE), ctx.fmt_count(NETFAIL_CRIT_MIN))
+                format!("kritisch ab {} der Requests eines Hosts in einer Fehlerklasse (mind. {})", ctx.fmt_pct(NETFAIL_CRIT_SHARE), ctx.fmt_count(NETFAIL_CRIT_MIN))
             } else {
-                format!("critical from {} of a host's requests (at least {})", ctx.fmt_pct(NETFAIL_CRIT_SHARE), ctx.fmt_count(NETFAIL_CRIT_MIN))
+                format!("critical from {} of a host's requests in one error class (at least {})", ctx.fmt_pct(NETFAIL_CRIT_SHARE), ctx.fmt_count(NETFAIL_CRIT_MIN))
             })
             .fact(ctx.l("Error class", "Fehlerklasse"), label)
             .fact(ctx.l("Failed (this class)", "Fehlgeschlagen (diese Klasse)"), ctx.fmt_count(n))
+            .fact(ctx.l("Share of this class", "Anteil dieser Klasse"), ctx.fmt_pct(class_share))
             .fact(ctx.l("Requests to the host", "Requests an den Host"), ctx.fmt_count(all))
             .fact(ctx.l("Failed share of the host (all classes)", "Fehleranteil des Hosts (alle Klassen)"), ctx.fmt_pct(share))
             .impact(ctx.l("The affected actions fail or wait for retries; on unstable networks this gets worse.", "Die betroffenen Aktionen scheitern oder warten auf Wiederholungen; in instabilen Netzen verschärft sich das."))
@@ -999,36 +1034,59 @@ impl Analyzer for AuthFailures {
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let ss = ctx.sessions;
-        let mut by_request: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, s) in ss.iter().enumerate().filter(|(_, s)| s.is_http()) {
-            by_request.entry(canon::canonical(&s.method, &s.url, None)).or_default().push(i);
+        let p = ctx.prep();
+        // Sessions per canonical request (without body), in start order.
+        let mut by_request: Vec<Vec<usize>> = vec![];
+        let mut slot: HashMap<u32, usize> = HashMap::new();
+        for &i in &p.http {
+            let k = *slot.entry(p.request[i]).or_insert_with(|| {
+                by_request.push(vec![]);
+                by_request.len() - 1
+            });
+            by_request[k].push(i);
         }
-        let mut requests_per_host: HashMap<String, usize> = HashMap::new();
+        let mut requests_per_host: HashMap<&str, usize> = HashMap::new();
         for s in ctx.http() {
-            *requests_per_host.entry(host(s)).or_default() += 1;
+            *requests_per_host.entry(host(ctx, s)).or_default() += 1;
         }
         // Classify every 401/407: answered (a success follows within the window, possibly
-        // after further challenge legs as in NTLM) or not.
-        let mut answered = vec![];
-        let mut unanswered = vec![];
-        for (i, s) in ss.iter().enumerate().filter(|(_, s)| s.is_http() && is_challenge(s)) {
-            let list = &by_request[&canon::canonical(&s.method, &s.url, None)];
-            let pos = list.binary_search(&i).unwrap_or(0);
-            let mut prev_end = s.end();
-            let mut ok = false;
-            for &j in &list[pos + 1..] {
-                let t = &ss[j];
-                if t.started > prev_end + AUTH_RETRY_WINDOW_US {
-                    break;
+        // after further challenge legs as in NTLM) or not. One linear pass per request:
+        // clusters of sessions each starting within the window after the running maximum
+        // end; a challenge is answered when a success comes later in its cluster.
+        let mut answered_at = vec![false; ss.len()];
+        let mut challenges = vec![];
+        for list in by_request.iter().filter(|l| l.iter().any(|&i| is_challenge(&ss[i]))) {
+            let mut cluster = vec![0usize; list.len()];
+            let mut until = 0u64;
+            for (k, &i) in list.iter().enumerate() {
+                if k > 0 && ss[i].started > until.saturating_add(AUTH_RETRY_WINDOW_US) {
+                    cluster[k] = cluster[k - 1] + 1;
+                    until = 0;
+                } else if k > 0 {
+                    cluster[k] = cluster[k - 1];
                 }
-                if (200..400).contains(&t.status) {
-                    ok = true;
-                    break;
-                }
-                prev_end = prev_end.max(t.end());
+                until = until.max(ss[i].end());
             }
-            if ok { answered.push(s) } else { unanswered.push(s) }
+            let mut success_later = false;
+            for k in (0..list.len()).rev() {
+                if k + 1 < list.len() && cluster[k + 1] != cluster[k] {
+                    success_later = false;
+                }
+                let s = &ss[list[k]];
+                if is_challenge(s) {
+                    answered_at[list[k]] = success_later;
+                    challenges.push(list[k]);
+                }
+                if (200..400).contains(&s.status) {
+                    success_later = true;
+                }
+            }
         }
+        challenges.sort_unstable();
+        let (answered, unanswered): (Vec<&Session>, Vec<&Session>) = {
+            let (a, u): (Vec<usize>, Vec<usize>) = challenges.iter().partition(|&&i| answered_at[i]);
+            (a.iter().map(|&i| &ss[i]).collect(), u.iter().map(|&i| &ss[i]).collect())
+        };
         let mut list = vec![];
         let schemes_fact = |f: Finding, v: &[&Session]| {
             let offered = top(v.iter().flat_map(|s| offered_schemes(s)));
@@ -1040,7 +1098,7 @@ impl Analyzer for AuthFailures {
             f
         };
         // Normal challenges: only when frequent.
-        for (h, v) in util::group_by(answered, |s| host(s)) {
+        for (h, v) in util::group_by(answered, |s| host(ctx, s)) {
             if v.len() < AUTH_CHALLENGE_INFO_MIN {
                 continue;
             }
@@ -1050,7 +1108,7 @@ impl Analyzer for AuthFailures {
                 "AUTH-FAIL",
                 &format!("challenge|{h}"),
                 Severity::Info,
-                format!("{} {}", ctx.l("Frequent authentication challenges:", "Häufige Anmelde-Challenges:"), util::short(&h, 80)),
+                format!("{} {}", ctx.l("Frequent authentication challenges:", "Häufige Anmelde-Challenges:"), util::short(h, 80)),
                 if ctx.de() {
                     format!("{} Request(s) an {} wurden zunächst mit 401/407 beantwortet und danach erfolgreich wiederholt ({} aller Requests).", ctx.fmt_count(v.len()), h, ctx.fmt_pct(ratio(v.len(), all)))
                 } else {
@@ -1069,7 +1127,7 @@ impl Analyzer for AuthFailures {
             list.push(schemes_fact(f, &v));
         }
         // Challenges never followed by success.
-        for (ep, v) in util::group_by(unanswered, |s| endpoint(s)) {
+        for (ep, v) in util::group_by(unanswered, |s| endpoint(ctx, s)) {
             let n = v.len();
             let severity = if n >= AUTH_LOOP_MIN { Severity::Critical } else { Severity::Warning };
             let proxy = v.iter().all(|s| s.status == 407);
@@ -1080,9 +1138,9 @@ impl Analyzer for AuthFailures {
                 &format!("unauthorized|{ep}"),
                 severity,
                 if n >= AUTH_LOOP_MIN {
-                    format!("{} {}", ctx.l("Authentication loop/failure:", "Anmeldeschleife/-fehler:"), util::short(&ep, 80))
+                    format!("{} {}", ctx.l("Authentication loop/failure:", "Anmeldeschleife/-fehler:"), util::short(ep, 80))
                 } else {
-                    format!("{} {}", ctx.l("Authentication failed:", "Anmeldung fehlgeschlagen:"), util::short(&ep, 80))
+                    format!("{} {}", ctx.l("Authentication failed:", "Anmeldung fehlgeschlagen:"), util::short(ep, 80))
                 },
                 if ctx.de() {
                     format!("{} Request(s) an {} wurden mit {} abgewiesen, ohne dass innerhalb von {} ein erfolgreicher Versuch folgte.", ctx.fmt_count(n), ep, if proxy { "407" } else { "401" }, ctx.fmt_ms(AUTH_RETRY_WINDOW_US as f64 / 1000.0))
@@ -1126,13 +1184,13 @@ impl Analyzer for AuthFailures {
             );
         }
         // 403: authenticated but not allowed.
-        for (ep, v) in util::group_by(ctx.http().filter(|s| s.status == 403), |s| endpoint(s)) {
+        for (ep, v) in util::group_by(ctx.http().filter(|s| s.status == 403), |s| endpoint(ctx, s)) {
             let n = v.len();
             let f = Finding::new(
                 "AUTH-FAIL",
                 &format!("forbidden|{ep}"),
                 Severity::Warning,
-                format!("{} {}", ctx.l("Access denied (403):", "Zugriff verweigert (403):"), util::short(&ep, 80)),
+                format!("{} {}", ctx.l("Access denied (403):", "Zugriff verweigert (403):"), util::short(ep, 80)),
                 if ctx.de() { format!("{} Request(s) an {} wurden mit 403 Forbidden abgewiesen.", ctx.fmt_count(n), ep) } else { format!("{} request(s) to {} were rejected with 403 Forbidden.", ctx.fmt_count(n), ep) },
             )
             .categories(&["auth", "errors"])
@@ -1170,8 +1228,11 @@ fn windows_scheme(s: &Session) -> Option<String> {
 }
 
 fn is_token_request(s: &Session) -> bool {
+    if !s.method.eq_ignore_ascii_case("POST") {
+        return false;
+    }
     let p = canon::parse(&s.url).path.to_ascii_lowercase();
-    s.method.eq_ignore_ascii_case("POST") && (p.contains("/token") || p.contains("/oauth2") || p.contains("/connect/token"))
+    p.contains("/token") || p.contains("/oauth2") || p.contains("/connect/token")
 }
 
 /// AUTH-REPEAT: repeated authentication (Windows handshakes, token acquisition).
@@ -1186,7 +1247,7 @@ impl Analyzer for AuthRepeat {
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let mut list = vec![];
-        for (h, v) in util::group_by(ctx.http(), |s| host(s)) {
+        for (h, v) in util::group_by(ctx.http(), |s| host(ctx, s)) {
             let legs: Vec<&Session> = v.iter().copied().filter(|s| windows_scheme(s).is_some()).collect();
             // A completed handshake: the leg that is not answered with another challenge.
             let done: Vec<&Session> = legs.iter().copied().filter(|s| !is_challenge(s)).collect();
@@ -1209,7 +1270,7 @@ impl Analyzer for AuthRepeat {
                 "AUTH-REPEAT",
                 &format!("handshake|{h}"),
                 severity,
-                format!("{} {}", ctx.l("Repeated Windows authentication:", "Wiederholte Windows-Anmeldung:"), util::short(&h, 80)),
+                format!("{} {}", ctx.l("Repeated Windows authentication:", "Wiederholte Windows-Anmeldung:"), util::short(h, 80)),
                 if ctx.de() {
                     format!("{} von {} Requests an {} führten eine NTLM-/Negotiate-Anmeldung durch ({}); dazu kamen {} Challenge-Antworten (401/407).", ctx.fmt_count(done.len()), ctx.fmt_count(n), h, ctx.fmt_pct(share), ctx.fmt_count(challenges))
                 } else {
@@ -1270,7 +1331,7 @@ impl Analyzer for AuthRepeat {
             );
         }
         // Token acquisition that is not cached.
-        for (ep, v) in util::group_by(ctx.http().filter(|s| is_token_request(s)), |s| endpoint(s)) {
+        for (ep, v) in util::group_by(ctx.http().filter(|s| is_token_request(s)), |s| endpoint(ctx, s)) {
             let times: Vec<u64> = v.iter().map(|s| s.started).collect();
             let peak = util::max_in_window(&times, TOKEN_WINDOW_US);
             if peak < TOKEN_MIN {
@@ -1284,7 +1345,7 @@ impl Analyzer for AuthRepeat {
                 "AUTH-REPEAT",
                 &format!("token|{ep}"),
                 severity,
-                format!("{} {}", ctx.l("Token requested repeatedly:", "Token wiederholt angefordert:"), util::short(&ep, 80)),
+                format!("{} {}", ctx.l("Token requested repeatedly:", "Token wiederholt angefordert:"), util::short(ep, 80)),
                 if ctx.de() {
                     format!("{} Token-Anforderung(en) an {}, davon bis zu {} innerhalb von 5 Minuten.", ctx.fmt_count(v.len()), ep, ctx.fmt_count(peak))
                 } else {
@@ -1339,8 +1400,10 @@ fn redirect_target(s: &Session) -> Option<String> {
     (!loc.is_empty()).then(|| canon::resolve(&s.url, loc))
 }
 
-fn url_key(url: &str) -> String {
-    canon::canonical("GET", url, None)
+/// `canon::url_key` of a URL that is not a session's (a redirect target), for a session
+/// that started at `start_us`.
+fn url_key(url: &str, start_us: u64) -> String {
+    canon::url_key(&canon::parse(url), Some(start_us))
 }
 
 fn bare_host(h: &str) -> &str {
@@ -1363,16 +1426,19 @@ impl Analyzer for Redirects {
         if targets.iter().all(|t| t.is_none()) {
             return;
         }
-        let mut by_url: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, s) in ss.iter().enumerate().filter(|(_, s)| s.is_http()) {
-            by_url.entry(url_key(&s.url)).or_default().push(i);
+        let p = ctx.prep();
+        let mut by_url: HashMap<&str, Vec<usize>> = HashMap::new();
+        for &i in &p.http {
+            by_url.entry(p.url_key_of(i)).or_default().push(i);
         }
+        // Canonical target of every redirect.
+        let target_keys: Vec<Option<String>> = targets.iter().enumerate().map(|(i, t)| t.as_ref().map(|t| url_key(t, ss[i].started))).collect();
         // Next hop: the first later session requesting the resolved Location in time.
         let mut next: Vec<Option<usize>> = vec![None; ss.len()];
         let mut has_pred = vec![false; ss.len()];
-        for (i, t) in targets.iter().enumerate() {
+        for (i, t) in target_keys.iter().enumerate() {
             let Some(t) = t else { continue };
-            let Some(cands) = by_url.get(&url_key(t)) else { continue };
+            let Some(cands) = by_url.get(t.as_str()) else { continue };
             let deadline = ss[i].end() + REDIRECT_FOLLOW_US;
             let start = cands.partition_point(|&j| j <= i);
             if let Some(&j) = cands[start..].iter().find(|&&j| ss[j].started >= ss[i].started)
@@ -1388,18 +1454,22 @@ impl Analyzer for Redirects {
             looped: bool,
         }
         let mut chains = vec![];
+        // A chain ends at the first hop that does not redirect (an SSO round trip that
+        // returns to the start URL, which then answers, is not a loop). It is a loop when a
+        // URL already visited redirects again to the same target as before.
         for i in (0..ss.len()).filter(|&i| targets[i].is_some() && !has_pred[i]) {
             let mut hops = vec![i];
-            let mut seen: HashSet<String> = HashSet::from([url_key(&ss[i].url)]);
+            let mut seen: HashMap<&str, &str> = HashMap::from([(p.url_key_of(i), target_keys[i].as_deref().unwrap_or(""))]);
             let mut looped = false;
             let mut cur = i;
             while let Some(j) = next[cur] {
                 hops.push(j);
-                if !seen.insert(url_key(&ss[j].url)) {
+                let Some(t) = target_keys[j].as_deref() else { break };
+                if seen.insert(p.url_key_of(j), t) == Some(t) {
                     looped = true;
                     break;
                 }
-                if targets[j].is_none() || hops.len() > REDIRECT_MAX_HOPS {
+                if hops.len() > REDIRECT_MAX_HOPS {
                     break;
                 }
                 cur = j;
@@ -1409,7 +1479,7 @@ impl Analyzer for Redirects {
         }
         let mut list = vec![];
         let long = chains.into_iter().filter(|c| c.looped || c.redirects >= REDIRECT_CHAIN_MIN);
-        for ((looped, first), v) in util::group_by(long, |c| (c.looped, endpoint(&ss[c.hops[0]]))) {
+        for ((looped, first), v) in util::group_by(long, |c| (c.looped, endpoint(ctx, &ss[c.hops[0]]))) {
             let example = &v[0];
             let hops = v.iter().map(|c| c.redirects).max().unwrap_or(0);
             let total: Vec<f64> = v.iter().map(|c| (ss[*c.hops.last().unwrap_or(&c.hops[0])].end().saturating_sub(ss[c.hops[0]].started)) as f64 / 1000.0).collect();
@@ -1423,7 +1493,7 @@ impl Analyzer for Redirects {
                 "REDIRECT",
                 &subject,
                 severity,
-                format!("{title} {}", util::short(&first, 80)),
+                format!("{title} {}", util::short(first, 80)),
                 if looped {
                     if ctx.de() {
                         format!("{} Weiterleitungskette(n) ab {} führten zu einer bereits besuchten URL zurück.", ctx.fmt_count(v.len()), first)
@@ -1470,11 +1540,11 @@ impl Analyzer for Redirects {
                 a.scheme == "http" && b.scheme == "https" && bare_host(&a.host) == bare_host(&b.host)
             })
         });
-        for (h, v) in util::group_by(upgrades, |&i| bare_host(&host(&ss[i])).to_string()) {
+        for (h, v) in util::group_by(upgrades, |&i| bare_host(host(ctx, &ss[i])).to_string()) {
             if v.len() < REDIRECT_HTTPS_MIN {
                 continue;
             }
-            let hsts = ctx.http().any(|s| s.is_https() && bare_host(&host(s)) == h && s.resp_header("strict-transport-security").is_some());
+            let hsts = ctx.http().any(|s| s.is_https() && bare_host(host(ctx, s)) == h && s.resp_header("strict-transport-security").is_some());
             let (cols, rows) = rtt_table(ctx, v.len() as f64);
             let mut f = Finding::new(
                 "REDIRECT",
@@ -1522,8 +1592,9 @@ fn session_like(name: &str) -> bool {
     n.ends_with("sid") || n.contains("session") || n.contains("auth") || n.contains("token") || n.contains("jwt")
 }
 
-fn cookie_names(s: &Session) -> Vec<String> {
-    s.req_header("cookie").map(|c| c.split(';').map(|x| x.split('=').next().unwrap_or("").trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default()
+/// Cookie names of the request's Cookie header.
+fn cookie_names(s: &Session) -> impl Iterator<Item = &str> {
+    s.req_header("cookie").into_iter().flat_map(|c| c.split(';')).map(|x| x.split('=').next().unwrap_or("").trim()).filter(|x| !x.is_empty())
 }
 
 /// COOKIE: cookie attributes, size and churn from `Set-Cookie` (redacted).
@@ -1538,10 +1609,21 @@ impl Analyzer for Cookies {
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let mut list = vec![];
-        for (h, v) in util::group_by(ctx.http(), |s| host(s)) {
-            let sets: Vec<(&Session, util::SetCookie)> = v.iter().flat_map(|s| s.resp_headers("set-cookie").map(move |c| (*s, util::set_cookie(c)))).filter(|(_, c)| !c.name.is_empty()).collect();
+        // Parse all Set-Cookie headers in one pass in session order (memory-friendly), then
+        // hand them out per host.
+        let mut sets_of: HashMap<&str, Vec<(&Session, util::SetCookie)>> = HashMap::new();
+        for s in ctx.http() {
+            for c in s.resp_headers("set-cookie") {
+                let c = util::set_cookie(c);
+                if !c.name.is_empty() {
+                    sets_of.entry(host(ctx, s)).or_default().push((s, c));
+                }
+            }
+        }
+        for (h, v) in util::group_by(ctx.http(), |s| host(ctx, s)) {
+            let sets: Vec<(&Session, util::SetCookie)> = sets_of.remove(h).unwrap_or_default();
             let finding = |kind: &str, severity: Severity, title: &str, obs: String, items: &[&(&Session, util::SetCookie)]| {
-                Finding::new("COOKIE", &format!("{kind}|{h}"), severity, format!("{title} {}", util::short(&h, 80)), obs)
+                Finding::new("COOKIE", &format!("{kind}|{h}"), severity, format!("{title} {}", util::short(h, 80)), obs)
                     .categories(&["cookies"])
                     .fact(ctx.l("Cookies", "Cookies"), list_names(items.iter().map(|(_, c)| c.name.as_str()), 10))
                     .fact(ctx.l("Responses", "Responses"), ctx.fmt_count(items.iter().map(|(s, _)| s.id).collect::<HashSet<_>>().len()))
@@ -1621,9 +1703,9 @@ impl Analyzer for Cookies {
                 latest.insert(c.name.as_str(), c.bytes.unwrap_or(0) + c.name.len() as u64);
             }
             let set_bytes: u64 = latest.values().sum();
-            let (max_names, max_sess) = v.iter().map(|s| (cookie_names(s).len(), s.id)).max_by_key(|x| x.0).unwrap_or((0, 0));
+            let (max_names, max_sess) = v.iter().map(|s| (cookie_names(s).count(), s.id)).max_by_key(|x| x.0).unwrap_or((0, 0));
             if set_bytes >= COOKIE_BYTES_MAX || max_names >= COOKIE_NAMES_MAX {
-                let mut big: Vec<u64> = v.iter().filter(|s| cookie_names(s).len() >= COOKIE_NAMES_MAX).map(|s| s.id).collect();
+                let mut big: Vec<u64> = v.iter().filter(|s| cookie_names(s).count() >= COOKIE_NAMES_MAX).map(|s| s.id).collect();
                 if max_names >= COOKIE_NAMES_MAX {
                     big.push(max_sess);
                 }
@@ -1633,7 +1715,7 @@ impl Analyzer for Cookies {
                         "COOKIE",
                         &format!("size|{h}"),
                         Severity::Warning,
-                        format!("{} {}", ctx.l("Very large cookies:", "Sehr große Cookies:"), util::short(&h, 80)),
+                        format!("{} {}", ctx.l("Very large cookies:", "Sehr große Cookies:"), util::short(h, 80)),
                         if ctx.de() {
                             format!("Der Host setzt {} Cookies mit zusammen etwa {}; Requests enthielten bis zu {} Cookie-Namen.", ctx.fmt_count(latest.len()), ctx.fmt_bytes(set_bytes as f64), ctx.fmt_count(max_names))
                         } else {
@@ -1659,21 +1741,34 @@ impl Analyzer for Cookies {
                     .sessions(big),
                 );
             }
-            // The same cookie set again and again.
+            // The same cookie set again and again. Per host once: the last start of any
+            // session, of one with a Cookie header, and per cookie name of one sending it.
+            let last_start = v.iter().map(|s| s.started).max().unwrap_or(0);
+            let mut last_cookie_header: Option<u64> = None;
+            let mut last_sent: HashMap<&str, u64> = HashMap::new();
+            for s in &v {
+                if s.req_header("cookie").is_some() {
+                    last_cookie_header = last_cookie_header.max(Some(s.started));
+                    for name in cookie_names(s) {
+                        let e = last_sent.entry(name).or_insert(s.started);
+                        *e = (*e).max(s.started);
+                    }
+                }
+            }
             for (name, items) in util::group_by(sets.iter().filter(|(_, c)| !c.deletes), |(_, c)| c.name.clone()) {
                 if items.len() < COOKIE_REPEAT_MIN {
                     continue;
                 }
                 let first = items[0].0.started;
-                let later: Vec<&&Session> = v.iter().filter(|s| s.started > first).collect();
-                let returned = later.iter().any(|s| cookie_names(s).iter().any(|x| x == &name));
-                let known = later.iter().any(|s| s.req_header("cookie").is_some()) || returned;
-                let severity = if !returned && !later.is_empty() { Severity::Warning } else { Severity::Info };
+                let any_later = last_start > first;
+                let returned = last_sent.get(name.as_str()).is_some_and(|&t| t > first);
+                let known = last_cookie_header.is_some_and(|t| t > first) || returned;
+                let severity = if !returned && any_later { Severity::Warning } else { Severity::Info };
                 let mut f = Finding::new(
                     "COOKIE",
                     &format!("repeat|{h}|{name}"),
                     severity,
-                    format!("{} {} ({})", ctx.l("Cookie set repeatedly:", "Cookie wiederholt gesetzt:"), util::short(&name, 40), util::short(&h, 60)),
+                    format!("{} {} ({})", ctx.l("Cookie set repeatedly:", "Cookie wiederholt gesetzt:"), util::short(&name, 40), util::short(h, 60)),
                     if ctx.de() {
                         format!("Das Cookie {} wurde von {} {}-mal gesetzt.", name, h, ctx.fmt_count(items.len()))
                     } else {
@@ -1686,7 +1781,7 @@ impl Analyzer for Cookies {
                 .fact(ctx.l("Times set", "Anzahl gesetzt"), ctx.fmt_count(items.len()))
                 .fact(ctx.l("Sent back by the client", "Vom Client zurückgesendet"), if returned { ctx.l("yes", "ja") } else { ctx.l("no", "nein") })
                 .sessions(items.iter().map(|(s, _)| s.id));
-                f = if !returned && !later.is_empty() {
+                f = if !returned && any_later {
                     f.impact(ctx.l("The client does not send the cookie back, so the server starts a new session (or login) on every request.", "Der Client sendet das Cookie nicht zurück, daher beginnt der Server bei jedem Request eine neue Sitzung (oder Anmeldung)."))
                         .hypothesis(ctx.l(
                             "The client has no cookie store, or rejects the cookie (Secure/SameSite/Domain/Path attributes).",
@@ -1711,7 +1806,7 @@ impl Analyzer for Cookies {
 // ------------------------------------------------------------------ CACHE
 
 /// Full reloads of the same static URL from this count are a warning.
-const CACHE_RELOAD_MIN: usize = 3;
+pub(crate) const CACHE_RELOAD_MIN: usize = 3;
 /// 304 revalidations of the same resource from this count are reported (info).
 const CACHE_304_MIN: usize = 10;
 /// API GETs of the same URL with an ETag but never revalidated, from this count (info).
@@ -1734,14 +1829,35 @@ fn conditional(s: &Session) -> bool {
     s.req_header("if-none-match").is_some() || s.req_header("if-modified-since").is_some()
 }
 
+/// A full download of a static resource: GET 200 without a conditional request.
+fn full_static_download(ctx: &Ctx, s: &Session) -> bool {
+    s.method.eq_ignore_ascii_case("GET") && !s.failed() && s.status == 200 && !conditional(s) && is_static(ctx, s)
+}
+
+/// Per session: part of a static resource downloaded fully at least [`CACHE_RELOAD_MIN`]
+/// times (reported by CACHE as reloads, so DUP-EXACT leaves these sessions out).
+pub(crate) fn cache_reloads(ctx: &Ctx) -> Vec<bool> {
+    let p = ctx.prep();
+    let mut count: HashMap<u32, usize> = HashMap::new();
+    let full: Vec<usize> = p.http.iter().copied().filter(|&i| full_static_download(ctx, &ctx.sessions[i])).collect();
+    for &i in &full {
+        *count.entry(p.url_key[i]).or_default() += 1;
+    }
+    let mut v = vec![false; ctx.sessions.len()];
+    for i in full {
+        v[i] = count[&p.url_key[i]] >= CACHE_RELOAD_MIN;
+    }
+    v
+}
+
 /// Groups with the most sessions first.
-fn by_count(mut g: Vec<(String, Vec<&Session>)>) -> Vec<(String, Vec<&Session>)> {
-    g.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+fn by_count<'a>(mut g: Vec<(&'a str, Vec<&'a Session>)>) -> Vec<(&'a str, Vec<&'a Session>)> {
+    g.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
     g
 }
 
-fn is_static(s: &Session) -> bool {
-    canon::is_static(&s.mime(), &canon::parse(&s.url).path)
+fn is_static(ctx: &Ctx, s: &Session) -> bool {
+    ctx.prep().is_static.get(ctx.index_of(s)).copied().unwrap_or(false)
 }
 
 /// CACHE: static resources without caching, full reloads, revalidation instead of freshness.
@@ -1757,10 +1873,10 @@ impl Analyzer for Caching {
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let mut list = vec![];
         let gets = ctx.http().filter(|s| s.method.eq_ignore_ascii_case("GET") && !s.failed());
-        for (h, v) in util::group_by(gets, |s| host(s)) {
-            let url_rows = |groups: &[(String, Vec<&Session>)]| -> Vec<Vec<String>> { groups.iter().take(8).map(|(u, l)| vec![util::short(u, 100), ctx.fmt_count(l.len()), ctx.fmt_bytes(l.iter().map(|s| s.response_bytes as f64).sum())]).collect() };
+        for (h, v) in util::group_by(gets, |s| host(ctx, s)) {
+            let url_rows = |groups: &[(&str, Vec<&Session>)]| -> Vec<Vec<String>> { groups.iter().take(8).map(|(u, l)| vec![util::short(u, 100), ctx.fmt_count(l.len()), ctx.fmt_bytes(l.iter().map(|s| s.response_bytes as f64).sum())]).collect() };
             let cols = || vec!["URL".to_string(), ctx.l("Requests", "Requests").to_string(), ctx.l("Transferred", "Übertragen").to_string()];
-            let statics: Vec<&Session> = v.iter().copied().filter(|s| is_static(s)).collect();
+            let statics: Vec<&Session> = v.iter().copied().filter(|s| is_static(ctx, s)).collect();
             // Static resources without any freshness or validator.
             let explicit = |s: &Session| {
                 s.resp_header("cache-control").is_some_and(|c| {
@@ -1770,13 +1886,13 @@ impl Analyzer for Caching {
             };
             let bare: Vec<&Session> = statics.iter().copied().filter(|s| s.status == 200 && !cacheable(s) && !explicit(s)).collect();
             if !bare.is_empty() {
-                let g = by_count(util::group_by(bare.iter().copied(), |s| endpoint(s)));
+                let g = by_count(util::group_by(bare.iter().copied(), |s| endpoint(ctx, s)));
                 list.push(
                     Finding::new(
                         "CACHE",
                         &format!("uncacheable|{h}"),
                         Severity::Warning,
-                        format!("{} {}", ctx.l("Static resources without caching headers:", "Statische Ressourcen ohne Cache-Header:"), util::short(&h, 80)),
+                        format!("{} {}", ctx.l("Static resources without caching headers:", "Statische Ressourcen ohne Cache-Header:"), util::short(h, 80)),
                         if ctx.de() {
                             format!("{} statische Response(s) von {} ({} verschiedene) hatten weder Cache-Control max-age noch Expires, ETag oder Last-Modified.", ctx.fmt_count(bare.len()), h, ctx.fmt_count(g.len()))
                         } else {
@@ -1798,13 +1914,13 @@ impl Analyzer for Caching {
             // Static resources explicitly not cached.
             let nostore: Vec<&Session> = statics.iter().copied().filter(|s| s.status == 200 && explicit(s)).collect();
             if !nostore.is_empty() {
-                let g = by_count(util::group_by(nostore.iter().copied(), |s| endpoint(s)));
+                let g = by_count(util::group_by(nostore.iter().copied(), |s| endpoint(ctx, s)));
                 list.push(
                     Finding::new(
                         "CACHE",
                         &format!("nostore|{h}"),
                         Severity::Info,
-                        format!("{} {}", ctx.l("Static resources marked no-store/no-cache:", "Statische Ressourcen mit no-store/no-cache:"), util::short(&h, 80)),
+                        format!("{} {}", ctx.l("Static resources marked no-store/no-cache:", "Statische Ressourcen mit no-store/no-cache:"), util::short(h, 80)),
                         if ctx.de() {
                             format!("{} statische Response(s) von {} verbieten das Cachen oder erzwingen eine Revalidierung.", ctx.fmt_count(nostore.len()), h)
                         } else {
@@ -1822,8 +1938,8 @@ impl Analyzer for Caching {
                 );
             }
             // Full reloads of the same static URL.
-            let reloads: Vec<(String, Vec<&Session>)> =
-                by_count(util::group_by(statics.iter().copied().filter(|s| s.status == 200 && !conditional(s)), |s| url_key(&s.url)).into_iter().filter(|(_, l)| l.len() >= CACHE_RELOAD_MIN).collect());
+            let reloads: Vec<(&str, Vec<&Session>)> =
+                by_count(util::group_by(statics.iter().copied().filter(|s| full_static_download(ctx, s)), |s| url_key_of(ctx, s)).into_iter().filter(|(_, l)| l.len() >= CACHE_RELOAD_MIN).collect());
             if !reloads.is_empty() {
                 let n: usize = reloads.iter().map(|(_, l)| l.len()).sum();
                 let wasted: f64 = reloads.iter().map(|(_, l)| l.iter().skip(1).map(|s| s.response_bytes as f64).sum::<f64>()).sum();
@@ -1832,7 +1948,7 @@ impl Analyzer for Caching {
                     "CACHE",
                     &format!("reload|{h}"),
                     Severity::Warning,
-                    format!("{} {}", ctx.l("Static resources downloaded again and again:", "Statische Ressourcen immer wieder geladen:"), util::short(&h, 80)),
+                    format!("{} {}", ctx.l("Static resources downloaded again and again:", "Statische Ressourcen immer wieder geladen:"), util::short(h, 80)),
                     if ctx.de() {
                         format!("{} statische URL(s) von {} wurden jeweils mindestens {}-mal vollständig ohne If-None-Match/If-Modified-Since geladen ({} Requests).", ctx.fmt_count(reloads.len()), h, CACHE_RELOAD_MIN, ctx.fmt_count(n))
                     } else {
@@ -1859,8 +1975,8 @@ impl Analyzer for Caching {
                 list.push(f);
             }
             // Many 304 for the same resource: revalidation instead of freshness.
-            let revalidated: Vec<(String, Vec<&Session>)> =
-                by_count(util::group_by(statics.iter().copied().filter(|s| s.status == 304), |s| url_key(&s.url)).into_iter().filter(|(_, l)| l.len() >= CACHE_304_MIN).collect());
+            let revalidated: Vec<(&str, Vec<&Session>)> =
+                by_count(util::group_by(statics.iter().copied().filter(|s| s.status == 304), |s| url_key_of(ctx, s)).into_iter().filter(|(_, l)| l.len() >= CACHE_304_MIN).collect());
             if !revalidated.is_empty() {
                 let n: usize = revalidated.iter().map(|(_, l)| l.len()).sum();
                 let (tcols, trows) = rtt_table(ctx, n as f64);
@@ -1869,7 +1985,7 @@ impl Analyzer for Caching {
                         "CACHE",
                         &format!("revalidate|{h}"),
                         Severity::Info,
-                        format!("{} {}", ctx.l("Frequent revalidation (304):", "Häufige Revalidierung (304):"), util::short(&h, 80)),
+                        format!("{} {}", ctx.l("Frequent revalidation (304):", "Häufige Revalidierung (304):"), util::short(h, 80)),
                         if ctx.de() {
                             format!("{} statische Ressource(n) von {} wurden je mindestens {}-mal mit 304 revalidiert ({} Requests).", ctx.fmt_count(revalidated.len()), h, CACHE_304_MIN, ctx.fmt_count(n))
                         } else {
@@ -1889,8 +2005,8 @@ impl Analyzer for Caching {
                 );
             }
             // API responses with ETag the client never uses.
-            let api: Vec<(String, Vec<&Session>)> = by_count(
-                util::group_by(v.iter().copied().filter(|s| !is_static(s) && (s.status == 200 || s.status == 304)), |s| url_key(&s.url))
+            let api: Vec<(&str, Vec<&Session>)> = by_count(
+                util::group_by(v.iter().copied().filter(|s| !is_static(ctx, s) && (s.status == 200 || s.status == 304)), |s| url_key_of(ctx, s))
                     .into_iter()
                     .filter(|(_, l)| l.len() >= CACHE_ETAG_API_MIN && l.iter().any(|s| s.resp_header("etag").is_some()) && !l.iter().any(|s| conditional(s)))
                     .collect(),
@@ -1902,7 +2018,7 @@ impl Analyzer for Caching {
                         "CACHE",
                         &format!("etag|{h}"),
                         Severity::Info,
-                        format!("{} {}", ctx.l("ETags not used by the client:", "ETags vom Client nicht genutzt:"), util::short(&h, 80)),
+                        format!("{} {}", ctx.l("ETags not used by the client:", "ETags vom Client nicht genutzt:"), util::short(h, 80)),
                         if ctx.de() {
                             format!("{} API-URL(s) von {} liefern ein ETag, wurden aber {}-mal ohne If-None-Match erneut geladen.", ctx.fmt_count(api.len()), h, ctx.fmt_count(n))
                         } else {
@@ -1962,7 +2078,7 @@ impl Analyzer for ConnReuse {
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let mut list = vec![];
-        for (h, v) in util::group_by(ctx.http(), |s| host(s)) {
+        for (h, v) in util::group_by(ctx.http(), |s| host(ctx, s)) {
             let n = v.len();
             let known = v.iter().filter(|s| s.server_connection_reused || s.timers.server_connect_start.is_some()).count();
             let fresh: Vec<&Session> = v.iter().copied().filter(|s| s.new_connection()).collect();
@@ -1977,9 +2093,9 @@ impl Analyzer for ConnReuse {
                 let (cols, rows) = rtt_table(ctx, trips);
                 let mut f = Finding::new(
                     "CONN-REUSE",
-                    &h,
+                    h,
                     if warn { Severity::Warning } else { Severity::Info },
-                    format!("{} {}", ctx.l("Connections not reused:", "Verbindungen nicht wiederverwendet:"), util::short(&h, 80)),
+                    format!("{} {}", ctx.l("Connections not reused:", "Verbindungen nicht wiederverwendet:"), util::short(h, 80)),
                     if ctx.de() {
                         format!("{} von {} Requests an {} öffneten eine neue Verbindung ({}); {} mit Connection: close, {} über HTTP/1.0.", ctx.fmt_count(fresh.len()), ctx.fmt_count(n), h, ctx.fmt_pct(share), ctx.fmt_count(close), ctx.fmt_count(http10))
                     } else {
@@ -2039,7 +2155,7 @@ impl Analyzer for ConnReuse {
                             "CONN-REUSE",
                             &format!("h2|{h}"),
                             Severity::Info,
-                            format!("{} {}", ctx.l("Many parallel HTTP/1.1 requests:", "Viele parallele HTTP/1.1-Requests:"), util::short(&h, 80)),
+                            format!("{} {}", ctx.l("Many parallel HTTP/1.1 requests:", "Viele parallele HTTP/1.1-Requests:"), util::short(h, 80)),
                             if ctx.de() {
                                 format!("Bis zu {} Requests an {} liefen gleichzeitig, alle über HTTP/1.x.", ctx.fmt_count(peak), h)
                             } else {
@@ -2081,23 +2197,28 @@ impl Analyzer for TlsOld {
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let old = ctx.sessions.iter().filter(|s| s.kind != Kind::WebSocket && s.tls_version.as_deref().and_then(util::tls_version).is_some_and(|v| v < TLS_MIN));
         let mut list = vec![];
-        for (h, v) in util::group_by(old, |s| host(s)) {
+        for (h, v) in util::group_by(old, |s| host(ctx, s)) {
             let versions = top(v.iter().filter_map(|s| s.tls_version.clone()));
+            // Connections, not requests: sessions on one client connection count once
+            // (sessions without a connection id count individually).
+            let conns = v.iter().filter_map(|s| s.client_connection).collect::<HashSet<_>>().len() + v.iter().filter(|s| s.client_connection.is_none()).count();
             list.push(
                 Finding::new(
                     "TLS-OLD",
-                    &h,
+                    h,
                     Severity::Warning,
-                    format!("{} {}", ctx.l("Outdated TLS version:", "Veraltete TLS-Version:"), util::short(&h, 80)),
+                    format!("{} {}", ctx.l("Outdated TLS version:", "Veraltete TLS-Version:"), util::short(h, 80)),
                     if ctx.de() {
-                        format!("{} Verbindung(en) zu {} nutzten ein Protokoll unter TLS 1.2 ({}).", ctx.fmt_count(v.len()), h, list_top(ctx, &versions, 3))
+                        format!("{} Verbindung(en) zu {} ({} Requests) nutzten ein Protokoll unter TLS 1.2 ({}).", ctx.fmt_count(conns), h, ctx.fmt_count(v.len()), list_top(ctx, &versions, 3))
                     } else {
-                        format!("{} connection(s) to {} used a protocol below TLS 1.2 ({}).", ctx.fmt_count(v.len()), h, list_top(ctx, &versions, 3))
+                        format!("{} connection(s) to {} ({} requests) used a protocol below TLS 1.2 ({}).", ctx.fmt_count(conns), h, ctx.fmt_count(v.len()), list_top(ctx, &versions, 3))
                     },
                 )
                 .categories(&["security", "tls"])
-                .score(util::scale(v.len() as f64, 1.0, 100.0))
+                .score(util::scale(conns as f64, 1.0, 100.0))
                 .threshold("< TLS 1.2")
+                .fact(ctx.l("Connections", "Verbindungen"), ctx.fmt_count(conns))
+                .fact(ctx.l("Requests", "Requests"), ctx.fmt_count(v.len()))
                 .fact(ctx.l("Versions", "Versionen"), list_top(ctx, &versions, 4))
                 .impact(ctx.l(
                     "TLS 1.0/1.1 are deprecated and insecure; current clients and servers refuse them, so connections will start to fail.",
@@ -2135,7 +2256,7 @@ impl Analyzer for CorsPreflight {
     }
     fn run(&self, ctx: &Ctx, out: &mut Vec<Finding>) {
         let mut list = vec![];
-        for (h, v) in util::group_by(ctx.http(), |s| host(s)) {
+        for (h, v) in util::group_by(ctx.http(), |s| host(ctx, s)) {
             let pre: Vec<&Session> = v.iter().copied().filter(|s| is_preflight(s)).collect();
             if pre.is_empty() {
                 continue;
@@ -2152,7 +2273,7 @@ impl Analyzer for CorsPreflight {
                         "CORS-PREFLIGHT",
                         &format!("fail|{h}"),
                         Severity::Warning,
-                        format!("{} {}", ctx.l("Failing CORS preflights:", "Fehlschlagende CORS-Preflights:"), util::short(&h, 80)),
+                        format!("{} {}", ctx.l("Failing CORS preflights:", "Fehlschlagende CORS-Preflights:"), util::short(h, 80)),
                         if ctx.de() {
                             format!("{} Preflight(s) an {} schlugen fehl oder enthielten kein Access-Control-Allow-Origin.", ctx.fmt_count(failed.len()), h)
                         } else {
@@ -2181,15 +2302,15 @@ impl Analyzer for CorsPreflight {
             let ok: Vec<&&Session> = pre.iter().filter(|s| (200..300).contains(&s.status)).collect();
             let no_max_age = ok.iter().filter(|s| s.resp_header("access-control-max-age").is_none()).count();
             let max_ages = top(ok.iter().filter_map(|s| s.resp_header("access-control-max-age")).map(|x| x.trim().to_string()));
-            let distinct_urls = pre.iter().map(|s| url_key(&s.url)).collect::<HashSet<_>>().len();
+            let distinct_urls = pre.iter().map(|s| url_key_of(ctx, s)).collect::<HashSet<_>>().len();
             let eps = top(pre.iter().map(|s| format!("{} {}", s.req_header("access-control-request-method").unwrap_or("?").trim().to_ascii_uppercase(), canon::endpoint("", &s.url).trim_start())));
             let severity = if per_request >= PREFLIGHT_PER_REQUEST { Severity::Warning } else { Severity::Info };
             let (cols, rows) = rtt_table(ctx, pre.len() as f64);
             let mut f = Finding::new(
                 "CORS-PREFLIGHT",
-                &h,
+                h,
                 severity,
-                format!("{} {}", ctx.l("CORS preflights:", "CORS-Preflights:"), util::short(&h, 80)),
+                format!("{} {}", ctx.l("CORS preflights:", "CORS-Preflights:"), util::short(h, 80)),
                 if ctx.de() {
                     format!("{} Preflight-Request(s) an {} für {} eigentliche Requests ({} pro Request), zusammen {}.", ctx.fmt_count(pre.len()), h, ctx.fmt_count(actual), crate::fmt::num(per_request, 2, ctx.opts.lang), ctx.fmt_ms(time))
                 } else {

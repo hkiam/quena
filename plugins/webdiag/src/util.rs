@@ -1,10 +1,69 @@
 //! Small helpers shared by the analyzers.
 use std::collections::HashMap;
-use std::hash::Hash;
+use std::hash::{BuildHasherDefault, Hash, Hasher};
+
+/// A fast, non-cryptographic hasher (the "Fx" hash of rustc) for internal maps whose keys
+/// do not come from an adversary that could force collisions (session-derived strings and
+/// ids of one capture). Results never depend on hash order: maps that are iterated are
+/// sorted or keep insertion order.
+#[derive(Default, Clone, Copy)]
+pub struct FxHasher(u64);
+
+const FX_SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+
+impl FxHasher {
+    #[inline]
+    fn add(&mut self, w: u64) {
+        self.0 = (self.0.rotate_left(5) ^ w).wrapping_mul(FX_SEED);
+    }
+}
+
+impl Hasher for FxHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut c = bytes.chunks_exact(8);
+        for w in &mut c {
+            self.add(u64::from_le_bytes(w.try_into().unwrap_or([0; 8])));
+        }
+        let r = c.remainder();
+        if !r.is_empty() {
+            let mut b = [0u8; 8];
+            b[..r.len()].copy_from_slice(r);
+            self.add(u64::from_le_bytes(b));
+        }
+    }
+    #[inline]
+    fn write_u8(&mut self, i: u8) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_u16(&mut self, i: u16) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.add(i);
+    }
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// `HashMap` with [`FxHasher`].
+pub type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
 /// Group items by key, keeping the order in which keys first appear.
 pub fn group_by<T, K: Hash + Eq + Clone>(items: impl IntoIterator<Item = T>, key: impl Fn(&T) -> K) -> Vec<(K, Vec<T>)> {
-    let mut idx: HashMap<K, usize> = HashMap::new();
+    let mut idx: FxHashMap<K, usize> = FxHashMap::default();
     let mut out: Vec<(K, Vec<T>)> = vec![];
     for it in items {
         let k = key(&it);
@@ -67,10 +126,9 @@ pub const MAX_PER_RULE: usize = 10;
 
 /// Byte count of a redacted value such as `Bearer <812 bytes>` or `<40 bytes>`.
 pub fn redacted_bytes(v: &str) -> Option<u64> {
-    let start = v.find('<')? + 1;
-    let rest = &v[start..];
-    let end = rest.find(" bytes>").or_else(|| rest.find(" byte>"))?;
-    rest[..end].trim().parse().ok()
+    let rest = &v[v.find('<')? + 1..];
+    let (n, tail) = rest.split_once(' ')?;
+    (tail.starts_with("bytes>") || tail.starts_with("byte>")).then(|| n.trim().parse().ok())?
 }
 
 /// Scheme of a (redacted) authentication header: `Bearer <812 bytes>` → `Bearer`.
@@ -154,14 +212,15 @@ pub fn set_cookie(v: &str) -> SetCookie {
     for a in parts {
         let a = a.trim();
         let (k, val) = a.split_once('=').unwrap_or((a, ""));
-        let val = val.trim();
-        match k.trim().to_ascii_lowercase().as_str() {
-            "secure" => c.secure = true,
-            "httponly" => c.http_only = true,
-            "samesite" => c.same_site = Some(val.to_ascii_lowercase()),
-            "max-age" if val.parse::<i64>().is_ok_and(|n| n <= 0) => c.deletes = true,
-            "expires" if val.contains("1970") => c.deletes = true,
-            _ => {}
+        let (k, val) = (k.trim(), val.trim());
+        if k.eq_ignore_ascii_case("secure") {
+            c.secure = true;
+        } else if k.eq_ignore_ascii_case("httponly") {
+            c.http_only = true;
+        } else if k.eq_ignore_ascii_case("samesite") {
+            c.same_site = Some(val.to_ascii_lowercase());
+        } else if (k.eq_ignore_ascii_case("max-age") && val.parse::<i64>().is_ok_and(|n| n <= 0)) || (k.eq_ignore_ascii_case("expires") && val.contains("1970")) {
+            c.deletes = true;
         }
     }
     if c.bytes == Some(0) {

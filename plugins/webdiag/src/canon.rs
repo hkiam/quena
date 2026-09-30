@@ -11,6 +11,9 @@
 
 /// Percent-decode (`+` stays `+`; invalid escapes are kept), lossy UTF-8.
 pub fn decode(s: &str) -> String {
+    if !s.contains('%') {
+        return s.to_string();
+    }
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -69,18 +72,37 @@ pub fn parse(url: &str) -> Url {
         .filter(|p| !p.is_empty())
         .map(|p| {
             let (k, v) = p.split_once('=').unwrap_or((p, ""));
-            (decode(&k.replace('+', " ")), decode(&v.replace('+', " ")))
+            let dec = |x: &str| if x.contains('+') { decode(&x.replace('+', " ")) } else { decode(x) };
+            (dec(k), dec(v))
         })
         .collect();
     Url { scheme, host, path: if path.is_empty() { "/".into() } else { path.to_string() }, query }
 }
 
+/// Timestamp-like cache busters (`t`, `ts`, `timestamp`) count only when their value is
+/// within this many seconds of the session start: otherwise the value is data.
+pub const TIMESTAMP_BUSTER_WINDOW_S: f64 = 300.0;
+
 /// Query parameters that only defeat caches (dropped from `canonical` and `template`).
-fn cache_buster(name: &str, value: &str) -> bool {
+///
+/// * `_`, `_t`, `_ts`, `cb`, `cachebuster`, `nocache`, `rnd`, `rand`, `random` with a
+///   numeric value or one of at least 6 characters: always.
+/// * `t`, `ts`, `timestamp` with a numeric value of at least 10 digits: only when the value,
+///   read as seconds, milliseconds or microseconds since the epoch, lies within
+///   [`TIMESTAMP_BUSTER_WINDOW_S`] of the session start `start_us` (µs since the epoch).
+///   Without a start they are data (a time range, a history query …).
+fn cache_buster(name: &str, value: &str, start_us: Option<u64>) -> bool {
     let n = name.to_ascii_lowercase();
     let numeric = !value.is_empty() && value.chars().all(|c| c.is_ascii_digit() || c == '.');
-    matches!(n.as_str(), "_" | "_t" | "_ts" | "cb" | "cachebuster" | "nocache" | "rnd" | "rand" | "random") && (numeric || value.len() >= 6)
-        || (matches!(n.as_str(), "t" | "ts" | "timestamp" | "time") && numeric && value.len() >= 10)
+    if matches!(n.as_str(), "_" | "_t" | "_ts" | "cb" | "cachebuster" | "nocache" | "rnd" | "rand" | "random") {
+        return numeric || value.len() >= 6;
+    }
+    if !matches!(n.as_str(), "t" | "ts" | "timestamp") || !numeric || value.len() < 10 {
+        return false;
+    }
+    let (Some(start), Ok(v)) = (start_us, value.parse::<f64>()) else { return false };
+    let start_s = start as f64 / 1e6;
+    [1.0, 1e3, 1e6].iter().any(|d| (v / d - start_s).abs() <= TIMESTAMP_BUSTER_WINDOW_S)
 }
 
 fn is_hex(s: &str) -> bool {
@@ -178,7 +200,7 @@ fn odata_tokens(expr: &str) -> Vec<(bool, String)> {
                 s.push(c[i]);
                 i += 1;
             }
-            let lit = s.parse::<f64>().is_ok()
+            let lit = is_number_literal(&s)
                 || is_guid(&s)
                 || (s.len() >= 10 && s.as_bytes()[..4].iter().all(|b| b.is_ascii_digit()) && s.as_bytes()[4] == b'-') // 2024-01-01…
                 || matches!(s.as_str(), "true" | "false" | "null");
@@ -189,6 +211,16 @@ fn odata_tokens(expr: &str) -> Vec<(bool, String)> {
         }
     }
     out
+}
+
+/// A numeric OData literal, including the OData v2 typed forms `100L`, `12.5M`, `1d`, `2f`.
+fn is_number_literal(s: &str) -> bool {
+    let starts_numeric = s.starts_with(|c: char| c.is_ascii_digit() || matches!(c, '-' | '+' | '.'));
+    if !starts_numeric {
+        return false;
+    }
+    let body = s.strip_suffix(['L', 'l', 'M', 'm', 'D', 'd', 'F', 'f']).unwrap_or(s);
+    !body.is_empty() && body.parse::<f64>().is_ok()
 }
 
 fn join_tokens(tokens: &[(bool, String)]) -> String {
@@ -286,26 +318,54 @@ pub fn odata_options(url: &Url) -> Vec<(String, String)> {
 
 fn query_string(pairs: &mut [(String, String)]) -> String {
     pairs.sort();
-    pairs.iter().map(|(k, v)| if v.is_empty() { k.clone() } else { format!("{k}={v}") }).collect::<Vec<_>>().join("&")
+    let mut s = String::with_capacity(pairs.iter().map(|(k, v)| k.len() + v.len() + 2).sum());
+    for (i, (k, v)) in pairs.iter().enumerate() {
+        if i > 0 {
+            s.push('&');
+        }
+        s.push_str(k);
+        if !v.is_empty() {
+            s.push('=');
+            s.push_str(v);
+        }
+    }
+    s
 }
 
 /// The meaning of a request (see module docs). Body hash is appended when given.
+/// Timestamp-like parameters are kept (no session start known, see [`canonical_at`]).
 pub fn canonical(method: &str, url: &str, body_hash: Option<u64>) -> String {
-    let u = parse(url);
+    canonical_at(method, url, body_hash, None)
+}
+
+/// [`canonical`] for a session that started at `start_us` (µs since the epoch): timestamp
+/// parameters close to the start are cache busters (see `cache_buster`).
+pub fn canonical_at(method: &str, url: &str, body_hash: Option<u64>, start_us: Option<u64>) -> String {
+    let mut s = format!("{} {}", method.to_ascii_uppercase(), url_key(&parse(url), start_us));
+    if let Some(h) = body_hash {
+        s.push_str(&format!(" #{h:016x}"));
+    }
+    s
+}
+
+/// The canonical form without method and body: `scheme://host/path?sorted-query`.
+pub fn url_key(u: &Url, start_us: Option<u64>) -> String {
     let mut q: Vec<(String, String)> = u
         .query
         .iter()
-        .filter(|(k, v)| !cache_buster(k, v))
+        .filter(|(k, v)| !cache_buster(k, v, start_us))
         .map(|(k, v)| if k.starts_with('$') { (k.to_ascii_lowercase(), odata_option(k, v)) } else { (k.clone(), v.clone()) })
         .collect();
-    let path: String = u.path.split('/').map(decode).collect::<Vec<_>>().join("/");
-    let mut s = format!("{} {}://{}{}", method.to_ascii_uppercase(), u.scheme, u.host, path);
-    if !q.is_empty() {
-        s.push('?');
-        s.push_str(&query_string(&mut q));
-    }
-    if let Some(h) = body_hash {
-        s.push_str(&format!(" #{h:016x}"));
+    let path: std::borrow::Cow<str> = if u.path.contains('%') { u.path.split('/').map(decode).collect::<Vec<_>>().join("/").into() } else { u.path.as_str().into() };
+    let qs = if q.is_empty() { String::new() } else { query_string(&mut q) };
+    concat(&[&u.scheme, "://", &u.host, &path, if qs.is_empty() { "" } else { "?" }, &qs])
+}
+
+/// Concatenation into one allocation of the right size.
+fn concat(parts: &[&str]) -> String {
+    let mut s = String::with_capacity(parts.iter().map(|p| p.len()).sum());
+    for p in parts {
+        s.push_str(p);
     }
     s
 }
@@ -319,12 +379,33 @@ pub struct Template {
 }
 
 pub fn template(method: &str, url: &str) -> Template {
+    template_at(method, url, None)
+}
+
+/// [`template`] for a session that started at `start_us` (see [`canonical_at`]).
+pub fn template_at(method: &str, url: &str, start_us: Option<u64>) -> Template {
     let u = parse(url);
     let mut vars = vec![];
-    let path: Vec<String> = u.path.split('/').enumerate().map(|(i, s)| segment_template(s, &mut vars, i)).collect();
+    let path = path_template(&u, &mut vars);
+    template_of(method, &u, path, vars, start_us)
+}
+
+/// Templated path (`/api/users/{}/orders`); replaced segments are added to `vars`.
+fn path_template(u: &Url, vars: &mut Vec<(String, String)>) -> String {
+    let mut out = String::with_capacity(u.path.len() + 8);
+    for (i, seg) in u.path.split('/').enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        out.push_str(&segment_template(seg, vars, i));
+    }
+    out
+}
+
+fn template_of(method: &str, u: &Url, path: String, mut vars: Vec<(String, String)>, start_us: Option<u64>) -> Template {
     let mut q: Vec<(String, String)> = vec![];
     for (k, v) in &u.query {
-        if cache_buster(k, v) {
+        if cache_buster(k, v, start_us) {
             continue;
         }
         let lk = k.to_ascii_lowercase();
@@ -347,11 +428,8 @@ pub fn template(method: &str, url: &str) -> Template {
         };
         q.push((if k.starts_with('$') { lk } else { k.clone() }, val));
     }
-    let mut key = format!("{} {}://{}{}", method.to_ascii_uppercase(), u.scheme, u.host, path.join("/"));
-    if !q.is_empty() {
-        key.push('?');
-        key.push_str(&query_string(&mut q));
-    }
+    let qs = if q.is_empty() { String::new() } else { query_string(&mut q) };
+    let key = concat(&[&method.to_ascii_uppercase(), " ", &u.scheme, "://", &u.host, &path, if qs.is_empty() { "" } else { "?" }, &qs]);
     Template { key, vars }
 }
 
@@ -359,8 +437,29 @@ pub fn template(method: &str, url: &str) -> Template {
 pub fn endpoint(method: &str, url: &str) -> String {
     let u = parse(url);
     let mut vars = vec![];
-    let path: Vec<String> = u.path.split('/').enumerate().map(|(i, s)| segment_template(s, &mut vars, i)).collect();
-    format!("{} {}{}", method.to_ascii_uppercase(), u.host, path.join("/"))
+    format!("{} {}{}", method.to_ascii_uppercase(), u.host, path_template(&u, &mut vars))
+}
+
+/// Everything derived from one request URL, computed from a single parse (the per-run
+/// cache `prep::Prep` holds it for every session).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Derived {
+    pub url: Url,
+    /// [`url_key`]: canonical form without method and body.
+    pub url_key: String,
+    pub template: Template,
+    /// [`endpoint`].
+    pub endpoint: String,
+}
+
+/// [`url_key`], [`template_at`] and [`endpoint`] of one request, parsing the URL once.
+pub fn derive(method: &str, url: &str, start_us: Option<u64>) -> Derived {
+    let u = parse(url);
+    let mut vars = vec![];
+    let path = path_template(&u, &mut vars);
+    let endpoint = concat(&[&method.to_ascii_uppercase(), " ", &u.host, &path]);
+    let template = template_of(method, &u, path, vars, start_us);
+    Derived { url_key: url_key(&u, start_us), template, endpoint, url: u }
 }
 
 // ------------------------------------------------------------------ content types
@@ -403,7 +502,12 @@ pub fn is_compressible(mime: &str) -> bool {
 /// Is this query parameter a cache buster (dropped by `canonical`)? Public form of the
 /// rule used by `canonical` and `template`.
 pub fn is_cache_buster(name: &str, value: &str) -> bool {
-    cache_buster(name, value)
+    cache_buster(name, value, None)
+}
+
+/// [`is_cache_buster`] for a session that started at `start_us` (see `cache_buster`).
+pub fn is_cache_buster_at(name: &str, value: &str, start_us: Option<u64>) -> bool {
+    cache_buster(name, value, start_us)
 }
 
 /// Items of an OData list option (`$select`, `$expand`, `$orderby`), split at top-level
@@ -478,6 +582,24 @@ mod tests {
         assert_eq!(canonical("GET", "https://h/a?x=1&_=1727690000123", None), canonical("GET", "https://h/a?x=1", None));
         assert_ne!(canonical("GET", "https://h/a?page=2", None), canonical("GET", "https://h/a?page=3", None));
         assert_ne!(canonical("POST", "https://h/a", Some(1)), canonical("POST", "https://h/a", Some(2)));
+        // Timestamps are cache busters only close to the session start (s, ms or µs).
+        let start = Some(1_727_690_000_000_000);
+        assert_eq!(canonical_at("GET", "https://h/a?ts=1727690012", None, start), canonical("GET", "https://h/a", None));
+        assert_eq!(canonical_at("GET", "https://h/a?t=1727690012345", None, start), canonical("GET", "https://h/a", None));
+        assert_ne!(canonical_at("GET", "https://h/a?ts=1727000000", None, start), canonical("GET", "https://h/a", None));
+        assert_ne!(canonical("GET", "https://h/a?ts=1727690012", None), canonical("GET", "https://h/a", None));
+        // `time` is always data.
+        assert_ne!(canonical_at("GET", "https://h/a?time=1727690012", None, start), canonical("GET", "https://h/a", None));
+    }
+
+    #[test]
+    fn derive_matches_the_single_functions() {
+        for (m, u) in [("get", "https://H/api/users/42/orders?x=1&$filter=Id eq 3&_=1727690000123"), ("POST", "http://h:80/o/Cases(7)?b=2&a=1"), ("GET", "")] {
+            let d = derive(m, u, None);
+            assert_eq!(format!("{} {}", m.to_ascii_uppercase(), d.url_key), canonical(m, u, None));
+            assert_eq!(d.template, template(m, u));
+            assert_eq!(d.endpoint, endpoint(m, u));
+        }
     }
 
     #[test]
@@ -498,6 +620,14 @@ mod tests {
         assert_eq!(endpoint("get", "https://h/api/users/42?x=1"), "GET h/api/users/{}");
         let p = template("GET", "https://h/o/Docs?$top=50&$skip=100");
         assert_eq!(p.key, template("GET", "https://h/o/Docs?$skip=150&$top=50").key);
+        // OData v2 typed literals.
+        for (a, b) in [("100L", "101L"), ("12.5M", "13.25M"), ("1d", "2.5d"), ("2f", "3F")] {
+            let t = template("GET", &format!("https://h/o/Items?$filter=OrderId eq {a}"));
+            assert_eq!(t.key, template("GET", &format!("https://h/o/Items?$filter=OrderId eq {b}")).key);
+            assert_eq!(t.vars, vec![("$filter".to_string(), a.to_string())]);
+        }
+        // … but a property name ending in such a letter stays a name.
+        assert!(template("GET", "https://h/o/Items?$filter=Field eq 1").key.contains("Field eq {}"));
     }
 
     #[test]

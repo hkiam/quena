@@ -9,9 +9,18 @@
 //!    [`LONG_REQUEST_FACTOR`] × the gap, so that one hanging request does not glue the
 //!    whole capture together.
 //! 2. **Correlation.** Segments whose sessions share a W3C `traceparent` trace id or an
-//!    identical `x-correlation-id` are merged (also across processes). An id that appears
-//!    in more than [`MAX_ID_SEGMENTS`] segments is treated as a session-wide id (not an
-//!    operation id) and ignored.
+//!    identical `x-correlation-id` are merged (also across processes), but only while they
+//!    are close in time: a segment joins the previous segment with the same id only if it
+//!    starts at most [`CORRELATION_GAP_FACTOR`] × the gap after that segment ended. An id
+//!    reused for a whole user session thus does not glue separate user actions together.
+//!    An id that appears in more than [`MAX_ID_SEGMENTS`] segments is treated as a
+//!    session-wide id (not an operation id) and ignored.
+//! 3. **Background.** Single-request segments of one endpoint that recur at least
+//!    [`MIN_BACKGROUND`] times form one background operation (timers, polling,
+//!    keep-alives) when they request the same canonical URL every time, or when there
+//!    are at least [`BACKGROUND_REGULAR_MIN`] of them at a regular interval (coefficient
+//!    of variation < [`BACKGROUND_MAX_CV`]). Single requests to different resources of one
+//!    endpoint (a user opening one case after another) stay separate operations.
 //!
 //! Operations are numbered `op-1`, `op-2` … by start time; `members` are indexes into the
 //! (start-sorted) sessions, sorted. The label is the operation's main request (see
@@ -30,6 +39,14 @@ use crate::util;
 pub const LONG_REQUEST_FACTOR: f64 = 10.0;
 /// Correlation ids seen in more segments than this are session-wide and not merged.
 pub const MAX_ID_SEGMENTS: usize = 8;
+/// Segments sharing a correlation id are merged only when the later one starts at most
+/// this many operation gaps after the earlier one ended.
+pub const CORRELATION_GAP_FACTOR: f64 = 5.0;
+/// Single recurring requests of one endpoint from this count on form a background operation.
+pub const MIN_BACKGROUND: usize = 3;
+/// … with different URLs only from this count on and at a regular interval.
+pub const BACKGROUND_REGULAR_MIN: usize = 5;
+pub const BACKGROUND_MAX_CV: f64 = 0.3;
 /// Maximum length of the path part of an operation label.
 pub const LABEL_LEN: usize = 60;
 
@@ -45,7 +62,10 @@ pub fn trace_id(traceparent: &str) -> Option<&str> {
 /// The main request of an operation: the first HTML document, else the first request
 /// that is not a static resource, else the first request. Index into `sessions`.
 pub fn main_request(sessions: &[Session], members: &[usize]) -> Option<usize> {
-    let doc = |s: &Session| matches!(s.mime().as_str(), "text/html" | "application/xhtml+xml");
+    let doc = |s: &Session| {
+        let m = s.content_type.split(';').next().unwrap_or("").trim();
+        m.eq_ignore_ascii_case("text/html") || m.eq_ignore_ascii_case("application/xhtml+xml")
+    };
     members
         .iter()
         .copied()
@@ -70,14 +90,12 @@ fn find(parent: &mut [usize], mut x: usize) -> usize {
 
 /// Split the capture into operations (see module docs). `sessions` must be sorted by start.
 pub fn segment(sessions: &[Session], opts: &Options) -> Vec<Operation> {
-    // Analyzer caches refer to the previous segmentation.
-    crate::analyzers::patterns::invalidate_cache();
     let gap_us = (opts.operation_gap_ms * 1000.0) as u64;
     let cap_us = (opts.operation_gap_ms * LONG_REQUEST_FACTOR * 1000.0) as u64;
 
     // 1. Idle gaps per process.
     let mut segs: Vec<Vec<usize>> = vec![];
-    let mut streams: HashMap<&str, (usize, u64)> = HashMap::new(); // process → (segment, in flight until)
+    let mut streams: util::FxHashMap<&str, (usize, u64)> = util::FxHashMap::default(); // process → (segment, in flight until)
     for (i, s) in sessions.iter().enumerate() {
         if !s.is_http() {
             continue;
@@ -110,6 +128,9 @@ pub fn segment(sessions: &[Session], opts: &Options) -> Vec<Operation> {
             }
         }
     }
+    let seg_start: Vec<u64> = segs.iter().map(|g| sessions[g[0]].started).collect();
+    let seg_end: Vec<u64> = segs.iter().map(|g| g.iter().map(|&i| sessions[i].end()).max().unwrap_or(0)).collect();
+    let near_us = (opts.operation_gap_ms * CORRELATION_GAP_FACTOR * 1000.0) as u64;
     let mut parent: Vec<usize> = (0..segs.len()).collect();
     let mut keys: Vec<&(bool, &str)> = ids.keys().collect();
     keys.sort(); // deterministic
@@ -118,10 +139,19 @@ pub fn segment(sessions: &[Session], opts: &Options) -> Vec<Operation> {
         if v.len() < 2 || v.len() > MAX_ID_SEGMENTS {
             continue;
         }
-        for &k in &v[1..] {
-            let (a, b) = (find(&mut parent, v[0]), find(&mut parent, k));
-            if a != b {
-                parent[a.max(b)] = a.min(b);
+        // Segments are numbered in start order; chain each to the previous one with the
+        // same id if it follows closely.
+        let mut until = seg_end[v[0]];
+        for w in v.windows(2) {
+            let (prev, k) = (w[0], w[1]);
+            if seg_start[k] <= until.saturating_add(near_us) {
+                let (a, b) = (find(&mut parent, prev), find(&mut parent, k));
+                if a != b {
+                    parent[a.max(b)] = a.min(b);
+                }
+                until = until.max(seg_end[k]);
+            } else {
+                until = seg_end[k];
             }
         }
     }
@@ -136,21 +166,41 @@ pub fn segment(sessions: &[Session], opts: &Options) -> Vec<Operation> {
     }
     // 3. Background traffic: single requests of one endpoint that recur on their own (timers,
     //    polling, keep-alives) form one background operation instead of many tiny ones.
-    let single_key = |g: &Vec<usize>| (g.len() == 1).then(|| crate::canon::endpoint(&sessions[g[0]].method, &sessions[g[0]].url));
-    let mut singles: HashMap<String, usize> = HashMap::new();
-    for g in &groups {
-        if let Some(k) = single_key(g) {
-            *singles.entry(k).or_default() += 1;
+    //    Keys are computed once per single (groups are visited twice).
+    let keys: Vec<Option<String>> = groups.iter().map(|g| (g.len() == 1).then(|| crate::canon::endpoint(&sessions[g[0]].method, &sessions[g[0]].url))).collect();
+    let mut singles: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (g, k) in groups.iter().zip(&keys) {
+        if let Some(k) = k {
+            singles.entry(k.as_str()).or_default().push(g[0]);
         }
     }
+    let recurring: HashSet<&str> = singles
+        .iter()
+        .filter(|(_, v)| {
+            if v.len() < MIN_BACKGROUND {
+                return false;
+            }
+            let canon = |i: usize| crate::canon::canonical_at(&sessions[i].method, &sessions[i].url, None, Some(sessions[i].started));
+            let first = canon(v[0]);
+            if v[1..].iter().all(|&i| canon(i) == first) {
+                return true;
+            }
+            let mut starts: Vec<u64> = v.iter().map(|&i| sessions[i].started).collect();
+            starts.sort_unstable();
+            let iv: Vec<f64> = starts.windows(2).map(|w| (w[1] - w[0]) as f64).collect();
+            v.len() >= BACKGROUND_REGULAR_MIN && util::mean_cv(&iv).1 < BACKGROUND_MAX_CV
+        })
+        .map(|(k, _)| *k)
+        .collect();
     let mut background: HashMap<String, Vec<usize>> = HashMap::new();
-    groups.retain(|g| match single_key(g) {
-        Some(k) if singles[&k] >= MIN_BACKGROUND => {
-            background.entry(k).or_default().push(g[0]);
-            false
+    let mut kept = vec![];
+    for (g, k) in groups.into_iter().zip(&keys) {
+        match k {
+            Some(k) if recurring.contains(k.as_str()) => background.entry(k.clone()).or_default().push(g[0]),
+            _ => kept.push(g),
         }
-        _ => true,
-    });
+    }
+    let mut groups = kept;
     let mut bg: Vec<Vec<usize>> = background.into_values().collect();
     for g in &mut bg {
         g.sort_unstable();
@@ -180,9 +230,6 @@ pub fn segment(sessions: &[Session], opts: &Options) -> Vec<Operation> {
         .collect()
 }
 
-/// Single recurring requests of one endpoint from this count on form a background operation.
-const MIN_BACKGROUND: usize = 3;
-
 fn operation(sessions: &[Session], lang: Lang, n: usize, members: Vec<usize>) -> Operation {
     let l = |en: &str, de: &str| if lang == Lang::De { de.to_string() } else { en.to_string() };
     let start = sessions[members[0]].started;
@@ -192,7 +239,7 @@ fn operation(sessions: &[Session], lang: Lang, n: usize, members: Vec<usize>) ->
     if members.len() > 1 {
         label.push_str(&format!(" (+{})", members.len() - 1));
     }
-    let mut seen = HashSet::new();
+    let mut seen: std::collections::HashSet<u64, std::hash::BuildHasherDefault<util::FxHasher>> = Default::default();
     let mut dups = 0;
     let (mut bytes, mut new_conns, mut errors) = (0u64, 0usize, 0usize);
     for &i in &members {
@@ -200,13 +247,14 @@ fn operation(sessions: &[Session], lang: Lang, n: usize, members: Vec<usize>) ->
         bytes += s.request_bytes + s.response_bytes;
         new_conns += s.new_connection() as usize;
         errors += (s.status >= 400 || s.failed()) as usize;
-        let mut h = std::hash::DefaultHasher::new();
+        let mut h = util::FxHasher::default();
         (s.method.as_str(), s.url.as_str(), s.request_body_hash).hash(&mut h);
         if !seen.insert(h.finish()) {
             dups += 1;
         }
     }
-    let levels = net::critical_path(sessions, &members).len();
+    let critical_path = net::critical_path(sessions, &members);
+    let levels = critical_path.len();
     let m = |key: &str, label: String, value: f64, unit: Unit| Metric { label, ..Metric::new(key, "", value, unit) };
     let metrics = vec![
         m("requests", l("Requests", "Requests"), members.len() as f64, Unit::Count),
@@ -217,7 +265,7 @@ fn operation(sessions: &[Session], lang: Lang, n: usize, members: Vec<usize>) ->
         m("errors", l("Errors and failures", "Fehler und Abbrüche"), errors as f64, Unit::Count),
         m("duplicates", l("Exact duplicates", "Exakte Duplikate"), dups as f64, Unit::Count),
     ];
-    Operation { id: format!("op-{n}"), label, start, end, members, metrics, background: false }
+    Operation { id: format!("op-{n}"), label, start, end, members, metrics, background: false, main, critical_path }
 }
 
 #[cfg(test)]
@@ -308,6 +356,23 @@ mod tests {
         // Two of a kind are not background yet.
         let (_, o) = seg((0..2).map(|i| get(i, "https://h/api/x").at(i * 5000)).collect());
         assert_eq!(o.len(), 2);
+        // Different resources of one endpoint: user actions, unless many and regular.
+        let (_, o) = seg((0..3).map(|i| get(i, &format!("https://h/cases/{}", 100 + i)).at(i * 10_000)).collect());
+        assert!(o.len() == 3 && o.iter().all(|x| !x.background), "{o:?}");
+        let (_, o) = seg((0..6).map(|i| get(i, &format!("https://h/cases/{}", 100 + i)).at(i * 10_000)).collect());
+        assert!(o.len() == 1 && o[0].background, "{o:?}");
+    }
+
+    #[test]
+    fn correlation_ids_merge_only_nearby_segments() {
+        // One id for the whole user session, six actions 20 s apart: six operations.
+        let mut s = vec![];
+        for a in 0..6u64 {
+            for k in 0..5u64 {
+                s.push(get(a * 10 + k, &format!("https://h/a{a}/r{k}")).at(a * 20_000 + k * 60).req_h("x-correlation-id", "user-session"));
+            }
+        }
+        assert_eq!(seg(s).1.len(), 6);
     }
 
     #[test]
