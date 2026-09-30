@@ -67,6 +67,9 @@ contain breaking changes (settings, file formats, plugin API).
   not fit, and the views are ordered by how well they fit the content.
 
 ### Fixed
+- *Plugins* dialog: long "Applies to" lists squeezed the other columns to single characters;
+  the columns keep their width, the Diagnostics plugin shows what it applies to, and status
+  and column titles are translated.
 - Inspector view tabs overflowed (and hid the pane titles) after coming back to *Inspect*
   from another right-pane tab; they are measured again when the view shows.
 - Diagnostics:

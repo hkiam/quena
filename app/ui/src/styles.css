@@ -2888,3 +2888,37 @@ body.file-drop #root::after {
   display: flex;
   justify-content: flex-end;
 }
+
+/* Plugins dialog: the "Applies to" lists are long; the other columns must keep their width
+   (table.kv breaks everywhere by default, which squeezed them to one character). */
+table.plugins-table td,
+table.plugins-table th {
+  word-break: normal;
+  overflow-wrap: normal;
+}
+table.plugins-table .pl-check {
+  width: 28px;
+}
+table.plugins-table .pl-name {
+  min-width: 170px;
+  width: 28%;
+}
+table.plugins-table .pl-name .muted {
+  overflow-wrap: anywhere;
+}
+table.plugins-table .pl-version,
+table.plugins-table .pl-status {
+  white-space: nowrap;
+  width: 1%;
+}
+table.plugins-table .pl-applies {
+  overflow-wrap: anywhere;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

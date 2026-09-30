@@ -2,7 +2,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { Driver } from "./webdriver.mjs";
-import { AUDIT } from "./audit.mjs";
+import { AUDIT, checkPluginsDialog } from "./audit.mjs";
 import path from "node:path";
 
 const har = path.resolve(import.meta.dirname, "fixtures/two-sessions.har");
@@ -62,6 +62,11 @@ test("settings tabs are readable", async () => {
   assert.ok(rects.length >= 4);
   for (let i = 1; i < rects.length; i++) assert.ok(rects[i].x >= rects[i - 1].x + rects[i - 1].width, "tabs overlap");
   await d.keys(["Escape"]);
+});
+
+test("the plugins dialog keeps its columns readable", async () => {
+  await checkPluginsDialog(d, assert);
+  await d.cmd("POST", d.s("/window/rect"), { width: 1920, height: 1080 });
 });
 
 test("every panel opens without crashing", async () => {

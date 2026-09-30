@@ -32,3 +32,42 @@ if (sc && cv) { const a = r(sc), b = r(cv); if (a.height - b.height > 2 || a.wid
 return gaps;
 `;
 
+
+// Plugins dialog: no column squeezed to single characters (regression), every plugin says
+// what it applies to.
+const PLUGIN_TABLE = `
+  const rows = [...document.querySelectorAll('.plugins-table tbody tr')];
+  return rows.map((r) => {
+    const cell = (c) => r.querySelector(c);
+    const h = (c) => cell(c).getBoundingClientRect().height;
+    return {
+      name: cell('.pl-name b').textContent,
+      nameWidth: Math.round(cell('.pl-name').getBoundingClientRect().width),
+      // One line of text plus padding is ~26 px; a squeezed column wraps character by character.
+      versionHeight: Math.round(h('.pl-version').valueOf() && cell('.pl-version').scrollHeight),
+      versionFits: cell('.pl-version').scrollWidth <= cell('.pl-version').clientWidth + 1,
+      statusFits: cell('.pl-status').scrollWidth <= cell('.pl-status').clientWidth + 1,
+      oneLine: [...r.querySelectorAll('.pl-version, .pl-status')].every((c) => {
+        const range = document.createRange();
+        range.selectNodeContents(c);
+        return range.getClientRects().length <= 1;
+      }),
+      applies: cell('.pl-applies').textContent.trim().length,
+    };
+  });`;
+export async function checkPluginsDialog(d, assert) {
+  await d.exec(`window.__quena.menu("tools.plugins")`);
+  await d.waitFor(".plugins-table tbody tr", { timeout: 10000 });
+  for (const [width, height] of [[1000, 700], [1600, 1000]]) {
+    await d.cmd("POST", d.s("/window/rect"), { width, height });
+    await new Promise((r) => setTimeout(r, 400));
+    const rows = await d.exec(PLUGIN_TABLE);
+    assert.ok(rows.length >= 4, `plugins: ${JSON.stringify(rows)}`);
+    for (const r of rows) {
+      assert.ok(r.nameWidth >= 120, `name column squeezed at ${width}px: ${JSON.stringify(r)}`);
+      assert.ok(r.oneLine && r.versionFits && r.statusFits, `version/status wrap at ${width}px: ${JSON.stringify(r)}`);
+      assert.ok(r.applies > 0, `"Applies to" empty: ${JSON.stringify(r)}`);
+    }
+  }
+  await d.keys(["Escape"]);
+}

@@ -100,7 +100,7 @@ export interface PluginInfo {
   status: string;
   error: string | null;
   path: string;
-  kind: "decoder" | "headerInspector";
+  kind: "decoder" | "headerInspector" | "analyzer";
   mimeTypes: string[];
   /** Header names of a header inspector. */
   headers: string[];

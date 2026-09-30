@@ -11,6 +11,21 @@ function pluginsChanged() {
   window.dispatchEvent(new Event("quena:plugins-changed"));
 }
 
+/** What a plugin applies to, for the table. */
+function appliesTo(p: PluginInfo): string {
+  if (p.kind === "analyzer") return t("The whole capture (Diagnostics tab)");
+  if (p.kind === "headerInspector") return t("Headers: {list}", { list: p.headers.join(", ") || t("all") });
+  return p.mimeTypes.join(", ");
+}
+
+/** Status from the plugin host ("Enabled", "Disabled", "Error"), in the UI language. */
+function statusLabel(s: string): string {
+  if (s === "Enabled") return t("Enabled");
+  if (s === "Disabled") return t("Disabled");
+  if (s === "Error") return t("Error");
+  return s;
+}
+
 export function PluginsPanel() {
   const [list, setList] = useState<PluginInfo[] | null>(null);
   useEffect(() => {
@@ -19,22 +34,25 @@ export function PluginsPanel() {
   if (!list) return <div>{t("Loading…")}</div>;
   return (
     <div className="plugins">
-      <table className="kv">
+      <table className="kv plugins-table">
         <thead>
           <tr>
-            <th style={{ width: 30 }}></th>
-            <th>Name</th>
-            <th>Version</th>
-            <th>Status</th>
-            <th>{t("Applies to")}</th>
+            <th className="pl-check">
+              <span className="sr-only">{t("Enabled")}</span>
+            </th>
+            <th className="pl-name">{t("Name")}</th>
+            <th className="pl-version">{t("Version")}</th>
+            <th className="pl-status">{t("Status")}</th>
+            <th className="pl-applies">{t("Applies to")}</th>
           </tr>
         </thead>
         <tbody>
           {list.map((p) => (
             <tr key={p.id}>
-              <td>
+              <td className="pl-check">
                 <input
                   type="checkbox"
+                  aria-label={t("Enable {name}", { name: p.name })}
                   checked={p.enabled}
                   disabled={!!p.error}
                   onChange={async (e) => {
@@ -44,14 +62,14 @@ export function PluginsPanel() {
                   }}
                 />
               </td>
-              <td>
+              <td className="pl-name">
                 <b>{p.name}</b>
                 <div className="muted small">{p.id}</div>
                 {p.error && <div className="err small">{p.error}</div>}
               </td>
-              <td>{p.version}</td>
-              <td>{p.status}</td>
-              <td className="mono small">{p.kind === "headerInspector" ? t("Headers: {list}", { list: p.headers.join(", ") || t("all") }) : p.mimeTypes.join(", ")}</td>
+              <td className="pl-version">{p.version}</td>
+              <td className={`pl-status ${p.error ? "err" : ""}`}>{statusLabel(p.status)}</td>
+              <td className={`pl-applies small ${p.kind === "analyzer" ? "" : "mono"}`}>{appliesTo(p)}</td>
             </tr>
           ))}
         </tbody>

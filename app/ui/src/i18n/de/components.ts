@@ -365,4 +365,11 @@ export const components: Record<string, string> = {
   "Save all sessions (⌘S)": "Alle Sessions speichern (⌘S)",
   "Comment (M)": "Kommentar (M)",
   "Text tools (⌘E)": "Text-Werkzeuge (⌘E)",
+  // Plugins dialog
+  Error: "Fehler",
+  Version: "Version",
+  Enabled: "Aktiviert",
+  Disabled: "Deaktiviert",
+  "The whole capture (Diagnostics tab)": "Die ganze Aufnahme (Tab Diagnose)",
+  "Enable {name}": "{name} aktivieren",
 };
