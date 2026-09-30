@@ -260,6 +260,8 @@ fn map_remote_and_map_local() {
                     Rule { match_: "prefix:http://bare.invalid".into(), action: format!("http://127.0.0.1:{port}"), ..Default::default() },
                     Rule { match_: r"regex:^http://old\.invalid/(.*)$".into(), action: format!("http://127.0.0.1:{port}/new/$1"), ..Default::default() },
                     Rule { match_: "prefix:http://local.invalid/static/".into(), action: format!("dir:{}", site.display()), ..Default::default() },
+                    Rule { match_: "prefix:http://creds.invalid".into(), action: format!("http://127.0.0.1:{port}/c/ *nocreds"), ..Default::default() },
+                    Rule { match_: "prefix:http://keep.invalid".into(), action: format!("http://127.0.0.1:{port}/k/"), ..Default::default() },
                 ],
             },
             true,
@@ -284,6 +286,43 @@ fn map_remote_and_map_local() {
     // regex + $1 keeps the query when the group captures it.
     let (_, _, out) = fetch(&proxy, "http://old.invalid/x/y?z=9");
     assert!(out.starts_with("GET /new/x/y?z=9 HTTP/1.1"), "{out}");
+
+    // --- Map Remote *nocreds: cookies and credentials stay behind on another host; rules
+    // without the modifier forward them as before.
+    let with_creds = |url: &str| {
+        let o = Command::new("curl")
+            .args(["-sS", "--max-time", "20", "-x", &proxy, "-H", "Cookie: sid=1", "-H", "Authorization: Bearer t0k", "-H", "X-Other: y", url])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).to_ascii_lowercase()
+    };
+    let out = with_creds("http://creds.invalid/a?b=1");
+    assert!(out.starts_with("get /c/a?b=1 http/1.1"), "{out}");
+    assert!(!out.contains("cookie:") && !out.contains("authorization:"), "{out}");
+    assert!(out.contains("x-other: y"), "{out}");
+    let out = with_creds("http://keep.invalid/a");
+    assert!(out.contains("cookie: sid=1") && out.contains("authorization: bearer t0k"), "{out}");
+    // An origin-only prefix does not match a longer host.
+    let (code, _, out) = fetch(&proxy, "http://creds.invalid.evil.invalid/");
+    assert!(code != 200 && !out.starts_with("GET /c/"), "{code} {out}");
+
+    // --- Map Local: large files are served whole, also several at once.
+    let big: Vec<u8> = (0..(24u32 << 20)).map(|i| (i % 251) as u8).collect();
+    std::fs::write(site.join("big.bin"), &big).unwrap();
+    let pulls: Vec<_> = (0..4)
+        .map(|_| {
+            let proxy = proxy.clone();
+            std::thread::spawn(move || {
+                Command::new("curl").args(["-sS", "--max-time", "60", "-x", &proxy, "http://local.invalid/static/big.bin"]).output().unwrap().stdout
+            })
+        })
+        .collect();
+    let (code, _, out) = fetch(&proxy, &format!("http://127.0.0.1:{port}/meanwhile"));
+    assert_eq!(code, 200, "{out}");
+    for p in pulls {
+        let got = p.join().unwrap();
+        assert!(got == big, "big.bin: {} bytes", got.len());
+    }
 
     // --- Map Local: files, index.html, Content-Type, 404.
     let (code, ct, out) = fetch(&proxy, "http://local.invalid/static/a/b.json?v=3");

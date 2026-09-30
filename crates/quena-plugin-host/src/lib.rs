@@ -16,7 +16,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -261,6 +261,9 @@ struct State {
     wasi: WasiCtx,
     table: ResourceTable,
     limits: StoreLimits,
+    /// Wall-clock end of the current call when the deadline is checked in slices
+    /// (interruptible analyzer runs, see [`PluginHost::analyze_interruptible`]).
+    call_end: Option<Instant>,
 }
 
 impl WasiView for State {
@@ -313,6 +316,21 @@ const TICK: Duration = Duration::from_millis(10);
 
 fn ticks(d: Duration) -> u64 {
     (d.as_millis() / TICK.as_millis()).max(1) as u64
+}
+
+/// How often an interruptible analyzer call checks its cancel flag (in ticks).
+const INTERRUPT_SLICE: u64 = 5;
+
+/// Arm the deadline of the next call: `budget` wall-clock time; with a slice callback
+/// installed ([`PluginHost::analyze_interruptible`]) the epoch fires every
+/// [`INTERRUPT_SLICE`] ticks and the callback enforces `budget`.
+fn arm(store: &mut Store<State>, budget: Duration, sliced: bool) {
+    if sliced {
+        store.data_mut().call_end = Some(Instant::now() + budget);
+        store.set_epoch_deadline(INTERRUPT_SLICE.min(ticks(budget)));
+    } else {
+        store.set_epoch_deadline(ticks(budget));
+    }
 }
 
 impl PluginHost {
@@ -501,7 +519,7 @@ impl PluginHost {
     fn store(&self) -> Store<State> {
         let wasi = WasiCtxBuilder::new().build();
         let limits = StoreLimitsBuilder::new().memory_size(self.limits.memory).instances(4).tables(32).memories(4).build();
-        let mut store = Store::new(&self.engine, State { wasi, table: ResourceTable::new(), limits });
+        let mut store = Store::new(&self.engine, State { wasi, table: ResourceTable::new(), limits, call_end: None });
         store.limiter(|s| &mut s.limits);
         store.set_epoch_deadline(self.deadline_ticks());
         store
@@ -732,7 +750,8 @@ impl PluginHost {
     /// One analyzer run: `run(options)`, a `push` per batch from `next_batch` (until it returns
     /// `None`), then `finish` → the report JSON. Fresh store per run; the call deadline applies
     /// to every call (`finish` gets [`Limits::finish_timeout`]). A plugin that traps, times out
-    /// or exceeds its memory only fails this run.
+    /// or exceeds its memory only fails this run. `cancelled` is checked between calls and
+    /// after `finish` (a run cancelled meanwhile returns an error, never a report).
     pub fn analyze(
         &self,
         index: u16,
@@ -740,10 +759,49 @@ impl PluginHost {
         next_batch: &mut dyn FnMut() -> Option<Vec<AnalyzerSession>>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<String> {
+        self.analyze_inner(index, options_json, next_batch, cancelled, None)
+    }
+
+    /// [`analyze`](Self::analyze) that also interrupts a call in flight: while the plugin
+    /// runs, `cancelled` is polled every 50 ms (epoch callback) and the call traps with
+    /// `cancelled` as soon as it returns true.
+    pub fn analyze_interruptible(
+        &self,
+        index: u16,
+        options_json: &str,
+        next_batch: &mut dyn FnMut() -> Option<Vec<AnalyzerSession>>,
+        cancelled: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<String> {
+        let c = cancelled.clone();
+        self.analyze_inner(index, options_json, next_batch, &move || c(), Some(cancelled))
+    }
+
+    fn analyze_inner(
+        &self,
+        index: u16,
+        options_json: &str,
+        next_batch: &mut dyn FnMut() -> Option<Vec<AnalyzerSession>>,
+        cancelled: &dyn Fn() -> bool,
+        interrupt: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    ) -> Result<String> {
         let (_, pre) = self.analyzer(index)?;
-        let (mut store, plugin) = self.instantiate_analyzer(&pre)?;
+        let mut store = self.store();
+        let sliced = interrupt.is_some();
+        if let Some(stop) = interrupt {
+            store.epoch_deadline_callback(move |ctx| {
+                if stop() {
+                    return Err(wasmtime::format_err!("cancelled"));
+                }
+                match ctx.data().call_end {
+                    Some(end) if Instant::now() < end => Ok(wasmtime::UpdateDeadline::Continue(INTERRUPT_SLICE)),
+                    _ => Ok(wasmtime::UpdateDeadline::Interrupt),
+                }
+            });
+        }
+        arm(&mut store, self.limits.call_timeout, sliced);
+        let plugin = pre.instantiate(&mut store).map_err(|e| anyhow!("{e:#}"))?;
         let a = plugin.quena_plugin_analyzer();
-        store.set_epoch_deadline(self.deadline_ticks());
+        arm(&mut store, self.limits.call_timeout, sliced);
         let run = a.run().call_constructor(&mut store, options_json).map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
         let result = (|| -> Result<String> {
             loop {
@@ -757,11 +815,15 @@ impl PluginHost {
                 }
                 let Some(batch) = batch else { break };
                 let batch: Vec<WitSession> = batch.into_iter().map(WitSession::from).collect();
-                store.set_epoch_deadline(self.deadline_ticks());
+                arm(&mut store, self.limits.call_timeout, sliced);
                 a.run().call_push(&mut store, run, &batch).map_err(|e| anyhow!("plugin trapped: {e:#}"))?.map_err(|e| anyhow!("{e}"))?;
             }
-            store.set_epoch_deadline(ticks(self.limits.finish_timeout));
+            arm(&mut store, self.limits.finish_timeout, sliced);
             let report = a.run().call_finish(&mut store, run).map_err(|e| anyhow!("plugin trapped: {e:#}"))?.map_err(|e| anyhow!("{e}"))?;
+            // Cancelled while `finish` ran: the caller must not get (and store) a stale report.
+            if cancelled() {
+                return Err(anyhow!("cancelled"));
+            }
             if report.len() > self.limits.max_report {
                 return Err(anyhow!("plugin output exceeds {} bytes", self.limits.max_report));
             }

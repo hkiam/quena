@@ -37,4 +37,18 @@ describe("German translation", () => {
   it("keeps the placeholders", () => {
     expect(Object.entries(de).filter(([en, g]) => holes(en).join() !== holes(g).join())).toEqual([]);
   });
+  // de.ts merges the area files; a key in two of them silently takes the later text.
+  it("has no key in two area files with different texts", () => {
+    const files = Object.entries(import.meta.glob("./de/*.ts", { eager: true }) as Record<string, Record<string, Record<string, string>>>);
+    const seen = new Map<string, [string, string]>();
+    const conflicts: string[] = [];
+    for (const [file, mod] of files)
+      for (const table of Object.values(mod))
+        for (const [en, g] of Object.entries(table)) {
+          const prev = seen.get(en);
+          if (!prev) seen.set(en, [file, g]);
+          else if (prev[1] !== g) conflicts.push(`${en}: ${prev[0]} "${prev[1]}" vs ${file} "${g}"`);
+        }
+    expect(conflicts).toEqual([]);
+  });
 });

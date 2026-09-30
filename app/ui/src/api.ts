@@ -611,8 +611,10 @@ export const api = {
       headers: { "quena-drop-id": id, "quena-drop-name": encodeURIComponent(name), "quena-drop-offset": String(offset), "quena-drop-last": last ? "1" : "0" },
     }),
   timers: (ids: SessionId[]) => invoke<{ id: SessionId; timers: Timers }[]>("timers", { ids }),
-  structure: (host: string | null, prefix: string) => invoke<{ nodes: TreeNode[]; truncated: boolean }>("structure", { host, prefix }),
-  structureIds: (host: string, path: string) => invoke<SessionId[]>("structure_ids", { host, path }),
+  /** Several tree levels in one backend pass (`host: null` = the list of hosts). */
+  structure: (levels: { host: string | null; prefix: string }[]) => invoke<{ nodes: TreeNode[]; truncated: boolean }[]>("structure", { levels }),
+  /** Sessions of a node; `exact` for "(this path)": that path only, nothing below it. */
+  structureIds: (host: string, path: string, exact = false) => invoke<SessionId[]>("structure_ids", { host, path, exact }),
   uiLanguage: () => invoke<string>("ui_language"),
   setLanguage: (pref: string) => invoke<string>("set_language", { pref }),
   takeOpenFiles: () => invoke<string[]>("take_open_files"),

@@ -40,8 +40,8 @@ export const diagnostics: Record<string, string> = {
   "Next steps": "Nächste Schritte",
   "Threshold": "Schwelle",
   "Affected sessions": "Betroffene Sessions",
-  "Below is a network diagnostics report of recorded HTTP traffic, created locally by Quena. Header values, cookies and tokens were redacted before the analysis; statements marked as estimate are modelled, not measured. Please explain the likely causes of the findings, prioritise them by impact on the user, and suggest concrete next steps. Point out where the data is not sufficient for a conclusion.":
-    "Es folgt ein Netzwerk-Diagnosebericht über aufgezeichneten HTTP-Verkehr, lokal von Quena erstellt. Header-Werte, Cookies und Tokens wurden vor der Analyse unkenntlich gemacht; als Schätzung markierte Aussagen sind modelliert, nicht gemessen. Bitte erkläre die wahrscheinlichen Ursachen der Befunde, priorisiere sie nach ihrer Auswirkung auf die Anwendenden und schlage konkrete nächste Schritte vor. Weise darauf hin, wo die Daten für eine Schlussfolgerung nicht ausreichen.",
+  "Below is a network diagnostics report of recorded HTTP traffic, created locally by Quena. Tokens, cookie values and sensitive URL parameters were removed before the analysis; URLs, host names and header names remain. Statements marked as estimate are modelled, not measured. Please explain the likely causes of the findings, prioritise them by impact on the user, and suggest concrete next steps. Point out where the data is not sufficient for a conclusion.":
+    "Es folgt ein Netzwerk-Diagnosebericht über aufgezeichneten HTTP-Verkehr, lokal von Quena erstellt. Tokens, Cookie-Werte und sensible URL-Parameter wurden vor der Analyse entfernt; URLs, Hostnamen und Header-Namen sind erhalten. Als Schätzung markierte Aussagen sind modelliert, nicht gemessen. Bitte erkläre die wahrscheinlichen Ursachen der Befunde, priorisiere sie nach ihrer Auswirkung auf die Anwendenden und schlage konkrete nächste Schritte vor. Weise darauf hin, wo die Daten für eine Schlussfolgerung nicht ausreichen.",
   // Run, job
   "The analyzer returned an invalid report.": "Das Analyse-Plugin hat einen ungültigen Bericht geliefert.",
   "The analysis failed.": "Die Analyse ist fehlgeschlagen.",
@@ -70,8 +70,8 @@ export const diagnostics: Record<string, string> = {
   "Diagnose the recorded traffic": "Aufgezeichneten Verkehr diagnostizieren",
   "The analyzer looks at the visible or selected sessions for slow and sequential requests, duplicates, caching, compression, errors, authentication round trips and connection problems. It explains each finding and selects the affected sessions with one click.":
     "Die Analyse untersucht die sichtbaren oder ausgewählten Sessions auf langsame und sequenzielle Requests, Duplikate, Caching, Komprimierung, Fehler, Authentifizierungs-Roundtrips und Verbindungsprobleme. Sie erklärt jeden Befund und wählt die betroffenen Sessions mit einem Klick aus.",
-  "Everything runs locally in Quena; nothing is sent anywhere. Header values, cookies and tokens are redacted before the analyzer sees them.":
-    "Alles läuft lokal in Quena; es wird nichts versendet. Header-Werte, Cookies und Tokens werden unkenntlich gemacht, bevor das Analyse-Plugin sie sieht.",
+  "Everything runs locally in Quena; nothing is sent anywhere. Tokens, cookie values and sensitive URL parameters are removed before the analyzer sees the traffic; URLs, host names and header names remain — check exports before sharing them.":
+    "Alles läuft lokal in Quena; es wird nichts versendet. Tokens, Cookie-Werte und sensible URL-Parameter werden entfernt, bevor das Analyse-Plugin den Verkehr sieht; URLs, Hostnamen und Header-Namen bleiben erhalten – Exporte vor dem Weitergeben prüfen.",
   "Statements marked": "Aussagen mit der Markierung",
   "are modelled from the measured timings (for example for slower networks), not measured.": "sind aus den gemessenen Zeiten modelliert (etwa für langsamere Netze), nicht gemessen.",
   "Choose a profile and the sessions, then click Run.": "Profil und Sessions wählen, dann auf Starten klicken.",
@@ -119,9 +119,6 @@ export const diagnostics: Record<string, string> = {
   "{n} finding unchanged.": "{n} Befund unverändert.",
   "{n} findings unchanged.": "{n} Befunde unverändert.",
   // Scope by process / host
-  Process: "Prozess",
-  Host: "Host",
-  all: "alle",
   All: "Alle",
   "{first} (+{n})": "{first} (+{n})",
   "Analyse only the traffic of these processes": "Nur den Verkehr dieser Prozesse analysieren",
@@ -140,12 +137,10 @@ export const diagnostics: Record<string, string> = {
   Warnings: "Warnungen",
   Note: "Hinweis",
   Notes: "Hinweise",
-  Authentication: "Anmeldung",
   Bandwidth: "Bandbreite",
   Chattiness: "Gesprächigkeit",
   Duplicates: "Duplikate",
   Errors: "Fehler",
-  Latency: "Latenz",
   Network: "Netz",
   Payload: "Nutzdaten",
   Performance: "Performance",

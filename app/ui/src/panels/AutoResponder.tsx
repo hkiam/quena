@@ -8,14 +8,14 @@ import { mapLocalRule, mapRemoteRule, type MappingKind } from "./autoresponderAc
 import { plural, t } from "../i18n";
 
 const MATCH_TEMPLATES = ["*", "EXACT:https://example.com/path", "prefix:https://example.com/api/", "regex:(?i)^https://.*\\.example\\.com/api/(.*)$", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json", "URLWithBody:/soap regex:GetOrder"];
-const ACTIONS = ["dir:/path/to/folder", "https://staging.example.com/api/", "*200", "*204", "*404", "*500", "*502", "*drop", "*delay:2000", "*redir:https://example.com/", "*header:X-Quena=1", "*CORSPreflightAllow", "*bpu", "*bpafter"];
+const ACTIONS = ["dir:/path/to/folder", "https://staging.example.com/api/", "https://staging.example.com/api/ *nocreds", "*200", "*204", "*404", "*500", "*502", "*drop", "*delay:2000", "*redir:https://example.com/", "*header:X-Quena=1", "*CORSPreflightAllow", "*bpu", "*bpafter"];
 
 export default function AutoResponderPanel() {
   const [st, setSt] = useState<ArState | null>(null);
   const [sel, setSel] = useState<number | null>(null);
   const [edit, setEdit] = useState<{ match: string; action: string; latency: number }>({ match: "", action: "", latency: 0 });
   const [over, setOver] = useState(false);
-  const [mapping, setMapping] = useState<{ kind: MappingKind; from: string; to: string } | null>(null);
+  const [mapping, setMapping] = useState<{ kind: MappingKind; from: string; to: string; noCreds: boolean } | null>(null);
   const nonce = useStore((s) => s.arNonce);
   const version = useStore((s) => s.listVersion);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -58,7 +58,7 @@ export default function AutoResponderPanel() {
   };
   const addMapping = () => {
     if (!mapping) return;
-    const r = mapping.kind === "remote" ? mapRemoteRule(mapping.from, mapping.to) : mapLocalRule(mapping.from, mapping.to);
+    const r = mapping.kind === "remote" ? mapRemoteRule(mapping.from, mapping.to, mapping.noCreds) : mapLocalRule(mapping.from, mapping.to);
     if ("error" in r) return say(r.error, "error");
     // On top: a mapping is specific, and the first matching rule wins.
     commit({ ...st, enabled: true, rules: [{ id: 0, enabled: true, match: r.match, action: r.action, latencyMs: 0, matchOnce: false, comment: r.comment, hits: 0 }, ...st.rules] }, true);
@@ -118,8 +118,8 @@ export default function AutoResponderPanel() {
           onClick={(e) => {
             const b = e.currentTarget.getBoundingClientRect();
             showContextMenu(b.left, b.bottom, [
-              { label: t("Map Remote… (URL prefix → other server)"), action: () => setMapping({ kind: "remote", from: "", to: "" }) },
-              { label: t("Map Local… (URL prefix → folder)"), action: () => setMapping({ kind: "local", from: "", to: "" }) },
+              { label: t("Map Remote… (URL prefix → other server)"), action: () => setMapping({ kind: "remote", from: "", to: "", noCreds: true }) },
+              { label: t("Map Local… (URL prefix → folder)"), action: () => setMapping({ kind: "local", from: "", to: "", noCreds: false }) },
             ]);
           }}
         >
@@ -238,6 +238,11 @@ export default function AutoResponderPanel() {
               )}
             </div>
           </div>
+          {mapping.kind === "remote" && (
+            <label className="f-check" title={t("Adds *nocreds to the rule: Cookie and Authorization meant for the original host are not sent to another host (or from https to http).")}>
+              <input type="checkbox" checked={mapping.noCreds} onChange={(e) => setMapping({ ...mapping, noCreds: e.target.checked })} /> {t("Remove credentials (Cookie, Authorization) when the host changes")}
+            </label>
+          )}
           <div className="btn-row">
             <button className="primary" onClick={addMapping} disabled={!mapping.from.trim() || !mapping.to.trim()}>
               {t("Add")}
@@ -303,7 +308,7 @@ export default function AutoResponderPanel() {
               {t("Remove")}
             </button>
           )}
-          <span className="muted small">{t("Rules are evaluated top to bottom; the first match wins. regex rules support $1 in the action; after prefix: an https://… target or dir:folder gets the rest of the URL.")}</span>
+          <span className="muted small">{t("Rules are evaluated top to bottom; the first match wins. regex rules support $1 in the action; after prefix: an https://… target or dir:folder gets the rest of the URL. An https://… target ending in *nocreds drops Cookie and Authorization when the host changes.")}</span>
         </div>
       </fieldset>
     </div>

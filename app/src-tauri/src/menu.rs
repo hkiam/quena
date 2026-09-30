@@ -79,7 +79,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             #[cfg(not(target_os = "macos"))]
             &sep()?,
             #[cfg(not(target_os = "macos"))]
-            &PredefinedMenuItem::quit(app, Some("Exit"))?,
+            &PredefinedMenuItem::quit(app, Some(tr("Exit")))?,
         ],
     )?;
 

@@ -601,8 +601,16 @@ function ThemeChoice() {
 function LanguageChoice() {
   const pref = useStore((st) => st.layout.language ?? "system");
   const pick = async (l: "system" | "en" | "de") => {
+    const before = get().layout.language;
     set((st) => ({ layout: { ...st.layout, language: l } }));
-    await api.saveUiPrefs({ layout: get().layout }).catch(() => {});
+    try {
+      await api.saveUiPrefs({ layout: get().layout });
+    } catch (e) {
+      // Not saved: keep the old language everywhere (UI and native menu).
+      set((st) => ({ layout: { ...st.layout, language: before } }));
+      say(String(e), "error");
+      return;
+    }
     const lang = await api.setLanguage(l).catch(() => currentLang());
     if (lang !== currentLang()) location.reload();
   };

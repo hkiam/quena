@@ -159,7 +159,11 @@ export function normalizeReport(raw: unknown): DiagReport | null {
     .map((f, i) => [f, i] as const)
     .sort(([a, i], [b, j]) => SEV_RANK[a.severity] - SEV_RANK[b.severity] || b.score - a.score || i - j)
     .map(([f]) => f);
-  const count = (s: Severity) => (typeof summary[s] === "number" ? num(summary[s]) : findings.filter((f) => f.severity === s).length);
+  // Counts from a (possibly foreign) report: whole, non-negative numbers, else counted.
+  const count = (s: Severity) => {
+    const v = summary[s];
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : findings.filter((f) => f.severity === s).length;
+  };
   return {
     schema: 1,
     tool: { id: str(tool.id), version: str(tool.version) },
@@ -337,10 +341,19 @@ export function opDuration(o: DiagOperation): string {
 
 // ------------------------------------------------------------------ Markdown
 
-const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\s*\n\s*/g, " ");
+/** Report texts (partly derived from the traffic) as inline Markdown: one line, and nothing that
+ * Markdown or HTML would interpret — no headings, lists, emphasis, links, code or tags. */
+export function mdText(s: string): string {
+  const one = s.replace(/\s*[\r\n]+\s*/g, " ").trim();
+  const esc = one.replace(/[\\`*_[\]<>|~]/g, "\\$&");
+  // Block markers at the start of a line (list, heading, quote, ordered list).
+  return esc.replace(/^([-+#>=])/, "\\$1").replace(/^(\d+)([.)])/, "$1\\$2");
+}
+const cell = (s: string) => mdText(s);
 const mdTable = (head: string[], rows: string[][]) =>
   [`| ${head.map(cell).join(" | ")} |`, `|${head.map(() => " --- ").join("|")}|`, ...rows.map((r) => `| ${head.map((_, i) => cell(r[i] ?? "")).join(" | ")} |`)].join("\n");
-const list = (items: string[]) => items.map((s) => `- ${s.replace(/\n/g, " ")}`).join("\n");
+/** A bullet list; `raw` items are frame texts that are already Markdown-safe. */
+const list = (items: string[], raw = false) => items.map((s) => `- ${raw ? s : mdText(s)}`).join("\n");
 
 export interface MarkdownOptions {
   /** At most this many findings per severity (the rest is counted). */
@@ -354,14 +367,14 @@ export function toMarkdown(r: DiagReport, t: Translate, opts: MarkdownOptions = 
   const limit = opts.limit ?? Infinity;
   const maxIds = opts.sessionIds ?? 50;
   const out: string[] = [];
-  out.push(`# ${t("Diagnostics report")}${r.profile.name ? `: ${r.profile.name}` : ""}`);
+  out.push(`# ${t("Diagnostics report")}${r.profile.name ? `: ${mdText(r.profile.name)}` : ""}`);
   const meta: string[] = [];
-  if (r.tool.id) meta.push(`${t("Analyzer")}: ${r.tool.id}${r.tool.version ? ` ${r.tool.version}` : ""}`);
-  if (r.scope) meta.push(`${t("Scope")}: ${scopeLabel(r, t)}`);
+  if (r.tool.id) meta.push(`${t("Analyzer")}: ${mdText(r.tool.id)}${r.tool.version ? ` ${mdText(r.tool.version)}` : ""}`);
+  if (r.scope) meta.push(`${t("Scope")}: ${mdText(scopeLabel(r, t))}`);
   meta.push(`${t("Sessions")}: ${fmtInt(r.range.sessions || r.scope?.sessions || 0)}`);
   if (r.range.from != null) meta.push(`${t("Time range")}: ${fmtDateTime(r.range.from)} – ${fmtDateTime(r.range.to)}`);
   if (r.generatedAt != null) meta.push(`${t("Generated")}: ${fmtDateTime(r.generatedAt)}`);
-  out.push(list(meta));
+  out.push(list(meta, true));
 
   out.push(`## ${t("Summary")}`);
   out.push(`${t("Critical")}: ${r.summary.critical} · ${t("Warning")}: ${r.summary.warning} · ${t("Info")}: ${r.summary.info}`);
@@ -397,22 +410,22 @@ export function toMarkdown(r: DiagReport, t: Translate, opts: MarkdownOptions = 
 
 function findingMarkdown(f: DiagFinding, r: DiagReport, t: Translate, maxIds: number): string {
   const out: string[] = [];
-  out.push(`### [${severityLabel(f.severity, t)}] ${f.title} (${f.id})`);
+  out.push(`### [${severityLabel(f.severity, t)}] ${mdText(f.title)} (${mdText(f.id)})`);
   const tags = [confidenceLabel(f.confidence, t)];
   if (f.estimate) tags.push(t("Estimate"));
-  if (f.categories.length) tags.push(`${t("Categories")}: ${f.categories.join(", ")}`);
+  if (f.categories.length) tags.push(`${t("Categories")}: ${mdText(f.categories.join(", "))}`);
   out.push(tags.join(" · "));
-  if (f.observation) out.push(`**${t("Observation")}:** ${f.observation}`);
+  if (f.observation) out.push(`**${t("Observation")}:** ${mdText(f.observation)}`);
   if (f.facts.length) out.push(mdTable([t("Fact"), t("Value")], f.facts.map((x) => [x.label, x.value])));
   if (f.table && f.table.columns.length) out.push(mdTable(f.table.columns, f.table.rows));
-  if (f.impact) out.push(`**${t("Impact")}:** ${f.impact}`);
+  if (f.impact) out.push(`**${t("Impact")}:** ${mdText(f.impact)}`);
   if (f.hypotheses.length) out.push(`**${t("Hypotheses (not verified)")}:**\n\n${list(f.hypotheses)}`);
   if (f.recommendations.length) out.push(`**${t("Recommendations")}:**\n\n${list(f.recommendations)}`);
   if (f.nextSteps.length) out.push(`**${t("Next steps")}:**\n\n${list(f.nextSteps)}`);
-  if (f.threshold) out.push(`**${t("Threshold")}:** ${f.threshold}`);
+  if (f.threshold) out.push(`**${t("Threshold")}:** ${mdText(f.threshold)}`);
   if (f.operation) {
     const op = r.operations.find((o) => o.id === f.operation);
-    out.push(`**${t("Operation")}:** ${op?.label || f.operation}`);
+    out.push(`**${t("Operation")}:** ${mdText(op?.label || f.operation)}`);
   }
   if (f.sessions.length) {
     const shown = f.sessions.slice(0, maxIds).map((id) => `#${id}`).join(", ");
@@ -424,7 +437,7 @@ function findingMarkdown(f: DiagFinding, r: DiagReport, t: Translate, maxIds: nu
 /** Markdown for pasting into an AI assistant: a short request, then the report. */
 export function toAiPrompt(r: DiagReport, t: Translate): string {
   const preface = t(
-    "Below is a network diagnostics report of recorded HTTP traffic, created locally by Quena. Header values, cookies and tokens were redacted before the analysis; statements marked as estimate are modelled, not measured. Please explain the likely causes of the findings, prioritise them by impact on the user, and suggest concrete next steps. Point out where the data is not sufficient for a conclusion.",
+    "Below is a network diagnostics report of recorded HTTP traffic, created locally by Quena. Tokens, cookie values and sensitive URL parameters were removed before the analysis; URLs, host names and header names remain. Statements marked as estimate are modelled, not measured. Please explain the likely causes of the findings, prioritise them by impact on the user, and suggest concrete next steps. Point out where the data is not sufficient for a conclusion.",
   );
   return `${preface}\n\n---\n\n${toMarkdown(r, t, { limit: 60, sessionIds: 10 })}`;
 }

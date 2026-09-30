@@ -21,15 +21,19 @@ const hasScheme = (u: string) => /^https?:\/\/[^/?#]+/i.test(u);
 // "https://host/api/*" and "https://host/api/" mean the same prefix.
 const cleanPrefix = (u: string) => u.trim().replace(/\*+$/, "");
 
-/** Map Remote: everything under `from` goes to `to`, keeping the rest of the path and the query. */
-export function mapRemoteRule(fromIn: string, toIn: string): MappingRule {
+/**
+ * Map Remote: everything under `from` goes to `to`, keeping the rest of the path and the query.
+ * `noCreds` appends the ` *nocreds` modifier: Cookie and Authorization are removed when the
+ * request goes to another host (or from https to http).
+ */
+export function mapRemoteRule(fromIn: string, toIn: string, noCreds = false): MappingRule {
   const from = cleanPrefix(fromIn);
   let to = cleanPrefix(toIn);
   if (!hasScheme(from)) return { error: t("From must start with http:// or https:// and a host") };
   if (!hasScheme(to)) return { error: t("To must start with http:// or https:// and a host") };
   // Keep the slash in step, so /api/users does not become /v2users.
   if (from.endsWith("/") && !to.endsWith("/") && /^https?:\/\/[^/]+\/./i.test(to)) to += "/";
-  return { match: `prefix:${from}`, action: to, comment: "Map Remote" };
+  return { match: `prefix:${from}`, action: noCreds ? `${to} *nocreds` : to, comment: "Map Remote" };
 }
 
 /** Map Local: files under `folder` answer requests under the URL prefix `from`. */

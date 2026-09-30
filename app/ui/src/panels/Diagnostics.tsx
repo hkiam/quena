@@ -50,18 +50,34 @@ const OP_PAGE = 100;
 const TABLE_ROWS = 200;
 /** Findings list and details side by side from this panel width on. */
 const WIDE = 720;
+/** A job the job list no longer shows (it keeps only the newest) counts as ended after this long. */
+const JOB_GONE_MS = 5000;
+/** A job that never showed up in the job list counts as ended after this long. */
+const JOB_UNSEEN_MS = 10000;
+
+/** Window event: plugins were enabled, disabled or rescanned (sent by the plugin manager). */
+export const PLUGINS_CHANGED = "quena:plugins-changed";
 
 // Panel state survives switching tabs (the panel unmounts).
 interface DiagUi {
   analyzers: Analyzer[] | null;
   analyzersError: string | null;
-  describe: Record<number, DiagDescribe>;
+  /** By analyzer id and version (indexes change when plugins are enabled or disabled). */
+  describe: Record<string, DiagDescribe>;
+  /** The report text as fetched: a remount keeps the view state while it is unchanged. */
+  text: string | null;
   raw: unknown;
   report: DiagReport | null;
   jobId: number | null;
+  /** The job appeared in the job list; when it started; since when it is missing from it. */
+  jobSeen: boolean;
+  jobStarted: number;
+  jobMissingSince: number | null;
   runError: string | null;
   base: { report: DiagReport; name: string } | null;
   picked: number | null;
+  /** Finding to scroll into view once rendered. */
+  scrollTo: number | null;
   pickedOp: string | null;
   sev: Severity | null;
   cat: string;
@@ -75,12 +91,17 @@ const useDiag = create<DiagUi>(() => ({
   analyzers: null,
   analyzersError: null,
   describe: {},
+  text: null,
   raw: null,
   report: null,
   jobId: null,
+  jobSeen: false,
+  jobStarted: 0,
+  jobMissingSince: null,
   runError: null,
   base: null,
   picked: null,
+  scrollTo: null,
   pickedOp: null,
   sev: null,
   cat: "",
@@ -91,6 +112,10 @@ const useDiag = create<DiagUi>(() => ({
 }));
 const setDiag = useDiag.setState;
 
+const describeKey = (a: Analyzer) => `${a.id}@${a.version}`;
+
+/** The last report. Only a new one resets the view (picked finding, filters, "show more"); the
+ * running job is left alone — its end is handled where the job list is watched. */
 async function fetchReport() {
   let text: string | null;
   try {
@@ -98,13 +123,57 @@ async function fetchReport() {
   } catch {
     return;
   }
-  if (!text) return;
+  if (!text || text === useDiag.getState().text) return;
   try {
     const { raw, report } = parseReport(text);
-    setDiag({ raw, report, picked: null, pickedOp: null, jobId: null, runError: null, limits: { critical: PAGE, warning: PAGE, info: PAGE }, opLimit: OP_PAGE });
+    setDiag({
+      text,
+      raw,
+      report,
+      picked: null,
+      scrollTo: null,
+      pickedOp: null,
+      runError: null,
+      sev: null,
+      cat: "",
+      q: "",
+      limits: { critical: PAGE, warning: PAGE, info: PAGE },
+      opLimit: OP_PAGE,
+    });
   } catch {
-    setDiag({ jobId: null, runError: t("The analyzer returned an invalid report.") });
+    setDiag({ text, runError: t("The analyzer returned an invalid report.") });
   }
+}
+
+/** (Re)load the analyzer list; a failure keeps the previous list and shows the error. */
+function loadAnalyzers() {
+  api
+    .diagAnalyzers()
+    .then((a) => setDiag({ analyzers: a, analyzersError: null }))
+    .catch((e) => setDiag((s) => ({ analyzers: s.analyzers ?? [], analyzersError: String(e) })));
+}
+
+/** The job has ended without a status we could see: take whatever report there is. */
+function endJob(id: number) {
+  void fetchReport().then(() => {
+    if (useDiag.getState().jobId === id) setDiag({ jobId: null, jobMissingSince: null });
+  });
+}
+
+/** Click and Enter/Space for a non-button element. */
+function pressable(fn?: () => void) {
+  if (!fn) return {};
+  return {
+    role: "button",
+    tabIndex: 0,
+    onClick: fn,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        fn();
+      }
+    },
+  };
 }
 
 /** Narrow the scope to processes or target hosts: a button with a checkable, searchable list. */
@@ -113,6 +182,19 @@ function ScopePick({ kind, value, onChange }: { kind: "processes" | "hosts"; val
   const [items, setItems] = useState<[string, number][] | null>(null);
   const [q, setQ] = useState("");
   const ref = useRef<HTMLSpanElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  const [shift, setShift] = useState(0);
+  // Keep the popup inside the pane: shift it left when the button is near the right edge.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const p = pop.current;
+    const pane = el?.closest(".rpane") ?? document.body;
+    if (!open || !el || !p) return;
+    const a = el.getBoundingClientRect();
+    const c = pane.getBoundingClientRect();
+    const w = p.offsetWidth;
+    setShift(Math.max(c.left + 8 - a.left, Math.min(0, c.right - 8 - (a.left + w))));
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     setItems(null);
@@ -136,8 +218,15 @@ function ScopePick({ kind, value, onChange }: { kind: "processes" | "hosts"; val
         {label}: <b>{summary}</b> <ChevronDown size={11} />
       </button>
       {open && (
-        <div className="diag-pick-pop">
-          <input autoFocus className="diag-search" placeholder={kind === "hosts" ? t("Filter, or *.example.com") : t("Filter")} value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="diag-pick-pop" ref={pop} style={{ left: shift }}>
+          <input
+            autoFocus
+            className="diag-search"
+            aria-label={kind === "hosts" ? t("Filter, or *.example.com") : t("Filter")}
+            placeholder={kind === "hosts" ? t("Filter, or *.example.com") : t("Filter")}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
           <div className="diag-pick-list">
             {items == null && <div className="muted small">{t("Loading…")}</div>}
             {pattern && (
@@ -207,42 +296,65 @@ export default function DiagnosticsPanel() {
   const selection = useStore((s) => s.selection);
 
   // Analyzers, the last report, and new reports as they arrive.
+  // The analyzer list is reloaded on every mount and when plugins change.
   useEffect(() => {
-    if (!useDiag.getState().analyzers)
-      api
-        .diagAnalyzers()
-        .then((a) => setDiag({ analyzers: a, analyzersError: null }))
-        .catch((e) => setDiag({ analyzers: [], analyzersError: String(e) }));
+    loadAnalyzers();
     void fetchReport();
     const un = on("diag-report", () => void fetchReport());
-    return () => void un.then((f) => f());
+    const pluginsChanged = () => {
+      setDiag({ describe: {} });
+      loadAnalyzers();
+    };
+    window.addEventListener(PLUGINS_CHANGED, pluginsChanged);
+    return () => {
+      void un.then((f) => f());
+      window.removeEventListener(PLUGINS_CHANGED, pluginsChanged);
+    };
   }, []);
 
   const analyzers = st.analyzers ?? [];
   const analyzer = analyzers.find((a) => a.id === prefs.analyzer) ?? analyzers[0];
-  const desc = analyzer ? st.describe[analyzer.index] : undefined;
+  const dkey = analyzer ? describeKey(analyzer) : "";
+  const desc = analyzer ? st.describe[dkey] : undefined;
   useEffect(() => {
-    if (!analyzer || useDiag.getState().describe[analyzer.index]) return;
+    if (!analyzer || desc) return;
     const idx = analyzer.index;
+    const key = dkey;
     api
       .diagDescribe(idx, currentLang())
       .then((text) => parseDescribe(text))
       .catch(() => parseDescribe(""))
-      .then((d) => setDiag((s) => ({ describe: { ...s.describe, [idx]: d } })));
-  }, [analyzer?.index]);
+      .then((d) => setDiag((s) => ({ describe: { ...s.describe, [key]: d } })));
+  }, [dkey, analyzer?.index, !desc]);
 
   // The running job: progress, and its end (failed/cancelled; "done" fetches the report).
   const job = st.jobId != null ? jobs.find((j) => j.id === st.jobId) : undefined;
   const running = st.jobId != null && (!job || job.status === "running" || job.status === "queued");
   useEffect(() => {
     if (!job) return;
-    if (job.status === "done") void fetchReport().then(() => setDiag({ jobId: null }));
+    if (job.status === "done") endJob(job.id);
     else if (job.status === "failed") setDiag({ jobId: null, runError: job.error || t("The analysis failed.") });
     else if (job.status === "cancelled") {
       setDiag({ jobId: null });
       say(t("Diagnostics cancelled"));
     }
   }, [job?.status]);
+  // The job list shows only the newest jobs: a job missing from it has ended (or never ran).
+  const jobListed = !!job;
+  useEffect(() => {
+    const s = useDiag.getState();
+    const id = s.jobId;
+    if (id == null) return;
+    if (jobListed) {
+      if (!s.jobSeen || s.jobMissingSince != null) setDiag({ jobSeen: true, jobMissingSince: null });
+      return;
+    }
+    const since = s.jobSeen ? (s.jobMissingSince ?? Date.now()) : s.jobStarted;
+    if (s.jobSeen && s.jobMissingSince == null) setDiag({ jobMissingSince: since });
+    const wait = (s.jobSeen ? JOB_GONE_MS : JOB_UNSEEN_MS) - (Date.now() - since);
+    const timer = setTimeout(() => endJob(id), Math.max(0, wait));
+    return () => clearTimeout(timer);
+  }, [st.jobId, jobListed]);
 
   const profiles = desc?.profiles ?? [];
   const profile = profiles.find((p) => p.id === prefs.profile) ?? profiles.find((p) => p.default) ?? profiles[0];
@@ -256,7 +368,7 @@ export default function DiagnosticsPanel() {
     try {
       const filter = { processes: prefs.processes ?? [], hosts: prefs.hosts ?? [] };
       const id = await api.diagRun(analyzer.index, JSON.stringify(options), scope === "selection" ? [...selection] : null, filter);
-      setDiag({ jobId: id });
+      setDiag({ jobId: id, jobSeen: false, jobStarted: Date.now(), jobMissingSince: null });
     } catch (e) {
       setDiag({ runError: String(e) });
     }
@@ -294,13 +406,13 @@ export default function DiagnosticsPanel() {
             </option>
           ))}
         </select>
-        <div className="diag-scope" role="radiogroup">
+        <div className="diag-scope" role="radiogroup" aria-label={t("Scope")}>
           <label>
-            <input type="radio" checked={scope === "visible"} onChange={() => updatePrefs({ scope: "visible" })} />
+            <input type="radio" name="diag-scope" checked={scope === "visible"} onChange={() => updatePrefs({ scope: "visible" })} />
             {t("Visible sessions")}
           </label>
           <label className={selection.size ? "" : "muted"}>
-            <input type="radio" checked={scope === "selection"} disabled={!selection.size} onChange={() => updatePrefs({ scope: "selection" })} />
+            <input type="radio" name="diag-scope" checked={scope === "selection"} disabled={!selection.size} onChange={() => updatePrefs({ scope: "selection" })} />
             {t("Selected sessions ({n})", { n: fmtInt(selection.size) })}
           </label>
           <ScopePick kind="processes" value={prefs.processes ?? []} onChange={(v) => updatePrefs({ processes: v })} />
@@ -367,12 +479,12 @@ function reportMenu(el: HTMLElement) {
 async function saveReport(kind: "json" | "md") {
   const { report, raw } = useDiag.getState();
   if (!report) return;
-  const path = await save({
-    defaultPath: `quena-diagnostics_${stamp(report.generatedAt)}.${kind}`,
-    filters: [kind === "json" ? { name: t("Diagnostics report (JSON)"), extensions: ["json"] } : { name: t("Markdown"), extensions: ["md"] }],
-  });
-  if (!path) return;
   try {
+    const path = await save({
+      defaultPath: `quena-diagnostics_${stamp(report.generatedAt)}.${kind}`,
+      filters: [kind === "json" ? { name: t("Diagnostics report (JSON)"), extensions: ["json"] } : { name: t("Markdown"), extensions: ["md"] }],
+    });
+    if (!path) return;
     await api.writeTextFile(path, kind === "json" ? JSON.stringify(raw ?? report, null, 2) + "\n" : toMarkdown(report, t));
     say(t("Report saved to {path}", { path }));
   } catch (e) {
@@ -388,10 +500,19 @@ async function copyForAi() {
 }
 
 async function loadBase() {
-  const path = await open({ multiple: false, filters: [{ name: t("Diagnostics report (JSON)"), extensions: ["json"] }] });
-  if (typeof path !== "string") return;
+  let path: string;
+  let text: string;
   try {
-    const { report } = parseReport(await api.readTextFile(path));
+    const picked = await open({ multiple: false, filters: [{ name: t("Diagnostics report (JSON)"), extensions: ["json"] }] });
+    if (typeof picked !== "string") return;
+    path = picked;
+    text = await api.readTextFile(path);
+  } catch (e) {
+    say(String(e), "error");
+    return;
+  }
+  try {
+    const { report } = parseReport(text);
     setDiag({ base: { report, name: path.split(/[\\/]/).pop() || path } });
   } catch {
     say(t("{path} is not a diagnostics report", { path }), "error");
@@ -405,7 +526,7 @@ function Intro({ running }: { running: boolean }) {
     <div className="scroll pad diag-intro">
       <h4>{running ? t("Analyzing the sessions…") : t("Diagnose the recorded traffic")}</h4>
       <p>{t("The analyzer looks at the visible or selected sessions for slow and sequential requests, duplicates, caching, compression, errors, authentication round trips and connection problems. It explains each finding and selects the affected sessions with one click.")}</p>
-      <p>{t("Everything runs locally in Quena; nothing is sent anywhere. Header values, cookies and tokens are redacted before the analyzer sees them.")}</p>
+      <p>{t("Everything runs locally in Quena; nothing is sent anywhere. Tokens, cookie values and sensitive URL parameters are removed before the analyzer sees the traffic; URLs, host names and header names remain — check exports before sharing them.")}</p>
       <p>
         {t("Statements marked")} <span className="pill pill-violet">{t("Estimate")}</span> {t("are modelled from the measured timings (for example for slower networks), not measured.")}
       </p>
@@ -416,7 +537,7 @@ function Intro({ running }: { running: boolean }) {
 
 // ------------------------------------------------------------------ options
 
-function NumField(p: { value: number; onChange: (v: number) => void; scale?: number; step?: number; title?: string; className?: string }) {
+function NumField(p: { value: number; onChange: (v: number) => void; scale?: number; step?: number; title?: string; label?: string; className?: string }) {
   const scale = p.scale ?? 1;
   const shown = +(p.value / scale).toFixed(3);
   const [text, setText] = useState(String(shown));
@@ -431,6 +552,7 @@ function NumField(p: { value: number; onChange: (v: number) => void; scale?: num
       step={p.step ?? 1}
       value={text}
       title={p.title}
+      aria-label={p.label}
       onChange={(e) => {
         setText(e.target.value);
         const n = parseFloat(e.target.value);
@@ -488,16 +610,16 @@ function OptionsSection({ desc, prefs, update }: { desc: DiagDescribe; prefs: Di
             {nets.map((n, i) => (
               <tr key={n.id + i}>
                 <td>
-                  <input className="diag-net-name" value={n.name} onChange={(e) => patchNet(i, { name: e.target.value })} />
+                  <input className="diag-net-name" aria-label={t("Name")} value={n.name} onChange={(e) => patchNet(i, { name: e.target.value })} />
                 </td>
                 <td>
-                  <NumField className="diag-num sm" value={n.rttMs} onChange={(v) => patchNet(i, { rttMs: v })} />
+                  <NumField className="diag-num sm" label={t("RTT ms")} value={n.rttMs} onChange={(v) => patchNet(i, { rttMs: v })} />
                 </td>
                 <td>
-                  <NumField className="diag-num sm" value={n.mbps} onChange={(v) => patchNet(i, { mbps: v })} />
+                  <NumField className="diag-num sm" label={t("Mbit/s")} value={n.mbps} onChange={(v) => patchNet(i, { mbps: v })} />
                 </td>
                 <td>
-                  <NumField className="diag-num sm" value={n.lossPct} step={0.1} onChange={(v) => patchNet(i, { lossPct: v })} />
+                  <NumField className="diag-num sm" label={t("Loss %")} value={n.lossPct} step={0.1} onChange={(v) => patchNet(i, { lossPct: v })} />
                 </td>
                 <td>
                   <button className="linklike" title={t("Remove")} onClick={() => setNets(nets.filter((_, j) => j !== i))}>
@@ -539,6 +661,16 @@ function ReportView({ report }: { report: DiagReport }) {
   }, [report, st.sev, st.cat, q]);
   const nShown = shown.critical.length + shown.warning.length + shown.info.length;
   const picked = st.picked != null ? report.findings[st.picked] : undefined;
+  // A finding picked elsewhere (the comparison): bring it into view once rendered.
+  useEffect(() => {
+    const i = st.scrollTo;
+    if (i == null) return;
+    const raf = requestAnimationFrame(() => {
+      ref.current?.querySelector(`[data-finding="${i}"]`)?.scrollIntoView({ block: "nearest" });
+      setDiag({ scrollTo: null });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [st.scrollTo, wide]);
 
   const overview = (
     <>
@@ -564,10 +696,10 @@ function ReportView({ report }: { report: DiagReport }) {
   const list = (
     <>
       <div className="diag-filter">
-        {categories.length > 0 && (
-          <select className="diag-sel" value={st.cat} onChange={(e) => setDiag({ cat: e.target.value })}>
+        {(categories.length > 0 || st.cat) && (
+          <select className="diag-sel" value={st.cat} aria-label={t("All categories")} onChange={(e) => setDiag({ cat: e.target.value })}>
             <option value="">{t("All categories")}</option>
-            {categories.map((c) => (
+            {(st.cat && !categories.includes(st.cat) ? [...categories, st.cat] : categories).map((c) => (
               <option key={c} value={c}>
                 {categoryLabel(c, t)}
               </option>
@@ -576,7 +708,7 @@ function ReportView({ report }: { report: DiagReport }) {
         )}
         <span className="diag-search">
           <Search size={12} />
-          <input placeholder={t("Search findings")} value={st.q} onChange={(e) => setDiag({ q: e.target.value })} />
+          <input placeholder={t("Search findings")} aria-label={t("Search findings")} value={st.q} onChange={(e) => setDiag({ q: e.target.value })} />
         </span>
         {nShown !== report.findings.length && <span className="muted small">{t("{n} of {total}", { n: fmtInt(nShown), total: fmtInt(report.findings.length) })}</span>}
       </div>
@@ -589,7 +721,7 @@ function ReportView({ report }: { report: DiagReport }) {
               {severityPlural(s, 2, t)} <span className="muted">({fmtInt(shown[s].length)})</span>
             </div>
             {shown[s].slice(0, st.limits[s]).map((i) => (
-              <FindingRow key={i} f={report.findings[i]} picked={st.picked === i} onPick={() => setDiag({ picked: st.picked === i ? null : i })}>
+              <FindingRow key={i} idx={i} f={report.findings[i]} picked={st.picked === i} onPick={() => setDiag({ picked: st.picked === i ? null : i })}>
                 {!wide && st.picked === i && <FindingDetail f={report.findings[i]} report={report} />}
               </FindingRow>
             ))}
@@ -655,12 +787,12 @@ function Metrics({ metrics }: { metrics: DiagMetric[] }) {
   );
 }
 
-function FindingRow(p: { f: DiagFinding; picked: boolean; onPick: () => void; children?: React.ReactNode }) {
+function FindingRow(p: { f: DiagFinding; idx: number; picked: boolean; onPick: () => void; children?: React.ReactNode }) {
   const f = p.f;
   const Chev = p.picked ? ChevronDown : ChevronRight;
   return (
-    <div className={`diag-f sev-${f.severity} ${p.picked ? "picked" : ""}`}>
-      <div className="diag-f-row" onClick={p.onPick}>
+    <div className={`diag-f sev-${f.severity} ${p.picked ? "picked" : ""}`} data-finding={p.idx}>
+      <div className="diag-f-row" {...pressable(p.onPick)} aria-expanded={p.picked}>
         <Chev size={12} className="diag-f-chev" />
         <div className="diag-f-text">
           <div className="diag-f-title">{f.title}</div>
@@ -844,10 +976,10 @@ function Operations({ report }: { report: DiagReport }) {
           <div
             key={o.id}
             className={`diag-op ${pickedOp === o.id ? "picked" : ""}`}
-            onClick={() => {
+            {...pressable(() => {
               setDiag({ pickedOp: o.id });
               void actions.selectIds(o.sessions);
-            }}
+            })}
             title={t("Select the sessions of this operation")}
           >
             <div className="diag-op-row">
@@ -874,7 +1006,12 @@ function CompareView({ base, report }: { base: { report: DiagReport; name: strin
   const c = useMemo(() => compare(base.report, report), [base, report]);
   const pick = (f: DiagFinding) => {
     const i = report.findings.indexOf(f);
-    setDiag({ base: null, picked: i >= 0 ? i : null, sev: null, cat: "", q: "" });
+    if (i < 0) return setDiag({ base: null, picked: null, sev: null, cat: "", q: "" });
+    // Show at least as many findings of its severity as needed to render it.
+    const pos = report.findings.slice(0, i).filter((x) => x.severity === f.severity).length;
+    const limits = useDiag.getState().limits;
+    const need = Math.ceil((pos + 1) / PAGE) * PAGE;
+    setDiag({ base: null, picked: i, scrollTo: i, sev: null, cat: "", q: "", limits: { ...limits, [f.severity]: Math.max(limits[f.severity], need) } });
   };
   const sevRows = c.severity.map((d) => ({ ...d, label: severityLabel(d.key as Severity, t) }));
   return (
@@ -944,7 +1081,7 @@ function CmpList({ title, items }: { title: string; items: { f: DiagFinding; fro
       {!items.length && <div className="muted small diag-none">{t("None")}</div>}
       {items.slice(0, limit).map(({ f, from, onClick }, i) => (
         <div key={`${f.key}-${i}`} className={`diag-f sev-${f.severity}`}>
-          <div className="diag-f-row" onClick={onClick} style={onClick ? undefined : { cursor: "default" }}>
+          <div className="diag-f-row" {...pressable(onClick)} style={onClick ? undefined : { cursor: "default" }}>
             <div className="diag-f-text">
               <div className="diag-f-title">{f.title}</div>
               <div className="diag-f-meta">

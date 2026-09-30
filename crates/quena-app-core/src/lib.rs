@@ -135,8 +135,8 @@ pub struct AppCore {
     pub(crate) mock: Mutex<Option<mock::MockHandle>>,
     pub(crate) searches: Mutex<std::collections::HashMap<JobId, Arc<Mutex<SearchResult>>>>,
     pub(crate) finds: Mutex<std::collections::HashMap<JobId, Arc<Mutex<find::FindResult>>>>,
-    /// Last diagnostics report (JSON).
-    pub(crate) diag_report: Mutex<Option<Arc<String>>>,
+    /// Last diagnostics report (JSON) and the generation of the latest run.
+    pub(crate) diag_report: Mutex<diagnostics::DiagSlot>,
     started: Instant,
     shut_down: std::sync::atomic::AtomicBool,
     /// Serializes starting and stopping the capture (the startup thread and the UI can race).
@@ -150,6 +150,7 @@ impl AppCore {
         let settings = Settings::load(&paths.settings);
         let capture = Self::new_temp_capture(&paths, &settings)?;
         let rules = rules::Rules::new(&paths.data);
+        archive::clean_dropped_at_startup(&paths.data);
         let core = Arc::new(AppCore {
             paths,
             settings: RwLock::new(settings),
@@ -167,7 +168,7 @@ impl AppCore {
             mock: Mutex::new(None),
             searches: Mutex::new(Default::default()),
             finds: Mutex::new(Default::default()),
-            diag_report: Mutex::new(None),
+            diag_report: Mutex::new(Default::default()),
             started: Instant::now(),
             shut_down: std::sync::atomic::AtomicBool::new(false),
         });
@@ -422,6 +423,8 @@ impl AppCore {
         cap.clear();
         cap.reset_numbering();
         self.emit("list", ListEvent { version: cap.index.version(), total: 0, count: 0 });
+        // The report refers to session ids that restart now.
+        self.diag_reset();
     }
 
     pub fn remove_except(&self, keep: Vec<SessionId>) {
@@ -567,6 +570,7 @@ impl AppCore {
         self.install_plugin_decoders(&cap);
         let old = std::mem::replace(&mut *self.capture.write(), cap);
         old.close(!self.settings.read().keep_captures);
+        self.diag_reset();
         let _ = self.apply_filter();
         let cap = self.capture();
         cap.index.tick();

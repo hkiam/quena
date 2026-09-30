@@ -34,6 +34,10 @@ pub struct Rule {
     /// (rest of the path and the query) is appended to the target. `dir:folder` is *Map Local*: it
     /// serves the file at the rest of the path inside the folder (the rest after a `prefix:` match,
     /// regex group 1, or else the whole URL path), never outside of it.
+    ///
+    /// A Map Remote target may end in ` *nocreds`: then Cookie, Authorization and
+    /// Proxy-Authorization are removed when the request goes to another host or port, or from
+    /// https to http. Without it (older rules) they are forwarded unchanged.
     pub action: String,
     pub latency_ms: u32,
     pub match_once: bool,
@@ -121,7 +125,7 @@ impl Matcher {
         match self {
             Matcher::All => true,
             Matcher::Exact(u) => head.url == *u,
-            Matcher::Prefix(p) => head.url.get(..p.len()).is_some_and(|x| x.eq_ignore_ascii_case(p)),
+            Matcher::Prefix(p) => prefix_matches(p, &head.url),
             Matcher::Regex(r) => r.is_match(&head.url),
             Matcher::Not(t) => !head.url.to_lowercase().contains(t.as_str()),
             Matcher::Contains(t) => head.url.to_lowercase().contains(t.as_str()),
@@ -146,6 +150,18 @@ impl Matcher {
             _ => Rest::None,
         }
     }
+}
+
+/// `prefix:` match (ASCII case-insensitive). A prefix that is only an origin
+/// (`https://host[:port]`) must end at the authority of the URL too: the next character has to
+/// be `/`, `?`, `#` or the end, so `https://prod.example.com` does not also match
+/// `https://prod.example.com.evil.net/` or `https://prod.example.com:8443/`.
+fn prefix_matches(p: &str, url: &str) -> bool {
+    if !url.get(..p.len()).is_some_and(|x| x.eq_ignore_ascii_case(p)) {
+        return false;
+    }
+    let origin_only = p.split_once("://").is_some_and(|(_, r)| !r.is_empty() && !r.contains(['/', '?', '#']));
+    !origin_only || url[p.len()..].chars().next().is_none_or(|c| matches!(c, '/' | '?' | '#'))
 }
 
 /// The part of a matched URL that mapping actions carry over.
@@ -243,6 +259,111 @@ fn resolve_in_dir(base: &str, rel: &str) -> std::result::Result<PathBuf, LocalMi
         return Err(not_found());
     }
     Ok(c)
+}
+
+/// Map Local: resolve like [`resolve_in_dir`], open the file and check that the *opened*
+/// handle still lies inside the folder. The path may be swapped for a symlink (or a folder on
+/// the way for a link) between resolving and opening; the real path of the open handle tells
+/// where the file actually is. Where the platform cannot tell (not Linux, macOS or Windows),
+/// the check falls back to canonicalising the path again right after opening.
+fn open_in_dir(base: &str, rel: &str) -> std::result::Result<(PathBuf, std::fs::File), LocalMiss> {
+    let c = resolve_in_dir(base, rel)?;
+    let base_c = std::fs::canonicalize(base).map_err(|_| LocalMiss(404, format!("[Quena] Map Local: folder not found: {base}")))?;
+    let f = std::fs::File::open(&c).map_err(|e| LocalMiss(500, format!("[Quena] Map Local: cannot read {}: {e}", c.display())))?;
+    verify_opened(&base_c, &c, &f)?;
+    Ok((c, f))
+}
+
+/// The opened file must be a regular file whose real location is inside `base_c`.
+fn verify_opened(base_c: &std::path::Path, path: &std::path::Path, f: &std::fs::File) -> std::result::Result<(), LocalMiss> {
+    let forbid = || LocalMiss(403, "[Quena] Map Local: the path leaves the mapped folder and was refused".into());
+    let real = opened_path(f).or_else(|_| std::fs::canonicalize(path)).map_err(|_| forbid())?;
+    if !real.starts_with(base_c) {
+        return Err(forbid());
+    }
+    if !f.metadata().is_ok_and(|m| m.is_file()) {
+        return Err(LocalMiss(404, format!("[Quena] Map Local: {} is not a file", path.display())));
+    }
+    Ok(())
+}
+
+/// Where an open file really is (symlinks resolved), from the handle itself.
+#[cfg(target_os = "linux")]
+fn opened_path(f: &std::fs::File) -> std::io::Result<PathBuf> {
+    use std::os::fd::AsRawFd;
+    std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd()))
+}
+
+#[cfg(target_os = "macos")]
+fn opened_path(f: &std::fs::File) -> std::io::Result<PathBuf> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    const F_GETPATH: std::ffi::c_int = 50;
+    const MAXPATHLEN: usize = 1024;
+    unsafe extern "C" {
+        fn fcntl(fd: std::ffi::c_int, cmd: std::ffi::c_int, ...) -> std::ffi::c_int;
+    }
+    let mut buf = [0u8; MAXPATHLEN];
+    // SAFETY: F_GETPATH writes a NUL-terminated path of at most MAXPATHLEN bytes into buf.
+    if unsafe { fcntl(f.as_raw_fd(), F_GETPATH, buf.as_mut_ptr()) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..n])))
+}
+
+#[cfg(windows)]
+fn opened_path(f: &std::fs::File) -> std::io::Result<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+    unsafe extern "system" {
+        fn GetFinalPathNameByHandleW(file: *mut std::ffi::c_void, path: *mut u16, len: u32, flags: u32) -> u32;
+    }
+    // The same form std::fs::canonicalize returns (\\?\C:\…), so starts_with compares like with like.
+    let mut buf = vec![0u16; 1024];
+    loop {
+        // SAFETY: the buffer is valid for buf.len() u16s; the handle belongs to `f`.
+        let n = unsafe { GetFinalPathNameByHandleW(f.as_raw_handle() as *mut std::ffi::c_void, buf.as_mut_ptr(), buf.len() as u32, 0) } as usize;
+        if n == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if n < buf.len() {
+            buf.truncate(n);
+            return Ok(PathBuf::from(std::ffi::OsString::from_wide(&buf)));
+        }
+        buf.resize(n + 1, 0);
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn opened_path(_f: &std::fs::File) -> std::io::Result<PathBuf> {
+    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+}
+
+/// Map Remote with `*nocreds`: these request headers are removed when the host changes.
+const CREDENTIAL_HEADERS: [&str; 3] = ["cookie", "authorization", "proxy-authorization"];
+
+/// Split a trailing ` *nocreds` modifier off a Map Remote target.
+fn split_nocreds(action: &str) -> (&str, bool) {
+    let a = action.trim();
+    match a.rsplit_once(char::is_whitespace) {
+        Some((url, m)) if m.eq_ignore_ascii_case("*nocreds") => (url.trim_end(), true),
+        _ => (a, false),
+    }
+}
+
+/// Does Map Remote go to another origin (host or port), or from https down to http?
+fn leaves_origin(from: &str, to: &str) -> bool {
+    let https = |u: &str| u.get(..8).is_some_and(|x| x.eq_ignore_ascii_case("https://"));
+    let auth = |u: &str| authority_of(u).map(|a| a.to_ascii_lowercase());
+    auth(from) != auth(to) || (https(from) && !https(to))
+}
+
+/// Does this action read a local file (Map Local or a response file)? Those run off the
+/// proxy's async workers.
+fn reads_file(action: &str) -> bool {
+    let a = action.trim_start().to_ascii_lowercase();
+    a.starts_with("dir:") || !(a.starts_with('*') || a.starts_with("session:") || a.starts_with("http://") || a.starts_with("https://"))
 }
 
 struct Compiled {
@@ -777,15 +898,11 @@ impl Rules {
         if starts_http {
             if let Ok(Some((first, headers))) = quena_formats::raw::read_head(&mut br) {
                 let (v, status, reason) = quena_formats::raw::parse_status_line(&first);
-                let mut w = cap.bodies.writer_with_limit(u64::MAX);
-                let mut buf = vec![0u8; 1 << 20];
-                let mut src: Box<dyn Read> = if quena_formats::raw::is_chunked(&headers) { Box::new(quena_formats::raw::ChunkedReader::new(br)) } else { Box::new(br) };
-                while let Ok(n) = src.read(&mut buf) {
-                    if n == 0 || w.write(&buf[..n]).is_err() {
-                        break;
-                    }
-                }
-                let body = w.finish();
+                let src: Box<dyn Read> = if quena_formats::raw::is_chunked(&headers) { Box::new(quena_formats::raw::ChunkedReader::new(br)) } else { Box::new(br) };
+                let body = match copy_to_body(&cap.bodies, src) {
+                    Ok(b) => b,
+                    Err(e) => return self.synthetic(500, "text/plain; charset=utf-8", format!("[Quena] Mock Rules: cannot read {path}: {e}").as_bytes(), &[]),
+                };
                 let mut headers = headers;
                 headers.remove("transfer-encoding");
                 headers.set("Content-Length", body.len().to_string());
@@ -795,18 +912,15 @@ impl Rules {
         self.plain_file_response(p, br)
     }
 
-    /// A 200 response with the file's bytes and a Content-Type guessed from its extension.
-    fn plain_file_response(&self, p: &std::path::Path, mut src: impl std::io::Read) -> Option<(ResponseHead, Body)> {
+    /// A 200 response with the file's bytes and a Content-Type guessed from its extension;
+    /// a 500 if the file cannot be read to the end (never a cut-off 200).
+    fn plain_file_response(&self, p: &std::path::Path, src: impl std::io::Read) -> Option<(ResponseHead, Body)> {
         let core = self.core()?;
         let cap = core.capture();
-        let mut w = cap.bodies.writer_with_limit(u64::MAX);
-        let mut buf = vec![0u8; 1 << 20];
-        while let Ok(n) = src.read(&mut buf) {
-            if n == 0 || w.write(&buf[..n]).is_err() {
-                break;
-            }
-        }
-        let body = w.finish();
+        let body = match copy_to_body(&cap.bodies, src) {
+            Ok(b) => b,
+            Err(e) => return self.synthetic(500, "text/plain; charset=utf-8", format!("[Quena] Mock Rules: cannot read {}: {e}", p.display()).as_bytes(), &[]),
+        };
         let mut h = Headers::new();
         h.push("Date", httpdate_now());
         h.push("Server", "Quena Mock Rules");
@@ -842,13 +956,10 @@ impl Rules {
                 Rest::Prefix(r) | Rest::Group(r) => r.clone(),
                 Rest::None => split_url_host_path(&head.url).1,
             };
-            return match resolve_in_dir(dir, &rel) {
-                Ok(p) => {
+            return match open_in_dir(dir, &rel) {
+                Ok((p, f)) => {
                     *mapped = Some((false, format!("local file {}", p.display())));
-                    match std::fs::File::open(&p) {
-                        Ok(f) => respond(self.plain_file_response(&p, f)),
-                        Err(e) => respond(self.synthetic(500, "text/plain; charset=utf-8", format!("[Quena] Map Local: cannot read {}: {e}", p.display()).as_bytes(), &[])),
-                    }
+                    respond(self.plain_file_response(&p, f))
                 }
                 Err(LocalMiss(code, msg)) => {
                     *mapped = Some((false, format!("{dir} (HTTP {code})")));
@@ -907,11 +1018,18 @@ impl Rules {
         if lower.starts_with("http://") || lower.starts_with("https://") {
             // Retarget the request (Map Remote with a prefix: match keeps the rest of the URL).
             // The upstream client connects (and sends TLS SNI) from the URL; Host follows it.
+            let (a, nocreds) = split_nocreds(a);
             let target = match rest {
                 Rest::Prefix(r) => join_target(a, r),
                 _ => a.to_string(),
             };
             let mut h = head;
+            // `*nocreds`: cookies and credentials meant for the original host stay behind.
+            if nocreds && leaves_origin(&h.url, &target) {
+                for n in CREDENTIAL_HEADERS {
+                    h.headers.remove(n);
+                }
+            }
             let host = authority_of(&target).unwrap_or_else(|| split_url(&target, "GET").0);
             *mapped = Some((true, target.clone()));
             h.url = target;
@@ -976,6 +1094,31 @@ impl Rules {
     }
 }
 
+/// Copy a file into a new body. Read errors (and a capture store without room, which would
+/// cut the body short) are errors, so no truncated response is served as complete.
+fn copy_to_body(store: &Arc<quena_body::BodyStore>, mut src: impl std::io::Read) -> std::result::Result<Body, String> {
+    let mut w = store.writer_with_limit(u64::MAX);
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        match src.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => w.write(&buf[..n]).map_err(|e| e.to_string())?,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                let b = w.finish();
+                store.delete(&b);
+                return Err(e.to_string());
+            }
+        }
+    }
+    let body = w.finish();
+    if body.is_truncated() {
+        store.delete(&body);
+        return Err("the capture store has no room for the file".into());
+    }
+    Ok(body)
+}
+
 fn httpdate_now() -> String {
     let t = time::OffsetDateTime::now_utc();
     const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -1021,8 +1164,23 @@ impl Interceptor for Rules {
                 } else if a == "*bpafter" {
                     this.break_response.lock().insert(s.id);
                 } else {
-                    let mut mapped = None;
-                    if let Some(action) = this.apply_action(&rule, head.clone(), &rest, &mut mapped) {
+                    // File work (Map Local, response files) runs on a blocking thread so large
+                    // or slow files do not stall the proxy's async workers.
+                    let (action, mapped) = if reads_file(&rule.action) {
+                        let (t, r, h, rs) = (this.clone(), rule.clone(), head.clone(), rest.clone());
+                        tokio::task::spawn_blocking(move || {
+                            let mut mapped = None;
+                            let a = t.apply_action(&r, h, &rs, &mut mapped);
+                            (a, mapped)
+                        })
+                        .await
+                        .unwrap_or_else(|_| (this.synthetic(500, "text/plain; charset=utf-8", b"[Quena] Mock Rules: reading the file failed", &[]).map(|(h, b)| RequestAction::Respond { head: h, body: b, delay_ms: 0 }), None))
+                    } else {
+                        let mut mapped = None;
+                        let a = this.apply_action(&rule, head.clone(), &rest, &mut mapped);
+                        (a, mapped)
+                    };
+                    if let Some(action) = action {
                         // Map Remote: the list shows the new target, so the comment names the
                         // original URL. Map Local: the list keeps the URL, the comment names the
                         // file. Session flags record both ends either way.
@@ -1421,5 +1579,95 @@ mod tests {
         assert_eq!(resolve_in_dir(b, "nope").unwrap_err().0, 404);
         assert_eq!(resolve_in_dir(b, "").unwrap_err().0, 404); // folder without index.html
         assert_eq!(resolve_in_dir("relative/dir", "x").unwrap_err().0, 500);
+    }
+
+    #[test]
+    fn origin_prefix_needs_a_boundary() {
+        let m = Matcher::parse("prefix:https://prod.example.com").unwrap();
+        for (url, want) in [
+            ("https://prod.example.com", true),
+            ("https://prod.example.com/", true),
+            ("https://PROD.example.com/a?b", true),
+            ("https://prod.example.com?q=1", true),
+            ("https://prod.example.com#f", true),
+            ("https://prod.example.com.evil.net/x", false),
+            ("https://prod.example.com:8443/x", false),
+            ("https://prod.example.comx/", false),
+        ] {
+            assert_eq!(m.matches(&head("GET", url), None), want, "{url}");
+        }
+        let m = Matcher::parse("prefix:http://localhost:3000").unwrap();
+        assert!(m.matches(&head("GET", "http://localhost:3000/api"), None));
+        assert!(!m.matches(&head("GET", "http://localhost:30001/api"), None));
+        // A prefix with a path keeps plain prefix semantics.
+        let m = Matcher::parse("prefix:https://prod.example.com/api").unwrap();
+        assert!(m.matches(&head("GET", "https://prod.example.com/api-v2/x"), None));
+        assert_eq!(m.rest("https://prod.example.com/api/x"), Rest::Prefix("/x".into()));
+    }
+
+    #[test]
+    fn nocreds_modifier() {
+        assert_eq!(split_nocreds("https://s.example.com/api/ *nocreds"), ("https://s.example.com/api/", true));
+        assert_eq!(split_nocreds("  https://s.example.com  *NoCreds "), ("https://s.example.com", true));
+        assert_eq!(split_nocreds("https://s.example.com/api/"), ("https://s.example.com/api/", false));
+        assert!(leaves_origin("https://a.example.com/x", "https://b.example.com/x"));
+        assert!(leaves_origin("https://a.example.com/x", "https://a.example.com:8443/x"));
+        assert!(leaves_origin("https://a.example.com/x", "http://a.example.com/x"));
+        assert!(!leaves_origin("https://A.example.com/x", "https://a.example.com/v2/x"));
+        assert!(!leaves_origin("http://a.example.com/x", "https://a.example.com/x"));
+    }
+
+    /// The handle, not the path, decides: a file opened through a link that was swapped in
+    /// after the path was checked is refused.
+    #[test]
+    fn opened_handle_must_stay_inside() {
+        let d = tempfile::tempdir().unwrap();
+        let base = d.path().join("site");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("ok.txt"), "ok").unwrap();
+        std::fs::write(d.path().join("secret.txt"), "TOP-SECRET").unwrap();
+        let base_c = std::fs::canonicalize(&base).unwrap();
+        let (p, f) = open_in_dir(base.to_str().unwrap(), "ok.txt").unwrap();
+        assert!(p.ends_with("ok.txt"));
+        verify_opened(&base_c, &p, &f).unwrap();
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+        assert!(opened_path(&f).unwrap().starts_with(&base_c), "{:?}", opened_path(&f));
+        #[cfg(unix)]
+        {
+            // The race: "ok.txt" was checked, then replaced by a link to the secret.
+            std::fs::remove_file(base.join("ok.txt")).unwrap();
+            std::os::unix::fs::symlink(d.path().join("secret.txt"), base.join("ok.txt")).unwrap();
+            let swapped = std::fs::File::open(&p).unwrap();
+            assert_eq!(verify_opened(&base_c, &p, &swapped).unwrap_err().0, 403);
+            assert_eq!(open_in_dir(base.to_str().unwrap(), "ok.txt").unwrap_err().0, 403);
+        }
+    }
+
+    #[test]
+    fn file_read_errors_are_not_served_as_complete() {
+        struct Broken(usize);
+        impl std::io::Read for Broken {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 == 0 {
+                    return Err(std::io::Error::other("disk gone"));
+                }
+                self.0 -= 1;
+                buf[..4].copy_from_slice(b"data");
+                Ok(4)
+            }
+        }
+        let d = tempfile::tempdir().unwrap();
+        let store = quena_body::BodyStore::open(d.path(), Default::default()).unwrap();
+        assert_eq!(copy_to_body(&store, Broken(3)).unwrap_err(), "disk gone");
+        assert_eq!(copy_to_body(&store, &b"hello"[..]).unwrap().read_range(0, 10).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn file_actions_are_recognised() {
+        assert!(reads_file("dir:/srv/site"));
+        assert!(reads_file("/tmp/mock.json"));
+        assert!(!reads_file("*404"));
+        assert!(!reads_file("session:3"));
+        assert!(!reads_file("https://x.example.com/ *nocreds"));
     }
 }

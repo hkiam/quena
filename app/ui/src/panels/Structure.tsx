@@ -1,6 +1,7 @@
 // Structure view: the visible sessions as a tree of hosts and paths. Levels are loaded
-// lazily from the backend; clicking a node selects its sessions in the list.
-import { useCallback, useEffect, useState } from "react";
+// lazily from the backend (all shown levels in one call); clicking a node selects its
+// sessions in the list.
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Globe } from "lucide-react";
 import { api, type TreeNode } from "../api";
 import { fmtBytes, fmtInt } from "../lib/format";
@@ -15,6 +16,11 @@ interface Level {
 
 // A level is identified by host + path prefix ("" host for the list of hosts).
 const keyOf = (host: string | null, prefix: string) => `${host ?? ""}\u0000${prefix}`;
+// The "(this path)" entry of a folder: its own identity (the folder row has keyOf(host, path)),
+// and it selects exactly that path, not everything below it.
+const exactKeyOf = (host: string, path: string) => `${keyOf(host, path)}\u0000=`;
+// While traffic flows, open levels are refreshed at most this often; expanding loads at once.
+const REFRESH_MS = 1500;
 
 export function StructurePanel() {
   const version = useStore((s) => s.listVersion);
@@ -24,25 +30,43 @@ export function StructurePanel() {
   const [picked, setPicked] = useState<string | null>(null);
 
   const load = useCallback(async (keys: string[]) => {
-    const got = await Promise.all(
-      keys.map(async (k) => {
+    const got = await api.structure(
+      keys.map((k) => {
         const [h, p] = k.split("\u0000");
-        return [k, await api.structure(h || null, p)] as const;
+        return { host: h || null, prefix: p };
       }),
     );
     setLevels((old) => {
       const m = new Map(old);
-      for (const [k, l] of got) m.set(k, l);
+      keys.forEach((k, i) => got[i] && m.set(k, got[i]));
       return m;
     });
   }, []);
 
-  // Reload the root and every open level as traffic comes in (throttled).
-  const tick = Math.floor(version / 10);
+  // The root and every open level, in one backend pass: at once when a node is expanded or
+  // collapsed, and at most every REFRESH_MS while traffic comes in.
+  const openRef = useRef(open);
+  openRef.current = open;
+  const lastLoad = useRef(0);
+  const timer = useRef<number | undefined>(undefined);
+  const refresh = useCallback(() => {
+    lastLoad.current = Date.now();
+    void load([keyOf(null, ""), ...openRef.current]).catch(() => {});
+  }, [load]);
   useEffect(() => {
-    const t = setTimeout(() => void load([keyOf(null, ""), ...open]).catch(() => {}), 150);
-    return () => clearTimeout(t);
-  }, [tick, open, load]);
+    window.clearTimeout(timer.current);
+    timer.current = undefined;
+    refresh();
+  }, [open, refresh]);
+  useEffect(() => {
+    if (timer.current !== undefined) return;
+    const wait = Math.max(0, lastLoad.current + REFRESH_MS - Date.now());
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined;
+      refresh();
+    }, wait);
+  }, [version, refresh]);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
   const toggle = (k: string) =>
     setOpen((o) => {
@@ -52,9 +76,9 @@ export function StructurePanel() {
       return n;
     });
 
-  const select = async (host: string, path: string) => {
-    setPicked(keyOf(host, path));
-    await actions.selectIds(await api.structureIds(host, path));
+  const select = async (key: string, host: string, path: string, exact = false) => {
+    setPicked(key);
+    await actions.selectIds(await api.structureIds(host, path, exact));
   };
 
   const root = levels.get(keyOf(null, ""));
@@ -72,10 +96,11 @@ export function StructurePanel() {
     }
     for (const n of lvl.nodes) {
       const path = prefix + n.name;
-      const k = keyOf(host, path);
+      const exact = n.name === "";
+      const k = exact ? exactKeyOf(host, path) : keyOf(host, path);
       const dir = n.name.endsWith("/");
       rows.push(
-        <Row key={k} node={n} label={n.name || t("(this path)")} depth={depth} open={open.has(k)} expandable={dir && n.hasChildren} picked={picked === k} onToggle={() => toggle(k)} onPick={() => select(host, path)} />,
+        <Row key={k} node={n} label={n.name || t("(this path)")} depth={depth} open={open.has(k)} expandable={dir && n.hasChildren} picked={picked === k} onToggle={() => toggle(k)} onPick={() => select(k, host, path, exact)} />,
       );
       if (dir && open.has(k)) walk(host, path, depth + 1);
     }
@@ -83,7 +108,8 @@ export function StructurePanel() {
   };
   for (const h of hosts) {
     const k = keyOf(h.name, "/");
-    rows.push(<Row key={k} node={h} label={h.name} host depth={0} open={open.has(k)} expandable={h.hasChildren} picked={picked === keyOf(h.name, "")} onToggle={() => toggle(k)} onPick={() => select(h.name, "")} />);
+    const hk = keyOf(h.name, "");
+    rows.push(<Row key={hk} node={h} label={h.name} host depth={0} open={open.has(k)} expandable={h.hasChildren} picked={picked === hk} onToggle={() => toggle(k)} onPick={() => select(hk, h.name, "")} />);
     if (open.has(k)) walk(h.name, "/", 1);
   }
 

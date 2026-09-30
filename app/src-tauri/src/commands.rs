@@ -131,16 +131,18 @@ async fn timers(core: State<'_, Core>, ids: Vec<SessionId>) -> R<Vec<quena_app_c
     blocking(move || Ok(core.timers(&ids))).await
 }
 
+/// Several tree levels (hosts and every open node) in one pass over the view.
 #[tauri::command]
-async fn structure(core: State<'_, Core>, host: Option<String>, prefix: String) -> R<quena_app_core::structure::TreeLevel> {
+async fn structure(core: State<'_, Core>, levels: Vec<quena_app_core::structure::LevelQuery>) -> R<Vec<quena_app_core::structure::TreeLevel>> {
     let core = core.inner().clone();
-    blocking(move || Ok(core.structure(host.as_deref(), &prefix))).await
+    blocking(move || Ok(core.structure_levels(&levels))).await
 }
 
+/// Sessions of a node; `exact` for the "(this path)" node (that path only, nothing below).
 #[tauri::command]
-async fn structure_ids(core: State<'_, Core>, host: String, path: String) -> R<Vec<SessionId>> {
+async fn structure_ids(core: State<'_, Core>, host: String, path: String, exact: Option<bool>) -> R<Vec<SessionId>> {
     let core = core.inner().clone();
-    blocking(move || Ok(core.structure_ids(&host, &path))).await
+    blocking(move || Ok(core.structure_ids(&host, &path, exact.unwrap_or(false)))).await
 }
 
 /// Language of the UI: the saved preference resolved to "en" or "de".
@@ -424,24 +426,37 @@ async fn write_text_file(path: String, text: String) -> R<()> {
 /// Largest text file [`read_text_file`] loads (a saved diagnostics report for comparison).
 const MAX_TEXT_FILE: u64 = 64 << 20;
 
+/// Load a saved diagnostics report: a regular `.json` file of at most [`MAX_TEXT_FILE`].
 #[tauri::command]
 async fn read_text_file(path: String) -> R<String> {
-    blocking(move || {
-        use std::io::Read;
-        let f = std::fs::File::open(&path).map_err(e)?;
-        let len = f.metadata().map_err(e)?.len();
-        if len > MAX_TEXT_FILE {
-            return Err(format!("{path}: file is larger than {} MB", MAX_TEXT_FILE >> 20));
-        }
-        let mut s = String::new();
-        // `take` also bounds a file that grows while it is read.
-        f.take(MAX_TEXT_FILE + 1).read_to_string(&mut s).map_err(e)?;
-        if s.len() as u64 > MAX_TEXT_FILE {
-            return Err(format!("{path}: file is larger than {} MB", MAX_TEXT_FILE >> 20));
-        }
-        Ok(s)
-    })
-    .await
+    blocking(move || read_report_file(&path)).await
+}
+
+fn read_report_file(path: &str) -> R<String> {
+    use std::io::Read;
+    let p = std::path::Path::new(path);
+    if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("json")) {
+        return Err(format!("{path}: not a .json file"));
+    }
+    // Checked before opening: opening a FIFO for reading would block.
+    if !std::fs::metadata(p).map_err(e)?.is_file() {
+        return Err(format!("{path}: not a regular file"));
+    }
+    let f = std::fs::File::open(p).map_err(e)?;
+    let meta = f.metadata().map_err(e)?;
+    if !meta.is_file() {
+        return Err(format!("{path}: not a regular file"));
+    }
+    if meta.len() > MAX_TEXT_FILE {
+        return Err(format!("{path}: file is larger than {} MB", MAX_TEXT_FILE >> 20));
+    }
+    let mut s = String::new();
+    // `take` also bounds a file that grows while it is read.
+    f.take(MAX_TEXT_FILE + 1).read_to_string(&mut s).map_err(e)?;
+    if s.len() as u64 > MAX_TEXT_FILE {
+        return Err(format!("{path}: file is larger than {} MB", MAX_TEXT_FILE >> 20));
+    }
+    Ok(s)
 }
 
 #[tauri::command]
@@ -796,4 +811,35 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         script_menus,
         script_run_menu,
     ]
+}
+
+#[cfg(test)]
+mod read_report_file_tests {
+    use super::read_report_file;
+
+    #[test]
+    fn only_regular_json_files_are_read() {
+        let dir = std::env::temp_dir().join(format!("quena-read-report-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ok = dir.join("report.JSON");
+        std::fs::write(&ok, "{}").unwrap();
+        assert_eq!(read_report_file(ok.to_str().unwrap()).unwrap(), "{}");
+        let txt = dir.join("notes.txt");
+        std::fs::write(&txt, "x").unwrap();
+        assert!(read_report_file(txt.to_str().unwrap()).unwrap_err().contains("not a .json file"));
+        // A directory named like a report is no file.
+        let d = dir.join("dir.json");
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(read_report_file(d.to_str().unwrap()).unwrap_err().contains("not a regular file"));
+        // A FIFO is refused instead of blocking the reader.
+        #[cfg(unix)]
+        {
+            let fifo = dir.join("fifo.json");
+            let _ = std::fs::remove_file(&fifo);
+            if std::process::Command::new("mkfifo").arg(&fifo).status().is_ok_and(|s| s.success()) {
+                assert!(read_report_file(fifo.to_str().unwrap()).unwrap_err().contains("not a regular file"));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

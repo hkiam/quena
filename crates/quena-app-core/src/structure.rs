@@ -1,12 +1,12 @@
 //! Structure view: the visible sessions as a tree of hosts and URL paths.
 //!
-//! The tree is built one level at a time (the UI expands nodes lazily), so even very large
-//! captures only cost one pass over the view per expanded node.
+//! The tree is built level by level (the UI expands nodes lazily); all levels the UI shows
+//! are computed together in one pass over the view ([`AppCore::structure_levels`]).
 
 use crate::AppCore;
 use quena_model::{SessionId, SessionSummary};
-use serde::Serialize;
-use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 
 /// Most children returned for one node.
 const MAX_CHILDREN: usize = 5000;
@@ -52,11 +52,13 @@ struct Level<'q> {
     host: Option<&'q str>,
     prefix: &'q str,
     map: BTreeMap<String, TreeNode>,
+    /// A name beyond [`MAX_CHILDREN`] was seen (and not collected).
+    more: bool,
 }
 
 impl<'q> Level<'q> {
     fn new(host: Option<&'q str>, prefix: &'q str) -> Self {
-        Level { host, prefix, map: BTreeMap::new() }
+        Level { host, prefix, map: BTreeMap::new(), more: false }
     }
 
     fn visit(&mut self, s: &SessionSummary) {
@@ -71,8 +73,15 @@ impl<'q> Level<'q> {
                 }
             }
         };
+        let full = self.map.len() >= MAX_CHILDREN;
         let n = match self.map.get_mut(name) {
             Some(n) => n,
+            // Once the level is full, new names are only counted as "more": a level with
+            // millions of distinct names must not collect them all first.
+            None if full => {
+                self.more = true;
+                return;
+            }
             None => self.map.entry(name.to_string()).or_default(),
         };
         n.has_children |= below;
@@ -80,11 +89,10 @@ impl<'q> Level<'q> {
     }
 
     fn finish(self) -> (Vec<TreeNode>, bool) {
-        let truncated = self.map.len() > MAX_CHILDREN;
+        let truncated = self.more;
         let nodes = self
             .map
             .into_iter()
-            .take(MAX_CHILDREN)
             .map(|(name, mut n)| {
                 n.name = name;
                 n
@@ -95,13 +103,16 @@ impl<'q> Level<'q> {
 }
 
 /// Does a session belong to the node `host` + `path`? A `path` ending in `/` (or empty)
-/// covers everything below it; otherwise only that exact path.
-pub fn matches(s: &SessionSummary, host: &str, path: &str) -> bool {
+/// covers everything below it; otherwise only that exact path. `exact` (the "(this path)"
+/// node of a folder) takes only sessions whose path is exactly `path`.
+pub fn matches(s: &SessionSummary, host: &str, path: &str, exact: bool) -> bool {
     if s.host != host {
         return false;
     }
     let p = path_of(s);
-    if path.is_empty() {
+    if exact {
+        p == path
+    } else if path.is_empty() {
         true
     } else if path.ends_with('/') {
         p.starts_with(path)
@@ -117,17 +128,59 @@ pub struct TreeLevel {
     pub truncated: bool,
 }
 
+/// One level asked for: `host: None` is the list of hosts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LevelQuery {
+    pub host: Option<String>,
+    pub prefix: String,
+}
+
+/// Several levels in one pass over `rows`; each row is only offered to the levels of its host.
+pub fn levels<'a>(rows: impl FnOnce(&mut dyn FnMut(&SessionSummary)), queries: &'a [LevelQuery]) -> Vec<TreeLevel> {
+    let mut levels: Vec<Level<'a>> = queries.iter().map(|q| Level::new(q.host.as_deref(), &q.prefix)).collect();
+    let mut roots = Vec::new();
+    let mut by_host: HashMap<&'a str, Vec<usize>> = HashMap::new();
+    for (i, q) in queries.iter().enumerate() {
+        match &q.host {
+            None => roots.push(i),
+            Some(h) => by_host.entry(h.as_str()).or_default().push(i),
+        }
+    }
+    rows(&mut |s: &SessionSummary| {
+        for &i in &roots {
+            levels[i].visit(s);
+        }
+        if let Some(ix) = by_host.get(s.host.as_str()) {
+            for &i in ix {
+                levels[i].visit(s);
+            }
+        }
+    });
+    levels
+        .into_iter()
+        .map(|l| {
+            let (nodes, truncated) = l.finish();
+            TreeLevel { nodes, truncated }
+        })
+        .collect()
+}
+
 impl AppCore {
     pub fn structure(&self, host: Option<&str>, prefix: &str) -> TreeLevel {
-        let mut level = Level::new(host, prefix);
-        self.capture().index.for_each_view(|s| level.visit(s));
-        let (nodes, truncated) = level.finish();
-        TreeLevel { nodes, truncated }
+        let q = [LevelQuery { host: host.map(str::to_string), prefix: prefix.to_string() }];
+        self.structure_levels(&q).pop().unwrap_or(TreeLevel { nodes: vec![], truncated: false })
     }
 
-    /// Visible sessions below a node, in view order.
-    pub fn structure_ids(&self, host: &str, path: &str) -> Vec<SessionId> {
-        self.capture().index.find(|s| matches(s, host, path))
+    /// Several levels (the hosts and every open node) in one pass over the view.
+    pub fn structure_levels(&self, queries: &[LevelQuery]) -> Vec<TreeLevel> {
+        let cap = self.capture();
+        levels(|f| cap.index.for_each_view(f), queries)
+    }
+
+    /// Visible sessions of a node, in view order (`exact`: see [`matches`]).
+    pub fn structure_ids(&self, host: &str, path: &str, exact: bool) -> Vec<SessionId> {
+        self.capture().index.find(|s| matches(s, host, path, exact))
     }
 }
 
@@ -140,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn levels() {
+    fn levels_one_at_a_time() {
         let rows = vec![
             s("a.test", "/api/v1/users?x=1", 200),
             s("a.test", "/api/v1/users", 404),
@@ -161,10 +214,52 @@ mod tests {
     #[test]
     fn node_membership() {
         let x = s("a.test", "/api/v1/users?x=1", 200);
-        assert!(matches(&x, "a.test", ""));
-        assert!(matches(&x, "a.test", "/api/"));
-        assert!(matches(&x, "a.test", "/api/v1/users"));
-        assert!(!matches(&x, "a.test", "/api/v1/use"));
-        assert!(!matches(&x, "b.test", "/api/"));
+        assert!(matches(&x, "a.test", "", false));
+        assert!(matches(&x, "a.test", "/api/", false));
+        assert!(matches(&x, "a.test", "/api/v1/users", false));
+        assert!(!matches(&x, "a.test", "/api/v1/use", false));
+        assert!(!matches(&x, "b.test", "/api/", false));
+        assert!(matches(&x, "a.test", "/api/v1/users", true));
+    }
+
+    /// The "(this path)" node (empty name below a folder) selects exactly the sessions it
+    /// counts, not everything below the folder.
+    #[test]
+    fn this_path_node_is_exact() {
+        let rows = vec![s("a.test", "/api/", 200), s("a.test", "/api/?x", 200), s("a.test", "/api/users", 200), s("a.test", "/", 200), s("a.test", "/x", 200)];
+        let (api, _) = children(&rows, Some("a.test"), "/api/");
+        let this = api.iter().find(|n| n.name.is_empty()).unwrap();
+        assert_eq!(this.count, 2);
+        assert_eq!(rows.iter().filter(|r| matches(r, "a.test", "/api/", true)).count(), 2);
+        assert_eq!(rows.iter().filter(|r| matches(r, "a.test", "/api/", false)).count(), 3);
+        let (root, _) = children(&rows, Some("a.test"), "/");
+        assert_eq!(root.iter().find(|n| n.name.is_empty()).unwrap().count, 1);
+        assert_eq!(rows.iter().filter(|r| matches(r, "a.test", "/", true)).count(), 1);
+    }
+
+    #[test]
+    fn several_levels_in_one_pass_and_capped() {
+        let mut rows: Vec<SessionSummary> = (0..MAX_CHILDREN + 50).map(|i| s("big.test", &format!("/f/{i:06}"), 200)).collect();
+        rows.push(s("a.test", "/api/x", 200));
+        let q = [
+            LevelQuery { host: None, prefix: String::new() },
+            LevelQuery { host: Some("a.test".into()), prefix: "/".into() },
+            LevelQuery { host: Some("big.test".into()), prefix: "/f/".into() },
+        ];
+        let mut passes = 0;
+        let out = levels(
+            |f| {
+                passes += 1;
+                rows.iter().for_each(f)
+            },
+            &q,
+        );
+        assert_eq!(passes, 1);
+        assert_eq!(out[0].nodes.len(), 2);
+        assert_eq!(out[1].nodes.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(), ["api/"]);
+        assert_eq!(out[2].nodes.len(), MAX_CHILDREN);
+        assert!(out[2].truncated && !out[0].truncated && !out[1].truncated);
+        // The same as one level at a time.
+        assert_eq!(out[1].nodes, children(&rows, Some("a.test"), "/").0);
     }
 }

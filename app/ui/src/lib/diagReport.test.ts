@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compare, direction, fmtDelta, fmtValue, normalizeReport, parseDescribe, parseReport, scopeLabel, toAiPrompt, toMarkdown, type DiagReport } from "./diagReport";
+import { compare, direction, fmtDelta, fmtValue, mdText, normalizeReport, parseDescribe, parseReport, scopeLabel, toAiPrompt, toMarkdown, type DiagReport } from "./diagReport";
 
 const t = (en: string, vars?: Record<string, string | number>) => (vars ? en.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m)) : en);
 
@@ -82,7 +82,7 @@ describe("diagnostics report", () => {
     expect(md).toContain("# Diagnostics report: Performance");
     expect(md).toContain("## Key metrics");
     expect(md).toContain("| Duplicate requests | 31 % |");
-    expect(md).toContain("### [Critical] Latency | chain (PERF-SEQ)");
+    expect(md).toContain("### [Critical] Latency \\| chain (PERF-SEQ)");
     expect(md).toContain("High confidence · Estimate · Categories: performance");
     expect(md).toContain("**Hypotheses (not verified):**");
     expect(md).toContain("| Good WAN | 20 ms |");
@@ -91,7 +91,37 @@ describe("diagnostics report", () => {
     expect(md).toContain("## Operations");
     const capped = toMarkdown(report, t, { limit: 0 });
     expect(capped).toContain("1 more findings of this severity not shown.");
-    expect(toAiPrompt(report, t)).toMatch(/^Below is a network diagnostics report.*redacted/s);
+    expect(toAiPrompt(report, t)).toMatch(/^Below is a network diagnostics report.*removed/s);
+  });
+
+  it("keeps traffic-derived texts from forming Markdown structure or HTML", () => {
+    expect(mdText("Slow\n# injected heading")).toBe("Slow # injected heading");
+    expect(mdText("# top")).toBe("\\# top");
+    expect(mdText("- item")).toBe("\\- item");
+    expect(mdText("1. first")).toBe("1\\. first");
+    expect(mdText("<img src=x onerror=alert(1)>")).toBe("\\<img src=x onerror=alert(1)\\>");
+    expect(mdText("`/x` *b* _i_ [l](u) a|b ~s~ c\\")).toBe("\\`/x\\` \\*b\\* \\_i\\_ \\[l\\](u) a\\|b \\~s\\~ c\\\\");
+    const report = normalizeReport({
+      schema: 1,
+      findings: [
+        {
+          id: "A",
+          title: "Slow\n# injected heading",
+          severity: "warning",
+          observation: "line1\n\n## Fake section",
+          hypotheses: ["one\n### two"],
+          table: { columns: ["Path", "x"], rows: [["/a\\|b", "c\\"], ["`/x", "<img src=x>"]] },
+        },
+      ],
+    })!;
+    const md = toMarkdown(report, t);
+    expect(md).toContain("### [Warning] Slow # injected heading (A)");
+    expect(md).toContain("**Observation:** line1 ## Fake section");
+    expect(md.split("\n").filter((l) => /^#{1,6} /.test(l))).toEqual(["# Diagnostics report", "## Summary", "## Findings", "### [Warning] Slow # injected heading (A)"]);
+    expect(md).toContain("- one ### two");
+    expect(md).toContain("| /a\\\\\\|b | c\\\\ |");
+    expect(md).toContain("| \\`/x | \\<img src=x\\> |");
+    expect(md).not.toMatch(/(^|[^\\])<img/);
   });
 
   it("compares two reports by finding key and metric direction", () => {
@@ -141,5 +171,11 @@ describe("diagnostics report", () => {
   it("names the narrowed scope", () => {
     const { report } = parseReport(JSON.stringify({ schema: 1, findings: [], scope: { kind: "visible", sessions: 3, processes: ["chrome"], hosts: ["*.example.com"] } }));
     expect(scopeLabel(report, (s: string, v?: Record<string, string | number>) => s.replace(/\{(\w+)\}/g, (_, k) => String(v?.[k])))).toBe("Visible sessions · Process: chrome · Host: *.example.com");
+  });
+  it("ignores invalid summary counts of a foreign report", () => {
+    const { report } = parseReport(JSON.stringify({ schema: 1, summary: { warning: -5, critical: 1.7, info: "x" }, findings: [{ id: "A", key: "A", title: "a", severity: "warning" }] }));
+    expect(report.summary.warning).toBe(1);
+    expect(report.summary.critical).toBe(1);
+    expect(report.summary.info).toBe(0);
   });
 });

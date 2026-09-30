@@ -610,6 +610,10 @@ kbd,
 .rp-tab:hover {
   color: var(--fg);
 }
+.rp-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .rp-tab.active {
   color: var(--accent);
   box-shadow: inset 0 -2px 0 var(--accent);
@@ -2645,6 +2649,11 @@ body.file-drop #root::after {
 .diag-f-row:hover {
   background: var(--active-line);
 }
+.diag-f-row:focus-visible,
+.diag-op:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .diag-f.picked > .diag-f-row {
   background: var(--accent-soft);
 }
@@ -2842,7 +2851,9 @@ body.file-drop #root::after {
   top: calc(100% + 2px);
   left: 0;
   z-index: 50;
-  width: min(320px, 80vw);
+  /* 100cqw: the .rpane size container (the popup is clipped by its overflow); the horizontal
+     position is corrected in ScopePick so the popup stays inside the pane. */
+  width: min(320px, calc(100cqw - 16px));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 4px;

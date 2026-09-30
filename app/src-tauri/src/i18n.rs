@@ -127,6 +127,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Developer" => "Entwickler",
         "Help" => "Hilfe",
         "About Quena" => "Über Quena",
+        "Exit" => "Beenden",
         _ => return None,
     })
 }
@@ -163,6 +164,7 @@ mod tests {
         let mut all = labels(src, "item(app, ", true);
         all.extend(labels(src, "CheckMenuItem::with_id(app, ", true));
         all.extend(labels(src, "Submenu::with_items(", false));
+        all.extend(labels(src, "PredefinedMenuItem::quit(app, Some(tr(", false));
         assert!(all.len() > 80, "found only {} labels", all.len());
         let missing: Vec<_> = all.iter().filter(|l| super::de(l).is_none()).collect();
         assert!(missing.is_empty(), "untranslated menu labels: {missing:?}");

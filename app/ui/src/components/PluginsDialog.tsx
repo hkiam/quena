@@ -4,6 +4,13 @@ import { api, type PluginInfo } from "../api";
 import { say } from "../store";
 import { t } from "../i18n";
 
+/** Plugins were enabled, disabled or rescanned: header inspectors and the Diagnostics analyzer
+ * list reload (the event name is PLUGINS_CHANGED in panels/Diagnostics, which is loaded lazily). */
+function pluginsChanged() {
+  forgetInspectorHeaders();
+  window.dispatchEvent(new Event("quena:plugins-changed"));
+}
+
 export function PluginsPanel() {
   const [list, setList] = useState<PluginInfo[] | null>(null);
   useEffect(() => {
@@ -32,7 +39,7 @@ export function PluginsPanel() {
                   disabled={!!p.error}
                   onChange={async (e) => {
                     await api.pluginSetEnabled(p.id, e.target.checked);
-                    forgetInspectorHeaders();
+                    pluginsChanged();
                     setList(await api.pluginsList());
                   }}
                 />
@@ -53,8 +60,8 @@ export function PluginsPanel() {
       <div className="btn-row">
         <button
           onClick={async () => {
-            forgetInspectorHeaders();
             setList(await api.pluginsRescan());
+            pluginsChanged();
             say(t("Plugins rescanned"));
           }}
         >

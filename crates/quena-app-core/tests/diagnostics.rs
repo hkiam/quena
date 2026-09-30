@@ -100,3 +100,58 @@ fn report_for_har() {
     wait(&core, core.diag_run(wd.index, opts, None, Default::default()).unwrap());
     println!("{}", core.diag_report().unwrap());
 }
+
+/// Secrets in URLs, `Location` and `Referer` do not reach the analyzer, the redacted URLs
+/// still parse (endpoint templates in the report), and "Remove all" drops the report.
+#[test]
+fn redacted_urls_reach_the_analyzer_and_remove_all_drops_the_report() {
+    use quena_model::{HttpVersion, RequestHead, ResponseHead, SessionDetail, SessionKind, SessionSummary, Timers};
+    let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist");
+    if !dist.join("webdiag").exists() {
+        eprintln!("webdiag plugin not built – run plugins/build.sh");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"actAsSystemProxy":false,"captureOnStartup":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let events = Arc::new(Events::default());
+    core.set_sink(events.clone());
+    core.init_plugins(Some(dist)).unwrap();
+    let wd = core.diag_analyzers().into_iter().find(|a| a.id == "io.github.hkiam.webdiag").expect("webdiag");
+    let cap = core.capture();
+    let t0 = quena_model::now_us();
+    for i in 0..30i64 {
+        let mut h = quena_model::Headers::new();
+        h.push("Referer", "https://app.test/cb?code=SECRETCODE1&state=SECRETSTATE");
+        let mut rh = quena_model::Headers::new();
+        rh.push("Location", "https://app.test/home#access_token=SECRETTOKEN&expires_in=3600");
+        rh.push("Content-Type", "application/json");
+        let started = t0 + i * 2_000_000;
+        let d = SessionDetail {
+            summary: SessionSummary { kind: SessionKind::Http, started_at: started, host: "api.test".into(), duration_ms: Some(1500), ..Default::default() },
+            request: RequestHead {
+                method: "GET".into(),
+                url: format!("https://bob:SECRETPASS@api.test/odata/Cases({i})?$expand=Items&sig=SECRETSIG&X-Amz-Signature=SECRETAMZ&$filter=Name%20eq%20%27x%27"),
+                version: HttpVersion::Http11,
+                headers: h,
+            },
+            response: Some(ResponseHead { status: 302, reason: "Found".into(), version: HttpVersion::Http11, headers: rh }),
+            timers: Timers { client_begin_request: Some(started), client_done_response: Some(started + 1_500_000), ..Default::default() },
+            ..Default::default()
+        };
+        cap.insert(d, quena_body::Body::empty(), quena_body::Body::empty());
+    }
+    cap.index.tick();
+    wait(&core, core.diag_run(wd.index, r#"{"lang":"en"}"#.into(), None, Default::default()).unwrap());
+    let report = core.diag_report().expect("report");
+    assert!(!report.contains("SECRET"), "{report}");
+    let r: serde_json::Value = serde_json::from_str(&report).unwrap();
+    assert!(r["findings"].is_array(), "{r:#}");
+    // The redacted URL still parses: the endpoint shows up with its path.
+    assert!(report.contains("/odata/Cases"), "{report}");
+
+    events.0.lock().unwrap().clear();
+    core.remove_all();
+    assert!(core.diag_report().is_none());
+    assert!(events.0.lock().unwrap().iter().any(|(e, _)| e == "diag-report"));
+}

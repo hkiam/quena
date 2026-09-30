@@ -3,7 +3,11 @@
 //!
 //! The host builds one record per session (plugins/webdiag/REPORT.md): allow-listed headers
 //! with secrets redacted, sizes, timers, connection data and fingerprints of the decoded
-//! bodies. Header values that carry credentials never reach the plugin.
+//! bodies. Credentials in the redacted headers (`Authorization`, `Cookie`, `Set-Cookie`,
+//! the `*-Authenticate` challenges) never reach the plugin; in the session URL, `Location`
+//! and `Referer` the user info, the values of sensitive query/fragment parameters and every
+//! other parameter value longer than 64 bytes are replaced by their size (OData `$` system
+//! options are only subject to the name rule). URL paths are passed unchanged.
 
 use crate::AppCore;
 use anyhow::{Result, anyhow};
@@ -22,8 +26,17 @@ pub const BATCH: usize = 2000;
 pub const REQUEST_HASH_LIMIT: u64 = 1 << 20;
 /// Largest decoded response body that gets a fingerprint.
 pub const RESPONSE_HASH_LIMIT: u64 = 8 << 20;
-/// Decoding stops here when only the decoded size is still wanted (decompression bombs).
-const DECODED_COUNT_LIMIT: u64 = 256 << 20;
+/// Decoding stops here when only the decoded size is still wanted (decompression bombs);
+/// a larger decoded size is reported as this lower bound (REPORT.md).
+pub const DECODED_COUNT_LIMIT: u64 = 256 << 20;
+/// Longest URL / header value passed to an analyzer; longer values are cut and marked.
+pub const FIELD_LIMIT: usize = 8 << 10;
+/// Headers per direction passed to an analyzer (further ones are dropped).
+pub const HEADER_COUNT_LIMIT: usize = 256;
+/// Approximate size limit of one `push` batch (besides [`BATCH`] sessions).
+pub const BATCH_BYTES: usize = 16 << 20;
+/// Query/fragment parameter values longer than this are replaced by their size.
+pub const URL_VALUE_LIMIT: usize = 64;
 
 /// Headers passed to analyzers (lower case); everything else is dropped.
 pub const HEADER_ALLOW_LIST: &[&str] = &[
@@ -184,22 +197,220 @@ pub fn redact_authenticate(v: &str) -> String {
         .join(", ")
 }
 
-/// `Cookie`: names only.
+/// `Cookie`: names only; a pair without `=` is a value (RFC 6265bis) and becomes `<n bytes>`.
 pub fn redact_cookie(v: &str) -> String {
-    v.split(';').map(|c| c.split_once('=').map_or(c, |(n, _)| n).trim()).filter(|n| !n.is_empty()).collect::<Vec<_>>().join("; ")
+    v.split(';')
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(|c| match c.split_once('=') {
+            Some((n, _)) => n.trim().to_string(),
+            None => bytes(c.len()),
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
-/// `Set-Cookie`: `name=<n bytes>` plus the attributes verbatim.
-pub fn redact_set_cookie(v: &str) -> String {
-    let (pair, attrs) = match v.find(';') {
-        Some(i) => (&v[..i], &v[i..]),
-        None => (v, ""),
-    };
+/// `Set-Cookie` attributes that are passed verbatim (lower case).
+const COOKIE_ATTRS: &[&str] = &["path", "domain", "expires", "max-age", "secure", "httponly", "samesite", "partitioned", "priority"];
+
+/// Whether `s` (after a comma) starts a new `name=value` cookie. A comma inside an
+/// `Expires` date is followed by a day number and a space (`Wed, 21 Oct …`), no token `=`.
+fn starts_cookie(s: &str) -> bool {
+    s.split_once('=').is_some_and(|(n, _)| is_token(n.trim()))
+}
+
+/// One cookie: `name=<n bytes>`, known attributes verbatim, anything else by its size.
+fn redact_one_set_cookie(v: &str) -> String {
+    let mut parts = v.split(';');
+    let pair = parts.next().unwrap_or("").trim();
     let (name, value) = pair.split_once('=').unwrap_or(("", pair));
-    format!("{}={}{attrs}", name.trim(), bytes(value.trim().len()))
+    let mut out = format!("{}={}", name.trim(), bytes(value.trim().len()));
+    for a in parts.map(str::trim).filter(|a| !a.is_empty()) {
+        let (n, val) = match a.split_once('=') {
+            Some((n, v)) => (n.trim(), Some(v.trim())),
+            None => (a, None),
+        };
+        out.push_str("; ");
+        if COOKIE_ATTRS.contains(&n.to_ascii_lowercase().as_str()) {
+            out.push_str(a);
+        } else {
+            match val {
+                Some(v) if is_token(n) => out.push_str(&format!("{n}={}", bytes(v.len()))),
+                _ => out.push_str(&bytes(a.len())),
+            }
+        }
+    }
+    out
 }
 
-/// Allow-listed headers in wire order, secrets redacted (REPORT.md).
+/// `Set-Cookie`: `name=<n bytes>` plus the known attributes (Path, Domain, Expires,
+/// Max-Age, Secure, HttpOnly, SameSite, Partitioned, Priority) verbatim; unknown attributes
+/// become `name=<n bytes>`. A value carrying several cookies (joined with a line break or
+/// folded with `, ` by HAR exporters and intermediaries) has each of them redacted.
+pub fn redact_set_cookie(v: &str) -> String {
+    v.split('\n')
+        .map(|line| {
+            let mut cookies: Vec<&str> = Vec::new();
+            let mut start = 0;
+            for (i, _) in line.match_indices(',') {
+                if starts_cookie(&line[i + 1..]) {
+                    cookies.push(&line[start..i]);
+                    start = i + 1;
+                }
+            }
+            cookies.push(&line[start..]);
+            cookies.into_iter().map(redact_one_set_cookie).collect::<Vec<_>>().join(", ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Query/fragment parameter names whose values are secrets (lower case, exact).
+const SECRET_PARAMS: &[&str] = &[
+    "auth", "code", "state", "nonce", "sig", "key", "sid", "otp", // OAuth, signed URLs, sessions
+    "se", "sp", "sv", "sr", "st", "spr", "srt", "ss", "si", "sdd", "skoid", "sktid", "skt", "ske", "sks", "skv", // Azure SAS
+];
+/// Parameter names that contain one of these (lower case) carry secrets, e.g. `access_token`,
+/// `id_token`, `refresh_token`, `client_secret`, `SAMLResponse`, `X-Goog-Credential`.
+const SECRET_PARAM_PARTS: &[&str] =
+    &["token", "password", "passwd", "secret", "signature", "apikey", "api_key", "api-key", "session", "credential", "jwt", "assertion", "samlresponse", "samlrequest", "ticket"];
+/// Parameter name prefixes that carry secrets (AWS / GCS signed URLs).
+const SECRET_PARAM_PREFIXES: &[&str] = &["x-amz-", "x-goog-"];
+
+/// Percent-decoding (and `+` → space) of a parameter name, for matching only.
+fn decode_param(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < b.len() => match std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                Some(x) => {
+                    out.push(x);
+                    i += 2;
+                }
+                None => out.push(b'%'),
+            },
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn secret_param(name: &str) -> bool {
+    let n = decode_param(name).trim().to_ascii_lowercase();
+    SECRET_PARAMS.contains(&n.as_str()) || SECRET_PARAM_PARTS.iter().any(|p| n.contains(p)) || SECRET_PARAM_PREFIXES.iter().any(|p| n.starts_with(p))
+}
+
+/// `<n bytes>`, percent-encoded so the URL stays valid (it decodes to `<n bytes>`).
+fn url_bytes(n: usize) -> String {
+    format!("%3C{n}%20bytes%3E")
+}
+
+/// `a=1&b=2` with sensitive or long values replaced by their size.
+fn redact_params(q: &str) -> String {
+    q.split('&')
+        .map(|p| match p.split_once('=') {
+            Some((name, value)) => {
+                if name.len() > URL_VALUE_LIMIT {
+                    url_bytes(p.len())
+                } else if !value.is_empty() && (secret_param(name) || (value.len() > URL_VALUE_LIMIT && !decode_param(name).starts_with('$'))) {
+                    format!("{name}={}", url_bytes(value.len()))
+                } else {
+                    p.to_string()
+                }
+            }
+            None if p.len() > URL_VALUE_LIMIT => url_bytes(p.len()),
+            None => p.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Whether `url` starts with a scheme and `://` (`^[A-Za-z][A-Za-z0-9+.-]*://`).
+pub fn has_scheme(url: &str) -> bool {
+    let Some(i) = url.find("://") else { return false };
+    let s = &url[..i];
+    s.bytes().next().is_some_and(|b| b.is_ascii_alphabetic()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"+.-".contains(&b))
+}
+
+/// A URL (absolute or relative) with the user info, sensitive query/fragment values
+/// (tokens, codes, signatures, keys, passwords, sessions …) and every other parameter value
+/// longer than [`URL_VALUE_LIMIT`] bytes replaced by `%3Cn%20bytes%3E` (`<n bytes>`, `n` =
+/// encoded length). OData system options (`$filter`, `$select` …) are only subject to the
+/// name rule. Scheme, host, port and path are kept.
+pub fn redact_url(url: &str) -> String {
+    let (rest, fragment) = match url.split_once('#') {
+        Some((r, f)) => (r, Some(f)),
+        None => (url, None),
+    };
+    let (base, query) = match rest.split_once('?') {
+        Some((b, q)) => (b, Some(q)),
+        None => (rest, None),
+    };
+    let mut out = String::with_capacity(url.len());
+    match base.find("://").filter(|_| has_scheme(base)) {
+        Some(i) => {
+            let after = &base[i + 3..];
+            let auth_end = after.find('/').unwrap_or(after.len());
+            let authority = &after[..auth_end];
+            out.push_str(&base[..i + 3]);
+            match authority.rsplit_once('@') {
+                Some((userinfo, host)) => {
+                    out.push_str(&url_bytes(userinfo.len()));
+                    out.push('@');
+                    out.push_str(host);
+                }
+                None => out.push_str(authority),
+            }
+            out.push_str(&after[auth_end..]);
+        }
+        None => out.push_str(base),
+    }
+    if let Some(q) = query {
+        out.push('?');
+        out.push_str(&redact_params(q));
+    }
+    if let Some(f) = fragment {
+        out.push('#');
+        if f.contains('=') {
+            out.push_str(&redact_params(f));
+        } else if f.len() > URL_VALUE_LIMIT {
+            out.push_str(&url_bytes(f.len()));
+        } else {
+            out.push_str(f);
+        }
+    }
+    out
+}
+
+/// Cut `s` to [`FIELD_LIMIT`] bytes (at a char boundary, before a split `%XX` escape in a
+/// URL) and mark the cut with `…<truncated n bytes>` (percent-encoded for URLs).
+fn cap_field(mut s: String, url: bool) -> String {
+    if s.len() <= FIELD_LIMIT {
+        return s;
+    }
+    let mut end = FIELD_LIMIT;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    if url && let Some(p) = s[end.saturating_sub(2)..end].find('%') {
+        end = end.saturating_sub(2) + p;
+    }
+    let cut = s.len() - end;
+    s.truncate(end);
+    if url {
+        s.push_str(&format!("%E2%80%A6%3Ctruncated%20{cut}%20bytes%3E"));
+    } else {
+        s.push_str(&format!("…<truncated {cut} bytes>"));
+    }
+    s
+}
+
+/// Allow-listed headers in wire order (at most [`HEADER_COUNT_LIMIT`]), secrets redacted,
+/// values cut to [`FIELD_LIMIT`] (REPORT.md).
 pub fn redact_headers(h: &Headers) -> Vec<(String, String)> {
     h.iter()
         .filter_map(|(name, value)| {
@@ -212,11 +423,19 @@ pub fn redact_headers(h: &Headers) -> Vec<(String, String)> {
                 "www-authenticate" | "proxy-authenticate" => redact_authenticate(value),
                 "cookie" => redact_cookie(value),
                 "set-cookie" => redact_set_cookie(value),
+                "location" | "referer" => redact_url(value),
                 _ => value.to_string(),
             };
-            Some((name.to_string(), value))
+            Some((name.to_string(), cap_field(value, false)))
         })
+        .take(HEADER_COUNT_LIMIT)
         .collect()
+}
+
+/// Approximate size of a record in a batch (strings dominate).
+pub fn record_bytes(r: &AnalyzerSession) -> usize {
+    let h: usize = r.request_headers.iter().chain(&r.response_headers).map(|(n, v)| n.len() + v.len() + 16).sum();
+    256 + r.url.len() + r.method.len() + r.host.len() + r.content_type.len() + r.process.len() + r.error.as_ref().map_or(0, |e| e.len()) + h
 }
 
 // ------------------------------------------------------------------ bodies
@@ -311,7 +530,13 @@ pub fn build_record(d: &SessionDetail, req: &Body, resp: &Body, cancelled: &dyn 
     let t = &d.timers;
     let empty = Headers::new();
     let resp_headers = d.response.as_ref().map(|r| &r.headers).unwrap_or(&empty);
-    let url = if d.request.url.contains("://") || s.kind == SessionKind::Tunnel { d.request.url.clone() } else { s.full_url() };
+    // Tunnels keep their authority form (`host:port`).
+    let url = if s.kind == SessionKind::Tunnel {
+        d.request.url.clone()
+    } else {
+        redact_url(&if has_scheme(&d.request.url) { d.request.url.clone() } else { s.full_url() })
+    };
+    let url = cap_field(url, true);
     let (_, req_hash) = body_fingerprint(req, d.request.headers.get("content-encoding"), REQUEST_HASH_LIMIT, false, cancelled);
     let (resp_decoded, resp_hash) = body_fingerprint(resp, resp_headers.get("content-encoding"), RESPONSE_HASH_LIMIT, true, cancelled);
     AnalyzerSession {
@@ -324,7 +549,7 @@ pub fn build_record(d: &SessionDetail, req: &Body, resp: &Body, cancelled: &dyn 
         host: s.host.clone(),
         version: d.request.version.as_str().into(),
         status: d.response.as_ref().map(|r| r.status).unwrap_or(0),
-        error: d.error.clone(),
+        error: d.error.clone().map(|e| cap_field(e, false)),
         request_bytes: d.request_body.wire_len().max(s.request_body_len),
         response_bytes: d.response_body.wire_len().max(s.response_body_len),
         response_decoded_bytes: resp_decoded,
@@ -486,14 +711,16 @@ impl AppCore {
         self.plugin_host_or_err()?.describe(index, lang)
     }
 
-    /// Start a diagnostics run as a background job over the selection (`ids`) or the visible
-    /// sessions. When done, the report is kept ([`diag_report`](Self::diag_report)) and
-    /// `diag-report` is emitted; a failing plugin fails the job. A new run cancels a running one.
     /// Processes and hosts of the visible sessions, for the scope of an analysis.
     pub fn diag_scope_options(&self) -> DiagScopeOptions {
         scope_options(&self.capture())
     }
 
+    /// Start a diagnostics run as a background job over the selection (`ids`) or the visible
+    /// sessions. When done, the report is kept ([`diag_report`](Self::diag_report)) and
+    /// `diag-report` is emitted; a failing plugin fails the job. A new run cancels a running
+    /// one; only the latest run (and none started before a reset, see
+    /// [`diag_reset`](Self::diag_reset)) can store its report.
     pub fn diag_run(self: &Arc<Self>, index: u16, options: String, ids: Option<Vec<SessionId>>, filter: DiagFilter) -> Result<JobId> {
         let host = self.plugin_host_or_err()?;
         if !self.diag_analyzers().iter().any(|a| a.index == index) {
@@ -504,6 +731,7 @@ impl AppCore {
         if ids.is_empty() {
             return Err(anyhow!("no sessions in the chosen scope"));
         }
+        let generation = self.diag_report.lock().begin();
         let core = Arc::downgrade(self);
         self.jobs.cancel_prefix("diag:");
         let key = format!("diag:{}", quena_model::now_us());
@@ -514,8 +742,10 @@ impl AppCore {
             // Sessions removed meanwhile are skipped; an empty batch means the end.
             let mut next = || -> Option<Vec<AnalyzerSession>> {
                 let mut batch = Vec::with_capacity(BATCH.min(total - pos));
-                while pos < total && batch.len() < BATCH && !ctx.cancelled() {
+                let mut size = 0usize;
+                while pos < total && batch.len() < BATCH && size < BATCH_BYTES && !ctx.cancelled() {
                     if let Some(r) = record_of(&cap, ids[pos], &cancelled) {
+                        size += record_bytes(&r);
                         batch.push(r);
                     }
                     pos += 1;
@@ -526,18 +756,61 @@ impl AppCore {
                 ctx.progress(pos as u64, total as u64);
                 (!batch.is_empty()).then_some(batch)
             };
-            let report = host.analyze(index, &options, &mut next, &cancelled).map_err(|e| format!("{e:#}"))?;
+            // Interrupts the plugin in flight when the job is cancelled.
+            let state = ctx.state().clone();
+            let report = host.analyze_interruptible(index, &options, &mut next, Arc::new(move || state.cancelled())).map_err(|e| format!("{e:#}"))?;
             let report = finish_report(&report, scope, total, &filter, quena_model::now_us()).map_err(|e| format!("{e:#}"))?;
             let Some(core) = core.upgrade() else { return Ok(()) };
-            *core.diag_report.lock() = Some(Arc::new(report));
-            core.emit("diag-report", serde_json::Value::Null);
+            core.diag_store(generation, report, &cancelled);
             Ok(())
         }))
     }
 
+    /// Keep the report of run `generation` and emit `diag-report` — unless the run was
+    /// cancelled or superseded (a newer run or a reset). Checked under the report lock, so a
+    /// stale run can never overwrite a newer report. Returns whether it was stored.
+    pub(crate) fn diag_store(&self, generation: u64, report: String, cancelled: &dyn Fn() -> bool) -> bool {
+        {
+            let mut slot = self.diag_report.lock();
+            if slot.generation != generation || cancelled() {
+                return false;
+            }
+            slot.report = Some(Arc::new(report));
+        }
+        self.emit("diag-report", serde_json::Value::Null);
+        true
+    }
+
+    /// Forget the report and cancel running analyses (the sessions it refers to are gone:
+    /// "Remove all", another capture). Runs started before cannot store afterwards.
+    pub fn diag_reset(&self) {
+        {
+            let mut slot = self.diag_report.lock();
+            slot.generation += 1;
+            slot.report = None;
+        }
+        self.jobs.cancel_prefix("diag:");
+        self.emit("diag-report", serde_json::Value::Null);
+    }
+
     /// The last diagnostics report (JSON).
     pub fn diag_report(&self) -> Option<Arc<String>> {
-        self.diag_report.lock().clone()
+        self.diag_report.lock().report.clone()
+    }
+}
+
+/// The last report and the generation of the latest run / reset (only that run may store).
+#[derive(Default)]
+pub(crate) struct DiagSlot {
+    report: Option<Arc<String>>,
+    generation: u64,
+}
+
+impl DiagSlot {
+    /// A new run: supersedes all earlier ones.
+    fn begin(&mut self) -> u64 {
+        self.generation += 1;
+        self.generation
     }
 }
 
@@ -584,11 +857,85 @@ mod tests {
     #[test]
     fn cookies_keep_names_only() {
         assert_eq!(redact_cookie("a=1; b=secret; sid=xyz"), "a; b; sid");
-        assert_eq!(redact_cookie(" theme=dark ;; flag"), "theme; flag");
+        // A pair without `=` is a value (RFC 6265bis), not a name.
+        assert_eq!(redact_cookie(" theme=dark ;; flag"), "theme; <4 bytes>");
+        assert_eq!(redact_cookie("sessiontoken-abc123; theme=dark"), "<19 bytes>; theme");
         assert_eq!(redact_set_cookie("sid=abcdef; Path=/; HttpOnly; Secure; SameSite=Lax"), "sid=<6 bytes>; Path=/; HttpOnly; Secure; SameSite=Lax");
         assert_eq!(redact_set_cookie("token=; Max-Age=0"), "token=<0 bytes>; Max-Age=0");
         assert_eq!(redact_set_cookie("a=b=c"), "a=<3 bytes>");
         assert_eq!(redact_set_cookie("lonely"), "=<6 bytes>");
+    }
+
+    #[test]
+    fn set_cookie_with_several_cookies_redacts_each() {
+        // Folded with ", " (HAR exporters, intermediaries) and joined with line breaks.
+        assert_eq!(redact_set_cookie("a=1; Path=/, sid=SECRET123; Path=/; HttpOnly"), "a=<1 bytes>; Path=/, sid=<9 bytes>; Path=/; HttpOnly");
+        assert_eq!(redact_set_cookie("a=1; Path=/\nsid=SECRET123; Path=/"), "a=<1 bytes>; Path=/\nsid=<9 bytes>; Path=/");
+        // The comma of an Expires date does not start a cookie.
+        assert_eq!(
+            redact_set_cookie("a=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Secure, b=22; expires=Thu, 01 Jan 1970 00:00:00 GMT"),
+            "a=<1 bytes>; Expires=Wed, 21 Oct 2026 07:28:00 GMT; Secure, b=<2 bytes>; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+        );
+        // Known attributes case-insensitively; anything else by its size.
+        assert_eq!(
+            redact_set_cookie("x=1; DOMAIN=.a.test; max-age=60; samesite=None; Partitioned; Priority=High; sid=SECRET; junk"),
+            "x=<1 bytes>; DOMAIN=.a.test; max-age=60; samesite=None; Partitioned; Priority=High; sid=<6 bytes>; <4 bytes>"
+        );
+        let out = redact_set_cookie("a=1; Path=/, sid=SECRET123\nt=TOPSECRET, u=ALSOSECRET; Max-Age=1");
+        assert!(!out.contains("SECRET"), "{out}");
+    }
+
+    #[test]
+    fn urls_redact_sensitive_and_long_parameter_values() {
+        assert_eq!(redact_url("https://api.test/v1/items?x=1&y=two"), "https://api.test/v1/items?x=1&y=two");
+        assert_eq!(
+            redact_url("https://login.test/cb?code=abc123&state=xyz&session_state=s1#access_token=eyJ0&token_type=Bearer&expires_in=3600"),
+            "https://login.test/cb?code=%3C6%20bytes%3E&state=%3C3%20bytes%3E&session_state=%3C2%20bytes%3E#access_token=%3C4%20bytes%3E&token_type=%3C6%20bytes%3E&expires_in=3600"
+        );
+        // Signed URLs (AWS, Azure SAS), API keys, passwords, SAML; percent-encoded names too.
+        let aws = redact_url("https://b.s3.test/o?X-Amz-Algorithm=AWS4&X-Amz-Credential=AKIA%2F1&X-Amz-Signature=deadbeef&versionId=3");
+        assert_eq!(aws, "https://b.s3.test/o?X-Amz-Algorithm=%3C4%20bytes%3E&X-Amz-Credential=%3C8%20bytes%3E&X-Amz-Signature=%3C8%20bytes%3E&versionId=3");
+        let sas = redact_url("https://a.blob.test/c/f?sv=2022-11-02&sp=r&se=2026-01-01&sr=b&sig=abc%3D&comp=list");
+        assert_eq!(sas, "https://a.blob.test/c/f?sv=%3C10%20bytes%3E&sp=%3C1%20bytes%3E&se=%3C10%20bytes%3E&sr=%3C1%20bytes%3E&sig=%3C6%20bytes%3E&comp=list");
+        assert_eq!(redact_url("/x?api%5Fkey=k1&Password=p&SAMLResponse=PHN&client_secret=c&id_token=j"), "/x?api%5Fkey=%3C2%20bytes%3E&Password=%3C1%20bytes%3E&SAMLResponse=%3C3%20bytes%3E&client_secret=%3C1%20bytes%3E&id_token=%3C1%20bytes%3E");
+        // Long values of any name; OData system options keep theirs; empty values stay.
+        let long = "a".repeat(65);
+        assert_eq!(redact_url(&format!("/p?q={long}&ok={}&e=", "b".repeat(64))), format!("/p?q=%3C65%20bytes%3E&ok={}&e=", "b".repeat(64)));
+        let filter = format!("$filter=Name%20eq%20%27{}%27&$select=Id", "x".repeat(80));
+        assert_eq!(redact_url(&format!("https://h.test/odata/Cases?{filter}")), format!("https://h.test/odata/Cases?{filter}"));
+        assert_eq!(redact_url(&format!("/p?{long}")), "/p?%3C65%20bytes%3E");
+        // User info, relative references and fragments.
+        assert_eq!(redact_url("https://bob:hunter2@h.test:8443/a?b=1"), "https://%3C11%20bytes%3E@h.test:8443/a?b=1");
+        assert_eq!(redact_url("/login?next=https://app.test/home"), "/login?next=https://app.test/home");
+        assert_eq!(redact_url("https://h.test/doc#section-2"), "https://h.test/doc#section-2");
+        assert_eq!(redact_url(&format!("https://h.test/#{long}")), "https://h.test/#%3C65%20bytes%3E");
+        assert_eq!(redact_url("api.test:443"), "api.test:443");
+        // The result stays a URL: no raw spaces or angle brackets.
+        assert!(!redact_url("https://h.test/?token=a b").contains(['<', '>']));
+    }
+
+    #[test]
+    fn absolute_urls_need_a_scheme_prefix() {
+        assert!(has_scheme("https://a.test/") && has_scheme("wss://a.test/s") && has_scheme("git+ssh://h/x"));
+        assert!(!has_scheme("/login?next=https://app.test/home") && !has_scheme("a.test:443") && !has_scheme("://x") && !has_scheme("1http://x"));
+    }
+
+    #[test]
+    fn long_values_are_cut_and_marked() {
+        let v = "é".repeat(5000); // 10 000 bytes
+        let c = cap_field(v.clone(), false);
+        assert!(c.len() < FIELD_LIMIT + 40 && c.ends_with(&format!("…<truncated {} bytes>", 10_000 - FIELD_LIMIT)), "{}", &c[c.len() - 40..]);
+        assert_eq!(cap_field("short".into(), false), "short");
+        // URLs: the mark is percent-encoded and no `%XX` escape is split.
+        let url = format!("https://h.test/{}", "%41".repeat(4000));
+        let c = cap_field(url, true);
+        let (head, tail) = c.split_once("%E2%80%A6%3Ctruncated%20").unwrap();
+        assert!(head.len() <= FIELD_LIMIT && head.ends_with("%41") && tail.ends_with("%20bytes%3E"), "{tail}");
+        let h = headers(&[("Referer", &format!("https://h.test/?q=1&{}", "a=1&".repeat(3000))), ("Content-Type", &"x".repeat(9000))]);
+        let r = redact_headers(&h);
+        assert!(r.iter().all(|(_, v)| v.len() <= FIELD_LIMIT + 40), "{r:?}");
+        let many: Vec<(&str, &str)> = (0..300).map(|_| ("Set-Cookie", "a=1")).collect();
+        assert_eq!(redact_headers(&headers(&many)).len(), HEADER_COUNT_LIMIT);
     }
 
     #[test]
@@ -621,6 +968,8 @@ mod tests {
             ("Proxy-Authenticate", "NTLM"),
             ("set-cookie", "b=22; Secure"),
             ("ETag", "\"v1\""),
+            ("Location", "https://app.test/cb#id_token=eyJ0&state=s"),
+            ("Referer", "https://app.test/?password=hunter2"),
         ]);
         assert_eq!(
             redact_headers(&h),
@@ -630,6 +979,8 @@ mod tests {
                 ("Proxy-Authenticate".into(), "NTLM".into()),
                 ("set-cookie".into(), "b=<2 bytes>; Secure".into()),
                 ("ETag".into(), "\"v1\"".into()),
+                ("Location".into(), "https://app.test/cb#id_token=%3C4%20bytes%3E&state=%3C1%20bytes%3E".into()),
+                ("Referer".into(), "https://app.test/?password=%3C7%20bytes%3E".into()),
             ]
         );
         assert!(HEADER_ALLOW_LIST.iter().all(|h| h.bytes().all(|b| !b.is_ascii_uppercase())));
@@ -774,6 +1125,81 @@ mod tests {
         assert_eq!((v["generatedAt"].as_i64(), v["schema"].as_i64()), (Some(42), Some(1)));
         assert!(finish_report("[]", "visible", 0, &f, 0).is_err());
         assert!(finish_report("{", "visible", 0, &f, 0).is_err());
+    }
+
+    #[derive(Default)]
+    struct Events(parking_lot::Mutex<Vec<String>>);
+    impl crate::EventSink for Events {
+        fn emit(&self, event: &str, _: serde_json::Value) {
+            self.0.lock().push(event.to_string());
+        }
+    }
+
+    fn core() -> (tempfile::TempDir, Arc<AppCore>) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"actAsSystemProxy":false,"captureOnStartup":false}}"#).unwrap();
+        let core = AppCore::new(crate::Paths::at(dir.path().to_path_buf()), crate::logbuf::LogBuffer::new(10)).unwrap();
+        (dir, core)
+    }
+
+    #[test]
+    fn only_the_latest_uncancelled_run_stores_its_report() {
+        let (_d, core) = core();
+        let events = Arc::new(Events::default());
+        core.set_sink(events.clone());
+        let old = core.diag_report.lock().begin();
+        let new = core.diag_report.lock().begin();
+        assert!(core.diag_store(new, "new".into(), &|| false));
+        // The older run finishes last: it must not overwrite the newer report.
+        assert!(!core.diag_store(old, "old".into(), &|| false));
+        // Cancelled after `finish`: not stored either.
+        assert!(!core.diag_store(new, "cancelled".into(), &|| true));
+        assert_eq!(core.diag_report().as_deref().map(String::as_str), Some("new"));
+        assert_eq!(events.0.lock().iter().filter(|e| *e == "diag-report").count(), 1);
+    }
+
+    #[test]
+    fn remove_all_and_switch_capture_drop_the_report_and_cancel_runs() {
+        let (_d, core) = core();
+        let events = Arc::new(Events::default());
+        core.set_sink(events.clone());
+        for reset in [0, 1] {
+            let run = core.diag_report.lock().begin();
+            assert!(core.diag_store(run, "r".into(), &|| false));
+            // A run started before the reset (still running).
+            let stale = core.diag_report.lock().begin();
+            let job = core.jobs.submit("diag:test", "Diagnostics", Priority::Background, true, |ctx: &JobCtx| {
+                while !ctx.cancelled() {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Ok(())
+            });
+            events.0.lock().clear();
+            if reset == 0 {
+                core.remove_all();
+            } else {
+                let (_d2, cap) = capture();
+                core.switch_capture(cap);
+            }
+            assert!(core.diag_report().is_none());
+            assert!(events.0.lock().iter().any(|e| e == "diag-report"));
+            assert!(core.jobs.get(job).unwrap().cancelled());
+            // Session ids restart: the stale run can no longer store its report.
+            assert!(!core.diag_store(stale, "stale".into(), &|| false));
+            assert!(core.diag_report().is_none());
+        }
+    }
+
+    #[test]
+    fn batches_are_bounded_by_bytes_too() {
+        let (_d, cap) = capture();
+        let mut d = detail(SessionKind::Http, "https://api.test/x", 1);
+        d.request.headers = headers(&[("Content-Type", &"x".repeat(FIELD_LIMIT))]);
+        let id = cap.insert(d, Body::empty(), Body::empty());
+        let r = record_of(&cap, id, &|| false).unwrap();
+        assert!(record_bytes(&r) > FIELD_LIMIT && record_bytes(&r) < FIELD_LIMIT + 2048);
+        // A batch of such records stays well below the batch byte limit.
+        assert!(BATCH_BYTES / record_bytes(&r) < BATCH);
     }
 
     #[test]

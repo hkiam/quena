@@ -18,11 +18,13 @@ export function fmtBytes(n: number): string {
   return `${fixed(v, v < 10 ? 2 : 1)} ${u[i]}`;
 }
 
-let nf: Intl.NumberFormat | null = null;
+const nf = new Map<string, Intl.NumberFormat>();
 /** Integer with thousands separators in the UI language (1,234 / 1.234). */
 export function fmtInt(n: number): string {
-  nf ??= new Intl.NumberFormat(currentLang() === "de" ? "de-DE" : "en-US");
-  return nf.format(n);
+  const lang = currentLang();
+  let f = nf.get(lang);
+  if (!f) nf.set(lang, (f = new Intl.NumberFormat(lang === "de" ? "de-DE" : "en-US")));
+  return f.format(n);
 }
 
 export function fmtTime(us: number | null | undefined): string {

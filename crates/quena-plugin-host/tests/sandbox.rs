@@ -230,3 +230,64 @@ fn webdiag_analyzer() {
     h.set_enabled("io.github.hkiam.webdiag", false).unwrap();
     assert!(h.analyze(p.index, "{}", &mut || None, &|| false).is_err());
 }
+
+/// A run cancelled while `finish` runs returns no report; a cancel flag interrupts a call
+/// in flight.
+#[test]
+fn webdiag_analyzer_cancellation() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let Some(h) = host() else { return };
+    let Some(p) = h.list().into_iter().find(|p| p.id == "io.github.hkiam.webdiag") else { return };
+    let t0 = 1_727_690_000_000_000u64;
+    let all: Vec<_> = (0..500u64).map(|i| analyzer_session(i + 1, t0 + i * 3_000_000, 200, 2500)).collect();
+    // `cancelled` is checked before and after fetching the (only) batch, twice around the
+    // end-of-input `None`, then after `finish`: cancel exactly while `finish` runs.
+    let calls = AtomicUsize::new(0);
+    let mut once = vec![all.clone()].into_iter();
+    let e = h.analyze(p.index, "{}", &mut || once.next(), &|| calls.fetch_add(1, Ordering::SeqCst) >= 4).unwrap_err();
+    assert!(e.to_string().contains("cancelled"), "{e}");
+    assert_eq!(calls.load(Ordering::SeqCst), 5, "cancel was not checked after finish");
+    // Same counts without the cancellation: a report.
+    let calls = AtomicUsize::new(0);
+    let mut once = vec![all.clone()].into_iter();
+    assert!(h.analyze(p.index, "{}", &mut || once.next(), &|| calls.fetch_add(1, Ordering::SeqCst) >= 5).is_ok());
+
+    // Interruptible: a flag raised while the plugin computes stops the call in flight.
+    let big: Vec<_> = (0..40_000u64).map(|i| analyzer_session(i + 1, t0 + i * 1_000, if i % 7 == 0 { 500 } else { 200 }, 2500)).collect();
+    let mut one = vec![big.clone()].into_iter();
+    let t = Instant::now();
+    h.analyze(p.index, "{}", &mut || one.next(), &|| false).unwrap();
+    let full = t.elapsed();
+    let stop = Arc::new(AtomicBool::new(false));
+    let s2 = stop.clone();
+    let mut one = vec![big].into_iter();
+    let started = Arc::new(AtomicBool::new(false));
+    let st2 = started.clone();
+    let flag = std::thread::spawn(move || {
+        while !st2.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        s2.store(true, Ordering::SeqCst);
+    });
+    let t = Instant::now();
+    let e = h
+        .analyze_interruptible(
+            p.index,
+            "{}",
+            &mut || {
+                started.store(true, Ordering::SeqCst);
+                one.next()
+            },
+            Arc::new(move || stop.load(Ordering::SeqCst)),
+        )
+        .unwrap_err();
+    flag.join().unwrap();
+    eprintln!("webdiag: 40 000 sessions in {full:?}; interrupted after {:?}: {e:#}", t.elapsed());
+    assert!(e.to_string().contains("cancelled"), "{e}");
+    // Only meaningful when the uninterrupted run takes clearly longer than the poll interval.
+    if full > std::time::Duration::from_millis(500) {
+        assert!(t.elapsed() < full / 2, "not interrupted in flight: {:?} of {full:?}", t.elapsed());
+    }
+}

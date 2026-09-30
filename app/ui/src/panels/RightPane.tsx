@@ -31,12 +31,40 @@ export function RightPane() {
   const tab = useStore((s) => s.activeTab);
   const filtersOn = useStore((s) => s.filters?.enabled);
   const arOn = useStore((s) => s.status?.engine.autoresponder);
-  const compact = useCompactTabs();
+  // Re-measure when a tab's content changes (the Filters / Mock Rules dots).
+  const compact = useCompactTabs(`${!!filtersOn}${!!arOn}`);
   return (
     <div className="rpane">
-      <div className={`rp-tabs ${compact.on ? "compact" : ""}`} ref={compact.ref}>
+      <div className={`rp-tabs ${compact.on ? "compact" : ""}`} ref={compact.ref} role="tablist">
         {TABS.map(([k, title, Icon]) => (
-          <div key={k} className={`rp-tab ${tab === k ? "active" : ""}`} title={title} onClick={() => set({ activeTab: k })}>
+          <div
+            key={k}
+            className={`rp-tab ${tab === k ? "active" : ""}`}
+            title={title}
+            role="tab"
+            aria-selected={tab === k}
+            aria-label={title}
+            tabIndex={tab === k ? 0 : -1}
+            onClick={() => set({ activeTab: k })}
+            onKeyDown={(e) => {
+              const i = TABS.findIndex(([x]) => x === k);
+              const go = (j: number) => {
+                const next = TABS[(j + TABS.length) % TABS.length][0];
+                set({ activeTab: next });
+                (e.currentTarget.parentElement?.children[(j + TABS.length) % TABS.length] as HTMLElement | undefined)?.focus();
+              };
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                set({ activeTab: k });
+              } else if (e.key === "ArrowRight") {
+                e.preventDefault();
+                go(i + 1);
+              } else if (e.key === "ArrowLeft") {
+                e.preventDefault();
+                go(i - 1);
+              }
+            }}
+          >
             <Icon size={14} strokeWidth={1.8} className="rp-icon" />
             <span className="rp-label">{title}</span>
             {k === "filters" && filtersOn && <span className="rp-dot" />}
@@ -70,23 +98,28 @@ export function RightPane() {
   );
 }
 
-/** Icons only when the tab labels do not fit (German labels are longer than English ones). */
-function useCompactTabs() {
+/** Icons only when the tab labels do not fit (German labels are longer than English ones).
+ * `content` changes whenever a tab's content changes (e.g. a status dot appears). */
+function useCompactTabs(content: string) {
   const ref = useRef<HTMLDivElement>(null);
   const [on, setOn] = useState(false);
-  const full = useRef(0); // width the tabs need with labels
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const check = () => {
+      // Measure the width the tabs need with labels, also while compact (the class is
+      // restored before the browser paints).
       const compact = el.classList.contains("compact");
-      if (!compact) full.current = el.scrollWidth;
-      setOn(full.current > el.clientWidth + 1);
+      if (compact) el.classList.remove("compact");
+      const full = el.scrollWidth;
+      if (compact) el.classList.add("compact");
+      setOn(full > el.clientWidth + 1);
     };
     const ro = new ResizeObserver(check);
     ro.observe(el);
+    for (const c of el.children) ro.observe(c);
     check();
     return () => ro.disconnect();
-  }, []);
+  }, [content]);
   return { ref, on };
 }
