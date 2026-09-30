@@ -7,6 +7,34 @@ import { searchKeymap, highlightSelectionMatches, search } from "@codemirror/sea
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 
 import type { Lang } from "./CodeView";
+import { t } from "../i18n";
+
+// CodeMirror's own texts (search panel, folding, go to line).
+const phrases = EditorState.phrases.of({
+  Find: t("Find"),
+  Replace: t("Replace"),
+  next: t("next"),
+  previous: t("previous"),
+  all: t("all"),
+  "match case": t("match case"),
+  regexp: t("regexp"),
+  "by word": t("by word"),
+  replace: t("replace"),
+  "replace all": t("replace all"),
+  close: t("close"),
+  "current match": t("current match"),
+  "on line": t("on line"),
+  "replaced match on line $": t("replaced match on line $"),
+  "replaced $ matches": t("replaced $ matches"),
+  "Go to line": t("Go to line"),
+  go: t("go"),
+  "Folded lines": t("Folded lines"),
+  "Unfolded lines": t("Unfolded lines"),
+  "folded code": t("folded code"),
+  unfold: t("unfold"),
+  "Fold line": t("Fold line"),
+  "Unfold line": t("Unfold line"),
+});
 
 // Language packs are loaded on first use, so they are not part of the startup bundle.
 const langCache = new Map<Lang, Promise<Extension>>();
@@ -91,6 +119,7 @@ export function CodeView({
         c.wrap.of(wrap ? EditorView.lineWrapping : []),
         c.edit.of([EditorState.readOnly.of(!editable), EditorView.editable.of(true)]),
         theme,
+        phrases,
         EditorView.updateListener.of((u) => {
           if (u.docChanged && onChangeRef.current) onChangeRef.current(u.state.doc.toString());
         }),

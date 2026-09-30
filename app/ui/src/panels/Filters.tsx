@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type FilterSettings } from "../api";
 import { say, set, useStore } from "../store";
 import { actions } from "../actions";
+import { t } from "../i18n";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -29,7 +30,7 @@ export function FiltersPanel() {
 
   useEffect(() => setF(stored), [stored]);
 
-  if (!f) return <div className="placeholder">Loading…</div>;
+  if (!f) return <div className="placeholder">{t("Loading…")}</div>;
 
   const update = (patch: Partial<FilterSettings>) => {
     const next = { ...f, ...patch };
@@ -53,36 +54,36 @@ export function FiltersPanel() {
     <div className="scroll pad filters">
       <div className="f-top">
         <label className="f-check strong">
-          <input type="checkbox" checked={f.enabled} onChange={(e) => update({ enabled: e.target.checked })} /> Use Filters
+          <input type="checkbox" checked={f.enabled} onChange={(e) => update({ enabled: e.target.checked })} /> {t("Use Filters")}
         </label>
         <button
           onClick={() => {
             const reset: FilterSettings = { ...f, enabled: false, hostMode: "noFilter", hosts: "", processMode: "all", processOnly: "", hideProcesses: "", urlShowOnly: "", urlHide: "", hideConnects: false, hideSuccess: false, hideNonSuccess: false, hideAuth: false, hideRedirects: false, hideNotModified: false, hideImages: false, hideCss: false, hideScripts: false, hideFonts: false, contentTypeShowOnly: "", contentTypeHide: "", minSize: null, maxSize: null, minDurationMs: null, expression: "" };
             update(reset);
-            say("Filters reset");
+            say(t("Filters reset"));
           }}
         >
-          Reset
+          {t("Reset")}
         </button>
         {err && <span className="err">{err}</span>}
       </div>
       <fieldset disabled={dis} className="f-body">
-        <Section title="Hosts">
+        <Section title={t("Hosts")}>
           <select value={f.hostMode} onChange={(e) => update({ hostMode: e.target.value as FilterSettings["hostMode"] })}>
-            <option value="noFilter">- No Host Filter -</option>
-            <option value="showOnly">Show only the following Hosts</option>
-            <option value="hide">Hide the following Hosts</option>
+            <option value="noFilter">{t("- No Host Filter -")}</option>
+            <option value="showOnly">{t("Show only the following Hosts")}</option>
+            <option value="hide">{t("Hide the following Hosts")}</option>
           </select>
           <textarea rows={3} placeholder="*.company.de; localhost; api.example.com" value={f.hosts} onChange={(e) => update({ hosts: e.target.value })} />
         </Section>
-        <Section title="Client Process">
+        <Section title={t("Client Process")}>
           <div className="f-radios">
             {(
               [
-                ["all", "All processes"],
-                ["browsers", "Show only browser traffic"],
-                ["nonBrowsers", "Show only non-browser traffic"],
-                ["remote", "Show only remote clients"],
+                ["all", t("All processes")],
+                ["browsers", t("Show only browser traffic")],
+                ["nonBrowsers", t("Show only non-browser traffic")],
+                ["remote", t("Show only remote clients")],
               ] as const
             ).map(([k, l]) => (
               <label key={k} className="f-check">
@@ -91,61 +92,61 @@ export function FiltersPanel() {
             ))}
           </div>
           <div className="f-row">
-            <span>Show only traffic from</span>
+            <span>{t("Show only traffic from")}</span>
             <input value={f.processOnly} placeholder="chrome; java" onChange={(e) => update({ processOnly: e.target.value })} />
           </div>
           <div className="f-row">
-            <span>Hide traffic from</span>
+            <span>{t("Hide traffic from")}</span>
             <input value={f.hideProcesses} placeholder="Teams; OneDrive" onChange={(e) => update({ hideProcesses: e.target.value })} />
           </div>
         </Section>
-        <Section title="Request Headers">
+        <Section title={t("Request Headers")}>
           <div className="f-row">
-            <span>Show only if URL contains</span>
+            <span>{t("Show only if URL contains")}</span>
             <input value={f.urlShowOnly} onChange={(e) => update({ urlShowOnly: e.target.value })} />
           </div>
           <div className="f-row">
-            <span>Hide if URL contains</span>
+            <span>{t("Hide if URL contains")}</span>
             <input value={f.urlHide} onChange={(e) => update({ urlHide: e.target.value })} />
           </div>
-          <Check label="Hide CONNECT tunnels" value={f.hideConnects} onChange={(v) => update({ hideConnects: v })} />
+          <Check label={t("Hide CONNECT tunnels")} value={f.hideConnects} onChange={(v) => update({ hideConnects: v })} />
         </Section>
-        <Section title="Response Status Code">
-          <Check label="Hide success (2xx)" value={f.hideSuccess} onChange={(v) => update({ hideSuccess: v })} />
-          <Check label="Hide non-2xx" value={f.hideNonSuccess} onChange={(v) => update({ hideNonSuccess: v })} />
-          <Check label="Hide Authentication demands (401, 407)" value={f.hideAuth} onChange={(v) => update({ hideAuth: v })} />
-          <Check label="Hide redirects (300, 301, 302, 303, 307)" value={f.hideRedirects} onChange={(v) => update({ hideRedirects: v })} />
-          <Check label="Hide Not Modified (304)" value={f.hideNotModified} onChange={(v) => update({ hideNotModified: v })} />
+        <Section title={t("Response Status Code")}>
+          <Check label={t("Hide success (2xx)")} value={f.hideSuccess} onChange={(v) => update({ hideSuccess: v })} />
+          <Check label={t("Hide non-2xx")} value={f.hideNonSuccess} onChange={(v) => update({ hideNonSuccess: v })} />
+          <Check label={t("Hide Authentication demands (401, 407)")} value={f.hideAuth} onChange={(v) => update({ hideAuth: v })} />
+          <Check label={t("Hide redirects (300, 301, 302, 303, 307)")} value={f.hideRedirects} onChange={(v) => update({ hideRedirects: v })} />
+          <Check label={t("Hide Not Modified (304)")} value={f.hideNotModified} onChange={(v) => update({ hideNotModified: v })} />
         </Section>
-        <Section title="Response Type and Size">
+        <Section title={t("Response Type and Size")}>
           <div className="f-grid2">
-            <Check label="Hide images" value={f.hideImages} onChange={(v) => update({ hideImages: v })} />
-            <Check label="Hide CSS" value={f.hideCss} onChange={(v) => update({ hideCss: v })} />
-            <Check label="Hide scripts" value={f.hideScripts} onChange={(v) => update({ hideScripts: v })} />
-            <Check label="Hide fonts" value={f.hideFonts} onChange={(v) => update({ hideFonts: v })} />
+            <Check label={t("Hide images")} value={f.hideImages} onChange={(v) => update({ hideImages: v })} />
+            <Check label={t("Hide CSS")} value={f.hideCss} onChange={(v) => update({ hideCss: v })} />
+            <Check label={t("Hide scripts")} value={f.hideScripts} onChange={(v) => update({ hideScripts: v })} />
+            <Check label={t("Hide fonts")} value={f.hideFonts} onChange={(v) => update({ hideFonts: v })} />
           </div>
           <div className="f-row">
-            <span>Show only Content-Types</span>
+            <span>{t("Show only Content-Types")}</span>
             <input value={f.contentTypeShowOnly} placeholder="json; xml" onChange={(e) => update({ contentTypeShowOnly: e.target.value })} />
           </div>
           <div className="f-row">
-            <span>Hide Content-Types</span>
+            <span>{t("Hide Content-Types")}</span>
             <input value={f.contentTypeHide} placeholder="video/; audio/" onChange={(e) => update({ contentTypeHide: e.target.value })} />
           </div>
           <div className="f-row">
-            <span>Hide smaller than (KB)</span>
+            <span>{t("Hide smaller than (KB)")}</span>
             <input type="number" value={f.minSize != null ? f.minSize / 1024 : ""} onChange={(e) => update({ minSize: num(e.target.value) != null ? num(e.target.value)! * 1024 : null })} />
           </div>
           <div className="f-row">
-            <span>Hide larger than (KB)</span>
+            <span>{t("Hide larger than (KB)")}</span>
             <input type="number" value={f.maxSize != null ? f.maxSize / 1024 : ""} onChange={(e) => update({ maxSize: num(e.target.value) != null ? num(e.target.value)! * 1024 : null })} />
           </div>
           <div className="f-row">
-            <span>Hide faster than (ms)</span>
+            <span>{t("Hide faster than (ms)")}</span>
             <input type="number" value={f.minDurationMs ?? ""} onChange={(e) => update({ minDurationMs: num(e.target.value) })} />
           </div>
         </Section>
-        <Section title="Advanced expression">
+        <Section title={t("Advanced expression")}>
           <textarea
             rows={3}
             className="mono"
@@ -154,7 +155,7 @@ export function FiltersPanel() {
             onChange={(e) => update({ expression: e.target.value })}
           />
           <div className="muted small">
-            Fields: host url path method status type process size reqsize time comment protocol color kind client custom · Operators: == != ~= (wildcard) ~ (contains) !~ =~ (regex) &lt; &lt;= &gt; &gt;= · and or not ( ) · status == 4xx · size &gt; 10k · time &gt; 1s
+            {t("Fields")}: host url path method status type process size reqsize time comment protocol color kind client custom · {t("Operators")}: == != ~= ({t("wildcard")}) ~ ({t("contains")}) !~ =~ (regex) &lt; &lt;= &gt; &gt;= · and or not ( ) · status == 4xx · size &gt; 10k · time &gt; 1s
           </div>
         </Section>
       </fieldset>

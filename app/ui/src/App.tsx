@@ -11,12 +11,13 @@ import { RightPane } from "./panels/RightPane";
 import { get, restoreLayout, say, set, useStore, type Layout } from "./store";
 import { installGlobalKeys } from "./keys";
 import { installFileDrop } from "./lib/dropImport";
+import { t } from "./i18n";
 
 async function importOpenFiles() {
   for (const path of await api.takeOpenFiles()) {
     try {
       await api.importArchive(path);
-      say(`Loading ${path}`);
+      say(t("Loading {path}", { path }));
     } catch (e) {
       say(String(e), "error");
     }
@@ -144,7 +145,7 @@ export function App() {
   const leftWidth = useStore((s) => s.layout.leftWidth);
   const overlay = useStore((s) => s.overlay);
   if (!isTauri) {
-    return <div className="not-tauri">Quena UI must run inside the Quena app (npm exec --prefix app/ui -- tauri dev).</div>;
+    return <div className="not-tauri">{t("Quena UI must run inside the Quena app ({command}).", { command: "npm exec --prefix app/ui -- tauri dev" })}</div>;
   }
   return (
     <div className="app">

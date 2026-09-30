@@ -4,6 +4,7 @@ import { api, type Detail, type WsFrame } from "../api";
 import { fmtBytes, fmtInt, fmtTime } from "../lib/format";
 import { CodeView } from "./CodeView";
 import { useStore } from "../store";
+import { t } from "../i18n";
 
 const PAGE = 500;
 
@@ -42,15 +43,15 @@ export function WebSocketView({ detail }: { detail: Detail }) {
             setTruncated(!!m.truncated);
             setError(null);
           },
-          (e) => alive && setError(`Could not load frames: ${String(e)}`),
+          (e) => alive && setError(t("Could not load frames: {error}", { error: String(e) })),
         )
         .finally(() => (busy = false));
     };
     load();
-    const t = detail.summary.state === "done" || detail.summary.state === "aborted" ? null : setInterval(load, 500);
+    const timer = detail.summary.state === "done" || detail.summary.state === "aborted" ? null : setInterval(load, 500);
     return () => {
       alive = false;
-      if (t) clearInterval(t);
+      if (timer) clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.summary.id, version]);
@@ -71,14 +72,15 @@ export function WebSocketView({ detail }: { detail: Detail }) {
     <div className="wsview">
       <div className="lt-bar">
         <span className="lt-info">
-          {fmtInt(total)} frames{!complete ? " · live" : ""}
-          {total > frames.length && ` · last ${fmtInt(frames.length)} shown`}
-          {truncated && " · truncated (recording limit reached)"}
+          {total === 1 ? t("{n} frame", { n: fmtInt(total) }) : t("{n} frames", { n: fmtInt(total) })}
+          {!complete ? ` · ${t("live")}` : ""}
+          {total > frames.length && ` · ${t("last {n} shown", { n: fmtInt(frames.length) })}`}
+          {truncated && ` · ${t("truncated (recording limit reached)")}`}
           {error && <span className="err"> · {error}</span>}
         </span>
         <select value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
-          <option value="all">All frames</option>
-          <option value="text">Text messages</option>
+          <option value="all">{t("All frames")}</option>
+          <option value="text">{t("Text messages")}</option>
           <option value="out">↑ Client → Server</option>
           <option value="in">↓ Server → Client</option>
         </select>
@@ -101,18 +103,18 @@ export function WebSocketView({ detail }: { detail: Detail }) {
               <span className="ws-text">{(f.text ?? f.preview ?? "").slice(0, 500)}</span>
             </div>
           ))}
-          {shown.length === 0 && !error && <div className="placeholder">No frames{total > 0 ? " match the filter" : " yet"}.</div>}
+          {shown.length === 0 && !error && <div className="placeholder">{total > 0 ? t("No frames match the filter.") : t("No frames yet.")}</div>}
         </div>
         {selFrame && (
           <div className="ws-detail">
             <div className="ws-detail-head">
               {selFrame.dir === 0 ? "Client → Server" : "Server → Client"} · {selFrame.opcodeName} · {fmtBytes(selFrame.len)} · {fmtTime(selFrame.time)}
-              {!selFrame.fin && " · fragment"}
+              {!selFrame.fin && ` · ${t("fragment")}`}
             </div>
             {selFrame.text != null ? (
               <CodeView text={selFrame.text} lang={looksJson(selFrame.text) ? "json" : "text"} wrap />
             ) : (
-              <pre className="ws-hex">{selFrame.preview ?? "(no payload)"}</pre>
+              <pre className="ws-hex">{selFrame.preview ?? t("(no payload)")}</pre>
             )}
           </div>
         )}

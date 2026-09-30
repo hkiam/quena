@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { FilterSettings, JobInfo, LogEntry, SessionId, Settings, Sort, Status } from "./api";
+import { t } from "./i18n";
 
 export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "structure";
 
@@ -30,19 +31,19 @@ export interface ColumnConf {
 /** Column titles come from the key (not the saved layout), so renames apply everywhere. */
 export const COLUMN_TITLES: Record<ColumnKey, string> = {
   id: "#",
-  result: "Status",
-  protocol: "Protocol",
-  host: "Host",
-  url: "Path",
-  body: "Size",
-  caching: "Caching",
-  contentType: "Type",
-  process: "Process",
-  comments: "Comments",
-  custom: "Custom",
-  method: "Method",
-  duration: "Duration",
-  started: "Started",
+  result: t("Status"),
+  protocol: t("Protocol"),
+  host: t("Host"),
+  url: t("Path"),
+  body: t("Size"),
+  caching: t("Caching"),
+  contentType: t("Type"),
+  process: t("Process"),
+  comments: t("Comments"),
+  custom: t("Custom"),
+  method: t("Method"),
+  duration: t("Duration"),
+  started: t("Started"),
 };
 
 const col = (key: ColumnKey, width: number, visible: boolean, align?: "left" | "right"): ColumnConf => ({

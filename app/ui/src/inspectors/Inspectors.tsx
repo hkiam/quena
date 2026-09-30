@@ -21,31 +21,35 @@ import { ViewTabs } from "./ViewTabs";
 import { defaultView, orderViews, viewFamily } from "./viewChoice";
 import { methodPill, statusPill } from "../grid/style";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { t } from "../i18n";
 
 const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
 const TITLES: Record<string, string> = {
-  headers: "Headers",
-  textview: "Plain Text",
-  syntaxview: "Body",
-  webforms: "Form Data",
+  headers: t("Headers"),
+  textview: t("Plain Text"),
+  syntaxview: t("Body"),
+  webforms: t("Form Data"),
   hexview: "Hex",
-  auth: "Auth",
-  cookies: "Cookies",
-  raw: "Raw",
+  auth: t("Auth"),
+  cookies: t("Cookies"),
+  raw: t("Raw"),
   json: "JSON",
   xml: "XML",
-  transformer: "Encoding",
-  imageview: "Image",
-  webview: "Preview",
-  caching: "Caching",
+  transformer: t("Encoding"),
+  imageview: t("Image"),
+  webview: t("Preview"),
+  caching: t("Caching"),
   soap: "SOAP",
   atom: "Atom/OData",
   websocket: "WebSocket",
   sse: "SSE",
-  multipart: "Parts",
+  multipart: t("Parts"),
   grpc: "gRPC",
 };
+
+/** Body variants as shown in the text view's status line. */
+const VARIANT_LABELS: Record<string, string> = { raw: t("raw"), decoded: t("decoded"), pretty: t("formatted") };
 
 /** Load the focused session's detail; refresh while it is in flight. */
 function useDetail(): { detail: Detail | null; error: string | null } {
@@ -102,7 +106,7 @@ function EncodedBanner({ detail, part }: { detail: Detail; part: Part }) {
   if (decode || !info.variants.includes("decoded")) return null;
   return (
     <div className="banner warn" onClick={() => patchSettings((s) => (s.decode = true))}>
-      Body is encoded ({info.contentEncoding}). Click to decode (toggles ‘Decode’).
+      {t("Body is encoded ({encoding}). Click to decode (toggles ‘Decode’).", { encoding: info.contentEncoding ?? "" })}
     </div>
   );
 }
@@ -112,34 +116,36 @@ function TextPane({ detail, part, syntax }: { detail: Detail; part: Part; syntax
   const [wrap, setWrap] = useState(!syntax);
   const [pretty, setPretty] = useState(syntax);
   const info = part === "request" ? detail.requestBody : detail.responseBody;
-  if (part === "response" && !detail.response) return <div className="placeholder">No response yet</div>;
-  if (!info.len) return <div className="placeholder">{info.complete ? "No body" : "Waiting for body…"}</div>;
+  if (part === "response" && !detail.response) return <div className="placeholder">{t("No response yet")}</div>;
+  if (!info.len) return <div className="placeholder">{info.complete ? t("No body") : t("Waiting for body…")}</div>;
   const v = bodyVariant(detail, part, decode, pretty);
   return (
     <div className="textpane">
       <EncodedBanner detail={detail} part={part} />
       <div className="tp-bar">
         <label>
-          <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} /> Wrap
+          <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} /> {t("Wrap")}
         </label>
         {info.variants.includes("pretty") && (
           <label>
-            <input type="checkbox" checked={pretty} onChange={(e) => setPretty(e.target.checked)} /> Format
+            <input type="checkbox" checked={pretty} onChange={(e) => setPretty(e.target.checked)} /> {t("Format")}
           </label>
         )}
         <span className="muted">
           {fmtBytes(info.len)}
-          {info.truncated ? " (truncated)" : ""} · {v}
+          {info.truncated ? ` ${t("(truncated)")}` : ""} · {VARIANT_LABELS[v] ?? v}
         </span>
         <span className="tp-spacer" />
-        <button onClick={() => actions.menu(part === "request" ? "file.save-request-body" : "file.save-response-body")}>Save…</button>
+        <button onClick={() => actions.menu(part === "request" ? "file.save-request-body" : "file.save-response-body")}>{t("Save…")}</button>
       </div>
       <div className="tp-body">
         {info.isText || v !== "raw" ? (
           <BodyText id={detail.summary.id} part={part} info={info} variant={v} highlight={syntax} wrap={wrap} />
         ) : (
           <div className="placeholder">
-            Binary content ({info.contentType ?? "unknown type"}, {fmtBytes(info.len)}). Open {info.isImage ? "Image or " : ""}Hex from the view menu.
+            {info.isImage
+              ? t("Binary content ({type}, {size}). Open Image or Hex from the view menu.", { type: info.contentType ?? t("unknown type"), size: fmtBytes(info.len) })
+              : t("Binary content ({type}, {size}). Open Hex from the view menu.", { type: info.contentType ?? t("unknown type"), size: fmtBytes(info.len) })}
           </div>
         )}
       </div>
@@ -156,9 +162,11 @@ function PluginView({ detail, part, variant, output }: { detail: Detail; part: P
       <div />
       <div className="tp-bar">
         <label>
-          <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} /> Wrap
+          <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} /> {t("Wrap")}
         </label>
-        <span className="muted">decoded by plugin · {output}</span>
+        <span className="muted">
+          {t("decoded by plugin")} · {output}
+        </span>
       </div>
       <div className="tp-body">
         <BodyText id={detail.summary.id} part={part} info={fake} variant={variant} highlight wrap={wrap} />
@@ -205,7 +213,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
     }));
     actions.saveLayout();
   };
-  let content: React.ReactNode = <div className="placeholder">Select a session to inspect it.</div>;
+  let content: React.ReactNode = <div className="placeholder">{t("Select a session to inspect it.")}</div>;
   if (detail && tamper) {
     content = <TamperEditor detail={detail} part={part} edits={tamper.edits} setEdits={tamper.setEdits} />;
   } else if (detail) {
@@ -224,7 +232,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         content = <WebFormsView detail={detail} />;
         break;
       case "hexview":
-        content = info.len ? <HexView id={detail.summary.id} part={part} variant={bodyVariant(detail, part, decode, false)} len={info.len} /> : <div className="placeholder">No body</div>;
+        content = info.len ? <HexView id={detail.summary.id} part={part} variant={bodyVariant(detail, part, decode, false)} len={info.len} /> : <div className="placeholder">{t("No body")}</div>;
         break;
       case "auth":
         content = <AuthView detail={detail} part={part} />;
@@ -254,7 +262,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         content = <CachingView detail={detail} />;
         break;
       case "atom":
-        content = atom ? <AtomView detail={detail} part={part} /> : <div className="placeholder">Not an Atom/OData document.</div>;
+        content = atom ? <AtomView detail={detail} part={part} /> : <div className="placeholder">{t("Not an Atom/OData document.")}</div>;
         break;
       case "grpc":
         content = <GrpcView detail={detail} part={part} />;
@@ -269,7 +277,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         content = <SseView detail={detail} />;
         break;
       case "soap":
-        content = soap ? <SoapView detail={detail} part={part} /> : <div className="placeholder">Not a SOAP message.</div>;
+        content = soap ? <SoapView detail={detail} part={part} /> : <div className="placeholder">{t("Not a SOAP message.")}</div>;
         break;
       default: {
         const pt = pluginTabs.find((t) => t.key === tab);
@@ -277,10 +285,10 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
           info.len ? (
             <PluginView detail={detail} part={part} variant={pt.p.variant} output={pt.p.output} />
           ) : (
-            <div className="placeholder">No body</div>
+            <div className="placeholder">{t("No body")}</div>
           )
         ) : (
-          <div className="placeholder">This decoder does not apply to this session.</div>
+          <div className="placeholder">{t("This decoder does not apply to this session.")}</div>
         );
       }
     }
@@ -291,7 +299,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   return (
     <div className="insp-pane">
       <div className="insp-head">
-        <span className="insp-part">{part === "request" ? "Request" : "Response"}</span>
+        <span className="insp-part">{part === "request" ? t("Request") : t("Response")}</span>
         {pill && <span className={`pill pill-${pill.tone}`}>{pill.text}</span>}
         <ViewTabs views={views} active={tab} title={title} onSelect={setTab} />
       </div>
@@ -353,9 +361,9 @@ export function Inspectors() {
       ) : detail ? (
         <SessionHeader detail={detail} />
       ) : error ? (
-        <div className="insp-summary err">Could not load session: {error}</div>
+        <div className="insp-summary err">{t("Could not load session: {error}", { error })}</div>
       ) : (
-        <div className="insp-summary muted">No session selected</div>
+        <div className="insp-summary muted">{t("No session selected")}</div>
       )}
       <div
         className={`insp-split ${stacked ? "stacked" : "side"}`}

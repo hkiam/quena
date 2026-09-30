@@ -6,6 +6,7 @@ import { CodeView, langFor } from "./CodeView";
 import { LargeTextView } from "./LargeTextView";
 import { decodeText } from "../lib/bodytext";
 import { fmtBytes } from "../lib/format";
+import { t } from "../i18n";
 
 /** Bodies up to this size (after decoding) go into CodeMirror. */
 export const CODEMIRROR_LIMIT = 8 << 20;
@@ -59,7 +60,7 @@ export function BodyText({
     };
   }, [id, part, variant, info.complete, info.len]);
 
-  if (state.mode === "loading") return <div className="placeholder">Loading {fmtBytes(info.len)}…</div>;
+  if (state.mode === "loading") return <div className="placeholder">{t("Loading {size}…", { size: fmtBytes(info.len) })}</div>;
   if (state.mode === "large") return <LargeTextView id={id} part={part} variant={variant} wrap={wrap} />;
   return (
     <div className="bodytext">

@@ -7,6 +7,7 @@ import { CodeView, langFor } from "./CodeView";
 import { save } from "@tauri-apps/plugin-dialog";
 import { say } from "../store";
 import { MoreRows } from "./views";
+import { plural, t } from "../i18n";
 
 /** Parts listed before "more". */
 const PARTS = 500;
@@ -55,14 +56,14 @@ export function MultipartView({ detail, part }: { detail: Detail; part: Part }) 
     };
   }, [detail.summary.id, part, p?.offset, p?.len, p?.isText]);
 
-  if (error) return <div className="placeholder">Could not parse the parts: {error}</div>;
-  if (!mp) return <div className="placeholder">Parsing…</div>;
-  if (mp.error) return <div className="placeholder">Not multipart: {mp.error}</div>;
+  if (error) return <div className="placeholder">{t("Could not parse the parts: {error}", { error })}</div>;
+  if (!mp) return <div className="placeholder">{t("Parsing…")}</div>;
+  if (mp.error) return <div className="placeholder">{t("Not multipart: {error}", { error: mp.error })}</div>;
 
   return (
     <div className="mpview">
       <div className="mp-info">
-        multipart/{mp.subtype} · {mp.parts.length} parts
+        multipart/{mp.subtype} · {plural(mp.parts.length, "{n} part", "{n} parts")}
         {mp.rootType && ` · root ${mp.rootType}`}
       </div>
       <div className="mp-split">
@@ -98,19 +99,19 @@ export function MultipartView({ detail, part }: { detail: Detail; part: Part }) 
                     const path = await save({ defaultPath: name });
                     if (!path) return;
                     await api.saveBodyRange(detail.summary.id, part, p.offset, p.len, path);
-                    say(`Saved ${name}`);
+                    say(t("Saved {name}", { name }));
                   } catch (e) {
-                    say(`Save failed: ${String(e)}`);
+                    say(t("Save failed: {error}", { error: String(e) }));
                   }
                 }}
               >
-                Save…
+                {t("Save…")}
               </button>
             </div>
             {p.isText && partErr ? (
-              <div className="placeholder">Could not load this part: {partErr}</div>
+              <div className="placeholder">{t("Could not load this part: {error}", { error: partErr })}</div>
             ) : p.isText && text == null ? (
-              <div className="placeholder">Loading…</div>
+              <div className="placeholder">{t("Loading…")}</div>
             ) : p.isText && text != null ? (
               <CodeView text={text} lang={langFor(p.contentType)} wrap />
             ) : (p.contentType ?? "").startsWith("image/") ? (
@@ -119,7 +120,7 @@ export function MultipartView({ detail, part }: { detail: Detail; part: Part }) 
                 <PartImage id={detail.summary.id} part={part} offset={p.offset} len={p.len} type={p.contentType} />
               </div>
             ) : (
-              <div className="placeholder">Binary part ({fmtBytes(p.len)}). Use Save to export it.</div>
+              <div className="placeholder">{t("Binary part ({size}). Use Save to export it.", { size: fmtBytes(p.len) })}</div>
             )}
           </div>
         )}
@@ -150,6 +151,6 @@ function PartImage({ id, part, offset, len, type }: { id: number; part: Part; of
       if (u) URL.revokeObjectURL(u);
     };
   }, [id, part, offset, len, type]);
-  if (error) return <div className="muted">Could not load the image: {error}</div>;
-  return url ? <img src={url} alt="attachment" onError={() => setError("not a displayable image")} /> : <div className="muted">Loading…</div>;
+  if (error) return <div className="muted">{t("Could not load the image: {error}", { error })}</div>;
+  return url ? <img src={url} alt="attachment" onError={() => setError(t("not a displayable image"))} /> : <div className="muted">{t("Loading…")}</div>;
 }

@@ -2,6 +2,7 @@ import { api, type SessionSummary } from "../api";
 import { get, say, set } from "../store";
 import { rowCache } from "../grid/SessionGrid";
 import { actions } from "../actions";
+import { t } from "../i18n";
 
 function focused(): SessionSummary | undefined {
   const i = get().focusIndex;
@@ -40,7 +41,7 @@ export async function filterNow(kind: "hideHost" | "onlyHost" | "hideUrl" | "hid
   }
   await api.setFilters(f);
   set({ filters: f });
-  say("Filter updated");
+  say(t("Filter updated"));
 }
 
 export async function selectSimilar(field: "host" | "process" | "url") {

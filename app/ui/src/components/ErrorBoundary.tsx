@@ -1,6 +1,7 @@
 // Catches render errors so one broken view (hostile or corrupt payload) never
 // blanks the whole window. Changing `resetKey` clears the error.
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { t } from "../i18n";
 
 type Props = {
   children: ReactNode;
@@ -48,8 +49,8 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.props.fallback) return this.props.fallback(error, this.reset);
     return (
       <div className="view-error">
-        <div>This view failed: {errorMessage(error)}</div>
-        <button onClick={this.reset}>Retry</button>
+        <div>{t("This view failed: {error}", { error: errorMessage(error) })}</div>
+        <button onClick={this.reset}>{t("Retry")}</button>
       </div>
     );
   }
@@ -59,10 +60,10 @@ export class ErrorBoundary extends Component<Props, State> {
 export function AppCrash({ error }: { error: Error }) {
   return (
     <div className="app-crash">
-      <h3>Something went wrong in the Quena UI.</h3>
+      <h3>{t("Something went wrong in the Quena UI.")}</h3>
       <pre>{errorMessage(error)}</pre>
-      <p className="muted">Capture keeps running in the background. Reloading the UI does not lose recorded sessions.</p>
-      <button onClick={() => window.location.reload()}>Reload UI</button>
+      <p className="muted">{t("Capture keeps running in the background. Reloading the UI does not lose recorded sessions.")}</p>
+      <button onClick={() => window.location.reload()}>{t("Reload UI")}</button>
     </div>
   );
 }

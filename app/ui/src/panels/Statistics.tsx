@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Statistics } from "../api";
 import { fmtBytes, fmtDateTime, fmtInt, fmtMs } from "../lib/format";
 import { useStore } from "../store";
+import { plural, t } from "../i18n";
 
 export function StatisticsPanel() {
   const selection = useStore((s) => s.selection);
@@ -11,25 +12,25 @@ export function StatisticsPanel() {
     const t = setTimeout(() => api.statistics([...selection]).then(setSt), 150);
     return () => clearTimeout(t);
   }, [selection, Math.floor(version / 30)]);
-  if (!st) return <div className="placeholder">Computing…</div>;
+  if (!st) return <div className="placeholder">{t("Computing…")}</div>;
   const maxCt = Math.max(1, ...st.contentTypes.map((c) => c[2]));
   const elapsed = st.firstRequest && st.lastResponse ? (st.lastResponse - st.firstRequest) / 1000 : null;
   return (
     <div className="scroll pad stats">
-      <div className="muted">{selection.size ? `${fmtInt(selection.size)} selected session(s)` : "All sessions"}</div>
+      <div className="muted">{selection.size ? plural(selection.size, "{n} selected session", "{n} selected sessions") : t("All sessions")}</div>
       <table className="kv">
         <tbody>
-          <tr><td>Request Count</td><td>{fmtInt(st.sessions)}</td></tr>
-          <tr><td>Bytes Sent (bodies)</td><td>{fmtInt(st.requestBytes)} ({fmtBytes(st.requestBytes)})</td></tr>
-          <tr><td>Bytes Received (bodies)</td><td>{fmtInt(st.responseBytes)} ({fmtBytes(st.responseBytes)})</td></tr>
-          <tr><td>Requests started at</td><td>{fmtDateTime(st.firstRequest)}</td></tr>
-          <tr><td>Responses completed at</td><td>{fmtDateTime(st.lastResponse)}</td></tr>
-          <tr><td>Sequence (clock) duration</td><td>{elapsed != null ? fmtMs(Math.round(elapsed)) : ""}</td></tr>
-          <tr><td>Aggregate Session time</td><td>{fmtMs(st.aggregateMs)}</td></tr>
-          <tr><td>In flight / aborted</td><td>{st.inFlight} / {st.aborted}</td></tr>
+          <tr><td>{t("Request Count")}</td><td>{fmtInt(st.sessions)}</td></tr>
+          <tr><td>{t("Bytes Sent (bodies)")}</td><td>{fmtInt(st.requestBytes)} ({fmtBytes(st.requestBytes)})</td></tr>
+          <tr><td>{t("Bytes Received (bodies)")}</td><td>{fmtInt(st.responseBytes)} ({fmtBytes(st.responseBytes)})</td></tr>
+          <tr><td>{t("Requests started at")}</td><td>{fmtDateTime(st.firstRequest)}</td></tr>
+          <tr><td>{t("Responses completed at")}</td><td>{fmtDateTime(st.lastResponse)}</td></tr>
+          <tr><td>{t("Sequence (clock) duration")}</td><td>{elapsed != null ? fmtMs(Math.round(elapsed)) : ""}</td></tr>
+          <tr><td>{t("Aggregate Session time")}</td><td>{fmtMs(st.aggregateMs)}</td></tr>
+          <tr><td>{t("In flight / aborted")}</td><td>{st.inFlight} / {st.aborted}</td></tr>
         </tbody>
       </table>
-      <h4>Response Codes</h4>
+      <h4>{t("Response Codes")}</h4>
       <table className="kv">
         <tbody>
           {Object.entries(st.statusCodes).map(([k, v]) => (
@@ -40,7 +41,7 @@ export function StatisticsPanel() {
           ))}
         </tbody>
       </table>
-      <h4>Response Bytes (by Content-Type)</h4>
+      <h4>{t("Response Bytes (by Content-Type)")}</h4>
       <div className="bars">
         {st.contentTypes.map(([ct, n, b]) => (
           <div key={ct} className="bar-row">
@@ -50,7 +51,7 @@ export function StatisticsPanel() {
           </div>
         ))}
       </div>
-      <h4>Hosts</h4>
+      <h4>{t("Hosts")}</h4>
       <table className="kv">
         <tbody>
           {st.hosts.slice(0, 20).map(([h, n, b]) => (
@@ -63,7 +64,7 @@ export function StatisticsPanel() {
       </table>
       {st.processes.length > 0 && (
         <>
-          <h4>Processes</h4>
+          <h4>{t("Processes")}</h4>
           <table className="kv">
             <tbody>
               {st.processes.map(([p, n]) => (

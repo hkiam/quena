@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type BodyView, type Part, type SessionId, type Variant } from "../api";
 import { fmtBytes, fmtInt } from "../lib/format";
+import { plural, t } from "../i18n";
 
 const LINE_H = 16;
 const MAX_PX = 8_000_000;
@@ -105,7 +106,7 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
       job = await api.bodySearch(id, part, variant, search, true);
     } catch (e) {
       setSearching(false);
-      setError(`Search failed: ${String(e)}`);
+      setError(t("Search failed: {error}", { error: String(e) }));
       return;
     }
     const poll = async () => {
@@ -114,7 +115,7 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
         r = await api.searchResult(job);
       } catch (e) {
         setSearching(false);
-        setError(`Search failed: ${String(e)}`);
+        setError(t("Search failed: {error}", { error: String(e) }));
         return;
       }
       if (r) {
@@ -157,22 +158,22 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
         <span className="lt-info">
           {view ? (
             <>
-              {fmtBytes(view.len)} · {fmtInt(totalLines)} lines
-              {!view.linesDone && ` (indexing ${view.len ? Math.floor((view.scanned / Math.max(1, view.len)) * 100) : 0}%)`}
-              {!view.complete && " · receiving/decoding…"}
+              {fmtBytes(view.len)} · {plural(totalLines, "{n} line", "{n} lines")}
+              {!view.linesDone && ` ${t("(indexing {pct}%)", { pct: view.len ? Math.floor((view.scanned / Math.max(1, view.len)) * 100) : 0 })}`}
+              {!view.complete && ` · ${t("receiving/decoding…")}`}
               {view.error && <span className="err"> · {view.error}</span>}
             </>
           ) : error ? (
-            <span className="err">Could not open the body: {error}</span>
+            <span className="err">{t("Could not open the body: {error}", { error })}</span>
           ) : (
-            "Opening…"
+            t("Opening…")
           )}
           {view && error && <span className="err"> · {error}</span>}
         </span>
-        <input className="lt-goto" placeholder="Line" value={goto} onChange={(e) => setGoto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scrollToLine(Math.max(0, Number(goto) - 1))} />
+        <input className="lt-goto" placeholder={t("Line")} value={goto} onChange={(e) => setGoto(e.target.value)} onKeyDown={(e) => e.key === "Enter" && scrollToLine(Math.max(0, Number(goto) - 1))} />
         <input
           className="lt-search"
-          placeholder="Find in body"
+          placeholder={t("Find in body")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => {
@@ -183,10 +184,10 @@ export function LargeTextView({ id, part, variant, wrap }: { id: SessionId; part
           }}
         />
         <button onClick={runSearch} disabled={!search}>
-          Find
+          {t("Find")}
         </button>
         <span className="lt-hits">
-          {searching ? "searching… " : ""}
+          {searching ? `${t("searching…")} ` : ""}
           {hits.length ? `${hitIdx + 1}/${fmtInt(hits.length)}` : search && !searching ? "" : ""}
         </span>
         <button onClick={() => step(-1)} disabled={!hits.length}>

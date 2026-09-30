@@ -1,13 +1,14 @@
 import { api } from "../api";
 import { get, set } from "../store";
 import { fmtDateTime } from "../lib/format";
+import { t } from "../i18n";
 
 export async function showProperties() {
   const id = get().focusId;
   if (id == null) return;
   const d = await api.detail(id);
   if (!d) return;
-  const t = d.timers;
+  const timers = d.timers;
   const lines = [
     `SESSION #${d.summary.id}`,
     `State: ${d.summary.state}   Kind: ${d.summary.kind}   Flags: 0x${d.summary.flags.toString(16)}`,
@@ -20,12 +21,12 @@ export async function showProperties() {
     d.error ? `Error: ${d.error}` : "",
     "",
     "TIMERS",
-    ...Object.entries(t)
+    ...Object.entries(timers)
       .filter(([, v]) => v != null)
       .map(([k, v]) => `  ${k.padEnd(22)} ${k.endsWith("Ms") ? `${v} ms` : fmtDateTime(v as number)}`),
     "",
     "FLAGS",
     ...d.extraFlags.map(([k, v]) => `  ${k}: ${v}`),
   ].filter((l) => l !== "");
-  set({ dialog: { kind: "text", title: `Properties of #${id}`, text: lines.join("\n") } });
+  set({ dialog: { kind: "text", title: t("Properties of #{id}", { id }), text: lines.join("\n") } });
 }

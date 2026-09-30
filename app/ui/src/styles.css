@@ -575,6 +575,7 @@ kbd,
   border-bottom: 1px solid var(--border);
   overflow: hidden;
   flex-wrap: nowrap;
+  min-width: 0;
 }
 .rpane {
   container-type: inline-size;
@@ -587,6 +588,13 @@ kbd,
   .rp-tab {
     padding: 8px 10px 7px;
   }
+}
+/* Labels do not fit the pane (measured in RightPane): icons only, names as tooltips. */
+.rp-tabs.compact .rp-label {
+  display: none;
+}
+.rp-tabs.compact .rp-tab {
+  padding: 8px 10px 7px;
 }
 .rp-tab {
   padding: 8px 9px 7px;

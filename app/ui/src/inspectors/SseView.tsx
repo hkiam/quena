@@ -4,6 +4,7 @@ import { api, fetchBody, type Detail } from "../api";
 import { fmtBytes, fmtInt } from "../lib/format";
 import { decodeText } from "../lib/bodytext";
 import { useStore } from "../store";
+import { t } from "../i18n";
 
 interface Event {
   id?: string;
@@ -70,17 +71,17 @@ export function SseView({ detail }: { detail: Detail }) {
         setEvents(parse(decodeText(data)).events);
         setError(null);
       } catch (e) {
-        if (alive) setError(`Could not load the event stream: ${String(e)}`);
+        if (alive) setError(t("Could not load the event stream: {error}", { error: String(e) }));
       } finally {
         busy = false;
       }
     };
     load();
     const running = detail.summary.state !== "done" && detail.summary.state !== "aborted";
-    const t = running ? setInterval(load, 500) : null;
+    const timer = running ? setInterval(load, 500) : null;
     return () => {
       alive = false;
-      if (t) clearInterval(t);
+      if (timer) clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail.summary.id, version]);
@@ -90,13 +91,14 @@ export function SseView({ detail }: { detail: Detail }) {
   return (
     <div className="scroll pad sse">
       <div className="muted small">
-        {fmtInt(events.length)} events{live ? " · live" : ""}
-        {total > LIMIT && ` · first ${fmtBytes(LIMIT)} of ${fmtBytes(total)} parsed`}
+        {events.length === 1 ? t("{n} event", { n: fmtInt(events.length) }) : t("{n} events", { n: fmtInt(events.length) })}
+        {live ? ` · ${t("live")}` : ""}
+        {total > LIMIT && ` · ${t("first {limit} of {total} parsed", { limit: fmtBytes(LIMIT), total: fmtBytes(total) })}`}
       </div>
       {error && <div className="banner error">{error}</div>}
       {from > 0 && (
         <div className="j-more" onClick={() => setShow(show + SHOW)}>
-          … {fmtInt(from)} earlier events (show {fmtInt(Math.min(SHOW, from))} more)
+          … {t("{n} earlier events (show {more} more)", { n: fmtInt(from), more: fmtInt(Math.min(SHOW, from)) })}
         </div>
       )}
       {events.slice(from).map((e, i) => (
@@ -109,7 +111,7 @@ export function SseView({ detail }: { detail: Detail }) {
           <pre className="sse-data">{e.data}</pre>
         </div>
       ))}
-      {events.length === 0 && !error && <div className="placeholder">No events yet.</div>}
+      {events.length === 0 && !error && <div className="placeholder">{t("No events yet.")}</div>}
     </div>
   );
 }

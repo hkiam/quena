@@ -6,6 +6,7 @@ import { loadText } from "../lib/bodytext";
 import { parseXml } from "../lib/xml";
 import { fmtBytes, fmtInt } from "../lib/format";
 import { MoreRows } from "./views";
+import { plural, t } from "../i18n";
 
 const ATOM = "http://www.w3.org/2005/Atom";
 const ODATA_M = ["http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"];
@@ -92,8 +93,8 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
     setRows(ROWS);
     if (info.len > LIMIT && !variant.startsWith("plugin:")) return;
     loadText(detail.summary.id, part, info, LIMIT, variant).then(
-      (t) => alive && setXml(t),
-      (e) => alive && setLoadErr(`Could not load the body: ${String(e)}`),
+      (s) => alive && setXml(s),
+      (e) => alive && setLoadErr(t("Could not load the body: {error}", { error: String(e) })),
     );
     return () => {
       alive = false;
@@ -120,7 +121,7 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
       return { kind: "edmx" as const, types, sets, version: root.getAttribute("Version") ?? "" };
     }
     if (root.namespaceURI !== ATOM || (root.localName !== "feed" && root.localName !== "entry")) {
-      return { error: `Not an Atom document (root element {${root.namespaceURI}}${root.localName}).` };
+      return { error: t("Not an Atom document (root element {element}).", { element: `{${root.namespaceURI}}${root.localName}` }) };
     }
     const odata = ODATA_D.concat(ODATA_M).some((n) => xml.includes(n));
     if (root.localName === "entry") return { kind: "feed" as const, odata, feed: null, entries: [readEntry(root)] };
@@ -140,22 +141,22 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
     };
   }, [xml]);
 
-  if (info.len > LIMIT && !variant.startsWith("plugin:")) return <div className="placeholder">Body is {fmtBytes(info.len)} – too large for the Atom view.</div>;
+  if (info.len > LIMIT && !variant.startsWith("plugin:")) return <div className="placeholder">{t("Body is {size} – too large for the Atom view.", { size: fmtBytes(info.len) })}</div>;
   if (loadErr) return <div className="placeholder">{loadErr}</div>;
-  if (!parsed) return <div className="placeholder">Loading…</div>;
+  if (!parsed) return <div className="placeholder">{t("Loading…")}</div>;
   if ("error" in parsed) return <div className="placeholder">{parsed.error}</div>;
-  const src = variant.startsWith("plugin:") ? `decoded by ${info.plugins.find((p) => p.variant === variant)?.tab}` : variant;
+  const src = variant.startsWith("plugin:") ? t("decoded by {plugin}", { plugin: info.plugins.find((p) => p.variant === variant)?.tab ?? "" }) : variant === "decoded" ? t("decoded") : t("raw");
 
   if (parsed.kind === "edmx") {
     return (
       <div className="scroll pad">
-        <div className="muted small">OData service metadata (EDMX {parsed.version}) · {src}</div>
-        <h4>Entity sets</h4>
+        <div className="muted small">{t("OData service metadata (EDMX {version})", { version: parsed.version })} · {src}</div>
+        <h4>{t("Entity sets")}</h4>
         <ul className="notes">{parsed.sets.slice(0, rows).map((s, i) => <li key={i} className="mono">{s}</li>)}</ul>
         <MoreRows shown={rows} total={parsed.sets.length} onMore={setRows} step={ROWS} />
-        <h4>Entity types</h4>
+        <h4>{t("Entity types")}</h4>
         <table className="kv">
-          <thead><tr><th>Type</th><th>Key</th><th>Properties</th><th>Navigation</th></tr></thead>
+          <thead><tr><th>{t("Type")}</th><th>{t("Key")}</th><th>{t("Properties")}</th><th>{t("Navigation")}</th></tr></thead>
           <tbody>
             {parsed.types.slice(0, rows).map((t, i) => (
               <tr key={i}>
@@ -178,24 +179,24 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
   return (
     <div className="scroll pad atom">
       <div className="muted small">
-        {odata ? "OData Atom" : "Atom"} {feed ? "feed" : "entry"} · {entries.length} entr{entries.length === 1 ? "y" : "ies"} · {src}
+        {odata ? "OData Atom" : "Atom"} {feed ? t("feed") : t("entry")} · {plural(entries.length, "{n} entry", "{n} entries")} · {src}
       </div>
       {feed && (
         <table className="kv">
           <tbody>
-            <tr><td>Title</td><td>{feed.title}</td></tr>
+            <tr><td>{t("Title")}</td><td>{feed.title}</td></tr>
             <tr><td>Id</td><td className="mono">{feed.id}</td></tr>
-            <tr><td>Updated</td><td>{feed.updated}</td></tr>
+            <tr><td>{t("Updated")}</td><td>{feed.updated}</td></tr>
             {feed.count && <tr><td>$inlinecount</td><td>{feed.count}</td></tr>}
-            {feed.next && <tr><td>Next page</td><td className="mono">{feed.next}</td></tr>}
+            {feed.next && <tr><td>{t("Next page")}</td><td className="mono">{feed.next}</td></tr>}
             {feed.base && <tr><td>xml:base</td><td className="mono">{feed.base}</td></tr>}
           </tbody>
         </table>
       )}
       {cols.length > 0 && (
         <>
-          <h4>Entries</h4>
-          {allCols.length > cols.length && <div className="muted small">Showing the first {COLS} of {fmtInt(allCols.length)} properties as columns; select an entry to see all.</div>}
+          <h4>{t("Entries")}</h4>
+          {allCols.length > cols.length && <div className="muted small">{t("Showing the first {cols} of {total} properties as columns; select an entry to see all.", { cols: COLS, total: fmtInt(allCols.length) })}</div>}
           <div className="atom-grid">
             <table className="kv">
               <thead><tr><th>#</th>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
@@ -220,17 +221,17 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
       )}
       {e && (
         <>
-          <h4>Entry {sel + 1}{e.type ? ` · ${e.type}` : ""}</h4>
+          <h4>{t("Entry {n}", { n: sel + 1 })}{e.type ? ` · ${e.type}` : ""}</h4>
           <table className="kv">
             <tbody>
               {e.id && <tr><td>Id</td><td className="mono">{e.id}</td></tr>}
-              {e.edit && <tr><td>Edit link</td><td className="mono">{e.edit}</td></tr>}
+              {e.edit && <tr><td>{t("Edit link")}</td><td className="mono">{e.edit}</td></tr>}
               {e.etag && <tr><td>ETag</td><td className="mono">{e.etag}</td></tr>}
-              {e.updated && <tr><td>Updated</td><td>{e.updated}</td></tr>}
+              {e.updated && <tr><td>{t("Updated")}</td><td>{e.updated}</td></tr>}
             </tbody>
           </table>
           <table className="kv">
-            <thead><tr><th>Property</th><th>Edm type</th><th>Value</th></tr></thead>
+            <thead><tr><th>{t("Property")}</th><th>{t("Edm type")}</th><th>{t("Value")}</th></tr></thead>
             <tbody>
               {e.props.slice(0, propRows).map((p, i) => (
                 <tr key={i}>
@@ -244,14 +245,14 @@ export function AtomView({ detail, part }: { detail: Detail; part: Part }) {
           <MoreRows shown={propRows} total={e.props.length} onMore={setPropRows} step={ROWS} />
           {e.links.length > 0 && (
             <table className="kv">
-              <thead><tr><th>Link</th><th>Title</th><th>href</th><th>Inline</th></tr></thead>
+              <thead><tr><th>{t("Link")}</th><th>{t("Title")}</th><th>href</th><th>{t("Inline")}</th></tr></thead>
               <tbody>
                 {e.links.slice(0, ROWS).map((l, i) => (
                   <tr key={i}>
                     <td className="mono small">{l.rel}</td>
                     <td>{l.title}</td>
                     <td className="mono small">{l.href}</td>
-                    <td>{l.inline ? `${l.inline} entr${l.inline === 1 ? "y" : "ies"} expanded` : ""}</td>
+                    <td>{l.inline ? plural(l.inline, "{n} entry expanded", "{n} entries expanded") : ""}</td>
                   </tr>
                 ))}
               </tbody>

@@ -1,9 +1,10 @@
 import { api } from "./api";
 import { say } from "./store";
+import { plural, t } from "./i18n";
 
 export async function goAll() {
   const n = await api.bpGo();
-  say(`Resumed ${n} session(s)`);
+  say(plural(n, "Resumed {n} session", "Resumed {n} sessions"));
 }
 
 export async function setAuto(mode: "before" | "after" | "off") {
@@ -14,5 +15,6 @@ export async function setAuto(mode: "before" | "after" | "off") {
   } else if (mode === "before") b.allRequests = !b.allRequests;
   else b.allResponses = !b.allResponses;
   await api.bpSet(b);
-  say(mode === "off" ? "Automatic breakpoints disabled" : `Break ${mode === "before" ? "before requests" : "after responses"}: ${mode === "before" ? (b.allRequests ? "on" : "off") : b.allResponses ? "on" : "off"}`);
+  const state = (on: boolean) => (on ? t("on") : t("off"));
+  say(mode === "off" ? t("Automatic breakpoints disabled") : mode === "before" ? t("Break before requests: {state}", { state: state(b.allRequests) }) : t("Break after responses: {state}", { state: state(b.allResponses) }));
 }

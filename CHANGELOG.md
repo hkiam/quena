@@ -26,6 +26,8 @@ contain breaking changes (settings, file formats, plugin API).
   and receive per session, with the time of each phase in the tooltip.
 - *Structure* tab: the visible sessions as a tree of hosts and paths with counts and errors;
   clicking a host or folder selects its sessions.
+- German user interface, including the native menus: *Settings → General → Language* (like
+  the system, English, Deutsch). Numbers and sizes follow the language (1.234, 1,5 KB).
 - Theme choice in *Settings → General*: like the system, light or dark.
 - Slow and large responses stand out in the session list: duration over 1 s / 5 s and body
   size over 1 MB / 10 MB are shown in amber / red.
@@ -38,8 +40,14 @@ contain breaking changes (settings, file formats, plugin API).
   action): `index.html` for folders, Content-Type by extension, a clear 404 for missing files;
   paths that would leave the folder (`..`, encoded `%2e%2e`, symlinks outside) are refused.
 - Mock Rules match `prefix:` for URLs that start with a given text.
+- User manual at <https://hkiam.github.io/quena/> (MkDocs Material, sources in `manual/`):
+  installation, capturing, HTTPS and devices, the session list, inspectors, Mock Rules,
+  analysis, archives, scripting, authentication, plugins, settings, shortcuts and
+  troubleshooting; built by the *Manual* workflow and published to GitHub Pages.
 
 ### Changed
+- The right pane's tabs show icons only when their names do not fit the pane.
+- The command palette also finds commands by their English names.
 - Inspector view tabs show as many views as fit the width; *More* only holds the ones that do
   not fit, and the views are ordered by how well they fit the content.
 

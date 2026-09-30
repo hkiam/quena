@@ -3,6 +3,7 @@ import { api, type MarkColor } from "./api";
 import { actions } from "./actions";
 import { get, say, set } from "./store";
 import { patchSettings } from "./settingsActions";
+import { t } from "./i18n";
 
 export async function handleMenu(id: string) {
   if (id.startsWith("edit.mark-")) return actions.mark(id.slice(10) as MarkColor);
@@ -48,7 +49,7 @@ export async function handleMenu(id: string) {
       if (id === "rules.hide-304") f.hideNotModified = !f.hideNotModified;
       await api.setFilters(f);
       set({ filters: f });
-      return say("Filter updated");
+      return say(t("Filter updated"));
     }
     case "rules.bp-before":
       return import("./breakpoints").then((m) => m.setAuto("before"));
@@ -62,7 +63,7 @@ export async function handleMenu(id: string) {
         const next = { ...st, auth: { ...st.auth, enabled: !st.auth.enabled } };
         set({ settings: next });
         await api.settingsSet(next);
-        say(next.auth.enabled ? "Automatic Authentication enabled" : "Automatic Authentication disabled");
+        say(next.auth.enabled ? t("Automatic Authentication enabled") : t("Automatic Authentication disabled"));
       }
       return;
     }
@@ -131,7 +132,7 @@ export async function handleMenu(id: string) {
     case "help.quickexec":
       return set({ dialog: { kind: "help", topic: "quickexec" } });
     case "help.coming-from":
-      return set({ dialog: { kind: "text", title: "Coming from Fiddler Classic", text: COMING_FROM } });
+      return set({ dialog: { kind: "text", title: t("Coming from Fiddler Classic"), text: comingFrom() } });
     case "help.shortcuts":
       return set({ dialog: { kind: "help", topic: "shortcuts" } });
     case "toolbar.decode":
@@ -139,35 +140,13 @@ export async function handleMenu(id: string) {
     default: {
       const { handleFileMenu } = await import("./fileActions");
       if (await handleFileMenu(id)) return;
-      say(`'${id}' is not available yet`, "error");
+      say(t("'{name}' is not available yet", { name: id }), "error");
     }
   }
 }
 
 /** Name mapping for people switching over (descriptive use; see docs/coming-from-fiddler.md). */
-const COMING_FROM = `Quena is an independent project, not affiliated with Progress Software.
-Your files, the filter/command syntax and shortcuts carry over; some features have other names.
-
-Files
-  .saz session archives     File → Import / Export Sessions → SAZ Archive…
-  .farx AutoResponder rules Mock Rules tab → Import… / Export…
-
-Names
-  QuickExec                 Command field in the toolbar (Alt+Q), palette Cmd/Ctrl+K
-  AutoResponder             Mock Rules
-  Inspectors                Inspect
-  TextView / SyntaxView     Plain Text / Body
-  WebForms / HexView        Form Data / Hex
-  ImageView / WebView       Image / Preview
-  Transformer               Encoding
-  TextWizard                Text Tools (Ctrl/Cmd+E)
-  FiddlerScript             Capture → Rules Script…, JavaScript (Ctrl/Cmd+R)
-  Rules menu                Capture menu; Hide … items under View → Hide in List
-  Reissue …                 Replay …
-  Any Process               Process Filter
-  Hide CONNECTs             View → Hide in List → Tunnels (CONNECT)
-  Result / Body columns     Status / Size columns
-
-Layout
-  Prefer a dense list with the request above the response?
-  Settings → General → Layout: Classic.`;
+const comingFrom = () =>
+  t(
+    "Quena is an independent project, not affiliated with Progress Software.\nYour files, the filter/command syntax and shortcuts carry over; some features have other names.\n\nFiles\n  .saz session archives     File → Import / Export Sessions → SAZ Archive…\n  .farx AutoResponder rules Mock Rules tab → Import… / Export…\n\nNames\n  QuickExec                 Command field in the toolbar (Alt+Q), palette Cmd/Ctrl+K\n  AutoResponder             Mock Rules\n  Inspectors                Inspect\n  TextView / SyntaxView     Plain Text / Body\n  WebForms / HexView        Form Data / Hex\n  ImageView / WebView       Image / Preview\n  Transformer               Encoding\n  TextWizard                Text Tools (Ctrl/Cmd+E)\n  FiddlerScript             Capture → Rules Script…, JavaScript (Ctrl/Cmd+R)\n  Rules menu                Capture menu; Hide … items under View → Hide in List\n  Reissue …                 Replay …\n  Any Process               Process Filter\n  Hide CONNECTs             View → Hide in List → Tunnels (CONNECT)\n  Result / Body columns     Status / Size columns\n\nLayout\n  Prefer a dense list with the request above the response?\n  Settings → General → Layout: Classic.",
+  );

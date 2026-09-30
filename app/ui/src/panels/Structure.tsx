@@ -6,6 +6,7 @@ import { api, type TreeNode } from "../api";
 import { fmtBytes, fmtInt } from "../lib/format";
 import { actions } from "../actions";
 import { useStore } from "../store";
+import { plural, t } from "../i18n";
 
 interface Level {
   nodes: TreeNode[];
@@ -57,8 +58,8 @@ export function StructurePanel() {
   };
 
   const root = levels.get(keyOf(null, ""));
-  if (!root) return <div className="placeholder">Loading…</div>;
-  if (!root.nodes.length) return <div className="placeholder">No sessions to show.</div>;
+  if (!root) return <div className="placeholder">{t("Loading…")}</div>;
+  if (!root.nodes.length) return <div className="placeholder">{t("No sessions to show.")}</div>;
   const f = filter.trim().toLowerCase();
   const hosts = f ? root.nodes.filter((n) => n.name.toLowerCase().includes(f)) : root.nodes;
 
@@ -66,7 +67,7 @@ export function StructurePanel() {
   const walk = (host: string, prefix: string, depth: number) => {
     const lvl = levels.get(keyOf(host, prefix));
     if (!lvl) {
-      rows.push(<div key={`${host}${prefix}…`} className="st-row muted" style={{ paddingLeft: 8 + depth * 14 }}>Loading…</div>);
+      rows.push(<div key={`${host}${prefix}…`} className="st-row muted" style={{ paddingLeft: 8 + depth * 14 }}>{t("Loading…")}</div>);
       return;
     }
     for (const n of lvl.nodes) {
@@ -74,11 +75,11 @@ export function StructurePanel() {
       const k = keyOf(host, path);
       const dir = n.name.endsWith("/");
       rows.push(
-        <Row key={k} node={n} label={n.name || "(this path)"} depth={depth} open={open.has(k)} expandable={dir && n.hasChildren} picked={picked === k} onToggle={() => toggle(k)} onPick={() => select(host, path)} />,
+        <Row key={k} node={n} label={n.name || t("(this path)")} depth={depth} open={open.has(k)} expandable={dir && n.hasChildren} picked={picked === k} onToggle={() => toggle(k)} onPick={() => select(host, path)} />,
       );
       if (dir && open.has(k)) walk(host, path, depth + 1);
     }
-    if (lvl.truncated) rows.push(<div key={`${host}${prefix}+`} className="st-row muted" style={{ paddingLeft: 8 + depth * 14 }}>… more entries not shown</div>);
+    if (lvl.truncated) rows.push(<div key={`${host}${prefix}+`} className="st-row muted" style={{ paddingLeft: 8 + depth * 14 }}>{t("… more entries not shown")}</div>);
   };
   for (const h of hosts) {
     const k = keyOf(h.name, "/");
@@ -89,12 +90,13 @@ export function StructurePanel() {
   return (
     <div className="structure">
       <div className="st-bar">
-        <input className="hv-filter st-filter" placeholder="Filter hosts" value={filter} onChange={(e) => setFilter(e.target.value)} />
+        <input className="hv-filter st-filter" placeholder={t("Filter hosts")} value={filter} onChange={(e) => setFilter(e.target.value)} />
         <span className="muted">
-          {fmtInt(hosts.length)} host(s){root.truncated ? " (more not shown)" : ""}
+          {plural(hosts.length, "{n} host", "{n} hosts")}
+          {root.truncated ? t(" (more not shown)") : ""}
         </span>
         <button className="linklike" onClick={() => setOpen(new Set())}>
-          Collapse all
+          {t("Collapse all")}
         </button>
       </div>
       <div className="scroll st-tree">{rows}</div>
@@ -110,7 +112,7 @@ function Row(p: { node: TreeNode; label: string; depth: number; open: boolean; e
       style={{ paddingLeft: 4 + p.depth * 14 }}
       onClick={p.onPick}
       onDoubleClick={() => p.expandable && p.onToggle()}
-      title={`${fmtInt(p.node.count)} session(s), ${fmtInt(p.node.errors)} error(s), ${fmtBytes(p.node.bytes)} received`}
+      title={t("{sessions}, {errors}, {size} received", { sessions: plural(p.node.count, "{n} session", "{n} sessions"), errors: plural(p.node.errors, "{n} error", "{n} errors"), size: fmtBytes(p.node.bytes) })}
     >
       <span
         className="st-chev"
@@ -124,7 +126,7 @@ function Row(p: { node: TreeNode; label: string; depth: number; open: boolean; e
       {p.host && <Globe size={12} className="st-icon" />}
       <span className="st-name">{p.label}</span>
       <span className="st-count">
-        {p.node.errors > 0 && <span className="st-err">{fmtInt(p.node.errors)} err · </span>}
+        {p.node.errors > 0 && <span className="st-err">{fmtInt(p.node.errors)} {t("err")} · </span>}
         {fmtInt(p.node.count)}
       </span>
     </div>

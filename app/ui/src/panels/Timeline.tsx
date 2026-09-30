@@ -4,6 +4,7 @@ import { fmtMs } from "../lib/format";
 import { PHASES, phasesOf, type Segment } from "../lib/waterfall";
 import { useStore } from "../store";
 import { actions } from "../actions";
+import { fmtNum, plural, t } from "../i18n";
 
 const MAX = 500;
 
@@ -32,7 +33,7 @@ export function TimelinePanel() {
       clearTimeout(t);
     };
   }, [selection, Math.floor(version / 15)]);
-  if (!rows.length) return <div className="placeholder">Select sessions to see their timeline.</div>;
+  if (!rows.length) return <div className="placeholder">{t("Select sessions to see their timeline.")}</div>;
 
   const segs = new Map<number, Segment[]>(rows.map((r) => [r.id, timers.has(r.id) ? phasesOf(timers.get(r.id)!) : []]));
   const endOf = (r: SessionSummary) => Math.max(r.startedAt + (r.durationMs ?? 0) * 1000, ...(segs.get(r.id) ?? []).map((s) => s.end));
@@ -46,8 +47,8 @@ export function TimelinePanel() {
     <div className="scroll pad timeline">
       <div className="tl-head">
         <span className="muted">
-          {rows.length} sessions over {fmtMs(Math.round(span / 1000))}
-          {selection.size > MAX ? ` (first ${MAX} of ${selection.size})` : ""}
+          {plural(rows.length, "{n} session over {time}", "{n} sessions over {time}", { time: fmtMs(Math.round(span / 1000)) })}
+          {selection.size > MAX ? t(" (first {max} of {total})", { max: fmtNum(MAX), total: fmtNum(selection.size) }) : ""}
         </span>
         <span className="tl-legend">
           {PHASES.filter((p) => used.has(p.key)).map((p) => (

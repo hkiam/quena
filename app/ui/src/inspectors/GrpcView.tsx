@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, type Detail, type Grpc, type PbField, type Part } from "../api";
 import { fmtBytes } from "../lib/format";
 import { MoreRows } from "./views";
+import { plural, t } from "../i18n";
 
 /** Messages / fields rendered before "more" (streams can carry thousands). */
 const MSGS = 200;
@@ -72,21 +73,21 @@ export function GrpcView({ detail, part }: { detail: Detail; part: Part }) {
       alive = false;
     };
   }, [detail.summary.id, part]);
-  if (error) return <div className="placeholder">Could not decode: {error}</div>;
-  if (!g) return <div className="placeholder">Decoding…</div>;
+  if (error) return <div className="placeholder">{t("Could not decode: {error}", { error })}</div>;
+  if (!g) return <div className="placeholder">{t("Decoding…")}</div>;
   if (g.error && g.messages.length === 0) return <div className="placeholder">{g.error}</div>;
   return (
     <div className="scroll pad grpc">
       <div className="muted small">
-        {g.isGrpc ? "gRPC" : "Protobuf"} · {g.messages.length} message{g.messages.length === 1 ? "" : "s"}
+        {g.isGrpc ? "gRPC" : "Protobuf"} · {plural(g.messages.length, "{n} message", "{n} messages")}
         {g.status && ` · grpc-status ${g.status}`}
         {g.statusMessage && ` (${g.statusMessage})`}
       </div>
       {g.messages.slice(0, limit).map((m) => (
         <div key={m.index} className="grpc-msg">
           <div className="grpc-msg-head muted">
-            Message {m.index} · {fmtBytes(m.len)}
-            {m.compressed && " · compressed"}
+            {t("Message {index}", { index: m.index })} · {fmtBytes(m.len)}
+            {m.compressed && ` · ${t("compressed")}`}
             {m.error && <span className="err"> · {m.error}</span>}
           </div>
           <Fields fields={m.fields ?? []} />

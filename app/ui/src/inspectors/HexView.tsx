@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchBody, type Part, type SessionId, type Variant } from "../api";
 import { fmtBytes } from "../lib/format";
+import { t } from "../i18n";
 
 const ROW = 16;
 const LINE_H = 16;
@@ -102,7 +103,7 @@ export function HexView({ id, part, variant, len }: { id: SessionId; part: Part;
         <span className="lt-info">{fmtBytes(total)}</span>
         <input
           className="lt-goto"
-          placeholder="Offset (hex or dec)"
+          placeholder={t("Offset (hex or dec)")}
           value={goto}
           onChange={(e) => setGoto(e.target.value)}
           onKeyDown={(e) => {

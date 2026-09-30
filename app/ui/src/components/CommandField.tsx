@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { actions } from "../actions";
 import { modKey } from "../lib/format";
+import { t } from "../i18n";
 
 const HISTORY_KEY = "quena.quickexec.history";
 
@@ -34,12 +35,12 @@ export function CommandField() {
   };
 
   return (
-    <div className="cmdfield" title="Filter or run a command (Alt+Q). Type help for the syntax.">
+    <div className="cmdfield" title={t("Filter or run a command (Alt+Q). Type help for the syntax.")}>
       <Search size={14} className="cmd-icon" />
       <input
         value={value}
         spellCheck={false}
-        placeholder="Filter or command  ?text  =404  @host  bpu /login"
+        placeholder={t("Filter or command  ?text  =404  @host  bpu /login")}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter") run();

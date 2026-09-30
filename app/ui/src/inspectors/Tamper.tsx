@@ -8,6 +8,7 @@ import { fmtBytes, latin1ToUtf8 } from "../lib/format";
 import { requestLine } from "../lib/http";
 import { say } from "../store";
 import { showContextMenu } from "../components/ContextMenu";
+import { t } from "../i18n";
 
 const EDIT_LIMIT = 1 << 20;
 
@@ -48,16 +49,16 @@ export function TamperEditor({ detail, part, edits, setEdits }: { detail: Detail
   }, [detail.summary.id, part]);
   return (
     <div className="tamper">
-      <div className="tamper-label">Headers (editable)</div>
+      <div className="tamper-label">{t("Headers (editable)")}</div>
       <div className="tamper-head">
-        <CodeView text={edits.head ?? initialHead.current} editable wrap onChange={(t) => setEdits({ ...edits, head: t })} />
+        <CodeView text={edits.head ?? initialHead.current} editable wrap onChange={(s) => setEdits({ ...edits, head: s })} />
       </div>
       <div className="tamper-label">
-        Body {fmtBytes(info.len)}
+        {t("Body {size}", { size: fmtBytes(info.len) })}
         <span className="tp-spacer" />
         {edits.file ? (
           <span className="muted">
-            Replaced by {edits.file} <button onClick={() => setEdits({ ...edits, file: null })}>Undo</button>
+            {t("Replaced by {file}", { file: edits.file })} <button onClick={() => setEdits({ ...edits, file: null })}>{t("Undo")}</button>
           </span>
         ) : (
           <button
@@ -66,24 +67,24 @@ export function TamperEditor({ detail, part, edits, setEdits }: { detail: Detail
               if (typeof p === "string") setEdits({ ...edits, file: p, body: null });
             }}
           >
-            Replace with file…
+            {t("Replace with file…")}
           </button>
         )}
       </div>
       <div className="tamper-body">
         {edits.file ? (
-          <div className="placeholder">The body will be replaced by the selected file.</div>
+          <div className="placeholder">{t("The body will be replaced by the selected file.")}</div>
         ) : editable ? (
           loadErr ? (
-            <div className="placeholder">Could not load the body ({loadErr}). It is forwarded unchanged unless you replace it with a file.</div>
+            <div className="placeholder">{t("Could not load the body ({error}). It is forwarded unchanged unless you replace it with a file.", { error: loadErr })}</div>
           ) : body == null ? (
-            <div className="placeholder">Loading…</div>
+            <div className="placeholder">{t("Loading…")}</div>
           ) : (
-            <CodeView text={edits.body ?? body} editable lang={langFor(info.contentType)} onChange={(t) => setEdits({ ...edits, body: t })} />
+            <CodeView text={edits.body ?? body} editable lang={langFor(info.contentType)} onChange={(s) => setEdits({ ...edits, body: s })} />
           )
         ) : (
           <div className="placeholder">
-            The body ({fmtBytes(info.len)}{info.contentEncoding ? `, ${info.contentEncoding}` : ""}) is too large or binary to edit inline. It is forwarded unchanged unless you replace it with a file.
+            {t("The body ({size}) is too large or binary to edit inline. It is forwarded unchanged unless you replace it with a file.", { size: `${fmtBytes(info.len)}${info.contentEncoding ? `, ${info.contentEncoding}` : ""}` })}
           </div>
         )}
       </div>
@@ -103,10 +104,10 @@ export function TamperBar({ detail, part, edits, onDone }: { detail: Detail; par
   };
   return (
     <div className="tamper-bar">
-      <span className="tamper-title">⏸ Breakpoint {part === "request" ? "before request" : "after response"}</span>
-      {part === "request" && <button onClick={() => resume({ action: "breakOnResponse" })}>Break on Response</button>}
+      <span className="tamper-title">⏸ {part === "request" ? t("Breakpoint before request") : t("Breakpoint after response")}</span>
+      {part === "request" && <button onClick={() => resume({ action: "breakOnResponse" })}>{t("Break on Response")}</button>}
       <button className="primary" onClick={() => resume({ action: "continue" })}>
-        Run to Completion
+        {t("Run to Completion")}
       </button>
       {part === "request" && (
         <button
@@ -115,17 +116,17 @@ export function TamperBar({ detail, part, edits, onDone }: { detail: Detail; par
               e.clientX,
               e.clientY + 6,
               [200, 204, 302, 401, 403, 404, 500, 502, 503].map((s) => ({
-                label: `Respond ${s}`,
+                label: t("Respond {status}", { status: s }),
                 action: () => resume({ action: "respond", status: s, headText: null, bodyText: "" }),
               })),
             )
           }
         >
-          Choose Response ▾
+          {t("Choose Response")} ▾
         </button>
       )}
-      <button onClick={() => resume({ action: "abort" })}>Abort</button>
-      <span className="muted small">Edits apply to the {part}. Content-Length is fixed automatically.</span>
+      <button onClick={() => resume({ action: "abort" })}>{t("Abort")}</button>
+      <span className="muted small">{part === "request" ? t("Edits apply to the request. Content-Length is fixed automatically.") : t("Edits apply to the response. Content-Length is fixed automatically.")}</span>
     </div>
   );
 }

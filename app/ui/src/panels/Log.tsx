@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { fmtTime } from "../lib/format";
 import { set, useStore } from "../store";
+import { plural, t } from "../i18n";
 
 export function LogPanel() {
   const log = useStore((s) => s.log);
@@ -15,16 +16,16 @@ export function LogPanel() {
   return (
     <div className="logpanel">
       <div className="lt-bar">
-        <span className="lt-info">{log.length} entries</span>
+        <span className="lt-info">{plural(log.length, "{n} entry", "{n} entries")}</span>
         <button
           onClick={() => {
             api.logClear();
             set({ log: [] });
           }}
         >
-          Clear
+          {t("Clear")}
         </button>
-        <button onClick={() => navigator.clipboard.writeText(log.map((l) => `${fmtTime(l.time)} ${l.level} ${l.message}`).join("\n"))}>Copy</button>
+        <button onClick={() => navigator.clipboard.writeText(log.map((l) => `${fmtTime(l.time)} ${l.level} ${l.message}`).join("\n"))}>{t("Copy")}</button>
       </div>
       <div
         className="log-scroll mono"

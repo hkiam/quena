@@ -10,6 +10,7 @@ import { methodPill, readPalette, rowStyle, stateMark, statusPill, type Palette,
 import { actions } from "../actions";
 import { showContextMenu } from "../components/ContextMenu";
 import { sessionMenu } from "../menus";
+import { t } from "../i18n";
 
 /** Row height: roomy in the Quena layout, dense in Classic. */
 let ROW_H = 24;
@@ -359,14 +360,14 @@ export class GridController {
           this.pill({ text: "TUNNEL", tone: "muted" }, x + 4, y, c.width - 8);
           ctx.font = font;
         } else {
-          const t = this.ell.fit(ctx, cellText(r, c.key), c.width - 8, font);
+          const text = this.ell.fit(ctx, cellText(r, c.key), c.width - 8, font);
           ctx.fillStyle = sel ? fg : (outlier(r, c.key, p) ?? fg);
           if (c.align === "right") {
             ctx.textAlign = "right";
-            ctx.fillText(t, x + c.width - 4, y + ROW_H / 2 + 0.5);
+            ctx.fillText(text, x + c.width - 4, y + ROW_H / 2 + 0.5);
             ctx.textAlign = "left";
           } else {
-            ctx.fillText(t, x + 4, y + ROW_H / 2 + 0.5);
+            ctx.fillText(text, x + 4, y + ROW_H / 2 + 0.5);
           }
         }
         x += c.width;
@@ -406,7 +407,7 @@ export class GridController {
       ctx.fillStyle = p.muted;
       ctx.font = FONT;
       ctx.textAlign = "center";
-      ctx.fillText(get().status?.engine.capturing ? "Waiting for traffic…" : "No sessions. Press F12 to start capturing.", this.vw / 2, 40);
+      ctx.fillText(get().status?.engine.capturing ? t("Waiting for traffic…") : t("No sessions. Press F12 to start capturing."), this.vw / 2, 40);
       ctx.textAlign = "left";
     }
   }
@@ -465,7 +466,7 @@ function Header({ scrollX }: { scrollX: number }) {
         action: () => setColumns(columns.map((x) => (x.key === c.key ? { ...x, visible: !x.visible } : x))),
       })),
       { separator: true },
-      { label: "Reset Columns", action: () => actions.resetColumns() },
+      { label: t("Reset Columns"), action: () => actions.resetColumns() },
     ]);
   };
 

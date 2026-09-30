@@ -6,6 +6,7 @@ import { set, useStore } from "../store";
 import { patchSettings } from "../settingsActions";
 import { showContextMenu } from "./ContextMenu";
 import { CommandField } from "./CommandField";
+import { t } from "../i18n";
 
 function Btn({ icon: Icon, label, onClick, active, title, disabled, menu }: { icon: LucideIcon; label?: string; onClick?: (e: React.MouseEvent) => void; active?: boolean; title?: string; disabled?: boolean; menu?: boolean }) {
   return (
@@ -23,9 +24,9 @@ function CaptureSwitch() {
   const busy = useStore((s) => s.captureBusy);
   // While switching, show the state being switched to.
   const on = busy ? busy === "starting" : capturing;
-  const label = busy === "starting" ? "Starting…" : busy === "stopping" ? "Stopping…" : capturing ? "Capturing" : "Paused";
+  const label = busy === "starting" ? t("Starting…") : busy === "stopping" ? t("Stopping…") : capturing ? t("Capturing") : t("Paused");
   return (
-    <button className={`capture-switch ${on ? "on" : ""} ${busy ? "busy" : ""}`} title="Capture traffic (F12)" aria-busy={!!busy} onClick={() => actions.toggleCapture()}>
+    <button className={`capture-switch ${on ? "on" : ""} ${busy ? "busy" : ""}`} title={t("Capture traffic (F12)")} aria-busy={!!busy} onClick={() => actions.toggleCapture()}>
       <span className="cs-track">
         <span className="cs-knob" />
       </span>
@@ -46,65 +47,65 @@ export function Toolbar() {
         <Btn
           icon={RotateCw}
           menu
-          title="Replay (R)"
+          title={t("Replay (R)")}
           onClick={(e) =>
             showContextMenu(e.clientX, e.clientY + 8, [
-              { label: "Replay Requests", shortcut: "R", action: () => import("../replay").then((m) => m.replaySelected({})) },
-              { label: "Replay Unconditionally", shortcut: "U", action: () => import("../replay").then((m) => m.replaySelected({ unconditional: true })) },
-              { label: "Replay and Edit", action: () => import("../replay").then((m) => m.replaySelected({ breakpoint: true })) },
-              { label: "Replay from Composer", action: () => import("../replay").then((m) => m.toComposer()) },
+              { label: t("Replay Requests"), shortcut: "R", action: () => import("../replay").then((m) => m.replaySelected({})) },
+              { label: t("Replay Unconditionally"), shortcut: "U", action: () => import("../replay").then((m) => m.replaySelected({ unconditional: true })) },
+              { label: t("Replay and Edit"), action: () => import("../replay").then((m) => m.replaySelected({ breakpoint: true })) },
+              { label: t("Replay from Composer"), action: () => import("../replay").then((m) => m.toComposer()) },
             ])
           }
         />
         <Btn
           icon={Trash2}
           menu
-          title="Remove sessions"
+          title={t("Remove sessions")}
           onClick={(e) =>
             showContextMenu(e.clientX, e.clientY + 8, [
-              { label: "Remove all", shortcut: "Ctrl+X", action: () => actions.removeAll() },
-              { label: "Images", action: () => api.removeWhere("type ~ image") },
-              { label: "Tunnels (CONNECT)", action: () => api.removeWhere("kind == tunnel") },
-              { label: "Non-200s", action: () => api.removeWhere("status != 200") },
-              { label: "Complete & Unmarked", action: () => api.removeWhere("color == '' and not kind == tunnel") },
+              { label: t("Remove all"), shortcut: "Ctrl+X", action: () => actions.removeAll() },
+              { label: t("Images"), action: () => api.removeWhere("type ~ image") },
+              { label: t("Tunnels (CONNECT)"), action: () => api.removeWhere("kind == tunnel") },
+              { label: t("Non-200s"), action: () => api.removeWhere("status != 200") },
+              { label: t("Complete & Unmarked"), action: () => api.removeWhere("color == '' and not kind == tunnel") },
               { separator: true },
-              { label: "Selected", shortcut: "Del", action: () => actions.removeSelected() },
-              { label: "Unselected", shortcut: "Shift+Del", action: () => actions.removeUnselected() },
+              { label: t("Selected"), shortcut: "Del", action: () => actions.removeSelected() },
+              { label: t("Unselected"), shortcut: "Shift+Del", action: () => actions.removeUnselected() },
             ])
           }
         />
-        <Btn icon={Play} label={paused ? `Resume ${paused}` : undefined} active={!!paused} disabled={!paused} title="Resume all paused sessions (G)" onClick={() => import("../breakpoints").then((m) => m.goAll())} />
+        <Btn icon={Play} label={paused ? t("Resume {n}", { n: paused }) : undefined} active={!!paused} disabled={!paused} title={t("Resume all paused sessions (G)")} onClick={() => import("../breakpoints").then((m) => m.goAll())} />
       </div>
       <div className="tb-group">
-        <Btn icon={Waves} active={settings?.stream ?? true} title="Stream responses to the client instead of buffering them" onClick={() => patchSettings((s) => (s.stream = !s.stream))} />
-        <Btn icon={FileArchive} active={settings?.decode ?? true} title="Show bodies decoded (gzip/br/zstd/deflate)" onClick={() => patchSettings((s) => (s.decode = !s.decode))} />
+        <Btn icon={Waves} active={settings?.stream ?? true} title={t("Stream responses to the client instead of buffering them")} onClick={() => patchSettings((s) => (s.stream = !s.stream))} />
+        <Btn icon={FileArchive} active={settings?.decode ?? true} title={t("Show bodies decoded (gzip/br/zstd/deflate)")} onClick={() => patchSettings((s) => (s.decode = !s.decode))} />
         <Btn
           icon={History}
           menu
-          title={keep ? `Keep the newest ${keep} sessions` : "Keep all sessions"}
+          title={keep ? t("Keep the newest {n} sessions", { n: keep }) : t("Keep all sessions")}
           active={keep > 0}
           onClick={(e) =>
             showContextMenu(
               e.clientX,
               e.clientY + 8,
               [0, 100, 200, 500, 1000, 10000].map((n) => ({
-                label: n ? `Keep newest ${n}` : "Keep all sessions",
+                label: n ? t("Keep newest {n}", { n }) : t("Keep all sessions"),
                 checked: keep === n,
                 action: () => patchSettings((s) => (s.keepSessions = n)),
               })),
             )
           }
         />
-        <Btn icon={AppWindow} title="Filter by process (Filters tab)" onClick={() => actions.showTab("filters")} />
+        <Btn icon={AppWindow} title={t("Filter by process (Filters tab)")} onClick={() => actions.showTab("filters")} />
       </div>
       <CommandField />
       <div className="tb-group">
-        <Btn icon={Search} title="Find sessions (⌘F)" onClick={() => set({ dialog: { kind: "find" } })} />
-        <Btn icon={Save} title="Save all sessions (⌘S)" onClick={() => actions.menu("file.save-all")} />
-        <Btn icon={MessageSquareText} onClick={() => actions.comment()} title="Comment (M)" />
-        <Btn icon={WandSparkles} title="Text tools (⌘E)" onClick={() => set({ dialog: { kind: "textwizard" } })} />
+        <Btn icon={Search} title={t("Find sessions (⌘F)")} onClick={() => set({ dialog: { kind: "find" } })} />
+        <Btn icon={Save} title={t("Save all sessions (⌘S)")} onClick={() => actions.menu("file.save-all")} />
+        <Btn icon={MessageSquareText} onClick={() => actions.comment()} title={t("Comment (M)")} />
+        <Btn icon={WandSparkles} title={t("Text tools (⌘E)")} onClick={() => set({ dialog: { kind: "textwizard" } })} />
       </div>
-      <Btn icon={Settings} title="Settings" onClick={() => set({ dialog: { kind: "options" } })} />
+      <Btn icon={Settings} title={t("Settings")} onClick={() => set({ dialog: { kind: "options" } })} />
     </div>
   );
 }

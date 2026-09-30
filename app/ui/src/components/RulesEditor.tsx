@@ -12,6 +12,7 @@ import { api, type ScriptState, type ScriptLog } from "../api";
 import { say } from "../store";
 import { actions } from "../actions";
 import { modKey } from "../lib/format";
+import { t } from "../i18n";
 
 const editorTheme = EditorView.theme({
   "&": { height: "100%", fontSize: "12px", backgroundColor: "var(--panel-bg)", color: "var(--fg)" },
@@ -43,10 +44,10 @@ export function RulesEditor() {
       setDirty(false);
       setLogs(await api.scriptLogs());
       void actions.refreshScriptMenus();
-      if (s.error) say("Rules script has errors — see the editor", "error");
-      else say("Rules script saved and reloaded");
+      if (s.error) say(t("Rules script has errors — see the editor"), "error");
+      else say(t("Rules script saved and reloaded"));
     } catch (err) {
-      say(`Could not save rules script: ${err}`, "error");
+      say(t("Could not save rules script: {error}", { error: String(err) }), "error");
     }
   };
   saveRef.current = save;
@@ -93,15 +94,15 @@ export function RulesEditor() {
 
   // Poll the script's console output while the editor is open.
   useEffect(() => {
-    const t = setInterval(async () => setLogs(await api.scriptLogs()), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(async () => setLogs(await api.scriptLogs()), 1000);
+    return () => clearInterval(timer);
   }, []);
 
   const toggleEnabled = async () => {
     const s = await api.scriptSetEnabled(!(state?.enabled ?? false));
     setState(s);
     void actions.refreshScriptMenus();
-    if (s.enabled && s.error) say("Script enabled but has errors", "error");
+    if (s.enabled && s.error) say(t("Script enabled but has errors"), "error");
   };
 
   const revert = async () => {
@@ -116,18 +117,18 @@ export function RulesEditor() {
     <div className="rules-editor">
       <div className="rules-toolbar">
         <label className="chk">
-          <input type="checkbox" checked={state?.enabled ?? false} onChange={toggleEnabled} /> Enable rules script
+          <input type="checkbox" checked={state?.enabled ?? false} onChange={toggleEnabled} /> {t("Enable rules script")}
         </label>
         <span className={`rules-status ${state?.loaded ? "ok" : "off"}`}>
-          {state?.error ? "error" : state?.loaded ? "loaded" : "not loaded"}
+          {state?.error ? t("error") : state?.loaded ? t("loaded") : t("not loaded")}
         </span>
         <span className="spacer" />
-        <button onClick={() => setShowTypes((x) => !x)}>{showTypes ? "Hide API" : "API reference"}</button>
+        <button onClick={() => setShowTypes((x) => !x)}>{showTypes ? t("Hide API") : t("API reference")}</button>
         <button onClick={revert} disabled={!dirty}>
-          Revert
+          {t("Revert")}
         </button>
         <button className="primary" onClick={save} disabled={!dirty}>
-          Save &amp; Reload ({modKey}S)
+          {t("Save & Reload ({key}S)", { key: modKey })}
         </button>
       </div>
       {state?.error && <pre className="rules-error">{state.error}</pre>}
@@ -137,19 +138,19 @@ export function RulesEditor() {
       </div>
       <div className="rules-log">
         <div className="rules-log-head">
-          Console
+          {t("Console")}
           <button
             onClick={async () => {
               await api.scriptClearLogs();
               setLogs([]);
             }}
           >
-            Clear
+            {t("Clear")}
           </button>
         </div>
         <div className="rules-log-body">
           {logs.length === 0 ? (
-            <div className="muted">No output. Use console.log() in your script.</div>
+            <div className="muted">{t("No output. Use console.log() in your script.")}</div>
           ) : (
             logs.map((l, i) => (
               <div key={i} className={`log-line log-${l.level}`}>

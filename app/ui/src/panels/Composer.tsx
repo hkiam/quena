@@ -7,6 +7,7 @@ import { loadText } from "../lib/bodytext";
 import { fmtBytes, latin1ToUtf8 } from "../lib/format";
 import { say, useStore } from "../store";
 import { actions } from "../actions";
+import { t } from "../i18n";
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"];
 const HISTORY_KEY = "quena.composer.history";
@@ -94,7 +95,7 @@ export default function ComposerPanel() {
       bodyFile: null,
     });
     setTab("parsed");
-    say(`Loaded #${id} into the Composer`);
+    say(t("Loaded #{id} into the Composer", { id }));
   };
 
   useEffect(() => {
@@ -122,7 +123,7 @@ export default function ComposerPanel() {
       } catch {
         /* ignore */
       }
-      say(`Request issued as #${id}`);
+      say(t("Request issued as #{id}", { id }));
       if (inspect) {
         setTimeout(() => {
           actions.selectIds([id]);
@@ -167,28 +168,28 @@ export default function ComposerPanel() {
     >
       <div className="lt-bar">
         <div className="tabs-inline">
-          {(["parsed", "raw", "history"] as const).map((t) => (
+          {(["parsed", "raw", "history"] as const).map((k) => (
             <span
-              key={t}
-              className={`insp-tab ${tab === t ? "active" : ""}`}
+              key={k}
+              className={`insp-tab ${tab === k ? "active" : ""}`}
               onClick={() => {
-                if (t === "raw" && tab !== "raw") setRaw(toRaw(d));
-                setTab(t);
+                if (k === "raw" && tab !== "raw") setRaw(toRaw(d));
+                setTab(k);
               }}
             >
-              {{ parsed: "Parsed", raw: "Raw", history: "History" }[t]}
+              {{ parsed: t("Parsed"), raw: t("Raw"), history: t("History") }[k]}
             </span>
           ))}
         </div>
         <span className="tp-spacer" />
         <label className="f-check">
-          <input type="checkbox" checked={fixLen} onChange={(e) => setFixLen(e.target.checked)} /> Fix Content-Length
+          <input type="checkbox" checked={fixLen} onChange={(e) => setFixLen(e.target.checked)} /> {t("Fix Content-Length")}
         </label>
         <label className="f-check">
-          <input type="checkbox" checked={inspect} onChange={(e) => setInspect(e.target.checked)} /> Inspect session
+          <input type="checkbox" checked={inspect} onChange={(e) => setInspect(e.target.checked)} /> {t("Inspect session")}
         </label>
         <button className="primary" disabled={busy} onClick={executeCurrent}>
-          ▶ Execute
+          ▶ {t("Execute")}
         </button>
       </div>
       {tab === "parsed" && (
@@ -201,19 +202,19 @@ export default function ComposerPanel() {
             </select>
             <input className="mono" value={d.url} onChange={(e) => setD({ ...d, url: e.target.value })} onKeyDown={(e) => e.key === "Enter" && executeCurrent()} spellCheck={false} />
           </div>
-          <div className="cmp-label">Request Headers</div>
+          <div className="cmp-label">{t("Request Headers")}</div>
           <textarea className="mono cmp-headers" value={d.headers} spellCheck={false} onChange={(e) => setD({ ...d, headers: e.target.value })} />
           <div className="cmp-label">
-            Request Body
+            {t("Request Body")}
             <span className="tp-spacer" />
             {d.bodyFromSession != null ? (
               <span className="muted">
-                Body of #{d.bodyFromSession} ({fmtBytes(d.bodyFromSessionLen)}) will be sent{" "}
-                <button onClick={() => setD({ ...d, bodyFromSession: null })}>Use text instead</button>
+                {t("Body of #{id} ({size}) will be sent", { id: d.bodyFromSession, size: fmtBytes(d.bodyFromSessionLen) })}{" "}
+                <button onClick={() => setD({ ...d, bodyFromSession: null })}>{t("Use text instead")}</button>
               </span>
             ) : d.bodyFile ? (
               <span className="muted">
-                File {d.bodyFile} <button onClick={() => setD({ ...d, bodyFile: null })}>Remove</button>
+                {t("File {name}", { name: d.bodyFile })} <button onClick={() => setD({ ...d, bodyFile: null })}>{t("Remove")}</button>
               </span>
             ) : (
               <button
@@ -222,18 +223,18 @@ export default function ComposerPanel() {
                   if (typeof p === "string") setD({ ...d, bodyFile: p });
                 }}
               >
-                Upload file…
+                {t("Upload file…")}
               </button>
             )}
           </div>
           <div className="cmp-body">{d.bodyFromSession == null && !d.bodyFile && <CodeView text={d.body} editable onChange={(t) => setD((x) => ({ ...x, body: t }))} />}</div>
-          <div className="muted small">Tip: drag a session from the list onto the Composer to load it.</div>
+          <div className="muted small">{t("Tip: drag a session from the list onto the Composer to load it.")}</div>
         </div>
       )}
       {tab === "raw" && (
         <div className="cmp-raw">
           <div className="cmp-raw-bar">
-            <span className="muted small">Paste a raw HTTP request, or a cURL command and import it.</span>
+            <span className="muted small">{t("Paste a raw HTTP request, or a cURL command and import it.")}</span>
             <span className="tp-spacer" />
             <button
               onClick={async () => {
@@ -241,13 +242,13 @@ export default function ComposerPanel() {
                   const p = await api.parseCurl(raw);
                   setD((x) => ({ ...x, method: p.method, url: p.url, headers: p.headers, body: p.body, bodyFromSession: null, bodyFile: null }));
                   setTab("parsed");
-                  say("Imported cURL command");
+                  say(t("Imported cURL command"));
                 } catch (err) {
-                  say(`Not a valid cURL command: ${err}`, "error");
+                  say(t("Not a valid cURL command: {error}", { error: String(err) }), "error");
                 }
               }}
             >
-              Import as cURL
+              {t("Import as cURL")}
             </button>
           </div>
           <CodeView text={raw} editable onChange={setRaw} />
@@ -255,9 +256,9 @@ export default function ComposerPanel() {
       )}
       {tab === "history" && (
         <div className="scroll pad">
-          {history.length === 0 && <div className="muted">No requests issued yet.</div>}
+          {history.length === 0 && <div className="muted">{t("No requests issued yet.")}</div>}
           {history.map((h, i) => (
-            <div key={i} className="cmp-hist" onClick={() => setD(h)} onDoubleClick={() => execute(h)} title="Click to load, double-click to execute">
+            <div key={i} className="cmp-hist" onClick={() => setD(h)} onDoubleClick={() => execute(h)} title={t("Click to load, double-click to execute")}>
               <b>{h.method}</b> {h.url} <span className="muted small">{new Date(h.at).toLocaleTimeString()}</span>
             </div>
           ))}

@@ -6,6 +6,7 @@ import { loadText } from "../lib/bodytext";
 import { parseXml } from "../lib/xml";
 import { fmtBytes, headerValue } from "../lib/format";
 import { ROW_CAP, XNode } from "./views";
+import { t } from "../i18n";
 
 const SOAP11 = "http://schemas.xmlsoap.org/soap/envelope/";
 const SOAP12 = "http://www.w3.org/2003/05/soap-envelope";
@@ -48,8 +49,8 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
     setLoadErr(null);
     if (info.len > LIMIT && !variant.startsWith("plugin:")) return;
     loadText(detail.summary.id, part, info, LIMIT, variant).then(
-      (t) => alive && setXml(t),
-      (e) => alive && setLoadErr(`Could not load the body: ${String(e)}`),
+      (s) => alive && setXml(s),
+      (e) => alive && setLoadErr(t("Could not load the body: {error}", { error: String(e) })),
     );
     return () => {
       alive = false;
@@ -62,7 +63,7 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
     if ("error" in res) return { error: res.error };
     const env = res.root;
     const ns = env.namespaceURI ?? "";
-    if (env.localName !== "Envelope" || (ns !== SOAP11 && ns !== SOAP12)) return { error: `Not a SOAP envelope (root element {${ns}}${env.localName}).` };
+    if (env.localName !== "Envelope" || (ns !== SOAP11 && ns !== SOAP12)) return { error: t("Not a SOAP envelope (root element {element}).", { element: `{${ns}}${env.localName}` }) };
     const header = child(env, ns, "Header");
     const body = child(env, ns, "Body");
     const blocks = header ? Array.from(header.children) : [];
@@ -81,9 +82,9 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
     return { ns, header, body, blocks, payload, fault, wsa };
   }, [xml]);
 
-  if (info.len > LIMIT && !variant.startsWith("plugin:")) return <div className="placeholder">Body is {fmtBytes(info.len)} – too large for the SOAP view. Use TextView/SyntaxView.</div>;
+  if (info.len > LIMIT && !variant.startsWith("plugin:")) return <div className="placeholder">{t("Body is {size} – too large for the SOAP view. Use Plain Text or Body.", { size: fmtBytes(info.len) })}</div>;
   if (loadErr) return <div className="placeholder">{loadErr}</div>;
-  if (!parsed) return <div className="placeholder">Loading…</div>;
+  if (!parsed) return <div className="placeholder">{t("Loading…")}</div>;
   if ("error" in parsed) return <div className="placeholder">{parsed.error}</div>;
   const { ns, blocks, payload, fault, wsa } = parsed;
   const ctAction = /action="?([^";]+)"?/i.exec(info.contentType ?? "")?.[1];
@@ -92,24 +93,24 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
     <div className="scroll pad soap">
       {fault && (
         <div className="banner error soap-fault">
-          <b>SOAP Fault</b> {fault.code && <span className="mono">{fault.code}</span>} – {fault.reason || "(no reason)"}
+          <b>SOAP Fault</b> {fault.code && <span className="mono">{fault.code}</span>} – {fault.reason || t("(no reason)")}
         </div>
       )}
       <table className="kv">
         <tbody>
           <tr>
-            <td>SOAP version</td>
+            <td>{t("SOAP version")}</td>
             <td>{ns === SOAP11 ? "1.1" : "1.2"}</td>
           </tr>
           {action && (
             <tr>
-              <td>Action</td>
+              <td>{t("Action")}</td>
               <td className="mono">{action}</td>
             </tr>
           )}
           {payload && (
             <tr>
-              <td>Operation</td>
+              <td>{t("Operation")}</td>
               <td className="mono">
                 {payload.localName} <span className="muted">{payload.namespaceURI ? `{${payload.namespaceURI}}` : ""}</span>
               </td>
@@ -125,21 +126,21 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
             ) : null;
           })}
           <tr>
-            <td>Source</td>
-            <td>{variant.startsWith("plugin:") ? `decoded by ${info.plugins.find((p) => p.variant === variant)?.tab}` : variant}</td>
+            <td>{t("Source")}</td>
+            <td>{variant.startsWith("plugin:") ? t("decoded by {plugin}", { plugin: info.plugins.find((p) => p.variant === variant)?.tab ?? "" }) : variant === "decoded" ? t("decoded") : t("raw")}</td>
           </tr>
         </tbody>
       </table>
       {blocks.length > 0 && (
         <>
-          <h4>Header blocks ({blocks.length}{blocks.length > ROW_CAP ? `, first ${ROW_CAP} shown` : ""})</h4>
+          <h4>{blocks.length > ROW_CAP ? t("Header blocks ({n}, first {cap} shown)", { n: blocks.length, cap: ROW_CAP }) : t("Header blocks ({n})", { n: blocks.length })}</h4>
           <table className="kv">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Namespace</th>
+                <th>{t("Name")}</th>
+                <th>{t("Namespace")}</th>
                 <th>mustUnderstand</th>
-                <th>Value</th>
+                <th>{t("Value")}</th>
               </tr>
             </thead>
             <tbody>
@@ -155,7 +156,7 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
           </table>
         </>
       )}
-      <h4>Body</h4>
+      <h4>{t("Body")}</h4>
       {fault?.detail && (
         <div className="mono">
           <XNode n={fault.detail} depth={0} />
@@ -166,7 +167,7 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
           <XNode n={payload} depth={0} />
         </div>
       ) : (
-        <div className="muted">Empty body</div>
+        <div className="muted">{t("Empty body")}</div>
       )}
     </div>
   );

@@ -1,16 +1,17 @@
 // Phases of a session for the waterfall: where the time went, from the session timers.
 import type { Timers } from "../api";
+import { t } from "../i18n";
 
 export type Phase = "request" | "dns" | "connect" | "tls" | "send" | "wait" | "receive";
 
 export const PHASES: { key: Phase; label: string }[] = [
-  { key: "request", label: "Request from client" },
-  { key: "dns", label: "DNS" },
-  { key: "connect", label: "Connect" },
-  { key: "tls", label: "TLS" },
-  { key: "send", label: "Send" },
-  { key: "wait", label: "Wait (time to first byte)" },
-  { key: "receive", label: "Receive" },
+  { key: "request", label: t("Request from client") },
+  { key: "dns", label: t("DNS") },
+  { key: "connect", label: t("Connect") },
+  { key: "tls", label: t("TLS") },
+  { key: "send", label: t("Send") },
+  { key: "wait", label: t("Wait (time to first byte)") },
+  { key: "receive", label: t("Receive") },
 ];
 
 export interface Segment {

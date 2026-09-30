@@ -3,6 +3,16 @@ import { api, type FindOptions, type MarkColor } from "../api";
 import { actions } from "../actions";
 import { fmtInt } from "../lib/format";
 import { get, say, set } from "../store";
+import { plural, t } from "../i18n";
+
+const COLORS: [MarkColor, string][] = [
+  ["gold", t("gold")],
+  ["red", t("red")],
+  ["blue", t("blue")],
+  ["green", t("green")],
+  ["orange", t("orange")],
+  ["purple", t("purple")],
+];
 
 const KEY = "quena.find.options";
 
@@ -41,14 +51,14 @@ export function FindDialog({ onDone }: { onDone: () => void }) {
     const poll = async () => {
       const r = await api.findResult(job);
       if (!r) return;
-      setRunning(`${fmtInt(r.examined)} / ${fmtInt(r.total)} examined · ${fmtInt(r.ids.length)} found`);
+      setRunning(t("{examined} / {total} examined · {found} found", { examined: fmtInt(r.examined), total: fmtInt(r.total), found: fmtInt(r.ids.length) }));
       if (!r.done) {
         setTimeout(poll, 150);
         return;
       }
       set((s) => ({ gridNonce: s.gridNonce + 1 }));
       await actions.selectIds(r.ids);
-      say(`${fmtInt(r.ids.length)} session(s) found`);
+      say(plural(r.ids.length, "{n} session found", "{n} sessions found"));
       onDone();
     };
     poll();
@@ -58,59 +68,59 @@ export function FindDialog({ onDone }: { onDone: () => void }) {
   return (
     <div className="find">
       <div className="f-row">
-        <span>Find</span>
+        <span>{t("Find")}</span>
         <input autoFocus value={o.text} onChange={(e) => up({ text: e.target.value })} onKeyDown={(e) => e.key === "Enter" && run()} />
       </div>
       <div className="f-row">
-        <span>Search</span>
+        <span>{t("Search")}</span>
         <select value={o.scope} onChange={(e) => up({ scope: e.target.value as FindOptions["scope"] })}>
-          <option value="all">Requests and responses</option>
-          <option value="requests">Requests only</option>
-          <option value="responses">Responses only</option>
-          <option value="urls">URLs only</option>
+          <option value="all">{t("Requests and responses")}</option>
+          <option value="requests">{t("Requests only")}</option>
+          <option value="responses">{t("Responses only")}</option>
+          <option value="urls">{t("URLs only")}</option>
         </select>
       </div>
       <div className="f-row">
-        <span>Examine</span>
+        <span>{t("Examine")}</span>
         <select value={o.examine} onChange={(e) => up({ examine: e.target.value as FindOptions["examine"] })}>
-          <option value="all">Headers and bodies</option>
-          <option value="headers">Headers only</option>
-          <option value="bodies">Bodies only</option>
+          <option value="all">{t("Headers and bodies")}</option>
+          <option value="headers">{t("Headers only")}</option>
+          <option value="bodies">{t("Bodies only")}</option>
         </select>
       </div>
       <div className="f-row">
-        <span>Result highlight</span>
+        <span>{t("Result highlight")}</span>
         <select value={o.mark ?? ""} onChange={(e) => up({ mark: (e.target.value || null) as MarkColor | null })}>
-          <option value="">(select only)</option>
-          {["gold", "red", "blue", "green", "orange", "purple"].map((c) => (
+          <option value="">{t("(select only)")}</option>
+          {COLORS.map(([c, label]) => (
             <option key={c} value={c}>
-              {c}
+              {label}
             </option>
           ))}
         </select>
       </div>
       <div className="f-grid2">
         <label className="f-check">
-          <input type="checkbox" checked={o.matchCase} onChange={(e) => up({ matchCase: e.target.checked })} /> Match case
+          <input type="checkbox" checked={o.matchCase} onChange={(e) => up({ matchCase: e.target.checked })} /> {t("Match case")}
         </label>
         <label className="f-check">
-          <input type="checkbox" checked={o.regex} onChange={(e) => up({ regex: e.target.checked })} /> Regular expression
+          <input type="checkbox" checked={o.regex} onChange={(e) => up({ regex: e.target.checked })} /> {t("Regular expression")}
         </label>
         <label className="f-check">
-          <input type="checkbox" checked={o.decode} onChange={(e) => up({ decode: e.target.checked })} /> Decode compressed bodies
+          <input type="checkbox" checked={o.decode} onChange={(e) => up({ decode: e.target.checked })} /> {t("Decode compressed bodies")}
         </label>
         <label className="f-check">
-          <input type="checkbox" checked={selectedOnly} onChange={(e) => setSelectedOnly(e.target.checked)} /> Selected sessions only
+          <input type="checkbox" checked={selectedOnly} onChange={(e) => setSelectedOnly(e.target.checked)} /> {t("Selected sessions only")}
         </label>
       </div>
       <div className="f-row">
-        <span>Skip bodies larger than (MB)</span>
+        <span>{t("Skip bodies larger than (MB)")}</span>
         <input type="number" value={o.maxBodyMb} onChange={(e) => up({ maxBodyMb: Number(e.target.value) })} />
       </div>
       <div className="modal-footer inline">
         <span className="muted">{running}</span>
         <button className="primary" onClick={run} disabled={!o.text}>
-          Find Sessions
+          {t("Find Sessions")}
         </button>
       </div>
     </div>

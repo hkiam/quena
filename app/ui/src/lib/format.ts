@@ -1,5 +1,13 @@
+import { currentLang, t } from "../i18n";
+
+/** Decimal number with a fixed number of fraction digits, in the UI language (1.50 / 1,50). */
+function fixed(v: number, digits: number): string {
+  const s = v.toFixed(digits);
+  return currentLang() === "de" ? s.replace(".", ",") : s;
+}
+
 export function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
+  if (n < 1024) return `${fmtInt(n)} B`;
   const u = ["KB", "MB", "GB", "TB"];
   let v = n / 1024;
   let i = 0;
@@ -7,11 +15,13 @@ export function fmtBytes(n: number): string {
     v /= 1024;
     i++;
   }
-  return `${v.toFixed(v < 10 ? 2 : 1)} ${u[i]}`;
+  return `${fixed(v, v < 10 ? 2 : 1)} ${u[i]}`;
 }
 
-const nf = new Intl.NumberFormat("en-US");
+let nf: Intl.NumberFormat | null = null;
+/** Integer with thousands separators in the UI language (1,234 / 1.234). */
 export function fmtInt(n: number): string {
+  nf ??= new Intl.NumberFormat(currentLang() === "de" ? "de-DE" : "en-US");
   return nf.format(n);
 }
 
@@ -30,8 +40,8 @@ export function fmtDateTime(us: number | null | undefined): string {
 
 export function fmtMs(ms: number | null | undefined): string {
   if (ms == null) return "";
-  if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s`;
+  if (ms < 1000) return `${fmtInt(ms)} ms`;
+  return `${fixed(ms / 1000, ms < 10000 ? 2 : 1)} s`;
 }
 
 export function headerValue(h: [string, string][] | undefined, name: string): string | undefined {
@@ -55,16 +65,18 @@ export const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.pl
 export const isWindows = typeof navigator !== "undefined" && /Win/.test(navigator.platform);
 export const isLinux = !isMac && !isWindows;
 
-/** Where the OS keeps trusted roots and secrets, in the words users know. */
+/** Where the OS keeps trusted roots and secrets, in the words users know.
+ * German forms: `os`, `trustStore` and `secrets` without article (used after "in:" / in
+ * parentheses), `machine` accusative ("verlässt nie {machine}"). */
 export const osNames = isMac
-  ? { os: "macOS", trustStore: "your login keychain", prompt: "macOS asks for your password.", machine: "this Mac", secrets: "the macOS keychain" }
+  ? { os: "macOS", trustStore: t("your login keychain"), prompt: t("macOS asks for your password."), machine: t("this Mac"), secrets: t("the macOS keychain") }
   : isWindows
-    ? { os: "Windows", trustStore: "your Windows certificate store", prompt: "Windows asks for confirmation.", machine: "this PC", secrets: "the Windows Credential Manager" }
+    ? { os: "Windows", trustStore: t("your Windows certificate store"), prompt: t("Windows asks for confirmation."), machine: t("this PC"), secrets: t("the Windows Credential Manager") }
     : {
-        os: "this system",
-        trustStore: "the browsers' certificate databases (Chrome, Firefox) and the system trust store",
-        prompt: "Updating the system store asks for your password.",
-        machine: "this computer",
-        secrets: "the desktop keyring",
+        os: t("this system"),
+        trustStore: t("the browsers' certificate databases (Chrome, Firefox) and the system trust store"),
+        prompt: t("Updating the system store asks for your password."),
+        machine: t("this computer"),
+        secrets: t("the desktop keyring"),
       };
 export const modKey = isMac ? "⌘" : "Ctrl+";

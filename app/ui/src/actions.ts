@@ -5,7 +5,7 @@ import { api, type Detail, type MarkColor, type SessionId, type Sort } from "./a
 import { get, say, set, PRESETS, type LayoutPreset, type RightTab } from "./store";
 import { grid, idAtIndex, rowCache } from "./grid/SessionGrid";
 import { buildCurl, buildFetch, buildPowerShell, buildPython, rawRequestText, rawResponseHead } from "./lib/http";
-import { fmtInt } from "./lib/format";
+import { plural, t } from "./i18n";
 
 const MARKS: MarkColor[] = ["red", "blue", "gold", "green", "orange", "purple"];
 
@@ -145,7 +145,7 @@ export const actions = {
     set({ selection: new Set(), focusId: null, focusIndex: null });
     rowCache.clear();
     await api.removeAll();
-    say("All sessions removed");
+    say(t("All sessions removed"));
   },
 
   async mark(color: MarkColor | null) {
@@ -176,9 +176,9 @@ export const actions = {
       const n = await api.scriptRunMenu(index, ids);
       rowCache.clear();
       set((s) => ({ gridNonce: s.gridNonce + 1 }));
-      if (n > 0) say(`Script updated ${n} session${n > 1 ? "s" : ""}`);
+      if (n > 0) say(plural(n, "Script updated {n} session", "Script updated {n} sessions"));
     } catch (err) {
-      say(`Script command failed: ${err}`, "error");
+      say(t("Script command failed: {error}", { error: String(err) }), "error");
     }
   },
 
@@ -240,7 +240,7 @@ export const actions = {
       }
     }
     await copyText(text);
-    say(`Copied ${ids.length > 1 ? `${fmtInt(ids.length)} sessions` : "session"} (${kind})`);
+    say(plural(ids.length, "Copied session ({kind})", "Copied {n} sessions ({kind})", { kind }));
   },
 
   // ---------------------------------------------------------------- capture
@@ -251,7 +251,7 @@ export const actions = {
     try {
       const on = await api.toggleCapture();
       set({ status: await api.status() });
-      say(on ? "Capturing" : "Capture stopped");
+      say(on ? t("Capturing") : t("Capture stopped"));
     } catch (e) {
       say(String(e), "error");
     } finally {
@@ -270,7 +270,7 @@ export const actions = {
     if (r.action === "help") set({ dialog: { kind: "help", topic: "quickexec" } });
     if (r.action === "dump") await actions.menu("file.save-all");
     if (r.message && r.action !== "help") say(r.message);
-    if (r.engineCommand && !r.message) say(`'${input}' is not available yet`, "error");
+    if (r.engineCommand && !r.message) say(t("'{name}' is not available yet", { name: input }), "error");
     return true;
   },
 

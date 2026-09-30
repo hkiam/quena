@@ -2,6 +2,7 @@ import { actions } from "./actions";
 import type { MenuItem } from "./components/ContextMenu";
 import { get } from "./store";
 import { modKey } from "./lib/format";
+import { t } from "./i18n";
 
 export function sessionMenu(): MenuItem[] {
   const n = get().selection.size;
@@ -11,7 +12,7 @@ export function sessionMenu(): MenuItem[] {
     scriptMenus.length > 0
       ? [
           {
-            label: "Scripts",
+            label: t("Scripts"),
             submenu: scriptMenus.map((label, i) => ({ label, action: () => actions.runScriptMenu(i) })),
           },
           { separator: true },
@@ -20,86 +21,86 @@ export function sessionMenu(): MenuItem[] {
   return [
     ...scriptItems,
     {
-      label: "Mock Rules",
+      label: t("Mock Rules"),
       submenu: [
-        { label: "Add Rule", action: () => import("./panels/autoresponderActions").then((m) => m.addRulesFromSelection()) },
-        { label: "Add Rule (Exact URL)", action: () => import("./panels/autoresponderActions").then((m) => m.addRulesFromSelection(true)) },
+        { label: t("Add Rule"), action: () => import("./panels/autoresponderActions").then((m) => m.addRulesFromSelection()) },
+        { label: t("Add Rule (Exact URL)"), action: () => import("./panels/autoresponderActions").then((m) => m.addRulesFromSelection(true)) },
       ],
     },
     {
-      label: "Copy",
+      label: t("Copy"),
       submenu: [
-        { label: "Just Url", shortcut: `${modKey}U`, action: () => actions.copySessions("url") },
-        { label: "Summary", shortcut: `${modKey}C`, action: () => actions.copySessions("summary") },
-        { label: "Headers only", action: () => actions.copySessions("headers") },
-        { label: "Full Session", action: () => actions.copySessions("full") },
-        { label: "As cURL", action: () => actions.copySessions("curl") },
-        { label: "As fetch (JavaScript)", action: () => actions.copySessions("fetch") },
-        { label: "As PowerShell", action: () => actions.copySessions("powershell") },
-        { label: "As Python requests", action: () => actions.copySessions("python") },
+        { label: t("Just Url"), shortcut: `${modKey}U`, action: () => actions.copySessions("url") },
+        { label: t("Summary"), shortcut: `${modKey}C`, action: () => actions.copySessions("summary") },
+        { label: t("Headers only"), action: () => actions.copySessions("headers") },
+        { label: t("Full Session"), action: () => actions.copySessions("full") },
+        { label: t("As cURL"), action: () => actions.copySessions("curl") },
+        { label: t("As fetch (JavaScript)"), action: () => actions.copySessions("fetch") },
+        { label: t("As PowerShell"), action: () => actions.copySessions("powershell") },
+        { label: t("As Python requests"), action: () => actions.copySessions("python") },
       ],
     },
     {
-      label: "Save",
+      label: t("Save"),
       submenu: [
-        { label: "Selected Sessions…", action: () => actions.menu("file.save-selected") },
-        { label: "Request Body…", disabled: !one, action: () => actions.menu("file.save-request-body") },
-        { label: "Response Body…", disabled: !one, action: () => actions.menu("file.save-response-body") },
+        { label: t("Selected Sessions…"), action: () => actions.menu("file.save-selected") },
+        { label: t("Request Body…"), disabled: !one, action: () => actions.menu("file.save-request-body") },
+        { label: t("Response Body…"), disabled: !one, action: () => actions.menu("file.save-response-body") },
       ],
     },
     {
-      label: "Remove",
+      label: t("Remove"),
       submenu: [
-        { label: "Selected Sessions", shortcut: "Del", action: () => actions.removeSelected() },
-        { label: "Unselected Sessions", shortcut: "Shift+Del", action: () => actions.removeUnselected() },
-        { label: "All Sessions", shortcut: "Ctrl+X", action: () => actions.removeAll() },
+        { label: t("Selected Sessions"), shortcut: "Del", action: () => actions.removeSelected() },
+        { label: t("Unselected Sessions"), shortcut: "Shift+Del", action: () => actions.removeUnselected() },
+        { label: t("All Sessions"), shortcut: "Ctrl+X", action: () => actions.removeAll() },
       ],
     },
     {
-      label: "Filter Now",
+      label: t("Filter Now"),
       submenu: [
-        { label: "Hide this Host", action: () => import("./panels/filterActions").then((m) => m.filterNow("hideHost")) },
-        { label: "Show only this Host", action: () => import("./panels/filterActions").then((m) => m.filterNow("onlyHost")) },
-        { label: "Hide this URL", action: () => import("./panels/filterActions").then((m) => m.filterNow("hideUrl")) },
-        { label: "Hide this Process", action: () => import("./panels/filterActions").then((m) => m.filterNow("hideProcess")) },
-        { label: "Show only this Process", action: () => import("./panels/filterActions").then((m) => m.filterNow("onlyProcess")) },
+        { label: t("Hide this Host"), action: () => import("./panels/filterActions").then((m) => m.filterNow("hideHost")) },
+        { label: t("Show only this Host"), action: () => import("./panels/filterActions").then((m) => m.filterNow("onlyHost")) },
+        { label: t("Hide this URL"), action: () => import("./panels/filterActions").then((m) => m.filterNow("hideUrl")) },
+        { label: t("Hide this Process"), action: () => import("./panels/filterActions").then((m) => m.filterNow("hideProcess")) },
+        { label: t("Show only this Process"), action: () => import("./panels/filterActions").then((m) => m.filterNow("onlyProcess")) },
       ],
     },
     { separator: true },
-    { label: "Comment…", shortcut: "M", action: () => actions.comment() },
+    { label: t("Comment…"), shortcut: "M", action: () => actions.comment() },
     {
-      label: "Mark",
+      label: t("Mark"),
       submenu: [
-        { label: "Red", shortcut: `${modKey}1`, action: () => actions.mark("red") },
-        { label: "Blue", shortcut: `${modKey}2`, action: () => actions.mark("blue") },
-        { label: "Gold", shortcut: `${modKey}3`, action: () => actions.mark("gold") },
-        { label: "Green", shortcut: `${modKey}4`, action: () => actions.mark("green") },
-        { label: "Orange", shortcut: `${modKey}5`, action: () => actions.mark("orange") },
-        { label: "Purple", shortcut: `${modKey}6`, action: () => actions.mark("purple") },
+        { label: t("Red"), shortcut: `${modKey}1`, action: () => actions.mark("red") },
+        { label: t("Blue"), shortcut: `${modKey}2`, action: () => actions.mark("blue") },
+        { label: t("Gold"), shortcut: `${modKey}3`, action: () => actions.mark("gold") },
+        { label: t("Green"), shortcut: `${modKey}4`, action: () => actions.mark("green") },
+        { label: t("Orange"), shortcut: `${modKey}5`, action: () => actions.mark("orange") },
+        { label: t("Purple"), shortcut: `${modKey}6`, action: () => actions.mark("purple") },
         { separator: true },
-        { label: "Unmark", shortcut: `${modKey}0`, action: () => actions.mark(null) },
+        { label: t("Unmark"), shortcut: `${modKey}0`, action: () => actions.mark(null) },
       ],
     },
     {
-      label: "Replay",
+      label: t("Replay"),
       submenu: [
-        { label: "Replay Requests", shortcut: "R", action: () => import("./replay").then((m) => m.replaySelected({})) },
-        { label: "Replay Unconditionally", shortcut: "U", action: () => import("./replay").then((m) => m.replaySelected({ unconditional: true })) },
-        { label: "Replay Sequentially…", shortcut: "Shift+R", action: () => import("./replay").then((m) => m.replaySelected({ repeat: true })) },
-        { label: "Replay and Edit", action: () => import("./replay").then((m) => m.replaySelected({ breakpoint: true })) },
-        { label: "Replay from Composer", disabled: !one, action: () => import("./replay").then((m) => m.toComposer()) },
+        { label: t("Replay Requests"), shortcut: "R", action: () => import("./replay").then((m) => m.replaySelected({})) },
+        { label: t("Replay Unconditionally"), shortcut: "U", action: () => import("./replay").then((m) => m.replaySelected({ unconditional: true })) },
+        { label: t("Replay Sequentially…"), shortcut: "Shift+R", action: () => import("./replay").then((m) => m.replaySelected({ repeat: true })) },
+        { label: t("Replay and Edit"), action: () => import("./replay").then((m) => m.replaySelected({ breakpoint: true })) },
+        { label: t("Replay from Composer"), disabled: !one, action: () => import("./replay").then((m) => m.toComposer()) },
       ],
     },
     {
-      label: "Select",
+      label: t("Select"),
       submenu: [
-        { label: "Same Host", action: () => import("./panels/filterActions").then((m) => m.selectSimilar("host")) },
-        { label: "Same Process", action: () => import("./panels/filterActions").then((m) => m.selectSimilar("process")) },
-        { label: "Duplicate Requests", action: () => import("./panels/filterActions").then((m) => m.selectSimilar("url")) },
+        { label: t("Same Host"), action: () => import("./panels/filterActions").then((m) => m.selectSimilar("host")) },
+        { label: t("Same Process"), action: () => import("./panels/filterActions").then((m) => m.selectSimilar("process")) },
+        { label: t("Duplicate Requests"), action: () => import("./panels/filterActions").then((m) => m.selectSimilar("url")) },
       ],
     },
     { separator: true },
-    { label: "Compare", disabled: n !== 2, action: () => import("./panels/compare").then((m) => m.compareSelected()) },
-    { label: "Properties…", disabled: !one, action: () => import("./panels/properties").then((m) => m.showProperties()) },
+    { label: t("Compare"), disabled: n !== 2, action: () => import("./panels/compare").then((m) => m.compareSelected()) },
+    { label: t("Properties…"), disabled: !one, action: () => import("./panels/properties").then((m) => m.showProperties()) },
   ];
 }

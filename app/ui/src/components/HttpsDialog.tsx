@@ -5,6 +5,7 @@ import { api, type CaInfo } from "../api";
 import { say, set, useStore } from "../store";
 import { patchSettings } from "../settingsActions";
 import { osNames } from "../lib/format";
+import { t } from "../i18n";
 
 export function HttpsPanel() {
   const settings = useStore((s) => s.settings);
@@ -30,78 +31,78 @@ export function HttpsPanel() {
   return (
     <div className="https">
       <label className="f-check strong">
-        <input type="checkbox" checked={h.decrypt} onChange={(e) => patchSettings((s) => (s.https.decrypt = e.target.checked)).then(load)} /> Decrypt HTTPS traffic
+        <input type="checkbox" checked={h.decrypt} onChange={(e) => patchSettings((s) => (s.https.decrypt = e.target.checked)).then(load)} /> {t("Decrypt HTTPS traffic")}
       </label>
       <div className="f-row">
-        <span>…from</span>
+        <span>{t("…from")}</span>
         <select value={h.scope} onChange={(e) => patchSettings((s) => (s.https.scope = e.target.value as typeof h.scope))}>
-          <option value="all">all processes</option>
-          <option value="browsers">browsers only</option>
-          <option value="nonBrowsers">non-browsers only</option>
-          <option value="remote">remote clients only</option>
+          <option value="all">{t("all processes")}</option>
+          <option value="browsers">{t("browsers only")}</option>
+          <option value="nonBrowsers">{t("non-browsers only")}</option>
+          <option value="remote">{t("remote clients only")}</option>
         </select>
       </div>
       <div className="f-row">
-        <span>Skip decryption for</span>
+        <span>{t("Skip decryption for")}</span>
         <input defaultValue={h.skipDecryption} placeholder="*.bank.example; login.live.com" onBlur={(e) => patchSettings((s) => (s.https.skipDecryption = e.target.value))} />
       </div>
       <label className="f-check">
-        <input type="checkbox" checked={h.ignoreCertErrors} onChange={(e) => patchSettings((s) => (s.https.ignoreCertErrors = e.target.checked))} /> Ignore server certificate errors (unsafe)
+        <input type="checkbox" checked={h.ignoreCertErrors} onChange={(e) => patchSettings((s) => (s.https.ignoreCertErrors = e.target.checked))} /> {t("Ignore server certificate errors (unsafe)")}
       </label>
       <label className="f-check">
-        <input type="checkbox" checked={h.enableHttp2} onChange={(e) => patchSettings((s) => (s.https.enableHttp2 = e.target.checked))} /> Enable HTTP/2
+        <input type="checkbox" checked={h.enableHttp2} onChange={(e) => patchSettings((s) => (s.https.enableHttp2 = e.target.checked))} /> {t("Enable HTTP/2")}
       </label>
       <fieldset className="f-section">
-        <legend>Client certificates (mTLS)</legend>
-        <p className="muted small">Presented to matching upstream hosts. Cert and key are PEM files (may be the same file).</p>
+        <legend>{t("Client certificates (mTLS)")}</legend>
+        <p className="muted small">{t("Presented to matching upstream hosts. Cert and key are PEM files (may be the same file).")}</p>
         {(h.clientCerts ?? []).map((c, i) => (
           <div className="cc-row" key={i}>
             <input
               className="cc-host"
-              placeholder="host pattern e.g. *.corp.example"
+              placeholder={t("host pattern e.g. *.corp.example")}
               defaultValue={c.host}
               onBlur={(e) => patchSettings((s) => (s.https.clientCerts[i].host = e.target.value))}
             />
             <button
               className="cc-file"
-              title={c.certPath || "choose certificate PEM"}
+              title={c.certPath || t("choose certificate PEM")}
               onClick={async () => {
                 const p = await open({ multiple: false, filters: [{ name: "PEM", extensions: ["pem", "crt", "cer", "key"] }] });
                 if (typeof p === "string") patchSettings((s) => (s.https.clientCerts[i].certPath = p));
               }}
             >
-              {c.certPath ? c.certPath.split("/").pop() : "Cert…"}
+              {c.certPath ? c.certPath.split("/").pop() : t("Cert…")}
             </button>
             <button
               className="cc-file"
-              title={c.keyPath || "choose key PEM (optional)"}
+              title={c.keyPath || t("choose key PEM (optional)")}
               onClick={async () => {
                 const p = await open({ multiple: false, filters: [{ name: "PEM", extensions: ["pem", "key", "crt"] }] });
                 if (typeof p === "string") patchSettings((s) => (s.https.clientCerts[i].keyPath = p));
               }}
             >
-              {c.keyPath ? c.keyPath.split("/").pop() : "Key…"}
+              {c.keyPath ? c.keyPath.split("/").pop() : t("Key…")}
             </button>
-            <button className="cc-del" title="Remove" onClick={() => patchSettings((s) => s.https.clientCerts.splice(i, 1))}>
+            <button className="cc-del" title={t("Remove")} onClick={() => patchSettings((s) => s.https.clientCerts.splice(i, 1))}>
               ✕
             </button>
           </div>
         ))}
         <button onClick={() => patchSettings((s) => (s.https.clientCerts = [...(s.https.clientCerts ?? []), { host: "", certPath: "", keyPath: "" }]))}>
-          Add client certificate
+          {t("Add client certificate")}
         </button>
       </fieldset>
       <fieldset className="f-section">
-        <legend>Root certificate</legend>
+        <legend>{t("Root certificate")}</legend>
         {!ca ? (
-          "Loading…"
+          t("Loading…")
         ) : !ca.exists ? (
-          <p className="muted">No root certificate yet. It is created when HTTPS decryption is enabled.</p>
+          <p className="muted">{t("No root certificate yet. It is created when HTTPS decryption is enabled.")}</p>
         ) : (
           <>
             <div>
-              Status:{" "}
-              {ca.trusted ? <b className="ok">trusted by {osNames.os}</b> : <b className="err">not trusted – browsers will show certificate errors</b>}
+              {t("Status:")}{" "}
+              {ca.trusted ? <b className="ok">{t("trusted by {os}", { os: osNames.os })}</b> : <b className="err">{t("not trusted – browsers will show certificate errors")}</b>}
             </div>
             <div className="mono small muted" style={{ wordBreak: "break-all" }}>
               SHA-256 {ca.sha256}
@@ -113,44 +114,44 @@ export function HttpsPanel() {
           <button
             className="primary"
             disabled={busy}
-            onClick={() => run(api.caTrust, "Root certificate trusted")}
-            title={`Adds the certificate to ${osNames.trustStore} as trusted root. ${osNames.prompt}`}
+            onClick={() => run(api.caTrust, t("Root certificate trusted"))}
+            title={t("Adds the certificate to {store} as trusted root. {prompt}", { store: osNames.trustStore, prompt: osNames.prompt })}
           >
-            {ca?.trusted ? "Re-trust" : "Trust root certificate…"}
+            {ca?.trusted ? t("Re-trust") : t("Trust root certificate…")}
           </button>
-          <button disabled={busy || !ca?.exists} onClick={() => run(api.caRemove, "Root certificate removed from the trust store")}>
-            Remove from trust store
+          <button disabled={busy || !ca?.exists} onClick={() => run(api.caRemove, t("Root certificate removed from the trust store"))}>
+            {t("Remove from trust store")}
           </button>
           <button
             disabled={busy || !ca?.exists}
             onClick={async () => {
-              const p = await save({ defaultPath: "quena-root-ca.crt", filters: [{ name: "Certificate", extensions: ["crt", "pem", "cer", "der"] }] });
+              const p = await save({ defaultPath: "quena-root-ca.crt", filters: [{ name: t("Certificate"), extensions: ["crt", "pem", "cer", "der"] }] });
               if (!p) return;
               await api.caExport(p, /\.(cer|der)$/i.test(p));
-              say(`Exported to ${p}`);
+              say(t("Exported to {path}", { path: p }));
             }}
           >
-            Export…
+            {t("Export…")}
           </button>
           <button
             disabled={busy || !ca?.exists}
             onClick={() => {
               if (ca?.trusted) {
-                say("Remove the current certificate from the trust store first", "error");
+                say(t("Remove the current certificate from the trust store first"), "error");
                 return;
               }
-              run(api.caRegenerate, "New root certificate created");
+              run(api.caRegenerate, t("New root certificate created"));
             }}
           >
-            Regenerate
+            {t("Regenerate")}
           </button>
         </div>
         <p className="small muted">
-          The private key never leaves {osNames.machine} (stored with owner-only permissions). Only trust it on machines you use for debugging; remove it afterwards.
+          {t("The private key never leaves {machine} (stored with owner-only permissions). Only trust it on machines you use for debugging; remove it afterwards.", { machine: osNames.machine })}
         </p>
       </fieldset>
       <p>
-        <button onClick={() => set({ dialog: { kind: "connect-device" } })}>Connect a device (iOS/Android)…</button>
+        <button onClick={() => set({ dialog: { kind: "connect-device" } })}>{t("Connect a device (iOS/Android)…")}</button>
       </p>
     </div>
   );

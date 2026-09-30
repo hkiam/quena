@@ -2,6 +2,7 @@
 // paths), so they are sent to the backend in chunks and imported from a temporary copy.
 import { api, isTauri } from "../api";
 import { say } from "../store";
+import { plural, t } from "../i18n";
 
 const CHUNK = 4 << 20;
 const ARCHIVE = /\.(saz|har|zip|json)$/i;
@@ -22,10 +23,10 @@ async function send(file: File) {
 export async function importDropped(files: File[]) {
   const ok = files.filter((f) => isArchiveName(f.name));
   const skipped = files.length - ok.length;
-  if (skipped) say(`${skipped} file(s) skipped: only .saz and .har archives can be dropped`, ok.length ? undefined : "error");
+  if (skipped) say(plural(skipped, "{n} file skipped: only .saz and .har archives can be dropped", "{n} files skipped: only .saz and .har archives can be dropped"), ok.length ? undefined : "error");
   for (const f of ok) {
     try {
-      say(`Loading ${f.name}`);
+      say(t("Loading {path}", { path: f.name }));
       await send(f);
     } catch (e) {
       say(`${f.name}: ${e}`, "error");

@@ -9,6 +9,7 @@ import { nodesToTree, type InspectSection } from "../lib/inspect";
 import { BodyText } from "./BodyText";
 import { get } from "../store";
 import { parseXml } from "../lib/xml";
+import { plural, t } from "../i18n";
 
 const TREE_LIMIT = 5 << 20;
 /** Rows / children rendered before a "more" control (hostile bodies can have millions). */
@@ -19,12 +20,12 @@ export function MoreRows({ shown, total, onMore, step = ROW_CAP }: { shown: numb
   if (total <= shown) return null;
   return (
     <div className="j-more" onClick={() => onMore(shown + step)}>
-      … {fmtInt(total - shown)} more (show {fmtInt(Math.min(step, total - shown))})
+      … {t("{n} more (show {step})", { n: fmtInt(total - shown), step: fmtInt(Math.min(step, total - shown)) })}
     </div>
   );
 }
 
-function Table({ rows, head = ["Name", "Value"] }: { rows: (string | React.ReactNode)[][]; head?: string[] }) {
+function Table({ rows, head = [t("Name"), t("Value")] }: { rows: (string | React.ReactNode)[][]; head?: string[] }) {
   const [limit, setLimit] = useState(ROW_CAP);
   return (
     <>
@@ -68,8 +69,8 @@ function useBodyText(detail: Detail, part: Part, limit: number) {
       return;
     }
     loadText(detail.summary.id, part, info, limit).then(
-      (t) => alive && setText(t),
-      (e) => alive && setError(`Could not load the body: ${String(e)}`),
+      (s) => alive && setText(s),
+      (e) => alive && setError(t("Could not load the body: {error}", { error: String(e) })),
     );
     return () => {
       alive = false;
@@ -89,14 +90,14 @@ export function WebFormsView({ detail }: { detail: Detail }) {
   return (
     <div className="scroll pad">
       <h4>QueryString</h4>
-      {query.length ? <Table rows={query} /> : <div className="muted">No query string</div>}
-      <h4>Body</h4>
+      {query.length ? <Table rows={query} /> : <div className="muted">{t("No query string")}</div>}
+      <h4>{t("Body")}</h4>
       {ct.includes("multipart/form-data") ? (
-        <div className="muted">multipart/form-data – see TextView / Raw ({fmtBytes(detail.requestBody.len)})</div>
+        <div className="muted">{t("multipart/form-data – see Plain Text / Raw ({size})", { size: fmtBytes(detail.requestBody.len) })}</div>
       ) : form.length ? (
         <Table rows={form} />
       ) : (
-        <div className="muted">{detail.requestBody.len ? `Body is not form-urlencoded (${ct || "no content type"})` : "No body"}</div>
+        <div className="muted">{detail.requestBody.len ? t("Body is not form-urlencoded ({type})", { type: ct || t("no content type") }) : t("No body")}</div>
       )}
     </div>
   );
@@ -130,20 +131,20 @@ function authValue(v: string): React.ReactNode {
     case "basic":
       return (
         <>
-          <div>Basic authentication</div>
+          <div>{t("Basic authentication")}</div>
           <pre>{b64decode(cred)}</pre>
         </>
       );
     case "bearer":
       return (
         <>
-          <div>Bearer token</div>
+          <div>{t("Bearer token")}</div>
           {jwt(cred) ?? <pre>{cred}</pre>}
         </>
       );
     case "ntlm":
     case "negotiate":
-      return <div>{scheme} ({cred.length} chars, {cred.startsWith("TlRMTVNTUAAB") ? "Type 1" : cred.startsWith("TlRMTVNTUAAC") ? "Type 2" : cred.startsWith("TlRMTVNTUAAD") ? "Type 3" : "token"})</div>;
+      return <div>{scheme} ({plural(cred.length, "{n} char", "{n} chars")}, {cred.startsWith("TlRMTVNTUAAB") ? t("Type {n}", { n: 1 }) : cred.startsWith("TlRMTVNTUAAC") ? t("Type {n}", { n: 2 }) : cred.startsWith("TlRMTVNTUAAD") ? t("Type {n}", { n: 3 }) : t("token")})</div>;
     default:
       return <pre>{v}</pre>;
   }
@@ -200,7 +201,7 @@ function PluginHeader({ name, value, fallback, optional }: { name: string; value
       {ok.length === 0 && fallback}
       {ok.map((r) => (
         <div key={r.pluginId}>
-          <div className="muted small">Plugin: {r.tab}</div>
+          <div className="muted small">{t("Plugin: {name}", { name: r.tab })}</div>
           {nodesToTree(r.nodes).map((s, i) => (
             <InspectSectionView key={i} s={s} />
           ))}
@@ -208,7 +209,7 @@ function PluginHeader({ name, value, fallback, optional }: { name: string; value
       ))}
       {failed.map((r) => (
         <div key={r.pluginId} className="err small">
-          Plugin {r.tab}: {r.error}
+          {t("Plugin {name}: {error}", { name: r.tab, error: r.error ?? "" })}
         </div>
       ))}
     </div>
@@ -245,7 +246,7 @@ export function AuthView({ detail, part }: { detail: Detail; part: Part }) {
   const more = h.filter(([k]) => !names.includes(k.toLowerCase()) && extra.has(k.toLowerCase()));
   return (
     <div className="scroll pad">
-      {found.length === 0 && <div className="muted">No {part === "request" ? "Authorization" : "WWW-Authenticate"} headers are present.</div>}
+      {found.length === 0 && <div className="muted">{t("No {header} headers are present.", { header: part === "request" ? "Authorization" : "WWW-Authenticate" })}</div>}
       {found.map(([k, v], i) => {
         const value = latin1ToUtf8(v);
         return <PluginHeader key={i} name={k} value={value} fallback={part === "request" ? authValue(value) : <pre>{value}</pre>} />;
@@ -260,7 +261,7 @@ export function AuthView({ detail, part }: { detail: Detail; part: Part }) {
 export function CookiesView({ detail, part }: { detail: Detail; part: Part }) {
   if (part === "request") {
     const rows = detail.request.headers.filter(([k]) => k.toLowerCase() === "cookie").flatMap(([, v]) => parseCookies(latin1ToUtf8(v)));
-    return <div className="scroll pad">{rows.length ? <Table rows={rows} /> : <div className="muted">This request did not send any cookie data.</div>}</div>;
+    return <div className="scroll pad">{rows.length ? <Table rows={rows} /> : <div className="muted">{t("This request did not send any cookie data.")}</div>}</div>;
   }
   const sets = (detail.response?.headers ?? []).filter(([k]) => k.toLowerCase() === "set-cookie").map(([, v]) => latin1ToUtf8(v));
   const rows = sets.map((s) => {
@@ -268,46 +269,46 @@ export function CookiesView({ detail, part }: { detail: Detail; part: Part }) {
     const i = nv.indexOf("=");
     return [nv.slice(0, Math.max(0, i)), nv.slice(i + 1), attrs.join("; ")];
   });
-  return <div className="scroll pad">{rows.length ? <Table head={["Name", "Value", "Attributes"]} rows={rows} /> : <div className="muted">This response did not set any cookies.</div>}</div>;
+  return <div className="scroll pad">{rows.length ? <Table head={[t("Name"), t("Value"), t("Attributes")]} rows={rows} /> : <div className="muted">{t("This response did not set any cookies.")}</div>}</div>;
 }
 
 export function CachingView({ detail }: { detail: Detail }) {
   const r = detail.response;
-  if (!r) return <div className="placeholder">No response</div>;
+  if (!r) return <div className="placeholder">{t("No response")}</div>;
   const h = r.headers;
   const cc = headerValue(h, "cache-control");
   const notes: string[] = [];
-  if (r.status === 304) notes.push("304 Not Modified: the client's cached copy was revalidated.");
+  if (r.status === 304) notes.push(t("304 Not Modified: the client's cached copy was revalidated."));
   if (cc) {
     for (const d of cc.split(",").map((x) => x.trim().toLowerCase())) {
-      if (d === "no-store") notes.push("no-store: must not be stored in any cache.");
-      else if (d === "no-cache") notes.push("no-cache: may be stored, but must be revalidated before every use.");
-      else if (d === "private") notes.push("private: only the browser cache may store it (no shared caches).");
-      else if (d === "public") notes.push("public: may be stored by shared caches.");
-      else if (d.startsWith("max-age=")) notes.push(`max-age: fresh for ${fmtInt(Number(d.slice(8)))} seconds.`);
-      else if (d.startsWith("s-maxage=")) notes.push(`s-maxage: shared caches keep it fresh for ${d.slice(9)} seconds.`);
-      else if (d === "must-revalidate") notes.push("must-revalidate: stale copies must be revalidated.");
-      else if (d === "immutable") notes.push("immutable: will not change during its freshness lifetime.");
+      if (d === "no-store") notes.push(t("no-store: must not be stored in any cache."));
+      else if (d === "no-cache") notes.push(t("no-cache: may be stored, but must be revalidated before every use."));
+      else if (d === "private") notes.push(t("private: only the browser cache may store it (no shared caches)."));
+      else if (d === "public") notes.push(t("public: may be stored by shared caches."));
+      else if (d.startsWith("max-age=")) notes.push(t("max-age: fresh for {n} seconds.", { n: fmtInt(Number(d.slice(8))) }));
+      else if (d.startsWith("s-maxage=")) notes.push(t("s-maxage: shared caches keep it fresh for {n} seconds.", { n: d.slice(9) }));
+      else if (d === "must-revalidate") notes.push(t("must-revalidate: stale copies must be revalidated."));
+      else if (d === "immutable") notes.push(t("immutable: will not change during its freshness lifetime."));
     }
-  } else notes.push("No Cache-Control header present.");
+  } else notes.push(t("No Cache-Control header present."));
   const exp = headerValue(h, "expires");
   const date = headerValue(h, "date");
   const lm = headerValue(h, "last-modified");
   if (exp) notes.push(`Expires: ${exp}${date ? ` (Date: ${date})` : ""}`);
   if (!cc && !exp && lm && date) {
     const age = (Date.parse(date) - Date.parse(lm)) / 1000;
-    if (age > 0) notes.push(`Heuristic freshness (10% of Date − Last-Modified): ~${fmtInt(Math.round(age / 10))} seconds.`);
+    if (age > 0) notes.push(t("Heuristic freshness (10% of Date − Last-Modified): ~{n} seconds.", { n: fmtInt(Math.round(age / 10)) }));
   }
   const etag = headerValue(h, "etag");
-  if (etag) notes.push(`ETag ${etag} allows conditional revalidation (If-None-Match).`);
-  if (lm) notes.push(`Last-Modified ${lm} allows conditional revalidation (If-Modified-Since).`);
+  if (etag) notes.push(t("ETag {etag} allows conditional revalidation (If-None-Match).", { etag }));
+  if (lm) notes.push(t("Last-Modified {date} allows conditional revalidation (If-Modified-Since).", { date: lm }));
   const vary = headerValue(h, "vary");
-  if (vary) notes.push(`Vary: ${vary} – cached per value of these request headers.`);
+  if (vary) notes.push(t("Vary: {vary} – cached per value of these request headers.", { vary }));
   const pragma = headerValue(h, "pragma");
-  if (pragma) notes.push(`Pragma: ${pragma} (HTTP/1.0 legacy).`);
+  if (pragma) notes.push(t("Pragma: {pragma} (HTTP/1.0 legacy).", { pragma }));
   return (
     <div className="scroll pad">
-      <h4>Response Caching Information</h4>
+      <h4>{t("Response Caching Information")}</h4>
       <ul className="notes">
         {notes.map((n, i) => (
           <li key={i}>{n}</li>
@@ -320,7 +321,7 @@ export function CachingView({ detail }: { detail: Detail }) {
 export function ImageView({ detail }: { detail: Detail }) {
   const info = detail.responseBody;
   const [dim, setDim] = useState<string>("");
-  if (!info.len) return <div className="placeholder">No body</div>;
+  if (!info.len) return <div className="placeholder">{t("No body")}</div>;
   const v: Variant = info.variants.includes("decoded") ? "decoded" : "raw";
   return (
     <div className="imageview">
@@ -333,7 +334,7 @@ export function ImageView({ detail }: { detail: Detail }) {
         <img
           src={bodyUrl(detail.summary.id, "response", v)}
           onLoad={(e) => setDim(`${(e.target as HTMLImageElement).naturalWidth} × ${(e.target as HTMLImageElement).naturalHeight}`)}
-          onError={() => setDim("not a displayable image")}
+          onError={() => setDim(t("not a displayable image"))}
         />
       </div>
     </div>
@@ -343,13 +344,13 @@ export function ImageView({ detail }: { detail: Detail }) {
 export function WebViewPane({ detail }: { detail: Detail }) {
   const info = detail.responseBody;
   const [on, setOn] = useState(false);
-  if (!info.len) return <div className="placeholder">No body</div>;
+  if (!info.len) return <div className="placeholder">{t("No body")}</div>;
   const v: Variant = info.variants.includes("decoded") ? "decoded" : "raw";
   if (!on) {
     return (
       <div className="placeholder">
-        <p>Renders the response in a sandboxed frame without scripts, forms or network access to the page's origin.</p>
-        <button onClick={() => setOn(true)}>Render</button>
+        <p>{t("Renders the response in a sandboxed frame without scripts, forms or network access to the page's origin.")}</p>
+        <button onClick={() => setOn(true)}>{t("Render")}</button>
       </div>
     );
   }
@@ -361,18 +362,18 @@ export function TransformerView({ detail }: { detail: Detail }) {
   const decode = get().settings?.decode;
   return (
     <div className="scroll pad">
-      <h4>Response body encoding</h4>
+      <h4>{t("Response body encoding")}</h4>
       <Table
         rows={[
-          ["Transfer-Encoding", info.transferEncoding ?? "(none) – chunking is removed while recording"],
-          ["Content-Encoding", info.contentEncoding ?? "(none)"],
-          ["Bytes on the wire", fmtInt(info.wireLen)],
-          ["Bytes stored", fmtInt(info.len) + (info.truncated ? " (truncated: recording limit reached)" : "")],
-          ["Complete", info.complete ? "yes" : "no (still receiving)"],
-          ["Decoded view", info.variants.includes("decoded") ? (decode ? "on (toolbar ‘Decode’)" : "off – enable ‘Decode’ in the toolbar") : "not needed"],
+          ["Transfer-Encoding", info.transferEncoding ?? t("(none) – chunking is removed while recording")],
+          ["Content-Encoding", info.contentEncoding ?? t("(none)")],
+          [t("Bytes on the wire"), fmtInt(info.wireLen)],
+          [t("Bytes stored"), fmtInt(info.len) + (info.truncated ? ` ${t("(truncated: recording limit reached)")}` : "")],
+          [t("Complete"), info.complete ? t("yes") : t("no (still receiving)")],
+          [t("Decoded view"), info.variants.includes("decoded") ? (decode ? t("on (toolbar ‘Decode’)") : t("off – enable ‘Decode’ in the toolbar")) : t("not needed")],
         ]}
       />
-      <p className="muted">Quena never modifies the recorded body; decoded and formatted views are derived caches (Raw Traffic = Source of Truth).</p>
+      <p className="muted">{t("Quena never modifies the recorded body; decoded and formatted views are derived caches (Raw Traffic = Source of Truth).")}</p>
     </div>
   );
 }
@@ -380,14 +381,14 @@ export function TransformerView({ detail }: { detail: Detail }) {
 export function RawView({ detail, part, wrap }: { detail: Detail; part: Part; wrap: boolean }) {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const head = part === "request" ? [requestLine(detail), ...detail.request.headers.map(([k, v]) => `${k}: ${latin1ToUtf8(v)}`)].join("\n") : detail.response ? rawResponseHead(detail).trimEnd() : "";
-  if (part === "response" && !detail.response) return <div className="placeholder">No response</div>;
+  if (part === "response" && !detail.response) return <div className="placeholder">{t("No response")}</div>;
   const textBody = info.len > 0 && (info.isText || info.variants.includes("decoded"));
   // Without a text body the head gets the whole pane; the binary hint is one line below it.
   return (
     <div className={textBody ? "rawview" : "rawview head-only"}>
       <pre className="raw-head">
         {head}
-        {info.len > 0 && !textBody && <span className="raw-binary">{`\n\nBinary body (${fmtBytes(info.len)}) – see HexView`}</span>}
+        {info.len > 0 && !textBody && <span className="raw-binary">{`\n\n${t("Binary body ({size}) – see Hex", { size: fmtBytes(info.len) })}`}</span>}
       </pre>
       {textBody && (
         <div className="raw-body">
@@ -430,7 +431,7 @@ function JNode({ k, v, depth }: { k: string | null; v: J; depth: number }) {
           ))}
           {entries.length > limit && (
             <div className="j-more" onClick={() => setLimit(limit + 1000)}>
-              … {fmtInt(entries.length - limit)} more
+              … {t("{n} more", { n: fmtInt(entries.length - limit) })}
             </div>
           )}
         </div>
@@ -443,12 +444,12 @@ export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
   const { text, info, error } = useBodyText(detail, part, TREE_LIMIT);
   const parsed = useMemo(() => {
     if (text == null) return { err: null, v: undefined };
-    const t = text.trim();
+    const s = text.trim();
     try {
-      return { err: null, v: JSON.parse(t) as J };
+      return { err: null, v: JSON.parse(s) as J };
     } catch (e) {
       // NDJSON / JSONP
-      const lines = t.split("\n").filter(Boolean);
+      const lines = s.split("\n").filter(Boolean);
       if (lines.length > 1) {
         try {
           return { err: null, v: lines.slice(0, 10000).map((l) => JSON.parse(l)) };
@@ -456,7 +457,7 @@ export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
           /* fall through */
         }
       }
-      const m = t.match(/^[\w$.]+\(([\s\S]*)\);?$/);
+      const m = s.match(/^[\w$.]+\(([\s\S]*)\);?$/);
       if (m) {
         try {
           return { err: null, v: JSON.parse(m[1]) };
@@ -467,11 +468,11 @@ export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
       return { err: String(e), v: undefined };
     }
   }, [text]);
-  if (!info.len) return <div className="placeholder">No body</div>;
-  if (info.len > TREE_LIMIT) return <div className="placeholder">Body is {fmtBytes(info.len)} – too large for the tree view. Use TextView (formatted) instead.</div>;
+  if (!info.len) return <div className="placeholder">{t("No body")}</div>;
+  if (info.len > TREE_LIMIT) return <div className="placeholder">{t("Body is {size} – too large for the tree view. Use Body (formatted) instead.", { size: fmtBytes(info.len) })}</div>;
   if (error) return <div className="placeholder">{error}</div>;
-  if (text == null) return <div className="placeholder">Loading…</div>;
-  if (parsed.err) return <div className="placeholder">Not valid JSON: {parsed.err}</div>;
+  if (text == null) return <div className="placeholder">{t("Loading…")}</div>;
+  if (parsed.err) return <div className="placeholder">{t("Not valid JSON: {error}", { error: parsed.err })}</div>;
   return (
     <div className="scroll pad mono">
       <JNode k={null} v={parsed.v} depth={0} />
@@ -502,7 +503,7 @@ export function XNode({ n, depth }: { n: Element; depth: number }) {
           {a.name}=<span className="j-str">"{a.value}"</span>
         </span>
       ))}
-      {allAttrs.length > attrs.length && <span className="muted"> … {fmtInt(allAttrs.length - attrs.length)} more attributes</span>}
+      {allAttrs.length > attrs.length && <span className="muted"> … {t("{n} more attributes", { n: fmtInt(allAttrs.length - attrs.length) })}</span>}
       {onlyText && <span className="x-text"> {kids[0].textContent}</span>}
       {open && !onlyText && (
         <div className="j-children">
@@ -525,10 +526,10 @@ export function XNode({ n, depth }: { n: Element; depth: number }) {
 export function XmlView({ detail, part }: { detail: Detail; part: Part }) {
   const { text, info, error } = useBodyText(detail, part, TREE_LIMIT);
   const doc = useMemo(() => (text == null ? null : parseXml(text)), [text]);
-  if (!info.len) return <div className="placeholder">No body</div>;
-  if (info.len > TREE_LIMIT) return <div className="placeholder">Body is {fmtBytes(info.len)} – too large for the tree view. Use TextView (formatted) instead.</div>;
+  if (!info.len) return <div className="placeholder">{t("No body")}</div>;
+  if (info.len > TREE_LIMIT) return <div className="placeholder">{t("Body is {size} – too large for the tree view. Use Body (formatted) instead.", { size: fmtBytes(info.len) })}</div>;
   if (error) return <div className="placeholder">{error}</div>;
-  if (!doc) return <div className="placeholder">Loading…</div>;
+  if (!doc) return <div className="placeholder">{t("Loading…")}</div>;
   if ("error" in doc) return <div className="placeholder">{doc.error}</div>;
   return (
     <div className="scroll pad mono">

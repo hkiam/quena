@@ -5,6 +5,7 @@ import type { Detail, Part } from "../api";
 import { latin1ToUtf8 } from "../lib/format";
 import { requestLine } from "../lib/http";
 import { CodeView } from "./CodeView";
+import { plural, t } from "../i18n";
 
 type Topic = "auth" | "cookie" | "cache" | "cors" | "content" | "conn" | "fetch" | "policy";
 
@@ -85,15 +86,15 @@ export function HeadersView({ detail, part }: { detail: Detail; part: Part }) {
     const hit = q ? all.filter((h) => h.k.toLowerCase().includes(q) || h.v.toLowerCase().includes(q) || (h.t && TOPIC_LABEL[h.t] === q)) : all;
     return sorted ? [...hit].sort((a, b) => a.k.localeCompare(b.k)) : hit;
   }, [head, filter, sorted]);
-  if (!head) return <div className="placeholder">{detail.summary.state === "aborted" ? "No response (session aborted)" : "Waiting for response…"}</div>;
+  if (!head) return <div className="placeholder">{detail.summary.state === "aborted" ? t("No response (session aborted)") : t("Waiting for response…")}</div>;
   const first = part === "request" ? requestLine(detail) : `${detail.response!.version} ${detail.response!.status} ${detail.response!.reason}`;
   const text = (sep: string) => [first, ...head.headers.map(([k, v]) => `${k}: ${latin1ToUtf8(v)}`)].join(sep);
   if (raw) {
     return (
       <div className="headers-view">
         <div className="hv-bar">
-          <span className="hv-title">{head.headers.length} headers</span>
-          <button onClick={() => setRaw(false)}>Table</button>
+          <span className="hv-title">{plural(head.headers.length, "{n} header", "{n} headers")}</span>
+          <button onClick={() => setRaw(false)}>{t("Table")}</button>
         </div>
         <CodeView text={text("\n")} wrap />
       </div>
@@ -102,21 +103,21 @@ export function HeadersView({ detail, part }: { detail: Detail; part: Part }) {
   return (
     <div className="headers-view">
       <div className="hv-bar">
-        <input className="hv-filter" placeholder="Filter headers…" value={filter} spellCheck={false} onChange={(e) => setFilter(e.target.value)} />
+        <input className="hv-filter" placeholder={t("Filter headers…")} value={filter} spellCheck={false} onChange={(e) => setFilter(e.target.value)} />
         <span className="muted small">{filter ? `${rows.length} / ${head.headers.length}` : head.headers.length}</span>
         <span className="tp-spacer" />
-        <button className={sorted ? "on" : ""} title="Sort by name (otherwise wire order)" onClick={() => setSorted(!sorted)}>
+        <button className={sorted ? "on" : ""} title={t("Sort by name (otherwise wire order)")} onClick={() => setSorted(!sorted)}>
           A–Z
         </button>
-        <button onClick={() => setRaw(true)}>Raw</button>
-        <button onClick={() => navigator.clipboard.writeText(text("\r\n"))}>Copy</button>
+        <button onClick={() => setRaw(true)}>{t("Raw")}</button>
+        <button onClick={() => navigator.clipboard.writeText(text("\r\n"))}>{t("Copy")}</button>
       </div>
       <div className="hv-scroll">
         <div className="hv-first">{first}</div>
         <table className="hv-table">
           <tbody>
             {rows.map((h, i) => (
-              <tr key={i} title="Double-click to copy" onDoubleClick={() => navigator.clipboard.writeText(`${h.k}: ${h.v}`)}>
+              <tr key={i} title={t("Double-click to copy")} onDoubleClick={() => navigator.clipboard.writeText(`${h.k}: ${h.v}`)}>
                 <td className="hv-name">{h.k}</td>
                 <td className="hv-value">{h.v}</td>
                 <td className="hv-tag">{h.t && <span className={`tag tag-${h.t}`} onClick={() => setFilter(TOPIC_LABEL[h.t!])}>{TOPIC_LABEL[h.t]}</span>}</td>
@@ -124,7 +125,7 @@ export function HeadersView({ detail, part }: { detail: Detail; part: Part }) {
             ))}
           </tbody>
         </table>
-        {head.headers.length === 0 && <div className="placeholder">No headers</div>}
+        {head.headers.length === 0 && <div className="placeholder">{t("No headers")}</div>}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { showContextMenu } from "../components/ContextMenu";
+import { t } from "../i18n";
 
 export function ViewTabs({ views, active, title, onSelect }: { views: string[]; active: string; title: (v: string) => string; onSelect: (v: string) => void }) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -67,7 +68,7 @@ export function ViewTabs({ views, active, title, onSelect }: { views: string[]; 
       {rest.length > 0 && (
         <button
           className="seg seg-more"
-          title="More views"
+          title={t("More views")}
           onClick={(e) => {
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
             showContextMenu(
@@ -77,7 +78,7 @@ export function ViewTabs({ views, active, title, onSelect }: { views: string[]; 
             );
           }}
         >
-          More <ChevronDown size={11} />
+          {t("More")} <ChevronDown size={11} />
         </button>
       )}
       {/* Off-screen copy for measuring natural widths (never visible, not focusable). */}
@@ -88,7 +89,7 @@ export function ViewTabs({ views, active, title, onSelect }: { views: string[]; 
           </span>
         ))}
         <span className="seg seg-more">
-          More <ChevronDown size={11} />
+          {t("More")} <ChevronDown size={11} />
         </span>
       </div>
     </div>

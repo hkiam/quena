@@ -5,6 +5,7 @@ import { api, type ArRule, type ArState } from "../api";
 import { say, useStore } from "../store";
 import { showContextMenu } from "../components/ContextMenu";
 import { mapLocalRule, mapRemoteRule, type MappingKind } from "./autoresponderActions";
+import { plural, t } from "../i18n";
 
 const MATCH_TEMPLATES = ["*", "EXACT:https://example.com/path", "prefix:https://example.com/api/", "regex:(?i)^https://.*\\.example\\.com/api/(.*)$", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json", "URLWithBody:/soap regex:GetOrder"];
 const ACTIONS = ["dir:/path/to/folder", "https://staging.example.com/api/", "*200", "*204", "*404", "*500", "*502", "*drop", "*delay:2000", "*redir:https://example.com/", "*header:X-Quena=1", "*CORSPreflightAllow", "*bpu", "*bpafter"];
@@ -28,7 +29,7 @@ export default function AutoResponderPanel() {
     return () => clearTimeout(t);
   }, [Math.floor(version / 10)]);
 
-  if (!st) return <div className="placeholder">Loading…</div>;
+  if (!st) return <div className="placeholder">{t("Loading…")}</div>;
 
   const commit = (next: ArState, immediate = false) => {
     setSt(next);
@@ -61,7 +62,7 @@ export default function AutoResponderPanel() {
     if ("error" in r) return say(r.error, "error");
     // On top: a mapping is specific, and the first matching rule wins.
     commit({ ...st, enabled: true, rules: [{ id: 0, enabled: true, match: r.match, action: r.action, latencyMs: 0, matchOnce: false, comment: r.comment, hits: 0 }, ...st.rules] }, true);
-    say(`${r.comment} rule added`);
+    say(t("{name} rule added", { name: r.comment }));
     setMapping(null);
   };
   const move = (d: number) => {
@@ -89,19 +90,19 @@ export default function AutoResponderPanel() {
         const ids = JSON.parse(e.dataTransfer.getData("quena/sessions") || "[]") as number[];
         if (!ids.length) return;
         const n = await api.arAddSessions(ids, true);
-        say(`${n} rule(s) added`);
+        say(plural(n, "{n} rule added", "{n} rules added"));
         setSt(await api.arGet());
       }}
     >
       <div className="ar-top">
         <label className="f-check strong">
-          <input type="checkbox" checked={st.enabled} onChange={(e) => commit({ ...st, enabled: e.target.checked }, true)} /> Enable rules
+          <input type="checkbox" checked={st.enabled} onChange={(e) => commit({ ...st, enabled: e.target.checked }, true)} /> {t("Enable rules")}
         </label>
         <label className="f-check">
-          <input type="checkbox" checked={st.unmatchedPassthrough} onChange={(e) => commit({ ...st, unmatchedPassthrough: e.target.checked }, true)} /> Unmatched requests passthrough
+          <input type="checkbox" checked={st.unmatchedPassthrough} onChange={(e) => commit({ ...st, unmatchedPassthrough: e.target.checked }, true)} /> {t("Unmatched requests passthrough")}
         </label>
         <label className="f-check">
-          <input type="checkbox" checked={st.enableLatency} onChange={(e) => commit({ ...st, enableLatency: e.target.checked }, true)} /> Enable Latency
+          <input type="checkbox" checked={st.enableLatency} onChange={(e) => commit({ ...st, enableLatency: e.target.checked }, true)} /> {t("Enable Latency")}
         </label>
         <span className="tp-spacer" />
         <button
@@ -110,43 +111,43 @@ export default function AutoResponderPanel() {
             setEdit({ match: "", action: "", latency: 0 });
           }}
         >
-          Add Rule
+          {t("Add Rule")}
         </button>
         <button
-          title="Map Remote (forward a URL prefix to another server) or Map Local (serve a folder)"
+          title={t("Map Remote (forward a URL prefix to another server) or Map Local (serve a folder)")}
           onClick={(e) => {
             const b = e.currentTarget.getBoundingClientRect();
             showContextMenu(b.left, b.bottom, [
-              { label: "Map Remote… (URL prefix → other server)", action: () => setMapping({ kind: "remote", from: "", to: "" }) },
-              { label: "Map Local… (URL prefix → folder)", action: () => setMapping({ kind: "local", from: "", to: "" }) },
+              { label: t("Map Remote… (URL prefix → other server)"), action: () => setMapping({ kind: "remote", from: "", to: "" }) },
+              { label: t("Map Local… (URL prefix → folder)"), action: () => setMapping({ kind: "local", from: "", to: "" }) },
             ]);
           }}
         >
-          Add mapping…
+          {t("Add mapping…")}
         </button>
         <button
           onClick={async () => {
-            const p = await open({ multiple: false, filters: [{ name: "Mock rules (.farx)", extensions: ["farx", "xml"] }] });
+            const p = await open({ multiple: false, filters: [{ name: t("Mock rules (.farx)"), extensions: ["farx", "xml"] }] });
             if (typeof p !== "string") return;
             try {
               setSt(await api.arImportFarx(p));
-              say("Rules imported");
+              say(t("Rules imported"));
             } catch (e) {
               say(String(e), "error");
             }
           }}
         >
-          Import…
+          {t("Import…")}
         </button>
         <button
           onClick={async () => {
-            const p = await save({ defaultPath: "quena-rules.farx", filters: [{ name: "Mock rules (.farx)", extensions: ["farx"] }] });
+            const p = await save({ defaultPath: "quena-rules.farx", filters: [{ name: t("Mock rules (.farx)"), extensions: ["farx"] }] });
             if (!p) return;
             await api.arExportFarx(p);
-            say(`Rules exported to ${p}`);
+            say(t("Rules exported to {path}", { path: p }));
           }}
         >
-          Export…
+          {t("Export…")}
         </button>
       </div>
       <div className="ar-list">
@@ -154,10 +155,10 @@ export default function AutoResponderPanel() {
           <thead>
             <tr>
               <th style={{ width: 24 }}></th>
-              <th>If request matches…</th>
-              <th>then respond with…</th>
-              <th style={{ width: 72 }}>Latency</th>
-              <th style={{ width: 52 }}>Hits</th>
+              <th>{t("If request matches…")}</th>
+              <th>{t("then respond with…")}</th>
+              <th style={{ width: 72 }}>{t("Latency")}</th>
+              <th style={{ width: 52 }}>{t("Hits")}</th>
             </tr>
           </thead>
           <tbody>
@@ -170,14 +171,14 @@ export default function AutoResponderPanel() {
                   e.preventDefault();
                   pick(r);
                   showContextMenu(e.clientX, e.clientY, [
-                    { label: r.enabled ? "Disable" : "Enable", action: () => commit({ ...st, rules: st.rules.map((x) => (x.id === r.id ? { ...x, enabled: !x.enabled } : x)) }, true) },
-                    { label: "Match only once", checked: r.matchOnce, action: () => commit({ ...st, rules: st.rules.map((x) => (x.id === r.id ? { ...x, matchOnce: !x.matchOnce } : x)) }, true) },
-                    { label: "Clone", action: () => commit({ ...st, rules: [...st.rules, { ...r, id: 0, hits: 0 }] }, true) },
+                    { label: r.enabled ? t("Disable") : t("Enable"), action: () => commit({ ...st, rules: st.rules.map((x) => (x.id === r.id ? { ...x, enabled: !x.enabled } : x)) }, true) },
+                    { label: t("Match only once"), checked: r.matchOnce, action: () => commit({ ...st, rules: st.rules.map((x) => (x.id === r.id ? { ...x, matchOnce: !x.matchOnce } : x)) }, true) },
+                    { label: t("Clone"), action: () => commit({ ...st, rules: [...st.rules, { ...r, id: 0, hits: 0 }] }, true) },
                     { separator: true },
-                    { label: "Move up", action: () => move(-1) },
-                    { label: "Move down", action: () => move(1) },
+                    { label: t("Move up"), action: () => move(-1) },
+                    { label: t("Move down"), action: () => move(1) },
                     { separator: true },
-                    { label: "Remove", action: () => commit({ ...st, rules: st.rules.filter((x) => x.id !== r.id) }, true) },
+                    { label: t("Remove"), action: () => commit({ ...st, rules: st.rules.filter((x) => x.id !== r.id) }, true) },
                   ]);
                 }}
               >
@@ -197,13 +198,13 @@ export default function AutoResponderPanel() {
             ))}
           </tbody>
         </table>
-        {st.rules.length === 0 && <div className="placeholder">No rules. Add one below, or drag sessions from the list here to replay their responses.</div>}
+        {st.rules.length === 0 && <div className="placeholder">{t("No rules. Add one below, or drag sessions from the list here to replay their responses.")}</div>}
       </div>
       {mapping && (
         <fieldset className="f-section ar-editor">
           <legend>{mapping.kind === "remote" ? "Map Remote" : "Map Local"}</legend>
           <div className="f-row">
-            <span>From URL prefix</span>
+            <span>{t("From URL prefix")}</span>
             <div className="combo">
               <input
                 className="mono"
@@ -216,7 +217,7 @@ export default function AutoResponderPanel() {
             </div>
           </div>
           <div className="f-row">
-            <span>{mapping.kind === "remote" ? "To URL prefix" : "Folder"}</span>
+            <span>{mapping.kind === "remote" ? t("To URL prefix") : t("Folder")}</span>
             <div className="combo">
               <input
                 className="mono"
@@ -232,30 +233,30 @@ export default function AutoResponderPanel() {
                     if (typeof p === "string") setMapping({ ...mapping, to: p });
                   }}
                 >
-                  Choose folder…
+                  {t("Choose folder…")}
                 </button>
               )}
             </div>
           </div>
           <div className="btn-row">
             <button className="primary" onClick={addMapping} disabled={!mapping.from.trim() || !mapping.to.trim()}>
-              Add
+              {t("Add")}
             </button>
-            <button onClick={() => setMapping(null)}>Cancel</button>
+            <button onClick={() => setMapping(null)}>{t("Cancel")}</button>
             <span className="muted small">
               {mapping.kind === "remote"
-                ? "The rest of the path and the query are kept: …/api/users?id=1 → …/api/users?id=1 on the other server."
-                : "Serves the file at the rest of the path (index.html for folders), never anything outside the folder."}
+                ? t("The rest of the path and the query are kept: …/api/users?id=1 → …/api/users?id=1 on the other server.")
+                : t("Serves the file at the rest of the path (index.html for folders), never anything outside the folder.")}
             </span>
           </div>
         </fieldset>
       )}
       <fieldset className="f-section ar-editor">
-        <legend>{selected ? "Rule Editor" : "New Rule"}</legend>
+        <legend>{selected ? t("Rule Editor") : t("New Rule")}</legend>
         <div className="f-row">
-          <span>If request matches</span>
+          <span>{t("If request matches")}</span>
           <div className="combo">
-            <input className="mono" value={edit.match} placeholder="e.g. regex:(?i)^https://api\.example\.com/users" onChange={(e) => setEdit({ ...edit, match: e.target.value })} list="ar-match" />
+            <input className="mono" value={edit.match} placeholder={t("e.g. {example}", { example: "regex:(?i)^https://api\\.example\\.com/users" })} onChange={(e) => setEdit({ ...edit, match: e.target.value })} list="ar-match" />
             <datalist id="ar-match">
               {MATCH_TEMPLATES.map((m) => (
                 <option key={m} value={m} />
@@ -264,9 +265,9 @@ export default function AutoResponderPanel() {
           </div>
         </div>
         <div className="f-row">
-          <span>then respond with</span>
+          <span>{t("then respond with")}</span>
           <div className="combo">
-            <input className="mono" value={edit.action} placeholder="*404, file path, dir:/folder, session:12, https://other/…" onChange={(e) => setEdit({ ...edit, action: e.target.value })} list="ar-action" />
+            <input className="mono" value={edit.action} placeholder={t("*404, file path, dir:/folder, session:12, https://other/…")} onChange={(e) => setEdit({ ...edit, action: e.target.value })} list="ar-action" />
             <datalist id="ar-action">
               {ACTIONS.map((a) => (
                 <option key={a} value={a} />
@@ -278,17 +279,17 @@ export default function AutoResponderPanel() {
                 if (typeof p === "string") setEdit({ ...edit, action: p });
               }}
             >
-              Find a file…
+              {t("Find a file…")}
             </button>
           </div>
         </div>
         <div className="f-row">
-          <span>Latency (ms)</span>
+          <span>{t("Latency (ms)")}</span>
           <input type="number" value={edit.latency} onChange={(e) => setEdit({ ...edit, latency: Number(e.target.value) })} style={{ width: 100 }} />
         </div>
         <div className="btn-row">
           <button className="primary" onClick={saveRule} disabled={!edit.match.trim() || !edit.action.trim()}>
-            {selected ? "Save" : "Add"}
+            {selected ? t("Save") : t("Add")}
           </button>
           {selected && <button onClick={() => move(-1)}>↑</button>}
           {selected && <button onClick={() => move(1)}>↓</button>}
@@ -299,10 +300,10 @@ export default function AutoResponderPanel() {
                 setSel(null);
               }}
             >
-              Remove
+              {t("Remove")}
             </button>
           )}
-          <span className="muted small">Rules are evaluated top to bottom; the first match wins. regex rules support $1 in the action; after prefix: an https://… target or dir:folder gets the rest of the URL.</span>
+          <span className="muted small">{t("Rules are evaluated top to bottom; the first match wins. regex rules support $1 in the action; after prefix: an https://… target or dir:folder gets the rest of the URL.")}</span>
         </div>
       </fieldset>
     </div>

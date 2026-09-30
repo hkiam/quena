@@ -17,10 +17,16 @@ if command -v cygpath >/dev/null; then
 fi
 [ -n "${EDGEDRIVER:-}" ] && driver_args+=(--native-driver "$EDGEDRIVER")
 export QUENA_APP QUENA_DATA_DIR
-echo '{"proxy":{"actAsSystemProxy":false,"port":0},"ui":{"layout":{"preset":"quena","presetChosen":true,"stacked":false}}}' > "$QUENA_DATA_DIR/settings.json"
+settings() {
+  echo '{"proxy":{"actAsSystemProxy":false,"port":0},"ui":{"layout":{"preset":"quena","presetChosen":true,"stacked":false,"language":"'"$1"'"}}}' > "$QUENA_DATA_DIR/settings.json"
+}
+settings en
 export WEBKIT_DISABLE_DMABUF_RENDERER=1 NO_AT_BRIDGE=1
 tauri-driver --port 4444 "${driver_args[@]}" > "$QUENA_DATA_DIR/tauri-driver.log" 2>&1 &
 driver=$!
 trap 'kill $driver 2>/dev/null; rm -rf "$QUENA_DATA_DIR"' EXIT
 for _ in $(seq 1 50); do curl -s http://127.0.0.1:4444/status >/dev/null && break; sleep 0.2; done
 node --test --test-reporter=spec "$here/app.test.mjs"
+# The German UI: longer texts must not break the layout.
+settings de
+node --test --test-reporter=spec "$here/german.test.mjs"

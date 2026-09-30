@@ -1,11 +1,12 @@
 import { api } from "../api";
 import { get, say, set } from "../store";
+import { plural, t } from "../i18n";
 
 export async function addRulesFromSelection(exact = false) {
   const ids = [...get().selection].sort((a, b) => a - b);
   if (!ids.length) return;
   const n = await api.arAddSessions(ids, exact);
-  say(`${n} AutoResponder rule(s) added`);
+  say(plural(n, "{n} mock rule added", "{n} mock rules added"));
   set({ activeTab: "autoresponder", arNonce: Date.now() });
 }
 
@@ -24,8 +25,8 @@ const cleanPrefix = (u: string) => u.trim().replace(/\*+$/, "");
 export function mapRemoteRule(fromIn: string, toIn: string): MappingRule {
   const from = cleanPrefix(fromIn);
   let to = cleanPrefix(toIn);
-  if (!hasScheme(from)) return { error: "From must start with http:// or https:// and a host" };
-  if (!hasScheme(to)) return { error: "To must start with http:// or https:// and a host" };
+  if (!hasScheme(from)) return { error: t("From must start with http:// or https:// and a host") };
+  if (!hasScheme(to)) return { error: t("To must start with http:// or https:// and a host") };
   // Keep the slash in step, so /api/users does not become /v2users.
   if (from.endsWith("/") && !to.endsWith("/") && /^https?:\/\/[^/]+\/./i.test(to)) to += "/";
   return { match: `prefix:${from}`, action: to, comment: "Map Remote" };
@@ -35,8 +36,8 @@ export function mapRemoteRule(fromIn: string, toIn: string): MappingRule {
 export function mapLocalRule(fromIn: string, folderIn: string): MappingRule {
   const from = cleanPrefix(fromIn);
   const folder = folderIn.trim();
-  if (!hasScheme(from)) return { error: "From must start with http:// or https:// and a host" };
-  if (!folder) return { error: "Choose a folder" };
-  if (!/^(\/|[a-zA-Z]:[\\/]|\\\\)/.test(folder)) return { error: "The folder must be an absolute path" };
+  if (!hasScheme(from)) return { error: t("From must start with http:// or https:// and a host") };
+  if (!folder) return { error: t("Choose a folder") };
+  if (!/^(\/|[a-zA-Z]:[\\/]|\\\\)/.test(folder)) return { error: t("The folder must be an absolute path") };
   return { match: `prefix:${from}`, action: `dir:${folder}`, comment: "Map Local" };
 }

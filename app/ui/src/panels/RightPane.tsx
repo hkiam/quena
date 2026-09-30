@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useLayoutEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { ChartColumn, ChartGantt, Filter, FolderTree, ScanSearch, ScrollText, Send, Zap } from "lucide-react";
 import { set, useStore, type RightTab } from "../store";
@@ -9,28 +9,30 @@ import { LogPanel } from "./Log";
 import { TimelinePanel } from "./Timeline";
 import { StructurePanel } from "./Structure";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { t } from "../i18n";
 
 const AutoResponderPanel = lazy(() => import("./AutoResponder"));
 const ComposerPanel = lazy(() => import("./Composer"));
 
 const TABS: [RightTab, string, LucideIcon][] = [
-  ["inspectors", "Inspect", ScanSearch],
-  ["composer", "Composer", Send],
-  ["autoresponder", "Mock Rules", Zap],
-  ["filters", "Filters", Filter],
-  ["timeline", "Timeline", ChartGantt],
-  ["structure", "Structure", FolderTree],
-  ["statistics", "Statistics", ChartColumn],
-  ["log", "Log", ScrollText],
+  ["inspectors", t("Inspect"), ScanSearch],
+  ["composer", t("Composer"), Send],
+  ["autoresponder", t("Mock Rules"), Zap],
+  ["filters", t("Filters"), Filter],
+  ["timeline", t("Timeline"), ChartGantt],
+  ["structure", t("Structure"), FolderTree],
+  ["statistics", t("Statistics"), ChartColumn],
+  ["log", t("Log"), ScrollText],
 ];
 
 export function RightPane() {
   const tab = useStore((s) => s.activeTab);
   const filtersOn = useStore((s) => s.filters?.enabled);
   const arOn = useStore((s) => s.status?.engine.autoresponder);
+  const compact = useCompactTabs();
   return (
     <div className="rpane">
-      <div className="rp-tabs">
+      <div className={`rp-tabs ${compact.on ? "compact" : ""}`} ref={compact.ref}>
         {TABS.map(([k, title, Icon]) => (
           <div key={k} className={`rp-tab ${tab === k ? "active" : ""}`} title={title} onClick={() => set({ activeTab: k })}>
             <Icon size={14} strokeWidth={1.8} className="rp-icon" />
@@ -54,7 +56,7 @@ export function RightPane() {
             {tab === "log" && <LogPanel />}
             {tab === "timeline" && <TimelinePanel />}
             {tab === "structure" && <StructurePanel />}
-            <Suspense fallback={<div className="placeholder">Loading…</div>}>
+            <Suspense fallback={<div className="placeholder">{t("Loading…")}</div>}>
               {tab === "autoresponder" && <AutoResponderPanel />}
               {tab === "composer" && <ComposerPanel />}
             </Suspense>
@@ -63,4 +65,25 @@ export function RightPane() {
       </div>
     </div>
   );
+}
+
+/** Icons only when the tab labels do not fit (German labels are longer than English ones). */
+function useCompactTabs() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [on, setOn] = useState(false);
+  const full = useRef(0); // width the tabs need with labels
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => {
+      const compact = el.classList.contains("compact");
+      if (!compact) full.current = el.scrollWidth;
+      setOn(full.current > el.clientWidth + 1);
+    };
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    check();
+    return () => ro.disconnect();
+  }, []);
+  return { ref, on };
 }

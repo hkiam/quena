@@ -1,6 +1,7 @@
 // Text Tools: quick encoders/decoders.
 import { useMemo, useState } from "react";
 import { b64decode } from "../lib/http";
+import { t } from "../i18n";
 
 const OPS = [
   "To Base64",
@@ -20,6 +21,23 @@ const OPS = [
 
 type Op = (typeof OPS)[number];
 
+// The ops are matched in run(); only their labels are translated.
+const OP_LABELS: Record<Op, string> = {
+  "To Base64": t("To Base64"),
+  "From Base64": t("From Base64"),
+  "URLEncode": t("URLEncode"),
+  "URLDecode": t("URLDecode"),
+  "HTML Encode": t("HTML Encode"),
+  "HTML Decode": t("HTML Decode"),
+  "To Hex": t("To Hex"),
+  "From Hex": t("From Hex"),
+  "JS String Escape": t("JS String Escape"),
+  "JS String Unescape": t("JS String Unescape"),
+  "Decode JWT": t("Decode JWT"),
+  "Unix time → Date": t("Unix time → Date"),
+  "UTF-8 bytes": t("UTF-8 bytes"),
+};
+
 function run(op: Op, s: string): string {
   const enc = new TextEncoder();
   try {
@@ -38,9 +56,9 @@ function run(op: Op, s: string): string {
       case "HTML Encode":
         return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
       case "HTML Decode": {
-        const t = document.createElement("textarea");
-        t.innerHTML = s;
-        return t.value;
+        const ta = document.createElement("textarea");
+        ta.innerHTML = s;
+        return ta.value;
       }
       case "To Hex":
         return [...enc.encode(s)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
@@ -65,7 +83,7 @@ function run(op: Op, s: string): string {
         return [...enc.encode(s)].join(", ");
     }
   } catch (e) {
-    return `Error: ${e}`;
+    return t("Error: {error}", { error: String(e) });
   }
 }
 
@@ -75,15 +93,15 @@ export function TextWizard({ initial }: { initial?: string }) {
   const out = useMemo(() => run(op, input), [op, input]);
   return (
     <div className="textwizard">
-      <textarea className="mono" rows={8} value={input} onChange={(e) => setInput(e.target.value)} placeholder="Input" autoFocus />
+      <textarea className="mono" rows={8} value={input} onChange={(e) => setInput(e.target.value)} placeholder={t("Input")} autoFocus />
       <div className="tw-ops">
         {OPS.map((o) => (
           <label key={o} className="f-check">
-            <input type="radio" checked={op === o} onChange={() => setOp(o)} /> {o}
+            <input type="radio" checked={op === o} onChange={() => setOp(o)} /> {OP_LABELS[o]}
           </label>
         ))}
       </div>
-      <textarea className="mono" rows={8} value={out} readOnly placeholder="Output" />
+      <textarea className="mono" rows={8} value={out} readOnly placeholder={t("Output")} />
     </div>
   );
 }
