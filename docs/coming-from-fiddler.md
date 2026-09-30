@@ -43,6 +43,22 @@ inspector arrangement any time with *View → Request Above / Beside Response*.
 Inspectors show the most common views (Headers, Body, Cookies, Raw and the content-specific
 ones) as tabs; the others are under **More**.
 
+## Map Remote and Map Local
+
+Both are Mock Rules, made with **Mock Rules → Add mapping…** and editable like any rule:
+
+| Mapping | Rule |
+|---|---|
+| Map Remote: a URL prefix to another server | `prefix:https://prod.example.com/api/` → `https://staging.example.com/api/` — the rest of the path and the query are appended, `Host` follows the target |
+| Map Local: a URL prefix to a folder | `prefix:https://example.com/static/` → `dir:/path/to/folder` — serves the file at the rest of the path, `index.html` for folders |
+
+A `dir:` action takes the rest after a `prefix:` match, else regex group 1, else the whole
+URL path, and never serves anything outside the folder (`..`, encoded `%2e%2e`, backslashes
+and symlinks pointing outside are refused with 403). Fiddler-style `regex:` rules with `$1`
+in an `https://…` action keep working as before. A remapped session is listed with its new
+URL; its comment and the `x-quena-mapped-from` / `x-quena-mapped-to` session flags keep both
+ends.
+
 ## Command field
 
 The command field in the toolbar understands the syntax you know:

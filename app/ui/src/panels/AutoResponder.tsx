@@ -4,15 +4,17 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { api, type ArRule, type ArState } from "../api";
 import { say, useStore } from "../store";
 import { showContextMenu } from "../components/ContextMenu";
+import { mapLocalRule, mapRemoteRule, type MappingKind } from "./autoresponderActions";
 
-const MATCH_TEMPLATES = ["*", "EXACT:https://example.com/path", "regex:(?i)^https://.*\\.example\\.com/api/(.*)$", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json", "URLWithBody:/soap regex:GetOrder"];
-const ACTIONS = ["*200", "*204", "*404", "*500", "*502", "*drop", "*delay:2000", "*redir:https://example.com/", "*header:X-Quena=1", "*CORSPreflightAllow", "*bpu", "*bpafter"];
+const MATCH_TEMPLATES = ["*", "EXACT:https://example.com/path", "prefix:https://example.com/api/", "regex:(?i)^https://.*\\.example\\.com/api/(.*)$", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json", "URLWithBody:/soap regex:GetOrder"];
+const ACTIONS = ["dir:/path/to/folder", "https://staging.example.com/api/", "*200", "*204", "*404", "*500", "*502", "*drop", "*delay:2000", "*redir:https://example.com/", "*header:X-Quena=1", "*CORSPreflightAllow", "*bpu", "*bpafter"];
 
 export default function AutoResponderPanel() {
   const [st, setSt] = useState<ArState | null>(null);
   const [sel, setSel] = useState<number | null>(null);
   const [edit, setEdit] = useState<{ match: string; action: string; latency: number }>({ match: "", action: "", latency: 0 });
   const [over, setOver] = useState(false);
+  const [mapping, setMapping] = useState<{ kind: MappingKind; from: string; to: string } | null>(null);
   const nonce = useStore((s) => s.arNonce);
   const version = useStore((s) => s.listVersion);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -52,6 +54,15 @@ export default function AutoResponderPanel() {
     } else {
       commit({ ...st, enabled: true, rules: [...st.rules, { id: 0, enabled: true, match: edit.match, action: edit.action, latencyMs: edit.latency, matchOnce: false, comment: "", hits: 0 }] }, true);
     }
+  };
+  const addMapping = () => {
+    if (!mapping) return;
+    const r = mapping.kind === "remote" ? mapRemoteRule(mapping.from, mapping.to) : mapLocalRule(mapping.from, mapping.to);
+    if ("error" in r) return say(r.error, "error");
+    // On top: a mapping is specific, and the first matching rule wins.
+    commit({ ...st, enabled: true, rules: [{ id: 0, enabled: true, match: r.match, action: r.action, latencyMs: 0, matchOnce: false, comment: r.comment, hits: 0 }, ...st.rules] }, true);
+    say(`${r.comment} rule added`);
+    setMapping(null);
   };
   const move = (d: number) => {
     if (!selected) return;
@@ -100,6 +111,18 @@ export default function AutoResponderPanel() {
           }}
         >
           Add Rule
+        </button>
+        <button
+          title="Map Remote (forward a URL prefix to another server) or Map Local (serve a folder)"
+          onClick={(e) => {
+            const b = e.currentTarget.getBoundingClientRect();
+            showContextMenu(b.left, b.bottom, [
+              { label: "Map Remote… (URL prefix → other server)", action: () => setMapping({ kind: "remote", from: "", to: "" }) },
+              { label: "Map Local… (URL prefix → folder)", action: () => setMapping({ kind: "local", from: "", to: "" }) },
+            ]);
+          }}
+        >
+          Add mapping…
         </button>
         <button
           onClick={async () => {
@@ -176,6 +199,57 @@ export default function AutoResponderPanel() {
         </table>
         {st.rules.length === 0 && <div className="placeholder">No rules. Add one below, or drag sessions from the list here to replay their responses.</div>}
       </div>
+      {mapping && (
+        <fieldset className="f-section ar-editor">
+          <legend>{mapping.kind === "remote" ? "Map Remote" : "Map Local"}</legend>
+          <div className="f-row">
+            <span>From URL prefix</span>
+            <div className="combo">
+              <input
+                className="mono"
+                autoFocus
+                value={mapping.from}
+                placeholder={mapping.kind === "remote" ? "https://prod.example.com/api/" : "https://example.com/static/"}
+                onChange={(e) => setMapping({ ...mapping, from: e.target.value })}
+                onKeyDown={(e) => e.key === "Enter" && addMapping()}
+              />
+            </div>
+          </div>
+          <div className="f-row">
+            <span>{mapping.kind === "remote" ? "To URL prefix" : "Folder"}</span>
+            <div className="combo">
+              <input
+                className="mono"
+                value={mapping.to}
+                placeholder={mapping.kind === "remote" ? "https://staging.example.com/api/" : "/path/to/folder"}
+                onChange={(e) => setMapping({ ...mapping, to: e.target.value })}
+                onKeyDown={(e) => e.key === "Enter" && addMapping()}
+              />
+              {mapping.kind === "local" && (
+                <button
+                  onClick={async () => {
+                    const p = await open({ directory: true, multiple: false });
+                    if (typeof p === "string") setMapping({ ...mapping, to: p });
+                  }}
+                >
+                  Choose folder…
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="btn-row">
+            <button className="primary" onClick={addMapping} disabled={!mapping.from.trim() || !mapping.to.trim()}>
+              Add
+            </button>
+            <button onClick={() => setMapping(null)}>Cancel</button>
+            <span className="muted small">
+              {mapping.kind === "remote"
+                ? "The rest of the path and the query are kept: …/api/users?id=1 → …/api/users?id=1 on the other server."
+                : "Serves the file at the rest of the path (index.html for folders), never anything outside the folder."}
+            </span>
+          </div>
+        </fieldset>
+      )}
       <fieldset className="f-section ar-editor">
         <legend>{selected ? "Rule Editor" : "New Rule"}</legend>
         <div className="f-row">
@@ -192,7 +266,7 @@ export default function AutoResponderPanel() {
         <div className="f-row">
           <span>then respond with</span>
           <div className="combo">
-            <input className="mono" value={edit.action} placeholder="*404, file path, session:12, https://other/…" onChange={(e) => setEdit({ ...edit, action: e.target.value })} list="ar-action" />
+            <input className="mono" value={edit.action} placeholder="*404, file path, dir:/folder, session:12, https://other/…" onChange={(e) => setEdit({ ...edit, action: e.target.value })} list="ar-action" />
             <datalist id="ar-action">
               {ACTIONS.map((a) => (
                 <option key={a} value={a} />
@@ -228,7 +302,7 @@ export default function AutoResponderPanel() {
               Remove
             </button>
           )}
-          <span className="muted small">Rules are evaluated top to bottom; the first match wins. regex rules support $1 in the action.</span>
+          <span className="muted small">Rules are evaluated top to bottom; the first match wins. regex rules support $1 in the action; after prefix: an https://… target or dir:folder gets the rest of the URL.</span>
         </div>
       </fieldset>
     </div>

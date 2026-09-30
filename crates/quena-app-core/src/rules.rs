@@ -25,10 +25,15 @@ use tokio::sync::oneshot;
 pub struct Rule {
     pub id: u64,
     pub enabled: bool,
-    /// Match expression (`*`, `exact:`, `regex:`, `NOT:`, `METHOD:`, `HEADER:`, `URLWithBody:` or substring).
+    /// Match expression (`*`, `exact:`, `prefix:`, `regex:`, `NOT:`, `METHOD:`, `HEADER:`, `URLWithBody:` or substring).
     #[serde(rename = "match")]
     pub match_: String,
-    /// Action (`file path`, `*404`, `*delay:500`, `*drop`, `*redir:url`, `*header:N=V`, `*bpu`, `*bpafter`, `http://…`, `session:ID`).
+    /// Action (`file path`, `dir:folder`, `*404`, `*delay:500`, `*drop`, `*redir:url`, `*header:N=V`, `*bpu`, `*bpafter`, `http://…`, `session:ID`).
+    ///
+    /// With a `prefix:` match, `http(s)://…` is *Map Remote*: the part of the URL after the prefix
+    /// (rest of the path and the query) is appended to the target. `dir:folder` is *Map Local*: it
+    /// serves the file at the rest of the path inside the folder (the rest after a `prefix:` match,
+    /// regex group 1, or else the whole URL path), never outside of it.
     pub action: String,
     pub latency_ms: u32,
     pub match_once: bool,
@@ -62,6 +67,8 @@ impl Default for AutoResponderState {
 enum Matcher {
     All,
     Exact(String),
+    /// URL starts with this text (ASCII case-insensitive); the rest is handed to the action.
+    Prefix(String),
     Regex(Regex),
     Not(String),
     Contains(String),
@@ -78,6 +85,12 @@ impl Matcher {
             Matcher::All
         } else if lower.starts_with("exact:") {
             Matcher::Exact(s[6..].to_string())
+        } else if lower.starts_with("prefix:") {
+            let p = s[7..].trim();
+            if p.is_empty() {
+                return Err(anyhow!("prefix: needs a URL prefix, e.g. prefix:https://example.com/api/"));
+            }
+            Matcher::Prefix(p.to_string())
         } else if lower.starts_with("regex:") {
             Matcher::Regex(Regex::new(&s[6..]).map_err(|e| anyhow!("regex: {e}"))?)
         } else if lower.starts_with("not:") {
@@ -108,6 +121,7 @@ impl Matcher {
         match self {
             Matcher::All => true,
             Matcher::Exact(u) => head.url == *u,
+            Matcher::Prefix(p) => head.url.get(..p.len()).is_some_and(|x| x.eq_ignore_ascii_case(p)),
             Matcher::Regex(r) => r.is_match(&head.url),
             Matcher::Not(t) => !head.url.to_lowercase().contains(t.as_str()),
             Matcher::Contains(t) => head.url.to_lowercase().contains(t.as_str()),
@@ -122,6 +136,113 @@ impl Matcher {
             }
         }
     }
+
+    /// What the action gets as "the rest of the URL" (see [`Rest`]). Only called after a match.
+    fn rest(&self, url: &str) -> Rest {
+        match self {
+            Matcher::Prefix(p) => Rest::Prefix(url.get(p.len()..).unwrap_or("").to_string()),
+            Matcher::Method(_, inner) | Matcher::UrlWithBody(inner, _) => inner.rest(url),
+            Matcher::Regex(re) => re.captures(url).and_then(|c| c.get(1)).map(|m| Rest::Group(m.as_str().to_string())).unwrap_or(Rest::None),
+            _ => Rest::None,
+        }
+    }
+}
+
+/// The part of a matched URL that mapping actions carry over.
+#[derive(Debug, Clone, PartialEq)]
+enum Rest {
+    None,
+    /// Everything after a `prefix:` match (path rest and query).
+    Prefix(String),
+    /// Regex capture group 1.
+    Group(String),
+}
+
+/// Map Remote: append the rest of the original URL to the target prefix. Joins `/` sensibly
+/// (no `//`, a `/` after a bare origin) and merges two queries with `&`.
+fn join_target(target: &str, rest: &str) -> String {
+    if rest.is_empty() {
+        return target.to_string();
+    }
+    let has_path = target.split_once("://").is_some_and(|(_, r)| r.contains(['/', '?', '#']));
+    if target.ends_with('/') && rest.starts_with('/') {
+        format!("{target}{}", &rest[1..])
+    } else if rest.starts_with('?') && target.contains('?') {
+        format!("{target}&{}", &rest[1..])
+    } else if !has_path && !rest.starts_with(['/', '?', '#']) {
+        format!("{target}/{rest}")
+    } else {
+        format!("{target}{rest}")
+    }
+}
+
+fn percent_decode(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let h = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok())?;
+            out.push(h);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Why Map Local did not find a file (status + message for the synthetic response).
+#[derive(Debug, PartialEq)]
+struct LocalMiss(u16, String);
+
+/// Map Local: resolve the URL rest `rel` inside `base`, never escaping it.
+///
+/// The query/fragment is cut off, the path percent-decoded once, and then rejected if any
+/// segment is `..`, contains a backslash, NUL or (on Windows) a drive colon. Both the folder
+/// and the final file are canonicalised and the file must still lie inside the folder, so a
+/// symlink pointing outside is refused as well. Directories serve their `index.html`.
+fn resolve_in_dir(base: &str, rel: &str) -> std::result::Result<PathBuf, LocalMiss> {
+    let forbid = || LocalMiss(403, "[Quena] Map Local: the path leaves the mapped folder and was refused".into());
+    let base_p = std::path::Path::new(base);
+    if !base_p.is_absolute() {
+        return Err(LocalMiss(500, format!("[Quena] Map Local: the folder must be an absolute path: {base}")));
+    }
+    let base_c = std::fs::canonicalize(base_p).map_err(|_| LocalMiss(404, format!("[Quena] Map Local: folder not found: {base}")))?;
+    let rel = &rel[..rel.find(['?', '#']).unwrap_or(rel.len())];
+    let decoded = percent_decode(rel).ok_or_else(|| LocalMiss(400, "[Quena] Map Local: invalid percent-encoding in the path".into()))?;
+    let mut p = base_c.clone();
+    let mut shown = String::new();
+    for seg in decoded.split('/') {
+        if seg.is_empty() || seg == "." {
+            continue;
+        }
+        if seg == ".." || seg.contains(['\\', '\0']) || (cfg!(windows) && seg.contains(':')) {
+            return Err(forbid());
+        }
+        p.push(seg);
+        shown.push('/');
+        shown.push_str(seg);
+    }
+    if shown.is_empty() {
+        shown.push('/');
+    }
+    let not_found = || LocalMiss(404, format!("[Quena] Map Local: no file {shown} in {}", base_c.display()));
+    let mut c = std::fs::canonicalize(&p).map_err(|_| not_found())?;
+    if !c.starts_with(&base_c) {
+        return Err(forbid());
+    }
+    if c.is_dir() {
+        c = std::fs::canonicalize(c.join("index.html")).map_err(|_| LocalMiss(404, format!("[Quena] Map Local: {shown} is a folder without index.html in {}", base_c.display())))?;
+        if !c.starts_with(&base_c) {
+            return Err(forbid());
+        }
+    }
+    if !c.is_file() {
+        return Err(not_found());
+    }
+    Ok(c)
 }
 
 struct Compiled {
@@ -147,6 +268,16 @@ pub(crate) fn guess_type(path: &std::path::Path) -> &'static str {
         Some("woff") => "font/woff",
         Some("pdf") => "application/pdf",
         Some("wasm") => "application/wasm",
+        Some("map") => "application/json",
+        Some("csv") => "text/csv; charset=utf-8",
+        Some("md") => "text/markdown; charset=utf-8",
+        Some("yaml" | "yml") => "application/yaml",
+        Some("avif") => "image/avif",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mp3") => "audio/mpeg",
         _ => "application/octet-stream",
     }
 }
@@ -579,7 +710,7 @@ impl Rules {
         b.all_responses || b.response_url.as_ref().is_some_and(|u| req.url.to_lowercase().contains(u.as_str())) || b.status == Some(resp.status)
     }
 
-    fn find_rule(&self, head: &RequestHead, body: Option<&Body>) -> Option<(Rule, Option<regex::Captures<'static>>)> {
+    fn find_rule(&self, head: &RequestHead, body: Option<&Body>) -> Option<(Rule, Rest)> {
         let s = self.ar.read();
         if !s.enabled {
             return None;
@@ -593,9 +724,10 @@ impl Rules {
             if x.matcher.matches(head, body) {
                 x.rule.hits += 1;
                 let mut rule = x.rule.clone();
-                // Regex capture substitution ($1 …) in the action.
+                // Regex capture substitution ($1 …) in the action. Not for a Map Local
+                // folder: it is taken literally, the URL rest is resolved inside it.
                 if let Matcher::Regex(re) = &x.matcher {
-                    if rule.action.contains('$') {
+                    if rule.action.contains('$') && !rule.action.trim_start().to_ascii_lowercase().starts_with("dir:") {
                         if let Some(caps) = re.captures(&head.url) {
                             let mut out = String::new();
                             caps.expand(&rule.action, &mut out);
@@ -603,7 +735,8 @@ impl Rules {
                         }
                     }
                 }
-                return Some((rule, None));
+                let rest = x.matcher.rest(&head.url);
+                return Some((rule, rest));
             }
         }
         None
@@ -659,9 +792,16 @@ impl Rules {
                 return Some((ResponseHead { status, reason, version: v, headers }, body));
             }
         }
+        self.plain_file_response(p, br)
+    }
+
+    /// A 200 response with the file's bytes and a Content-Type guessed from its extension.
+    fn plain_file_response(&self, p: &std::path::Path, mut src: impl std::io::Read) -> Option<(ResponseHead, Body)> {
+        let core = self.core()?;
+        let cap = core.capture();
         let mut w = cap.bodies.writer_with_limit(u64::MAX);
         let mut buf = vec![0u8; 1 << 20];
-        while let Ok(n) = br.read(&mut buf) {
+        while let Ok(n) = src.read(&mut buf) {
             if n == 0 || w.write(&buf[..n]).is_err() {
                 break;
             }
@@ -689,12 +829,33 @@ impl Rules {
         Some((head, body))
     }
 
-    /// Turn an AutoResponder action into a proxy action.
-    fn apply_action(&self, rule: &Rule, head: RequestHead) -> Option<RequestAction> {
+    /// Turn an AutoResponder action into a proxy action. `mapped` receives where a
+    /// Map Remote (`true`) / Map Local (`false`) action sent the request (shown on the session).
+    fn apply_action(&self, rule: &Rule, head: RequestHead, rest: &Rest, mapped: &mut Option<(bool, String)>) -> Option<RequestAction> {
         let latency = if self.ar.read().enable_latency { rule.latency_ms as u64 } else { 0 };
         let a = rule.action.trim();
         let lower = a.to_ascii_lowercase();
         let respond = |x: Option<(ResponseHead, Body)>| x.map(|(h, b)| RequestAction::Respond { head: h, body: b, delay_ms: latency });
+        if lower.starts_with("dir:") {
+            let dir = a[4..].trim();
+            let rel = match rest {
+                Rest::Prefix(r) | Rest::Group(r) => r.clone(),
+                Rest::None => split_url_host_path(&head.url).1,
+            };
+            return match resolve_in_dir(dir, &rel) {
+                Ok(p) => {
+                    *mapped = Some((false, format!("local file {}", p.display())));
+                    match std::fs::File::open(&p) {
+                        Ok(f) => respond(self.plain_file_response(&p, f)),
+                        Err(e) => respond(self.synthetic(500, "text/plain; charset=utf-8", format!("[Quena] Map Local: cannot read {}: {e}", p.display()).as_bytes(), &[])),
+                    }
+                }
+                Err(LocalMiss(code, msg)) => {
+                    *mapped = Some((false, format!("{dir} (HTTP {code})")));
+                    respond(self.synthetic(code, "text/plain; charset=utf-8", msg.as_bytes(), &[]))
+                }
+            };
+        }
         if let Some(rest) = lower.strip_prefix('*') {
             if let Ok(code) = rest.parse::<u16>() {
                 return respond(self.synthetic(code, "text/plain; charset=utf-8", format!("[Quena] Mock Rules: {code}").as_bytes(), &[]));
@@ -744,10 +905,16 @@ impl Rules {
             }
         }
         if lower.starts_with("http://") || lower.starts_with("https://") {
-            // Retarget the request.
+            // Retarget the request (Map Remote with a prefix: match keeps the rest of the URL).
+            // The upstream client connects (and sends TLS SNI) from the URL; Host follows it.
+            let target = match rest {
+                Rest::Prefix(r) => join_target(a, r),
+                _ => a.to_string(),
+            };
             let mut h = head;
-            let (host, _) = split_url(a, "GET");
-            h.url = a.to_string();
+            let host = authority_of(&target).unwrap_or_else(|| split_url(&target, "GET").0);
+            *mapped = Some((true, target.clone()));
+            h.url = target;
             h.headers.set("Host", host);
             return Some(RequestAction::Forward { head: Some(h), body: None, delay_ms: latency });
         }
@@ -847,19 +1014,35 @@ impl Interceptor for Rules {
             let mut script_edited = false;
             // 1. AutoResponder
             let mut want_bp = false;
-            if let Some((rule, _)) = this.find_rule(&head, body.as_ref()) {
+            if let Some((rule, rest)) = this.find_rule(&head, body.as_ref()) {
                 let a = rule.action.trim().to_ascii_lowercase();
                 if a == "*bpu" {
                     want_bp = true;
                 } else if a == "*bpafter" {
                     this.break_response.lock().insert(s.id);
-                } else if let Some(action) = this.apply_action(&rule, head.clone()) {
-                    s.live.update(|d| {
-                        if d.summary.comment.is_empty() {
-                            d.summary.comment = format!("Mock rule: {}", rule.match_);
-                        }
-                    });
-                    return action;
+                } else {
+                    let mut mapped = None;
+                    if let Some(action) = this.apply_action(&rule, head.clone(), &rest, &mut mapped) {
+                        // Map Remote: the list shows the new target, so the comment names the
+                        // original URL. Map Local: the list keeps the URL, the comment names the
+                        // file. Session flags record both ends either way.
+                        let original = head.url.clone();
+                        s.live.update(|d| {
+                            if d.summary.comment.is_empty() {
+                                d.summary.comment = match &mapped {
+                                    Some((true, _)) => format!("Mapped from {original}"),
+                                    Some((false, to)) => format!("Mapped to {to}"),
+                                    None => format!("Mock rule: {}", rule.match_),
+                                };
+                            }
+                            if let Some((_, to)) = &mapped {
+                                d.extra_flags.retain(|(k, _)| k != "x-quena-mapped-from" && k != "x-quena-mapped-to");
+                                d.extra_flags.push(("x-quena-mapped-from".into(), original.clone()));
+                                d.extra_flags.push(("x-quena-mapped-to".into(), to.clone()));
+                            }
+                        });
+                        return action;
+                    }
                 }
             } else if this.ar.read().enabled && !this.ar.read().unmatched_passthrough {
                 if let Some((h, b)) = this.synthetic(404, "text/plain; charset=utf-8", b"[Quena] Mock Rules: no rule matched and unmatched requests are not passed through", &[]) {
@@ -1202,5 +1385,41 @@ mod tests {
         assert_eq!(authority_of("http://example.com:8080/x"), Some("example.com:8080".into()));
         assert_eq!(authority_of("http://user@example.com/x"), Some("example.com".into()));
         assert_eq!(authority_of("example.com:443"), None); // no scheme
+    }
+
+    #[test]
+    fn prefix_and_join_target() {
+        let m = Matcher::parse("prefix:https://Prod.example.com/api/").unwrap();
+        let h = head("GET", "https://prod.example.com/api/users?id=1");
+        assert!(m.matches(&h, None));
+        assert_eq!(m.rest(&h.url), Rest::Prefix("users?id=1".into()));
+        assert!(!m.matches(&head("GET", "https://prod.example.com/other"), None));
+        assert!(Matcher::parse("prefix:").is_err());
+        assert_eq!(join_target("https://s.example.com/api/", "users?id=1"), "https://s.example.com/api/users?id=1");
+        assert_eq!(join_target("https://s.example.com/api/", "/users"), "https://s.example.com/api/users");
+        assert_eq!(join_target("https://s.example.com", "users"), "https://s.example.com/users");
+        assert_eq!(join_target("https://s.example.com", "/users?x"), "https://s.example.com/users?x");
+        assert_eq!(join_target("https://s.example.com/x?k=1", "?q=2"), "https://s.example.com/x?k=1&q=2");
+        assert_eq!(join_target("https://s.example.com/v2", ""), "https://s.example.com/v2");
+    }
+
+    #[test]
+    fn map_local_resolution() {
+        let d = tempfile::tempdir().unwrap();
+        let base = d.path().join("site");
+        std::fs::create_dir_all(base.join("sub")).unwrap();
+        std::fs::write(base.join("sub/index.html"), "x").unwrap();
+        std::fs::write(base.join("a b.txt"), "x").unwrap();
+        let b = base.to_str().unwrap();
+        assert!(resolve_in_dir(b, "sub/").unwrap().ends_with("sub/index.html"));
+        assert!(resolve_in_dir(b, "a%20b.txt?v=1").unwrap().ends_with("a b.txt"));
+        assert_eq!(resolve_in_dir(b, "../site/a%20b.txt").unwrap_err().0, 403);
+        assert_eq!(resolve_in_dir(b, "%2e%2e/x").unwrap_err().0, 403);
+        assert_eq!(resolve_in_dir(b, "x%5c..%5cy").unwrap_err().0, 403);
+        assert_eq!(resolve_in_dir(b, "%00").unwrap_err().0, 403);
+        assert_eq!(resolve_in_dir(b, "%zz").unwrap_err().0, 400);
+        assert_eq!(resolve_in_dir(b, "nope").unwrap_err().0, 404);
+        assert_eq!(resolve_in_dir(b, "").unwrap_err().0, 404); // folder without index.html
+        assert_eq!(resolve_in_dir("relative/dir", "x").unwrap_err().0, 500);
     }
 }

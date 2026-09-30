@@ -196,3 +196,133 @@ fn scripting_through_proxy() {
 
     core.shutdown();
 }
+
+/// `curl --path-as-is` through the proxy → (status, content type, body).
+fn fetch(proxy: &str, url: &str) -> (u16, String, String) {
+    let o = Command::new("curl").args(["-sS", "--path-as-is", "--max-time", "20", "-x", proxy, "-w", "\n@@%{http_code}|%{content_type}", url]).output().unwrap();
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    let (body, meta) = out.rsplit_once("\n@@").unwrap_or((&out, "0|"));
+    let (code, ct) = meta.split_once('|').unwrap_or((meta, ""));
+    (code.trim().parse().unwrap_or(0), ct.trim().to_string(), body.to_string())
+}
+
+/// The captured session whose URL (as listed) is `url`.
+fn session_for(core: &AppCore, url: &str) -> quena_model::SessionDetail {
+    let cap = core.capture();
+    let t = Instant::now();
+    loop {
+        if let Some(d) = (1..500).rev().filter_map(|id| cap.detail(id)).find(|d| d.summary.full_url() == url) {
+            return d;
+        }
+        assert!(t.elapsed() < Duration::from_secs(10), "no session for {url}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Map Remote (prefix → prefix, regex + $1) and Map Local (prefix → folder) through the proxy.
+#[test]
+fn map_remote_and_map_local() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("settings.json"),
+        r#"{"proxy":{"port":18872,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}}"#,
+    )
+    .unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap();
+    core.set_proxy_engine(engine.clone());
+    core.start_capture().unwrap();
+    let addr = engine.proxy.listen_addrs().into_iter().find(|a| a.is_ipv4()).unwrap();
+    let proxy = format!("http://{addr}");
+    let port = echo_server();
+    let rules = core.rules.clone().unwrap();
+
+    // A site folder next to a secret that must stay out of reach.
+    let site = dir.path().join("site");
+    std::fs::create_dir_all(site.join("a")).unwrap();
+    std::fs::create_dir_all(site.join("docs")).unwrap();
+    std::fs::write(site.join("index.html"), "<h1>home</h1>").unwrap();
+    std::fs::write(site.join("a/b.json"), r#"{"b":1}"#).unwrap();
+    std::fs::write(site.join("docs/index.html"), "<h1>docs</h1>").unwrap();
+    std::fs::write(site.join("app.css"), "body{}").unwrap();
+    std::fs::write(dir.path().join("secret.txt"), "TOP-SECRET").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(dir.path().join("secret.txt"), site.join("link.txt")).unwrap();
+
+    rules
+        .set_autoresponder(
+            AutoResponderState {
+                enabled: true,
+                unmatched_passthrough: true,
+                enable_latency: false,
+                rules: vec![
+                    Rule { match_: "prefix:http://prod.invalid/api/".into(), action: format!("http://127.0.0.1:{port}/v2/"), ..Default::default() },
+                    Rule { match_: "prefix:http://bare.invalid".into(), action: format!("http://127.0.0.1:{port}"), ..Default::default() },
+                    Rule { match_: r"regex:^http://old\.invalid/(.*)$".into(), action: format!("http://127.0.0.1:{port}/new/$1"), ..Default::default() },
+                    Rule { match_: "prefix:http://local.invalid/static/".into(), action: format!("dir:{}", site.display()), ..Default::default() },
+                ],
+            },
+            true,
+        )
+        .unwrap();
+
+    // --- Map Remote: rest of the path and the query survive, Host follows the target.
+    let from = "http://prod.invalid/api/users/7?q=a%20b&x=1";
+    let (code, _, out) = fetch(&proxy, from);
+    assert_eq!(code, 200, "{out}");
+    assert!(out.starts_with("GET /v2/users/7?q=a%20b&x=1 HTTP/1.1"), "{out}");
+    assert!(out.to_ascii_lowercase().contains(&format!("host: 127.0.0.1:{port}")), "{out}");
+    // The session shows the target; the comment and flags keep the original URL.
+    let to = format!("http://127.0.0.1:{port}/v2/users/7?q=a%20b&x=1");
+    let d = session_for(&core, &to);
+    assert_eq!(d.summary.comment, format!("Mapped from {from}"));
+    assert!(d.extra_flags.iter().any(|(k, v)| k == "x-quena-mapped-from" && v == from), "{:?}", d.extra_flags);
+    assert!(d.summary.has_flag(quena_model::flags::TAMPERED));
+    // A bare origin maps onto a bare origin.
+    let (_, _, out) = fetch(&proxy, "http://bare.invalid/deep/path?k=v");
+    assert!(out.starts_with("GET /deep/path?k=v HTTP/1.1"), "{out}");
+    // regex + $1 keeps the query when the group captures it.
+    let (_, _, out) = fetch(&proxy, "http://old.invalid/x/y?z=9");
+    assert!(out.starts_with("GET /new/x/y?z=9 HTTP/1.1"), "{out}");
+
+    // --- Map Local: files, index.html, Content-Type, 404.
+    let (code, ct, out) = fetch(&proxy, "http://local.invalid/static/a/b.json?v=3");
+    assert_eq!((code, ct.as_str(), out.as_str()), (200, "application/json", r#"{"b":1}"#));
+    let (code, ct, out) = fetch(&proxy, "http://local.invalid/static/");
+    assert_eq!((code, out.as_str()), (200, "<h1>home</h1>"));
+    assert!(ct.starts_with("text/html"), "{ct}");
+    let (code, _, out) = fetch(&proxy, "http://local.invalid/static/docs");
+    assert_eq!((code, out.as_str()), (200, "<h1>docs</h1>"));
+    let (code, ct, _) = fetch(&proxy, "http://local.invalid/static/app.css");
+    assert_eq!((code, ct.as_str()), (200, "text/css"));
+    let (code, _, out) = fetch(&proxy, "http://local.invalid/static/missing.txt");
+    assert_eq!(code, 404, "{out}");
+    assert!(out.contains("Map Local: no file /missing.txt"), "{out}");
+    let d = session_for(&core, "http://local.invalid/static/a/b.json?v=3");
+    assert!(d.summary.comment.starts_with("Mapped to local file "), "{}", d.summary.comment);
+
+    // --- Map Local never leaves the folder.
+    for url in [
+        "http://local.invalid/static/../secret.txt",
+        "http://local.invalid/static/a/../../secret.txt",
+        "http://local.invalid/static/%2e%2e/secret.txt",
+        "http://local.invalid/static/%2E%2E%2Fsecret.txt",
+        "http://local.invalid/static/a%2f..%2f..%2fsecret.txt",
+        "http://local.invalid/static/..%5csecret.txt",
+        "http://local.invalid/static//etc/passwd",
+        #[cfg(unix)]
+        "http://local.invalid/static/link.txt",
+    ] {
+        let (code, _, out) = fetch(&proxy, url);
+        assert!(!out.contains("TOP-SECRET") && !out.contains("root:"), "{url} leaked: {out}");
+        assert!(code == 403 || code == 404, "{url}: {code} {out}");
+    }
+    let (code, _, _) = fetch(&proxy, "http://local.invalid/static/../secret.txt");
+    assert_eq!(code, 403);
+    let (code, _, _) = fetch(&proxy, "http://local.invalid/static/%2e%2e/secret.txt");
+    assert_eq!(code, 403);
+    #[cfg(unix)]
+    assert_eq!(fetch(&proxy, "http://local.invalid/static/link.txt").0, 403);
+
+    core.shutdown();
+}
