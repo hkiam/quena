@@ -54,6 +54,20 @@ docker run --rm -e HOME=/tmp/h -v "$PWD":/src -v quena-target:/src/target -w /sr
 > Then test with `curl -x http://127.0.0.1:8866 …` (add `--cacert /tmp/quena-dev/quena-root-ca.pem`
 > for HTTPS) instead of trusting the certificate system-wide.
 
+## UI end-to-end tests
+
+`app/e2e` starts the real app (built with `tauri build`) through WebDriver and drives the UI:
+session list, inspectors, header filter, find, settings, live traffic through the proxy, the
+command field and the capture switch. It runs on Linux (tauri-driver + WebKitWebDriver) in CI
+and locally in the Linux container:
+
+```bash
+docker run --rm -e HOME=/tmp/h -v "$PWD":/src -v quena-target:/src/target -w /src quena-linux \
+  sh -c 'mkdir -p $HOME && xvfb-run -a dbus-run-session -- app/e2e/run.sh target/release/quena'
+```
+
+The tests use an isolated data directory and never touch the system proxy.
+
 ## Checks
 
 Please make sure these pass before opening a pull request (CI runs the tests, the UI build and

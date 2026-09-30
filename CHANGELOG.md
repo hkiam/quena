@@ -10,6 +10,7 @@ contain breaking changes (settings, file formats, plugin API).
 ### Added
 - macOS builds are universal (Apple Silicon and Intel); Linux packages for arm64 (aarch64)
   in addition to x86_64.
+- UI end-to-end tests that start the real app and drive it through WebDriver (Linux, in CI).
 - Requests the HTTP parser rejects (malformed request line or headers, too large heads) appear
   as aborted sessions with the raw bytes received, instead of only a 400 to the client.
 

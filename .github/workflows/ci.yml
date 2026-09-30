@@ -135,6 +135,12 @@ jobs:
           else
             npm exec --prefix app/ui -- tauri build "${args[@]}" -- --profile "$BUILD_PROFILE"
           fi
+      - name: UI end-to-end tests (real app via WebDriver)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get install -y --no-install-recommends webkit2gtk-driver xvfb
+          cargo install tauri-driver --locked
+          xvfb-run -a dbus-run-session -- app/e2e/run.sh "${{ matrix.out }}/$BUILD_PROFILE/quena"
       - name: Portable ZIP (Windows, xcopy deployment)
         if: runner.os == 'Windows'
         shell: pwsh
