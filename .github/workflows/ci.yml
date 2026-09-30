@@ -145,17 +145,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends webkit2gtk-driver xvfb
           cargo install tauri-driver --locked
           xvfb-run -a -s "-screen 0 1920x1080x24" dbus-run-session -- app/e2e/run.sh "${{ matrix.out }}/$BUILD_PROFILE/quena"
-      - name: UI end-to-end tests (Windows, WebView2 via Edge WebDriver)
+      # The Windows e2e tests run in their own job on windows-2022 (see e2e-windows): on the
+      # windows-2025 image WebView2 never opens its DevTools port under WebDriver
+      # (actions/runner-images#14738). They test exactly this build.
+      - name: Upload the app for the Windows UI tests
         if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          cargo install tauri-driver --locked
-          # Edge WebDriver in the version of the installed WebView2 runtime.
-          ver=$(pwsh -NoProfile -Command "(Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv")
-          echo "WebView2 $ver"
-          curl -fsSL --retry 3 -o edgedriver.zip "https://msedgedriver.microsoft.com/$ver/edgedriver_win64.zip"
-          unzip -q -o edgedriver.zip -d "$RUNNER_TEMP/edgedriver"
-          EDGEDRIVER="$RUNNER_TEMP/edgedriver/msedgedriver.exe" app/e2e/run.sh "target/$BUILD_PROFILE/quena.exe"
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-windows-app
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            target/${{ env.BUILD_PROFILE }}/quena.exe
+            plugins/dist/
       - name: Portable ZIP (Windows, xcopy deployment)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -191,9 +193,36 @@ jobs:
             ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/rpm/*.rpm
             ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/appimage/*.AppImage
 
+  e2e-windows:
+    name: UI end-to-end tests (Windows, WebView2)
+    needs: build
+    # Not windows-latest: see the upload step in the build job.
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Same paths as in the build job: the dev-build fallback finds plugins/dist next to the
+      # checkout the binary was built from (identical on both runners).
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-windows-app
+          path: .
+      - name: Run the UI tests (tauri-driver + Edge WebDriver)
+        shell: bash
+        run: |
+          cargo install tauri-driver --locked
+          # Edge WebDriver in the version of the installed WebView2 runtime.
+          ver=$(pwsh -NoProfile -Command "(Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv")
+          echo "WebView2 $ver"
+          curl -fsSL --retry 3 -o edgedriver.zip "https://msedgedriver.microsoft.com/$ver/edgedriver_win64.zip"
+          unzip -q -o edgedriver.zip -d "$RUNNER_TEMP/edgedriver"
+          EDGEDRIVER="$RUNNER_TEMP/edgedriver/msedgedriver.exe" app/e2e/run.sh "target/$BUILD_PROFILE/quena.exe"
+
   release:
     name: draft release
-    needs: build
+    needs: [build, e2e-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
