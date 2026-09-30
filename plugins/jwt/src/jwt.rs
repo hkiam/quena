@@ -198,19 +198,33 @@ pub fn span(secs: i64) -> String {
     if parts.is_empty() { "0 s".into() } else { parts.join(" ") }
 }
 
-/// Seconds of a NumericDate claim; `None` for non-numbers and absurd values.
-fn numeric_date(v: &Value) -> Option<i64> {
+/// Above this a NumericDate (seconds) would lie after the year 5000: such values are almost
+/// always milliseconds (JavaScript `Date.now()`), and are shown as `value / 1000`.
+const MILLIS_ABOVE: f64 = 1e11;
+
+/// Seconds of a NumericDate claim and whether the value looked like milliseconds; `None` for
+/// non-numbers and absurd values.
+fn numeric_date_ms(v: &Value) -> Option<(i64, bool)> {
     let f = v.as_f64()?;
-    (f.is_finite() && f.abs() < 1e13).then(|| f.floor() as i64)
+    if !f.is_finite() || f.abs() >= 1e13 {
+        return None;
+    }
+    Some(if f.abs() > MILLIS_ABOVE { ((f / 1000.0).floor() as i64, true) } else { (f.floor() as i64, false) })
+}
+
+/// Seconds of a NumericDate claim (milliseconds converted); `None` for non-numbers and absurd values.
+fn numeric_date(v: &Value) -> Option<i64> {
+    numeric_date_ms(v).map(|(t, _)| t)
 }
 
 fn time_value(claim: &str, v: &Value, now: Option<i64>) -> Option<String> {
-    let t = numeric_date(v)?;
+    let (t, millis) = numeric_date_ms(v)?;
     let raw = match v {
         Value::Num(n) => n.clone(),
         _ => t.to_string(),
     };
-    let mut s = format!("{} ({raw})", iso_utc(t));
+    let note = if millis { "; looks like milliseconds, shown as value / 1000" } else { "" };
+    let mut s = format!("{} ({raw}{note})", iso_utc(t));
     if let Some(now) = now {
         let d = t - now;
         let rel = match claim {
@@ -464,7 +478,7 @@ fn token_nodes(f: &Found, now: Option<i64>, o: &mut Out) {
                         let value = if TIME_CLAIMS.contains(&k.as_str()) {
                             time_value(k, v, now).unwrap_or_else(|| clip(display(v), 1024))
                         } else if k == "scope" {
-                            v.as_str().map(|s| s.split_whitespace().collect::<Vec<_>>().join(", ")).unwrap_or_else(|| display(v))
+                            clip(v.as_str().map(|s| s.split_whitespace().collect::<Vec<_>>().join(", ")).unwrap_or_else(|| display(v)), 1024)
                         } else {
                             clip(display(v), 1024)
                         };

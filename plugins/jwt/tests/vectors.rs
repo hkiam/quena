@@ -242,3 +242,19 @@ fn mutations_never_panic() {
         }
     }
 }
+
+#[test]
+fn millisecond_dates_and_long_scopes() {
+    // exp/iat in milliseconds (Date.now()) used to show as the year ~56 000.
+    let scope = (0..2000).map(|i| format!("s{i}")).collect::<Vec<_>>().join(" ");
+    let payload = format!(r#"{{"iat":1727690400000,"exp":1727694300000,"nbf":1727690400,"scope":"{scope}"}}"#);
+    let tok = make(r#"{"alg":"HS256"}"#, &payload, &[1u8; 32]);
+    let n = nodes("authorization", &format!("Bearer {tok}"), Some(NOW));
+    assert_eq!(field(&n, "iat (Issued at)"), Some("2024-09-30 10:00:00 UTC (1727690400000; looks like milliseconds, shown as value / 1000) – 12 min ago"));
+    assert_eq!(field(&n, "exp (Expiration time)"), Some("2024-09-30 11:05:00 UTC (1727694300000; looks like milliseconds, shown as value / 1000) – valid for 53 min"));
+    // Seconds stay seconds.
+    assert_eq!(field(&n, "nbf (Not before)"), Some("2024-09-30 10:00:00 UTC (1727690400) – 12 min ago"));
+    assert_eq!(field(&n, "Status"), Some("valid for 53 min"));
+    let s = field(&n, "scope (Scopes)").unwrap();
+    assert!(s.len() < 1100 && s.starts_with("s0, s1, ") && s.ends_with(" bytes)"), "{} bytes", s.len());
+}

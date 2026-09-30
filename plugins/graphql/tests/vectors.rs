@@ -234,3 +234,21 @@ fn deep_nesting_is_limited() {
     let out = render(Some("application/graphql"), q.as_bytes(), 0).unwrap();
     assert!(out.lines().all(|l| l.len() <= 100));
 }
+
+#[test]
+fn formatter_output_is_capped() {
+    // 8 MiB of '{' used to grow ~80× through indentation.
+    let src = "{".repeat(8 << 20);
+    let t = std::time::Instant::now();
+    let out = format_query(&src);
+    assert!(out.len() <= gql::output_cap(src.len()) + 200, "{} bytes", out.len());
+    assert!(out.len() <= (16 << 20) + 200);
+    assert!(out.ends_with("the rest is not shown."), "{}", &out[out.len() - 120..]);
+    assert!(t.elapsed() < std::time::Duration::from_secs(20));
+    // A small cap cuts early and says so; ordinary documents are untouched.
+    let small = gql::format_query_capped("query { a { b { c } } }", 10);
+    assert!(small.contains("Formatting stopped after 10 bytes"), "{small}");
+    assert!(!format_query("{ a }").contains("Formatting stopped"));
+    assert_eq!(gql::output_cap(1), 4 + (1 << 20));
+    assert_eq!(gql::output_cap(100 << 20), 16 << 20);
+}

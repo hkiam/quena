@@ -192,13 +192,30 @@ fn starts_value(t: &Tok) -> bool {
     matches!(t, Tok::Name(_) | Tok::Lit(_) | Tok::P("[") | Tok::P("{") | Tok::P("$"))
 }
 
+/// Upper bound for formatted output: indentation can blow a document of nested braces up
+/// ~80×, so the output is capped at 4× the input plus 1 MiB, and never more than 16 MiB.
+pub fn output_cap(input_len: usize) -> usize {
+    input_len.saturating_mul(4).saturating_add(1 << 20).min(16 << 20)
+}
+
 /// Pretty-print a GraphQL document (two-space indentation, one selection per line).
+/// Stops at [`output_cap`] and says so at the end.
 pub fn format_query(src: &str) -> String {
+    format_query_capped(src, output_cap(src.len()))
+}
+
+/// [`format_query`] with an explicit output limit in bytes.
+pub fn format_query_capped(src: &str, cap: usize) -> String {
     let t = tokens(src);
     let mut f = Fmt { out: String::with_capacity(src.len() + src.len() / 2), sep: Sep::None, stack: Vec::new(), blocks: 0 };
     let mut prev: Option<&Tok> = None;
     let mut prev2: Option<&Tok> = None;
+    let mut stopped = false;
     for (i, tok) in t.iter().enumerate() {
+        if f.out.len() > cap {
+            stopped = true;
+            break;
+        }
         let top = f.stack.last().copied();
         let inline = matches!(top, Some(Ctx::Paren | Ctx::List | Ctx::Object));
         // Separators between list items and arguments are optional in GraphQL; add them.
@@ -314,6 +331,19 @@ pub fn format_query(src: &str) -> String {
         }
         prev2 = prev;
         prev = Some(tok);
+    }
+    if stopped {
+        let mut end = cap.min(f.out.len());
+        while !f.out.is_char_boundary(end) {
+            end -= 1;
+        }
+        f.out.truncate(end);
+        let mut out = f.out.trim_end().to_string();
+        out.push_str(&format!(
+            "\n\n# [Quena] Formatting stopped after {cap} bytes of output.\n# The document has {} bytes; the rest is not shown.",
+            src.len()
+        ));
+        return out;
     }
     f.out.trim_end().to_string()
 }
