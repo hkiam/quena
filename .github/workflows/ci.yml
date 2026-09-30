@@ -229,8 +229,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # Only the installers: the e2e-windows-app artifact (test binary + plugins) is no release asset.
       - uses: actions/download-artifact@v4
         with:
+          pattern: quena-*
           path: dist
       - name: Create draft release
         env:
