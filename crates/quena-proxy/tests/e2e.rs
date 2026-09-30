@@ -141,7 +141,11 @@ fn curl(env: &Env, args: &[&str]) -> (String, String) {
 }
 
 fn wait_done(env: &Env, pred: impl Fn(&quena_model::SessionSummary) -> bool) -> quena_model::SessionSummary {
-    for _ in 0..200 {
+    // Recording finishes after forwarding: for the 64 MiB body the client has everything
+    // while the body is still being written to the store, which on a busy CI disk (Windows,
+    // virus scanner) can take several seconds. Only waits as long as needed.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         env.capture.index.tick();
         let ids = env.capture.index.find_all(|s| pred(s) && s.state.is_final());
         if let Some(id) = ids.last() {
