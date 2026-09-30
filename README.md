@@ -100,6 +100,8 @@ Quena is an independent, open-source take on this kind of tool, with its own des
 
 ### Analyze
 - **Command field** (`?text`, `@host`, `=404`, `>10k`, `bpu`, `g` …) and **command palette** (`Ctrl/⌘ K`)
+- **Diagnostics**: prioritised findings with evidence — N+1, duplicates, polling, retries,
+  auth loops, caching, compression, OData queries, latency/bandwidth sensitivity
 - Filters, Find, Statistics, Timeline, Compare, Text Tools
 - Comments, color marks, custom column
 

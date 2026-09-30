@@ -8,6 +8,21 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Diagnostics** (View → Diagnostics, bundled plugin *webdiag*): turns a capture into a short
+  list of prioritised findings with evidence instead of thousands of sessions — slow requests
+  and server time, large and uncompressed transfers, exact and semantic duplicates (OData
+  aware), N+1 and polling patterns, retries and double submits, HTTP errors and connection
+  failures, authentication loops and repeated NTLM/Kerberos handshakes, redirect chains, cookie
+  and caching problems, connection reuse, old TLS, CORS preflights, unbounded OData queries,
+  and how sensitive each operation is to latency and bandwidth (estimates per network
+  profile, clearly marked). Profiles: full, performance, troubleshooting, authentication,
+  network resilience, modernization. Scope: visible or selected sessions, narrowed to
+  processes or target hosts; mixed traffic of several applications is pointed out. Findings
+  select their sessions with one click. Reports save as JSON or Markdown, copy as a prompt for
+  an AI assistant (redacted), and compare with a saved report. Everything runs locally; tokens
+  and cookie values never reach the plugin.
+- Plugin API: *analyzer* plugins analyse a whole capture (contract in
+  `plugins/webdiag/REPORT.md`).
 - Inspectors remember the chosen view per kind of content, separately for request and
   response (e.g. SOAP → XML, JSON → Body, Fast Infoset → its plugin view). Until a view was
   chosen, the one that fits the content opens (SOAP, gRPC, WebSocket, images, form data …).

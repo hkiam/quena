@@ -11,6 +11,7 @@ untrusted, huge payloads.
 |---|---|---|
 | **Decoder** | turns a body of certain content types (or file extensions) into text, XML or JSON | as an extra view in the request or response card, named by the plugin |
 | **Header inspector** | explains the value of certain headers | in the *Auth* view (and wherever the header is recognised) |
+| **Analyzer** | analyses a whole capture and reports findings | in the *Diagnostics* tab |
 
 ## Bundled plugins
 
@@ -19,6 +20,7 @@ untrusted, huge payloads.
 | **Fast Infoset** | decoder | `application/fastinfoset`, `application/soap+fastinfoset`, `application/x-fastinfoset` (`.fi`, `.finf`): binary XML decoded to XML. The SOAP and Atom/OData views work on its output. |
 | **Kerberos / NTLM** | header inspector | `Authorization`, `Proxy-Authorization`, `WWW-Authenticate`, `Proxy-Authenticate`: SPNEGO, Kerberos AP-REQ/AP-REP/KRB-ERROR and NTLM Type 1–3 tokens; flags Negotiate that fell back to NTLM. |
 | **JWT** | header inspector | JSON Web Tokens in authorization headers (Bearer, DPoP), `Cookie`, `Set-Cookie` and common token headers: header, claims, dates and expiry. Signatures are not verified. |
+| **Diagnostics** (webdiag) | analyzer | the capture or a selection: performance, errors, authentication, duplicates, N+1, polling, OData, network sensitivity — see [Diagnostics](diagnostics.md). |
 | **GraphQL** | decoder | `application/graphql` and GraphQL JSON requests and responses: the operation with the query pretty-printed, errors first in responses. |
 
 ## Managing plugins
@@ -52,7 +54,9 @@ mime_types = ["application/fastinfoset", "application/soap+fastinfoset", "applic
 extensions = ["fi", "finf"]
 ```
 
-A header inspector has a `[header_inspector]` section with `headers = [ … ]` instead.
+A header inspector has a `[header_inspector]` section with `headers = [ … ]` instead, an
+analyzer an empty `[analyzer]` section (its contract: `plugins/webdiag/REPORT.md` in the
+repository).
 
 Quena looks for plugins in the user plugin folder and in the bundled plugins (in the app's
 resources, or in a `plugins` folder next to the executable of a portable installation).

@@ -76,6 +76,7 @@ nav:
       - Inspect: inspect.md
       - Change and replay: change-replay.md
       - Analyze: analyze.md
+      - Diagnostics: diagnostics.md
       - Archives and copying: archives.md
   - Advanced:
       - Rules scripts: scripting.md
