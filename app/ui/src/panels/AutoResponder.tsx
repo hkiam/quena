@@ -133,8 +133,8 @@ export default function AutoResponderPanel() {
               <th style={{ width: 24 }}></th>
               <th>If request matches…</th>
               <th>then respond with…</th>
-              <th style={{ width: 60 }}>Latency</th>
-              <th style={{ width: 44 }}>Hits</th>
+              <th style={{ width: 72 }}>Latency</th>
+              <th style={{ width: 52 }}>Hits</th>
             </tr>
           </thead>
           <tbody>

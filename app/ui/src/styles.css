@@ -519,6 +519,18 @@ kbd,
   overflow: hidden;
   flex-wrap: nowrap;
 }
+.rpane {
+  container-type: inline-size;
+}
+/* Narrow right pane: icons only (the title is the tooltip), so every tab stays reachable. */
+@container (max-width: 640px) {
+  .rp-label {
+    display: none;
+  }
+  .rp-tab {
+    padding: 8px 10px 7px;
+  }
+}
 .rp-tab {
   padding: 8px 9px 7px;
   white-space: nowrap;
@@ -732,7 +744,9 @@ kbd,
 .tp-bar,
 .lt-bar {
   display: flex;
-  gap: 6px;
+  /* Wrap instead of cutting off buttons in narrow panes. */
+  flex-wrap: wrap;
+  gap: 2px 6px;
   align-items: center;
   padding: 2px 6px;
   border-bottom: 1px solid var(--border);
@@ -815,9 +829,15 @@ kbd,
 .tp-body {
   min-height: 0;
   display: grid;
+  /* Always the stretching last row, also when there is no banner above the toolbar. */
+  grid-row: 3;
 }
 .bodytext {
   grid-template-rows: auto 1fr;
+}
+/* The editor fills the stretching row whether or not a note banner is shown. */
+.bodytext > .codeview {
+  grid-row: 2;
 }
 .codeview {
   min-height: 0;
@@ -1571,6 +1591,9 @@ pre {
   overflow: auto;
   min-height: 0;
   border: 1px solid var(--border);
+}
+.ar-table th {
+  white-space: nowrap;
 }
 .ar-table td {
   word-break: break-all;

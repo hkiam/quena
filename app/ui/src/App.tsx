@@ -24,6 +24,11 @@ async function importOpenFiles() {
 
 function useBoot() {
   useEffect(() => {
+    // Lets end-to-end tests run menu commands (the native menu is outside the web view).
+    (window as unknown as { __quena?: object }).__quena = {
+      menu: (id: string) => actions.menu(id),
+      setLayout: (patch: Partial<Layout>) => set((s) => ({ layout: { ...s.layout, ...patch } })),
+    };
     if (!isTauri) return;
     const unlisten: Promise<() => void>[] = [];
     unlisten.push(
@@ -90,15 +95,20 @@ function useBoot() {
   }, []);
 }
 
-function Splitter({ onDrag, vertical }: { onDrag: (fraction: number) => void; vertical?: boolean }) {
+/** `min` = smallest size in px of the areas before and after the splitter, so dragging can
+ * never squeeze one of them into something unusable. */
+function Splitter({ onDrag, vertical, min = [120, 120] }: { onDrag: (fraction: number) => void; vertical?: boolean; min?: [number, number] }) {
   const ref = useRef<HTMLDivElement>(null);
   const down = (e: React.PointerEvent) => {
     e.preventDefault();
     const parent = ref.current!.parentElement!;
     const rect = parent.getBoundingClientRect();
     const move = (ev: PointerEvent) => {
-      const f = vertical ? (ev.clientY - rect.top) / rect.height : (ev.clientX - rect.left) / rect.width;
-      onDrag(Math.min(0.9, Math.max(0.1, f)));
+      const size = vertical ? rect.height : rect.width;
+      const f = vertical ? (ev.clientY - rect.top) / size : (ev.clientX - rect.left) / size;
+      const lo = Math.min(0.5, min[0] / size);
+      const hi = Math.max(0.5, 1 - min[1] / size);
+      onDrag(Math.min(hi, Math.max(lo, f)));
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -123,11 +133,11 @@ export function App() {
   return (
     <div className="app">
       <Toolbar />
-      <div className="main" style={{ gridTemplateColumns: `${leftWidth * 100}% 8px 1fr` }}>
+      <div className="main" style={{ gridTemplateColumns: `minmax(280px, ${leftWidth * 100}%) 8px minmax(380px, 1fr)` }}>
         <div className="left">
           <SessionGrid />
         </div>
-        <Splitter onDrag={(f) => set((s) => ({ layout: { ...s.layout, leftWidth: f } }))} />
+        <Splitter min={[320, 420]} onDrag={(f) => set((s) => ({ layout: { ...s.layout, leftWidth: f } }))} />
         <RightPane />
       </div>
       <StatusBar />

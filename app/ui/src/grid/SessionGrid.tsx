@@ -22,6 +22,19 @@ const FONT_PILL = "600 10.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', sys
 
 export const rowCache = new RowCache();
 
+/**
+ * Visible columns as drawn: when they are narrower than the list, the Path column (or Host,
+ * or the last one) takes the rest, so a wide window shows longer URLs instead of empty space.
+ * Stored widths stay as the user set them; they act as minimums here.
+ */
+export function fitColumns(cols: ColumnConf[], width: number): ColumnConf[] {
+  const vis = cols.filter((c) => c.visible);
+  const total = vis.reduce((a, c) => a + c.width, 0);
+  if (!vis.length || width <= total) return vis;
+  const flex = vis.find((c) => c.key === "url") ?? vis.find((c) => c.key === "host") ?? vis[vis.length - 1];
+  return vis.map((c) => (c === flex ? { ...c, width: c.width + (width - total) } : c));
+}
+
 function cellText(r: SessionSummary, key: ColumnKey): string {
   switch (key) {
     case "id":
@@ -161,7 +174,7 @@ export class GridController {
   }
 
   columns(): ColumnConf[] {
-    return get().layout.columns.filter((c) => c.visible);
+    return fitColumns(get().layout.columns, this.vw);
   }
 
   totalWidth(): number {
@@ -171,6 +184,7 @@ export class GridController {
   private resize() {
     this.dpr = window.devicePixelRatio || 1;
     this.vw = this.scroller.clientWidth;
+    if (get().gridWidth !== this.vw) set({ gridWidth: this.vw });
     this.vh = this.scroller.clientHeight;
     this.canvas.width = Math.max(1, Math.floor(this.vw * this.dpr));
     this.canvas.height = Math.max(1, Math.floor(this.vh * this.dpr));
@@ -378,6 +392,8 @@ export const grid = new GridController();
 
 function Header({ scrollX }: { scrollX: number }) {
   const columns = useStore((s) => s.layout.columns);
+  const gridWidth = useStore((s) => s.gridWidth);
+  const shown = fitColumns(columns, gridWidth);
   const sort = useStore((s) => s.sort);
   const drag = useRef<{ key: ColumnKey; startX: number; startW: number } | null>(null);
   const [dragOver, setDragOver] = useState<ColumnKey | null>(null);
@@ -432,9 +448,7 @@ function Header({ scrollX }: { scrollX: number }) {
   return (
     <div className="grid-header" onContextMenu={onContext}>
       <div className="grid-header-inner" style={{ transform: `translateX(${-scrollX}px)` }}>
-        {columns
-          .filter((c) => c.visible)
-          .map((c) => (
+        {shown.map((c) => (
             <div
               key={c.key}
               className={`gh-cell ${dragOver === c.key ? "drag-over" : ""} ${c.align === "right" ? "gh-right" : ""}`}

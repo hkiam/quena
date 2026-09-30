@@ -7,6 +7,17 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Changed
+- Layout uses the whole window at every size: the Path column of the session list takes the
+  width left over by the other columns; in a narrow right pane request and response go above
+  each other automatically and the pane's tabs show icons only; toolbars in the inspectors wrap
+  instead of cutting off buttons; splitters keep a usable minimum size for every area.
+
+### Fixed
+- Body views of small responses left a white area below the text (the editor did not fill
+  the pane when no notice was shown above it).
+- Mock Rules: the Latency and Hits column headings broke in the middle of the word.
+
 ## [0.1.1] — 2026-09-30
 
 Faster start and capture switching, more platforms, and more robustness. Packages are still

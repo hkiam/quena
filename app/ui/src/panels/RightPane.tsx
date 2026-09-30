@@ -30,9 +30,9 @@ export function RightPane() {
     <div className="rpane">
       <div className="rp-tabs">
         {TABS.map(([k, title, Icon]) => (
-          <div key={k} className={`rp-tab ${tab === k ? "active" : ""}`} onClick={() => set({ activeTab: k })}>
+          <div key={k} className={`rp-tab ${tab === k ? "active" : ""}`} title={title} onClick={() => set({ activeTab: k })}>
             <Icon size={14} strokeWidth={1.8} className="rp-icon" />
-            {title}
+            <span className="rp-label">{title}</span>
             {k === "filters" && filtersOn && <span className="rp-dot" />}
             {k === "autoresponder" && arOn && <span className="rp-dot" />}
           </div>

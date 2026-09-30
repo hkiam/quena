@@ -140,7 +140,7 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends webkit2gtk-driver xvfb
           cargo install tauri-driver --locked
-          xvfb-run -a dbus-run-session -- app/e2e/run.sh "${{ matrix.out }}/$BUILD_PROFILE/quena"
+          xvfb-run -a -s "-screen 0 1920x1080x24" dbus-run-session -- app/e2e/run.sh "${{ matrix.out }}/$BUILD_PROFILE/quena"
       - name: Portable ZIP (Windows, xcopy deployment)
         if: runner.os == 'Windows'
         shell: pwsh

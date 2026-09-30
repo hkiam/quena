@@ -63,7 +63,7 @@ and locally in the Linux container:
 
 ```bash
 docker run --rm -e HOME=/tmp/h -v "$PWD":/src -v quena-target:/src/target -w /src quena-linux \
-  sh -c 'mkdir -p $HOME && xvfb-run -a dbus-run-session -- app/e2e/run.sh target/release/quena'
+  sh -c 'mkdir -p $HOME && xvfb-run -a -s "-screen 0 1920x1080x24" dbus-run-session -- app/e2e/run.sh target/release/quena'
 ```
 
 The tests use an isolated data directory and never touch the system proxy.

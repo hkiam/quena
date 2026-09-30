@@ -3,6 +3,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { Driver } from "./webdriver.mjs";
+import { AUDIT } from "./audit.mjs";
 import path from "node:path";
 
 const app = process.env.QUENA_APP;
@@ -95,6 +96,20 @@ test("capture switch toggles off and on", async () => {
   await d.waitFor(".capture-switch", { text: "Paused" });
   await d.click(await d.waitFor(".capture-switch"));
   await d.waitFor(".capture-switch", { text: "Capturing" });
+});
+
+test("layout fills the window at small and large sizes, side by side and stacked", async () => {
+  const problems = [];
+  for (const patch of [{ stacked: false, leftWidth: 0.5 }, { stacked: true, leftWidth: 0.5 }, { stacked: false, leftWidth: 0.72 }]) {
+    await d.exec(`window.__quena.setLayout(${JSON.stringify(patch)})`);
+    for (const [width, height] of [[900, 560], [1920, 1080]]) {
+      await d.cmd("POST", d.s("/window/rect"), { width, height });
+      await new Promise((r) => setTimeout(r, 400));
+      for (const g of await d.exec(AUDIT)) problems.push({ ...patch, width, height, ...g });
+    }
+  }
+  await d.exec(`window.__quena.setLayout({ stacked: false, leftWidth: 0.5 })`);
+  assert.deepEqual(problems, [], "unused space in the layout");
 });
 
 test("no view crashed", async () => {

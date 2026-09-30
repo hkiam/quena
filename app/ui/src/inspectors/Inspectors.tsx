@@ -339,17 +339,31 @@ function SessionHeader({ detail }: { detail: Detail }) {
   );
 }
 
+/** Below this width, request and response go above each other even in the side-by-side
+ * layout: two columns of ~300 px would cut tabs, toolbars and header values. */
+const SIDE_BY_SIDE_MIN = 760;
+
 export function Inspectors() {
   const { detail, error } = useDetail();
   const split = useStore((s) => s.layout.inspectorSplit);
-  const stacked = useStore((s) => s.layout.stacked);
+  const stackedPref = useStore((s) => s.layout.stacked);
+  const root = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setNarrow(e.contentRect.width < SIDE_BY_SIDE_MIN));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const stacked = stackedPref || narrow;
   const paused = pausedPart(detail);
   const [edits, setEdits] = useState<TamperEdits>({ head: null, body: null, file: null });
   const pausedKey = detail && paused ? `${detail.summary.id}:${paused}` : "";
   useEffect(() => setEdits({ head: null, body: null, file: null }), [pausedKey]);
   const tamper = { edits, setEdits };
   return (
-    <div className="inspectors">
+    <div className="inspectors" ref={root}>
       {detail && paused ? (
         <TamperBar detail={detail} part={paused} edits={edits} onDone={() => setEdits({ head: null, body: null, file: null })} />
       ) : detail ? (
@@ -361,10 +375,10 @@ export function Inspectors() {
       )}
       <div
         className={`insp-split ${stacked ? "stacked" : "side"}`}
-        style={stacked ? { gridTemplateRows: `${split * 100}% 5px 1fr` } : { gridTemplateColumns: `${split * 100}% 5px 1fr` }}
+        style={stacked ? { gridTemplateRows: `minmax(90px, ${split * 100}%) 5px minmax(90px, 1fr)` } : { gridTemplateColumns: `minmax(260px, ${split * 100}%) 5px minmax(260px, 1fr)` }}
       >
         <Pane detail={detail} part="request" tamper={paused === "request" ? tamper : undefined} />
-        <Splitter vertical={stacked} onDrag={(f) => set((s) => ({ layout: { ...s.layout, inspectorSplit: f } }))} />
+        <Splitter vertical={stacked} min={stacked ? [110, 110] : [300, 300]} onDrag={(f) => set((s) => ({ layout: { ...s.layout, inspectorSplit: f } }))} />
         <Pane detail={detail} part="response" tamper={paused === "response" ? tamper : undefined} />
       </div>
     </div>

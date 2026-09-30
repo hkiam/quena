@@ -192,6 +192,8 @@ export interface AppState {
   scriptMenus: string[];
   /** Capture is being switched on/off (the system proxy can take a moment). */
   captureBusy: "starting" | "stopping" | null;
+  /** Visible width of the session list (the flexible column fills it). */
+  gridWidth: number;
 }
 
 export const useStore = create<AppState>(() => ({
@@ -218,6 +220,7 @@ export const useStore = create<AppState>(() => ({
   arNonce: 0,
   scriptMenus: [],
   captureBusy: null,
+  gridWidth: 0,
 }));
 
 export const set = useStore.setState;
