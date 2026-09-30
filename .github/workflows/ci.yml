@@ -165,7 +165,7 @@ jobs:
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: quena-${{ runner.os }}-${{ runner.arch }}
+          name: quena-${{ runner.os }}-${{ matrix.tauri-target && 'universal' || runner.arch }}
           if-no-files-found: error
           path: |
             ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/dmg/*.dmg
