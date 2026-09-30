@@ -7,17 +7,6 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
-### Changed
-- Layout uses the whole window at every size: the Path column of the session list takes the
-  width left over by the other columns; in a narrow right pane request and response go above
-  each other automatically and the pane's tabs show icons only; toolbars in the inspectors wrap
-  instead of cutting off buttons; splitters keep a usable minimum size for every area.
-
-### Fixed
-- Body views of small responses left a white area below the text (the editor did not fill
-  the pane when no notice was shown above it).
-- Mock Rules: the Latency and Hits column headings broke in the middle of the word.
-
 ## [0.1.1] — 2026-09-30
 
 Faster start and capture switching, more platforms, and more robustness. Packages are still
@@ -34,6 +23,10 @@ not signed with a paid certificate (see the notes for 0.1.0).
   as aborted sessions with the raw bytes received, instead of only a 400 to the client.
 
 ### Changed
+- Layout uses the whole window at every size: the Path column of the session list takes the
+  width left over by the other columns; in a narrow right pane request and response go above
+  each other automatically and the pane's tabs show icons only; toolbars in the inspectors wrap
+  instead of cutting off buttons; splitters keep a usable minimum size for every area.
 - The capture switch reacts immediately and shows "Starting…"/"Stopping…" while the system
   proxy is being changed.
 - Stopping the capture also closes open client connections, tunnels and WebSockets (after the
@@ -51,6 +44,9 @@ not signed with a paid certificate (see the notes for 0.1.0).
   plugins are found in a `plugins` folder next to the executable.
 
 ### Fixed
+- Body views of small responses left a white area below the text (the editor did not fill
+  the pane when no notice was shown above it).
+- Mock Rules: the Latency and Hits column headings broke in the middle of the word.
 - Windows: logging off or shutting down while Quena runs restores the system proxy (it could
   stay pointed at Quena until the next start, leaving the user without internet).
 - Starting the capture at launch and toggling it at the same moment could start it twice.
