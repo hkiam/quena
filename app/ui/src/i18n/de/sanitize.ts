@@ -1,6 +1,9 @@
 // German translations: sanitized export (dialog and redaction log).
 export const sanitize: Record<string, string> = {
-  "All sessions in the list": "Alle Sessions der Liste",
+  "All sessions in the list ({n})": "Alle Sessions der Liste ({n})",
+  "Sanitized sessions saved to {path}": "Bereinigte Sessions gespeichert in {path}",
+  "Show redaction log": "Prüfprotokoll anzeigen",
+  "KiB per body": "KiB je Body",
   "Authorization / Proxy-Authorization: only the scheme and the size stay": "Authorization / Proxy-Authorization: nur Schema und Größe bleiben",
   "Authorization credentials": "Anmeldedaten in Authorization",
   "Automatic detection can miss data. Check the file before sharing it.": "Automatische Erkennung kann Daten übersehen; vor dem Weitergeben prüfen.",

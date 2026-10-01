@@ -171,6 +171,8 @@ export interface Message {
   text: string;
   kind: "info" | "error";
   at: number;
+  /** A button next to the message (e.g. "Show redaction log"). */
+  action?: { label: string; run: () => void };
 }
 
 export type Dialog =
@@ -190,8 +192,9 @@ export type Dialog =
   | { kind: "rules" }
   /** Mocks from sessions; the dialog offers the selected or the visible sessions. */
   | { kind: "mocks"; selected: SessionId[]; target?: "apply" | "package" | "wiremock" }
-  /** Sanitized export of the selected (else all) sessions, and its redaction log afterwards. */
-  | { kind: "sanitize"; selected: SessionId[] }
+  /** Sanitized export: the selected sessions or all in the list (`scope` is what the dialog
+   *  starts with; it can switch while there is a selection), and its redaction log afterwards. */
+  | { kind: "sanitize"; selected: SessionId[]; scope: "selected" | "all" }
   | { kind: "sanitize-result"; result: SanitizedExport }
   | { kind: "choose-layout" }
   | { kind: "compare"; a: string; b: string; titleA: string; titleB: string }
@@ -265,8 +268,28 @@ export const useStore = create<AppState>(() => ({
 export const set = useStore.setState;
 export const get = useStore.getState;
 
-export function say(text: string, kind: "info" | "error" = "info") {
-  set({ message: { text, kind, at: Date.now() } });
+export function say(text: string, kind: "info" | "error" = "info", action?: Message["action"]) {
+  set({ message: { text, kind, at: Date.now(), action } });
+}
+
+/** Yes/no question in the app's confirm dialog. Focus returns to where it was (usually the
+ *  session list), so the keyboard keeps working. */
+export function confirmAsk(title: string, message: string, confirm: string): Promise<boolean> {
+  const back = document.activeElement as HTMLElement | null;
+  return new Promise((resolve) =>
+    set({
+      dialog: {
+        kind: "confirm",
+        title,
+        message,
+        confirm,
+        resolve: (ok) => {
+          resolve(ok);
+          setTimeout(() => back?.focus?.(), 0);
+        },
+      },
+    }),
+  );
 }
 
 export function selectedIds(): SessionId[] {

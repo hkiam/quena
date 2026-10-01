@@ -107,3 +107,17 @@ test("the sanitized file opens again", async () => {
   await click(await button(".sanitize-result", "Open Sanitized File"));
   await d.waitFor(".statusbar", { text: "4 sessions", timeout: 30000 });
 });
+
+test("the session menu exports only the one session it was opened on", async () => {
+  const one = path.join(dir, "one.har");
+  await d.exec("window.__quenaSanitizePath = arguments[0]", [one]);
+  await d.exec("return window.__quena.selectRow(0).then(() => true)");
+  await d.exec(`window.__quena.menu("file.export-sanitized-selection")`);
+  await d.waitFor(".sanitize-dialog", { text: "Selected session (1)" });
+  assert.equal(await d.exec(`return document.querySelector('.sanitize-dialog input[name="sanitize-scope"][value="selected"]').checked`), true);
+  await click(await d.waitFor('.sanitize-dialog input[value="har"]'));
+  await click(await button(".sanitize-dialog", "Export…"));
+  await d.waitFor(".sanitize-result", { timeout: 30000 });
+  const entries = JSON.parse(fs.readFileSync(one, "utf8")).log.entries;
+  assert.equal(entries.length, 1, "only the selected session");
+});

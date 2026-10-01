@@ -1630,6 +1630,10 @@ pre {
 .sb-error {
   color: var(--row-red);
 }
+.sb-msg-action {
+  margin-left: 8px;
+  font: inherit;
+}
 .spinner {
   width: 10px;
   height: 10px;

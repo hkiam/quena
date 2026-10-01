@@ -483,9 +483,25 @@ pub fn open(target: &str) -> Result<()> {
     Command::new("xdg-open").arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ()).map_err(|e| PlatformError::Command(format!("xdg-open: {e}")))
 }
 
+/// `file://` URI of an absolute path, percent-encoded (spaces, `%`, `#`, non-ASCII; a `,`
+/// would split dbus-send's array argument).
+fn file_uri(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let abs = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let mut uri = String::from("file://");
+    for &b in abs.as_os_str().as_bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri
+}
+
 pub fn reveal(path: &Path) -> Result<()> {
     // The freedesktop file-manager interface selects the file (Nautilus, Dolphin, Nemo…).
-    let uri = format!("file://{}", path.display());
+    let uri = file_uri(path);
     let shown = run(
         "dbus-send",
         &["--session", "--print-reply", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems", &format!("array:string:{uri}"), "string:"],
@@ -732,6 +748,11 @@ fn process_name(pid: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_uri_is_percent_encoded() {
+        assert_eq!(file_uri(Path::new("/tmp/a b,c#%ä.saz")), "file:///tmp/a%20b%2Cc%23%25%C3%A4.saz");
+    }
 
     #[test]
     fn proc_tcp_parse() {

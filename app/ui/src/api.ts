@@ -547,7 +547,9 @@ export type MockSkipReason =
   | "errorStatus"
   | "notModified"
   | "superseded"
-  | "duplicate";
+  | "duplicate"
+  | "tooLarge"
+  | "undecodable";
 
 export interface MockSequence {
   group: number;
@@ -570,6 +572,8 @@ export interface MockPackage {
   dir: string;
   rules: number;
   rejected: number;
+  /** Hosts the package's rules answer for (sorted). */
+  hosts: string[];
   created: number | null;
 }
 
@@ -582,6 +586,10 @@ export interface MockJobResult {
   mappings: number;
   sequences: number;
   skipped: number;
+  /** Mappings that did not become rules (unsafe or invalid); 0 normally. */
+  rejected: number;
+  /** Recorded response headers left out as invalid. */
+  droppedHeaders: number;
 }
 
 export interface BpState {
@@ -755,6 +763,8 @@ export const api = {
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   /** [support, gdpr] */
   sanitizePresets: () => invoke<SanitizeOptions[]>("sanitize_presets"),
+  /** Rejects with the first invalid pattern. */
+  sanitizeValidate: (options: SanitizeOptions) => invoke<void>("sanitize_validate", { options }),
   dropChunk: (id: string, name: string, offset: number, data: Uint8Array, last: boolean) =>
     tauriInvoke<number | null>("drop_chunk", data, {
       headers: { "quena-drop-id": id, "quena-drop-name": encodeURIComponent(name), "quena-drop-offset": String(offset), "quena-drop-last": last ? "1" : "0" },
@@ -781,6 +791,8 @@ export const api = {
   mockImportPackageData: (name: string, data: Uint8Array, replace: boolean) =>
     tauriInvoke<MockPackage>("mock_import_package_data", data, { headers: { "quena-mock-name": encodeURIComponent(name), "quena-mock-replace": replace ? "1" : "0" } }),
   mockRemovePackage: (name: string) => invoke<number>("mock_remove_package", { name }),
+  /** Sequences of the package start again with their first response; the number of rules reset. */
+  mockResetSequences: (name: string) => invoke<number>("mock_reset_sequences", { name }),
   mockPackages: () => invoke<MockPackage[]>("mock_packages"),
   bpGet: () => invoke<BpState>("bp_get"),
   bpSet: (state: BpState) => invoke<void>("bp_set", { state }),

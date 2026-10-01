@@ -2,9 +2,9 @@
 import { useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api, type ArRule, type ArState, type MockPackage } from "../api";
-import { say, set, useStore } from "../store";
+import { confirmAsk, say, set, useStore } from "../store";
 import { showContextMenu } from "../components/ContextMenu";
-import { confirmText, importMockPackageFiles, isMockPackageName, mapLocalRule, mapRemoteRule, mocksFromSelection, type MappingKind } from "./autoresponderActions";
+import { mapLocalRule, mapRemoteRule, mockPackageImported, mocksFromSelection, type MappingKind } from "./autoresponderActions";
 import { plural, t } from "../i18n";
 
 const MATCH_TEMPLATES = ["*", "EXACT:https://example.com/path", "prefix:https://example.com/api/", "regex:(?i)^https://.*\\.example\\.com/api/(.*)$", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json", "URLWithBody:/soap regex:GetOrder"];
@@ -71,18 +71,26 @@ export default function AutoResponderPanel() {
     const p = await open({ multiple: false, filters: [{ name: t("Quena mock package"), extensions: ["quena-mocks", "zip"] }] });
     if (typeof p !== "string") return;
     try {
-      const pkg = await api.mockImportPackage(p, replace);
-      say(pkg.rejected ? t("Package {name}: {n} rules imported, {m} unsafe rules left out", { name: pkg.name, n: pkg.rules, m: pkg.rejected }) : t("Package {name}: {n} rules imported", { name: pkg.name, n: pkg.rules }));
+      mockPackageImported(await api.mockImportPackage(p, replace));
       set({ arNonce: Date.now() });
     } catch (e) {
       say(String(e), "error");
     }
   };
   const removePackage = async (name: string) => {
-    if (!(await confirmText(t("Remove package"), t("Remove the package {name} with its rules and response files?", { name }), t("Remove")))) return;
+    if (!(await confirmAsk(t("Remove package"), t("Remove the package {name} with its rules and response files?", { name }), t("Remove")))) return;
     try {
       const n = await api.mockRemovePackage(name);
       say(plural(n, "Package removed ({n} rule)", "Package removed ({n} rules)"));
+      set({ arNonce: Date.now() });
+    } catch (e) {
+      say(String(e), "error");
+    }
+  };
+  const resetSequences = async (name: string) => {
+    try {
+      const n = await api.mockResetSequences(name);
+      say(plural(n, "Package {name}: sequences start again ({n} rule reset)", "Package {name}: sequences start again ({n} rules reset)", { name }));
       set({ arNonce: Date.now() });
     } catch (e) {
       say(String(e), "error");
@@ -109,15 +117,9 @@ export default function AutoResponderPanel() {
       }}
       onDragLeave={() => setOver(false)}
       onDrop={async (e) => {
+        // Files (mock packages, archives) go on to the window's drop handler, which imports
+        // packages into Mock Rules and resets the drop highlight.
         setOver(false);
-        const files = [...e.dataTransfer.files];
-        if (files.length && files.every((f) => isMockPackageName(f.name))) {
-          // A mock package: imported here, not by the window's archive drop.
-          e.preventDefault();
-          e.stopPropagation();
-          await importMockPackageFiles(files);
-          return;
-        }
         const ids = JSON.parse(e.dataTransfer.getData("quena/sessions") || "[]") as number[];
         if (!ids.length) return;
         const n = await api.arAddSessions(ids, true);
@@ -198,9 +200,13 @@ export default function AutoResponderPanel() {
           <div className="ar-packages">
             <span className="muted">{t("Packages:")}</span>
             {packages.map((p) => (
-              <span key={p.name} className="ar-package" title={p.dir}>
+              <span key={p.name} className="ar-package" title={[p.dir, ...(p.hosts.length ? [t("Hosts: {hosts}", { hosts: p.hosts.join(", ") })] : [])].join("\n")}>
                 <span className="mono">{p.name}</span> <span className="muted small">{plural(p.rules, "{n} rule", "{n} rules")}</span>
-                <button className="ar-package-x" title={t("Remove package")} onClick={() => void removePackage(p.name)}>
+                {!!p.hosts.length && <span className="muted small mono ar-package-hosts">{p.hosts.slice(0, 2).join(", ") + (p.hosts.length > 2 ? " …" : "")}</span>}
+                <button className="ar-package-x" title={t("Reset sequences (start again with the first recorded response)")} aria-label={t("Reset sequences of {name}", { name: p.name })} onClick={() => void resetSequences(p.name)}>
+                  ↺
+                </button>
+                <button className="ar-package-x" title={t("Remove package")} aria-label={t("Remove package {name}", { name: p.name })} onClick={() => void removePackage(p.name)}>
                   ✕
                 </button>
               </span>

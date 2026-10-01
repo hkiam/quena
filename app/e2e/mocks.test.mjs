@@ -80,6 +80,9 @@ function viaProxy(port, url) {
 test("Mocks from Sessions → Create Mock Rules now answers through the proxy", async () => {
   await d.exec(`window.__quena.menu("file.export-mocks")`);
   await d.waitFor(".modal-title", { text: "Mocks from Sessions" });
+  // File → Export Sessions → Mocks… starts with the package; switch to Mock Rules.
+  assert.equal(await d.exec(`return document.querySelector('.mocks-dialog input[name="mock-target"][value="package"]').checked`), true);
+  await d.click(await d.waitFor('.mocks-dialog input[name="mock-target"][value="apply"]'));
   // Live preview: one mapping from one session.
   await d.waitFor(".mocks-counts", { text: "1 mapping", timeout: 15000 });
   await d.click(await d.waitFor(".mocks-actions .primary", { text: "Create rules" }));

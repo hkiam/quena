@@ -79,12 +79,26 @@ export async function handleFileMenu(id: string): Promise<boolean> {
       return true;
     }
     case "file.export-mocks":
+      // File → Export Sessions → Mocks…: a file to share; Mock Rules "Create from sessions…"
+      // and the session menu start with "Create Mock Rules now".
+      set({ dialog: { kind: "mocks", selected, target: "package" } });
+      return true;
+    case "mocks.from-sessions":
       set({ dialog: { kind: "mocks", selected } });
       return true;
     case "file.export-sanitized":
+    case "file.export-sanitized-selection":
       if (!get().listTotal) say(t("There are no sessions to save"), "error");
-      // Like the other exports: a multiple selection, else everything in the list.
-      else set({ dialog: { kind: "sanitize", selected: selected.length > 1 ? selected : [] } });
+      else
+        set({
+          dialog: {
+            kind: "sanitize",
+            selected,
+            // The session menu means the sessions it was opened on, even a single one; the File
+            // menu works like the other exports: a multiple selection, else the whole list.
+            scope: (id === "file.export-sanitized-selection" ? selected.length > 0 : selected.length > 1) ? "selected" : "all",
+          },
+        });
       return true;
     case "file.save-response-body":
     case "file.save-request-body": {

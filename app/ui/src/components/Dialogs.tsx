@@ -842,7 +842,7 @@ function DialogBody({ d }: { d: Dialog }) {
     case "sanitize":
       return (
         <Modal title={t("Sanitized Export")} onClose={close} wide>
-          <SanitizeDialog selected={d.selected} onClose={close} />
+          <SanitizeDialog selected={d.selected} scope={d.scope} onClose={close} />
         </Modal>
       );
     case "sanitize-result":

@@ -2,7 +2,7 @@
 // and the command field. Every action returns immediately (optimistic UI, R11); the
 // core confirms asynchronously.
 import { api, type Detail, type MarkColor, type SessionId, type Sort } from "./api";
-import { get, say, set, PRESETS, type LayoutPreset, type RightTab } from "./store";
+import { confirmAsk, get, say, set, PRESETS, type LayoutPreset, type RightTab } from "./store";
 import { grid, idAtIndex, rowCache } from "./grid/SessionGrid";
 import { buildCurl, buildFetch, buildPowerShell, buildPython, rawRequestText, rawResponseHead } from "./lib/http";
 import { plural, t } from "./i18n";
@@ -31,24 +31,9 @@ async function details(ids: SessionId[], limit = 200): Promise<Detail[]> {
   return out;
 }
 
-/** Ask before sessions are removed (removal cannot be undone). Focus returns to where it was
- *  (usually the session list), so the keyboard keeps working. */
+/** Ask before sessions are removed (removal cannot be undone). */
 function confirmRemove(title: string): Promise<boolean> {
-  const back = document.activeElement as HTMLElement | null;
-  return new Promise((resolve) =>
-    set({
-      dialog: {
-        kind: "confirm",
-        title,
-        message: t("They are removed from the list and from the recorded data. This cannot be undone."),
-        confirm: t("Remove"),
-        resolve: (ok) => {
-          resolve(ok);
-          setTimeout(() => back?.focus?.(), 0);
-        },
-      },
-    }),
-  );
+  return confirmAsk(title, t("They are removed from the list and from the recorded data. This cannot be undone."), t("Remove"));
 }
 
 export const actions = {

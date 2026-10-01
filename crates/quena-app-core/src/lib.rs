@@ -232,8 +232,14 @@ impl AppCore {
         self.settings.read().clone()
     }
 
-    pub fn update_settings(self: &Arc<Self>, s: Settings) -> Result<()> {
-        let old = std::mem::replace(&mut *self.settings.write(), s.clone());
+    /// Replace the settings. `sanitize` (the last options of the sanitized export) belongs to
+    /// the core: the export writes it, and a caller's copy may be older, so it is kept.
+    pub fn update_settings(self: &Arc<Self>, mut s: Settings) -> Result<()> {
+        let old = {
+            let mut cur = self.settings.write();
+            s.sanitize = cur.sanitize.clone();
+            std::mem::replace(&mut *cur, s.clone())
+        };
         s.save(&self.paths.settings).context("save settings")?;
         self.capture().bodies.set_config(s.bodies.to_config());
         if old.proxy != s.proxy
@@ -674,5 +680,23 @@ fn target_text(t: &quickexec::BreakTarget) -> Option<String> {
     match t {
         quickexec::BreakTarget::UrlContains(u) => Some(u.clone()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn update_settings_keeps_the_sanitize_options_of_the_core() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = AppCore::new(Paths::at(dir.path().to_path_buf()), logbuf::LogBuffer::new(10)).unwrap();
+        // A UI copy taken before an export ...
+        let stale = core.settings();
+        // ... the export remembers its options ...
+        core.settings.write().sanitize.format = "har".into();
+        // ... and saving the stale copy does not bring the old ones back.
+        core.update_settings(stale).unwrap();
+        assert_eq!(core.settings().sanitize.format, "har");
     }
 }

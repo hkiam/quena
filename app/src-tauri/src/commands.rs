@@ -422,6 +422,12 @@ async fn sanitize_presets() -> R<Vec<quena_app_core::sanitize::SanitizeOptions>>
     Ok(["support", "gdpr"].iter().filter_map(|p| quena_app_core::sanitize::SanitizeOptions::preset(p)).collect())
 }
 
+/// Check sanitize options before the save dialog (an invalid pattern names itself).
+#[tauri::command]
+async fn sanitize_validate(options: quena_app_core::sanitize::SanitizeOptions) -> R<()> {
+    options.validate()
+}
+
 /// Show a file in the file manager.
 #[tauri::command]
 async fn reveal_path(path: String) -> R<()> {
@@ -599,18 +605,25 @@ async fn mock_import_package_data(core: State<'_, Core>, request: tauri::ipc::Re
     let h = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let name = percent_encoding::percent_decode_str(&h("quena-mock-name")).decode_utf8_lossy().into_owned();
     let replace = h("quena-mock-replace") == "1";
-    let data = match request.body() {
-        tauri::ipc::InvokeBody::Raw(b) => b.clone(),
-        _ => return Err("expected raw bytes".into()),
+    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
+        return Err("expected raw bytes".into());
     };
-    let core = core.inner().clone();
-    blocking(move || core.mock_import_package_bytes(&name, &data, replace).map_err(e)).await
+    // The body is borrowed from the request: work on it in place (no copy of a package that
+    // can be hundreds of MB), off the async workers' queue.
+    tokio::task::block_in_place(|| core.mock_import_package_bytes(&name, data, replace).map_err(e))
 }
 
 #[tauri::command]
 async fn mock_remove_package(core: State<'_, Core>, name: String) -> R<usize> {
     let core = core.inner().clone();
     blocking(move || core.mock_remove_package(&name).map_err(e)).await
+}
+
+/// Sequences of a package start again with their first response; the number of rules reset.
+#[tauri::command]
+async fn mock_reset_sequences(core: State<'_, Core>, name: String) -> R<usize> {
+    let core = core.inner().clone();
+    blocking(move || core.mock_reset_sequences(&name).map_err(e)).await
 }
 
 #[tauri::command]
@@ -864,6 +877,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         import_archive,
         export_sanitized,
         sanitize_presets,
+        sanitize_validate,
         reveal_path,
         timers,
         ui_language,
@@ -893,6 +907,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         mock_import_package_data,
         mock_remove_package,
         mock_packages,
+        mock_reset_sequences,
         bp_get,
         bp_set,
         bp_paused,

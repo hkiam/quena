@@ -596,3 +596,78 @@ fn mock_writes_wiremock_and_a_package() {
     // Neither target given: clap rejects it (exit 2).
     assert_eq!(code(&run(&["mock", input.to_str().unwrap()])), 2);
 }
+
+#[test]
+fn sanitize_and_mock_configs_are_strict() {
+    let d = tempfile::tempdir().unwrap();
+    let input = har(d.path(), "a.har", 2, 0);
+    let out = d.path().join("out.saz");
+    let cfg = d.path().join("cfg.json");
+    let sanitize = |c: &str| {
+        std::fs::write(&cfg, c).unwrap();
+        run(&["sanitize", input.to_str().unwrap(), "-o", out.to_str().unwrap(), "--config", cfg.to_str().unwrap(), "-q"])
+    };
+    // A typo is named, not ignored.
+    let o = sanitize(r#"{"preset":"custom","emials":true}"#);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("emials"), "{}", text(&o));
+    // The app's saved wrapper is accepted.
+    let o = sanitize(r#"{"options":{"preset":"custom","emails":true},"format":"saz"}"#);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert!(out.is_file());
+    let wm = d.path().join("wm");
+    let mock = |c: &str| {
+        std::fs::write(&cfg, c).unwrap();
+        run(&["mock", input.to_str().unwrap(), "--wiremock", wm.to_str().unwrap(), "--config", cfg.to_str().unwrap(), "-q"])
+    };
+    let o = mock(r#"{"repeat":"sequence"}"#);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("repeat"), "{}", text(&o));
+    let o = mock(r#"{"sanitize":{"preset":"custom","phonez":true}}"#);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("phonez"), "{}", text(&o));
+    assert_eq!(code(&mock(r#"{"repeats":"sequence","sanitize":"gdpr"}"#)), 0);
+    assert_eq!(code(&mock(r#"{"sanitize":{"preset":"custom","emails":true}}"#)), 0);
+}
+
+#[test]
+fn outputs_never_overwrite_inputs_or_each_other() {
+    let d = tempfile::tempdir().unwrap();
+    let input = har(d.path(), "a.har", 2, 0);
+    let before = std::fs::read(&input).unwrap();
+    let i = input.to_str().unwrap();
+    // The output is the input (also through another spelling of the path).
+    let same = d.path().join(".").join("a.har");
+    assert_eq!(code(&run(&["sanitize", i, "-o", same.to_str().unwrap()])), 2);
+    let out = d.path().join("out.har");
+    assert_eq!(code(&run(&["sanitize", i, "-o", out.to_str().unwrap(), "--log", out.to_str().unwrap()])), 2);
+    assert_eq!(code(&run(&["sanitize", i, "-o", out.to_str().unwrap(), "--log", i])), 2);
+    let pkg = d.path().join("m.quena-mocks");
+    let zip = d.path().join("m.zip");
+    assert_eq!(code(&run(&["mock", i, "--package", i])), 2);
+    assert_eq!(code(&run(&["mock", i, "--wiremock", zip.to_str().unwrap(), "--package", zip.to_str().unwrap()])), 2);
+    // A package must be named .quena-mocks; a WireMock folder is not an existing file.
+    assert_eq!(code(&run(&["mock", i, "--package", d.path().join("m.zip").to_str().unwrap()])), 2);
+    std::fs::write(d.path().join("file"), "x").unwrap();
+    assert_eq!(code(&run(&["mock", i, "--wiremock", d.path().join("file").to_str().unwrap()])), 2);
+    // A capture inside the WireMock folder's mappings would be replaced.
+    let wm = d.path().join("wm");
+    std::fs::create_dir_all(wm.join("mappings")).unwrap();
+    let inner = wm.join("mappings").join("in.har");
+    std::fs::copy(&input, &inner).unwrap();
+    assert_eq!(code(&run(&["mock", inner.to_str().unwrap(), "--wiremock", wm.to_str().unwrap()])), 2);
+    assert_eq!(std::fs::read(&input).unwrap(), before);
+    assert_eq!(code(&run(&["mock", i, "--package", pkg.to_str().unwrap(), "-q"])), 0);
+}
+
+#[test]
+fn sanitize_and_mock_honour_the_timeout() {
+    let d = tempfile::tempdir().unwrap();
+    let input = har(d.path(), "a.har", 2, 0);
+    let out = d.path().join("out.har");
+    let o = run(&["sanitize", input.to_str().unwrap(), "-o", out.to_str().unwrap(), "--timeout", "0"]);
+    assert_eq!(code(&o), 3, "{}", text(&o));
+    assert!(!out.exists());
+    let o = run(&["mock", input.to_str().unwrap(), "--package", d.path().join("m.quena-mocks").to_str().unwrap(), "--timeout", "0"]);
+    assert_eq!(code(&o), 3, "{}", text(&o));
+}

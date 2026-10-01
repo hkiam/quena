@@ -1,7 +1,7 @@
 // Sanitized export (File → Export Sessions → Sanitized for Sharing): options with presets,
 // the export job, and the redaction log afterwards. The replacement itself happens in
 // crates/quena-app-core/src/sanitize.rs.
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, on, type SanitizedExport, type SanitizeOptions, type SessionId } from "../api";
 import { get, say, set, useStore } from "../store";
@@ -78,24 +78,36 @@ const lines = (s: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-/** Start the export; the redaction log opens when the job is done. */
-export async function runSanitizedExport(ids: SessionId[], path: string, format: "saz" | "har", options: SanitizeOptions) {
+/** The settings again: the export remembers its options there (the core owns that field). */
+function refreshSettings() {
+  api
+    .settingsGet()
+    .then((s) => set({ settings: s }))
+    .catch(() => {});
+}
+
+/**
+ * Start the export. When the job is done the redaction log opens, unless another dialog is
+ * open by then (it is not replaced): a message offers the log instead. `own` is the dialog
+ * that started the export, which does not count as "another dialog". Rejects when the export
+ * could not be started.
+ */
+export async function runSanitizedExport(ids: SessionId[], path: string, format: "saz" | "har", options: SanitizeOptions, own: unknown = null) {
   let job: number | null = null;
   let finished = false;
   const cleanups: (() => void)[] = [];
   const finish = () => {
     finished = true;
     cleanups.forEach((c) => c());
+    refreshSettings();
   };
   const unlisten = await on<SanitizedExport>("export-sanitized", (r) => {
     if (finished || r.path !== path) return;
     finish();
-    set({ dialog: { kind: "sanitize-result", result: r } });
-    // The export remembered its options in the settings.
-    api
-      .settingsGet()
-      .then((s) => set({ settings: s }))
-      .catch(() => {});
+    const show = () => set({ dialog: { kind: "sanitize-result", result: r } });
+    const open = get().dialog;
+    if (open == null || open === own) show();
+    else say(t("Sanitized sessions saved to {path}", { path: r.path }), "info", { label: t("Show redaction log"), run: show });
   });
   cleanups.push(unlisten);
   cleanups.push(
@@ -110,30 +122,51 @@ export async function runSanitizedExport(ids: SessionId[], path: string, format:
   );
   try {
     job = await api.exportSanitized(ids, path, format, options);
+    refreshSettings();
     say(t("Saving sanitized sessions to {path}", { path }));
   } catch (e) {
     finish();
-    say(String(e), "error");
+    throw e;
   }
 }
 
-export function SanitizeDialog({ selected, onClose }: { selected: SessionId[]; onClose: () => void }) {
-  const saved = get().settings?.sanitize;
+/** Body size field: may be empty while typing; a number of at least 1 on blur and export. */
+const kibOf = (s: string) => Math.max(1, Math.floor(Number(s)) || 1);
+
+export function SanitizeDialog({ selected, scope: initialScope, onClose }: { selected: SessionId[]; scope: "selected" | "all"; onClose: () => void }) {
+  const id = useId();
+  // This dialog in the store: closing after an await must not close another one.
+  const mine = useRef(get().dialog);
+  const close = () => {
+    if (get().dialog === mine.current) onClose();
+  };
   const [presets, setPresets] = useState<SanitizeOptions[] | null>(null);
-  const [o, setO] = useState<SanitizeOptions | null>(saved?.options ?? null);
-  const [format, setFormat] = useState<"saz" | "har">(saved?.format === "har" ? "har" : "saz");
-  const [rules, setRules] = useState(() => ({
-    headers: (saved?.options.extraHeaders ?? []).join(", "),
-    params: (saved?.options.extraParams ?? []).join(", "),
-    fields: (saved?.options.extraFields ?? []).join(", "),
-    patterns: (saved?.options.patterns ?? []).join("\n"),
-  }));
+  const [o, setO] = useState<SanitizeOptions | null>(null);
+  const [kib, setKib] = useState("");
+  const [format, setFormat] = useState<"saz" | "har">("saz");
+  const [scope, setScope] = useState<"selected" | "all">(selected.length ? initialScope : "all");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const total = useStore((s) => s.listTotal);
+  const [rules, setRules] = useState({ headers: "", params: "", fields: "", patterns: "" });
   useEffect(() => {
-    api
-      .sanitizePresets()
-      .then((p) => {
+    // The last options from the core: the store's copy may predate the last export.
+    Promise.all([api.sanitizePresets(), api.settingsGet().then(
+        (s) => s.sanitize ?? null,
+        () => get().settings?.sanitize ?? null,
+      )])
+      .then(([p, last]) => {
         setPresets(p);
-        setO((cur) => cur ?? p[0]);
+        const start = last?.options ?? p[0];
+        setO(start);
+        setKib(String(start.truncateKib));
+        if (last?.format === "har") setFormat("har");
+        setRules({
+          headers: (last?.options.extraHeaders ?? []).join(", "),
+          params: (last?.options.extraParams ?? []).join(", "),
+          fields: (last?.options.extraFields ?? []).join(", "),
+          patterns: (last?.options.patterns ?? []).join("\n"),
+        });
       })
       .catch((e) => say(String(e), "error"));
   }, []);
@@ -141,7 +174,7 @@ export function SanitizeDialog({ selected, onClose }: { selected: SessionId[]; o
   const custom = (patch: Partial<SanitizeOptions>) => setO({ ...o, ...patch, preset: "custom" });
   const pick = (name: "support" | "gdpr" | "custom") => {
     const p = presets?.find((x) => x.preset === name);
-    if (p)
+    if (p) {
       setO({
         ...p,
         extraHeaders: o.extraHeaders,
@@ -149,7 +182,8 @@ export function SanitizeDialog({ selected, onClose }: { selected: SessionId[]; o
         extraFields: o.extraFields,
         patterns: o.patterns,
       });
-    else setO({ ...o, preset: "custom" });
+      setKib(String(p.truncateKib));
+    } else setO({ ...o, preset: "custom" });
   };
   const check = ([k, label]: [Flag, () => string]) => (
     <label key={k} className="f-check">
@@ -159,30 +193,55 @@ export function SanitizeDialog({ selected, onClose }: { selected: SessionId[]; o
   const start = async () => {
     const options: SanitizeOptions = {
       ...o,
+      truncateKib: kibOf(kib),
       extraHeaders: list(rules.headers),
       extraParams: list(rules.params),
       extraFields: list(rules.fields),
       patterns: lines(rules.patterns),
     };
-    // End-to-end tests have no native save dialog.
-    const hook = (window as unknown as { __quenaSanitizePath?: string }).__quenaSanitizePath;
-    const filters = format === "saz" ? [{ name: t("SAZ Session Archive"), extensions: ["saz"] }] : [{ name: t("HTTP Archive (HAR)"), extensions: ["har"] }];
-    const path =
-      hook ??
-      (await save({
-        defaultPath: `quena_${stamp()}_sanitized.${format}`,
-        filters,
-      }));
-    if (!path) return;
-    onClose();
-    await runSanitizedExport(selected, path, format, options);
+    setKib(String(options.truncateKib));
+    setError(null);
+    setBusy(true);
+    try {
+      // An invalid pattern is reported here, before the save dialog, and the dialog stays.
+      await api.sanitizeValidate(options);
+      // End-to-end tests have no native save dialog.
+      const hook = (window as unknown as { __quenaSanitizePath?: string }).__quenaSanitizePath;
+      const filters = format === "saz" ? [{ name: t("SAZ Session Archive"), extensions: ["saz"] }] : [{ name: t("HTTP Archive (HAR)"), extensions: ["har"] }];
+      const path =
+        hook ??
+        (await save({
+          defaultPath: `quena_${stamp()}_sanitized.${format}`,
+          filters,
+        }));
+      if (!path) return;
+      await runSanitizedExport(scope === "selected" ? selected : [], path, format, options, mine.current);
+      close();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   };
-  const scope = selected.length ? plural(selected.length, "{n} selected session", "{n} selected sessions") : t("All sessions in the list");
+  const rid = (k: string) => `${id}-${k}`;
   return (
     <div className="sanitize-dialog">
       <div className="f-row">
         <span>{t("Sessions")}</span>
-        <span>{scope}</span>
+        {selected.length ? (
+          <span style={{ display: "flex", gap: 12, flexWrap: "wrap" }} className="sanitize-scope">
+            <label className="f-check">
+              <input type="radio" name="sanitize-scope" value="selected" checked={scope === "selected"} onChange={() => setScope("selected")} />{" "}
+              {plural(selected.length, "Selected session ({n})", "Selected sessions ({n})")}
+            </label>
+            <label className="f-check">
+              <input type="radio" name="sanitize-scope" value="all" checked={scope === "all"} onChange={() => setScope("all")} />{" "}
+              {t("All sessions in the list ({n})", { n: fmtNum(total) })}
+            </label>
+          </span>
+        ) : (
+          <span className="sanitize-scope">{t("All sessions in the list ({n})", { n: fmtNum(total) })}</span>
+        )}
       </div>
       <div className="f-row">
         <span>{t("Preset")}</span>
@@ -222,9 +281,9 @@ export function SanitizeDialog({ selected, onClose }: { selected: SessionId[]; o
       <fieldset className="f-section">
         <legend>{t("Bodies")}</legend>
         <div className="f-row">
-          <span>{t("Bodies")}</span>
+          <label htmlFor={rid("bodies")}>{t("Bodies")}</label>
           <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <select value={o.bodies} onChange={(e) => custom({ bodies: e.target.value as SanitizeOptions["bodies"] })}>
+            <select id={rid("bodies")} value={o.bodies} onChange={(e) => custom({ bodies: e.target.value as SanitizeOptions["bodies"] })}>
               <option value="keep">{t("keep (sanitized)")}</option>
               <option value="truncate">{t("first KiB only (sanitized)")}</option>
               <option value="placeholder">{t("replace by a placeholder")}</option>
@@ -236,12 +295,13 @@ export function SanitizeDialog({ selected, onClose }: { selected: SessionId[]; o
                   type="number"
                   min={1}
                   style={{ width: 80 }}
-                  value={o.truncateKib}
-                  onChange={(e) =>
-                    custom({
-                      truncateKib: Math.max(1, Number(e.target.value) || 1),
-                    })
-                  }
+                  aria-label={t("KiB per body")}
+                  value={kib}
+                  onChange={(e) => {
+                    setKib(e.target.value);
+                    if (o.preset !== "custom") setO({ ...o, preset: "custom" });
+                  }}
+                  onBlur={() => setKib(String(kibOf(kib)))}
                 />{" "}
                 KiB
               </>
@@ -260,22 +320,27 @@ export function SanitizeDialog({ selected, onClose }: { selected: SessionId[]; o
       <fieldset className="f-section">
         <legend>{t("Own rules")}</legend>
         <div className="f-row">
-          <span>{t("Header names")}</span>
-          <input value={rules.headers} placeholder="x-tenant, x-customer" onChange={(e) => setRules({ ...rules, headers: e.target.value })} />
+          <label htmlFor={rid("headers")}>{t("Header names")}</label>
+          <input id={rid("headers")} value={rules.headers} placeholder="x-tenant, x-customer" onChange={(e) => setRules({ ...rules, headers: e.target.value })} />
         </div>
         <div className="f-row">
-          <span>{t("Parameter names (URL, form)")}</span>
-          <input value={rules.params} placeholder="customer, ref" onChange={(e) => setRules({ ...rules, params: e.target.value })} />
+          <label htmlFor={rid("params")}>{t("Parameter names (URL, form)")}</label>
+          <input id={rid("params")} value={rules.params} placeholder="customer, ref" onChange={(e) => setRules({ ...rules, params: e.target.value })} />
         </div>
         <div className="f-row">
-          <span>{t("Field names (JSON, XML, multipart)")}</span>
-          <input value={rules.fields} placeholder="customerNo, contractId" onChange={(e) => setRules({ ...rules, fields: e.target.value })} />
+          <label htmlFor={rid("fields")}>{t("Field names (JSON, XML, multipart)")}</label>
+          <input id={rid("fields")} value={rules.fields} placeholder="customerNo, contractId" onChange={(e) => setRules({ ...rules, fields: e.target.value })} />
         </div>
         <div className="f-row">
-          <span>{t("Regular expressions (one per line)")}</span>
-          <textarea rows={2} className="mono" value={rules.patterns} placeholder={"ACME-\\d{6}"} onChange={(e) => setRules({ ...rules, patterns: e.target.value })} />
+          <label htmlFor={rid("patterns")}>{t("Regular expressions (one per line)")}</label>
+          <textarea id={rid("patterns")} rows={2} className="mono" value={rules.patterns} placeholder={"ACME-\\d{6}"} onChange={(e) => setRules({ ...rules, patterns: e.target.value })} />
         </div>
       </fieldset>
+      {error && (
+        <div className="mocks-error sanitize-error" role="alert">
+          {error}
+        </div>
+      )}
       <div className="muted small">{t("Automatic detection can miss data. Check the file before sharing it.")}</div>
       <div
         className="modal-footer inline sticky"
@@ -287,7 +352,7 @@ export function SanitizeDialog({ selected, onClose }: { selected: SessionId[]; o
         }}
       >
         <button onClick={onClose}>{t("Cancel")}</button>
-        <button className="primary" onClick={start}>
+        <button className="primary" disabled={busy} onClick={start}>
           {t("Export…")}
         </button>
       </div>

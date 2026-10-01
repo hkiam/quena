@@ -1,4 +1,4 @@
-import { api } from "../api";
+import { api, type MockPackage } from "../api";
 import { get, say, set } from "../store";
 import { plural, t } from "../i18n";
 
@@ -17,8 +17,6 @@ export function mocksFromSelection(target?: "apply" | "package" | "wiremock") {
 
 // ---- Quena mock packages (.quena-mocks)
 
-export const isMockPackageName = (name: string) => /\.quena-mocks$/i.test(name);
-
 /** Largest package accepted by drag and drop (sent in one piece). */
 const MAX_DROPPED_PACKAGE = 512 << 20;
 
@@ -30,8 +28,7 @@ export async function importMockPackageFiles(files: File[]) {
       continue;
     }
     try {
-      const pkg = await api.mockImportPackageData(f.name, new Uint8Array(await f.arrayBuffer()), false);
-      say(t("Package {name}: {n} rules imported", { name: pkg.name, n: pkg.rules }));
+      mockPackageImported(await api.mockImportPackageData(f.name, new Uint8Array(await f.arrayBuffer()), false));
     } catch (e) {
       say(`${f.name}: ${e}`, "error");
     }
@@ -39,9 +36,11 @@ export async function importMockPackageFiles(files: File[]) {
   set({ activeTab: "autoresponder", arNonce: Date.now() });
 }
 
-/** Yes/no question in the app's confirm dialog. */
-export function confirmText(title: string, message: string, confirm: string): Promise<boolean> {
-  return new Promise((resolve) => set({ dialog: { kind: "confirm", title, message, confirm, resolve } }));
+/** The message after a package import, with the rules that were left out. */
+export function mockPackageImported(pkg: MockPackage) {
+  const imported = plural(pkg.rules, "Package {name}: {n} rule imported", "Package {name}: {n} rules imported", { name: pkg.name });
+  const hosts = pkg.hosts.length ? ` (${pkg.hosts.slice(0, 3).join(", ")}${pkg.hosts.length > 3 ? " …" : ""})` : "";
+  say(pkg.rejected ? `${imported}${hosts}, ${plural(pkg.rejected, "{n} rule left out (unsafe or for any host)", "{n} rules left out (unsafe or for any host)")}` : imported + hosts);
 }
 
 // ---- Map Remote / Map Local: plain mock rules built from two small forms.

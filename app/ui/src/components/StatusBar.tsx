@@ -26,7 +26,7 @@ export function StatusBar() {
   useEffect(() => {
     if (!message) return;
     setMsgVisible(true);
-    const timer = setTimeout(() => setMsgVisible(false), message.kind === "error" ? 8000 : 4000);
+    const timer = setTimeout(() => setMsgVisible(false), message.action ? 15000 : message.kind === "error" ? 8000 : 4000);
     return () => clearTimeout(timer);
   }, [message]);
 
@@ -75,7 +75,24 @@ export function StatusBar() {
       {status?.recordingSuspended && <div className="sb-cell sb-warn">{t("Recording suspended (disk)")}</div>}
       {status?.mockRunning && <div className="sb-cell sb-warn">{t("Mock traffic")}</div>}
       <div className="sb-msg">
-        {msgVisible && message ? <span className={message.kind === "error" ? "sb-error" : ""}>{message.text}</span> : eng?.error ? <span className="sb-error">{eng.error}</span> : null}
+        {msgVisible && message ? (
+          <>
+            <span className={message.kind === "error" ? "sb-error" : ""}>{message.text}</span>
+            {message.action && (
+              <button
+                className="sb-msg-action linklike"
+                onClick={() => {
+                  setMsgVisible(false);
+                  message.action?.run();
+                }}
+              >
+                {message.action.label}
+              </button>
+            )}
+          </>
+        ) : eng?.error ? (
+          <span className="sb-error">{eng.error}</span>
+        ) : null}
       </div>
       {running.length > 0 && (
         <div className="sb-cell sb-click sb-jobs" onClick={() => set({ dialog: { kind: "jobs" } })} title={t("Background jobs")}>

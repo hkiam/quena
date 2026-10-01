@@ -112,15 +112,18 @@ struct SanitizeArgs {
     /// credentials (only credentials and tokens).
     #[arg(long, default_value = "support")]
     preset: String,
-    /// Sanitize options (JSON, as saved by the app); replaces --preset.
+    /// Sanitize options (JSON: the options object, or the app's saved `{"options": …,
+    /// "format": …}`); replaces --preset. Unknown keys are an error (exit 2).
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
     /// Also write the redaction log (`.json` or text).
     #[arg(long, value_name = "PATH")]
     log: Option<PathBuf>,
+    /// No progress messages on stderr (errors only).
     #[arg(short, long)]
     quiet: bool,
-    /// Give up when the whole run takes longer than this many seconds; exit code 3.
+    /// Give up when the whole run (imports, sanitizing, writing) takes longer than this many
+    /// seconds; exit code 3.
     #[arg(long, default_value_t = 600)]
     timeout: u64,
 }
@@ -130,14 +133,16 @@ struct MockArgs {
     /// Captures to turn into mocks (.har, .saz).
     #[arg(required = true, value_name = "CAPTURE")]
     files: Vec<PathBuf>,
-    /// WireMock mappings and __files: a folder, or a `.zip`.
+    /// WireMock mappings and __files: a folder (its old mappings and __files are replaced),
+    /// or a `.zip`.
     #[arg(long, value_name = "PATH", required_unless_present = "package")]
     wiremock: Option<PathBuf>,
-    /// Quena mock package (`.quena-mocks`), for Mock Rules → Import package.
+    /// Quena mock package (must end in `.quena-mocks`), for Mock Rules → Import package.
     #[arg(long, value_name = "PATH")]
     package: Option<PathBuf>,
     /// Mock options (JSON: hosts, includeStatic, query, ignoreParams, repeats, matchBody,
-    /// latency, includePreflight, includeErrors, sanitize, keepSetCookie); flags win.
+    /// latency, includePreflight, includeErrors, sanitize, keepSetCookie; `sanitize` is a
+    /// preset name, null or full sanitize options); flags win. Unknown keys are an error.
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
     /// Only these hosts (repeatable; subdomains included).
@@ -155,12 +160,15 @@ struct MockArgs {
     /// Answer after the recorded time to first byte.
     #[arg(long)]
     latency: bool,
-    /// Sanitize preset for the mocks (credentials, support, gdpr) or `none`.
+    /// Sanitize preset for the mocks: credentials (the default: credentials and tokens),
+    /// support, gdpr, or `none` (as recorded).
     #[arg(long, value_name = "PRESET")]
     sanitize: Option<String>,
+    /// No progress messages on stderr (errors only).
     #[arg(short, long)]
     quiet: bool,
-    /// Give up when the whole run takes longer than this many seconds; exit code 3.
+    /// Give up when the whole run (imports, building and writing the mocks) takes longer
+    /// than this many seconds; exit code 3.
     #[arg(long, default_value_t = 600)]
     timeout: u64,
 }
@@ -547,9 +555,88 @@ fn load_captures(files: &[PathBuf], quiet: bool, deadline: &Deadline) -> Result<
     Ok((engine, ids))
 }
 
-fn json_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
-    let text = std::fs::read_to_string(path).map_err(|e| usage(format!("{}: {e}", path.display())))?;
-    serde_json::from_str(&text).map_err(|e| usage(format!("{}: {e}", path.display())))
+fn read_text(path: &Path) -> Result<String> {
+    std::fs::read_to_string(path).map_err(|e| usage(format!("{}: {e}", path.display())))
+}
+
+/// Mock options from a config file, strictly: unknown keys are an error that names them.
+/// `sanitize` is a preset name, null, or full sanitize options (also strict).
+fn mock_options(text: &str) -> std::result::Result<quena_app_core::mockgen::MockOptions, String> {
+    use quena_app_core::mockgen::MockOptions;
+    use quena_app_core::sanitize::SanitizeOptions;
+    let v: Value = serde_json::from_str(text).map_err(|e| format!("invalid JSON: {e}"))?;
+    let Value::Object(mut map) = v else {
+        return Err("expected a JSON object".into());
+    };
+    let known: Vec<String> = match serde_json::to_value(MockOptions::default()) {
+        Ok(Value::Object(d)) => d.keys().cloned().collect(),
+        _ => vec![],
+    };
+    let mut unknown: Vec<&String> = map.keys().filter(|k| !known.contains(k)).collect();
+    if !unknown.is_empty() {
+        unknown.sort();
+        let unknown: Vec<&str> = unknown.iter().map(|s| s.as_str()).collect();
+        return Err(format!("unknown option(s): {} (known: {})", unknown.join(", "), known.join(", ")));
+    }
+    let sanitize = match map.remove("sanitize") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(Value::String(name)) if name == "none" => Some(None),
+        Some(Value::String(name)) => Some(Some(
+            SanitizeOptions::preset(&name).ok_or_else(|| format!("sanitize: unknown preset {name:?} (credentials, support, gdpr or none)"))?,
+        )),
+        Some(o @ Value::Object(_)) => Some(Some(SanitizeOptions::from_json_strict(&o.to_string()).map_err(|e| format!("sanitize: {e}"))?)),
+        Some(_) => return Err("sanitize: a preset name, null or an object".into()),
+    };
+    let mut opts: MockOptions = serde_json::from_value(Value::Object(map)).map_err(|e| format!("invalid options: {e}"))?;
+    if let Some(s) = sanitize {
+        opts.sanitize = s;
+    }
+    Ok(opts)
+}
+
+/// Where a path points: the canonical file, or for one that does not exist yet the
+/// canonical folder plus the file name.
+fn path_key(p: &Path) -> PathBuf {
+    if let Ok(c) = p.canonicalize() {
+        return c;
+    }
+    let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    match (parent.canonicalize(), p.file_name()) {
+        (Ok(d), Some(n)) => d.join(n),
+        _ => p.to_path_buf(),
+    }
+}
+
+/// No output may overwrite an input or another output; nor may a WireMock folder hold an
+/// input in the parts that are replaced (`mappings`, `__files`).
+fn check_outputs(inputs: &[PathBuf], outputs: &[(&str, &PathBuf)], wiremock_dir: Option<&Path>) -> Result<()> {
+    let ins: Vec<(PathBuf, &PathBuf)> = inputs.iter().map(|p| (path_key(p), p)).collect();
+    let mut seen: Vec<(PathBuf, &str)> = Vec::new();
+    for (flag, p) in outputs {
+        let k = path_key(p);
+        if let Some((_, i)) = ins.iter().find(|(c, _)| *c == k) {
+            return Err(usage(format!("{flag} {}: is the capture {}", p.display(), i.display())));
+        }
+        if let Some((_, other)) = seen.iter().find(|(c, _)| *c == k) {
+            return Err(usage(format!("{flag} {}: the same file as {other}", p.display())));
+        }
+        seen.push((k, flag));
+    }
+    if let Some(dir) = wiremock_dir {
+        let d = path_key(dir);
+        for (c, i) in &ins {
+            if c.starts_with(d.join("mappings")) || c.starts_with(d.join("__files")) {
+                return Err(usage(format!("--wiremock {}: would replace the capture {}", dir.display(), i.display())));
+            }
+        }
+        for (c, flag) in &seen {
+            if *flag != "--wiremock" && (c.starts_with(d.join("mappings")) || c.starts_with(d.join("__files"))) {
+                return Err(usage(format!("--wiremock {}: would replace the {flag} output", dir.display())));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn sanitize(a: SanitizeArgs) -> Result<()> {
@@ -557,7 +644,7 @@ fn sanitize(a: SanitizeArgs) -> Result<()> {
     use quena_app_core::sanitize::SanitizeOptions;
     let deadline = Deadline::after(a.timeout);
     let opts: SanitizeOptions = match &a.config {
-        Some(p) => json_file(p)?,
+        Some(p) => SanitizeOptions::from_json_strict(&read_text(p)?).map_err(|e| usage(format!("{}: {e}", p.display())))?,
         None => SanitizeOptions::preset(&a.preset).ok_or_else(|| usage(format!("--preset {}: use support, gdpr or credentials", a.preset)))?,
     };
     opts.validate().map_err(usage)?;
@@ -570,11 +657,25 @@ fn sanitize(a: SanitizeArgs) -> Result<()> {
     for p in std::iter::once(&a.output).chain(a.log.as_ref()) {
         check_writable(p).map_err(usage)?;
     }
+    let mut outs = vec![("-o", &a.output)];
+    outs.extend(a.log.iter().map(|p| ("--log", p)));
+    check_outputs(&a.files, &outs, None)?;
     let (engine, ids) = load_captures(&a.files, a.quiet, &deadline)?;
     progress(a.quiet, "sanitizing");
     let tmp = engine._data.path().join("sanitize-tmp");
     let body_cfg = engine.core.settings().bodies.to_config();
-    let log = sanitized_export(&engine.core.capture(), &ids, &a.output, format, opts, &tmp, body_cfg, &quena_formats::NoProgress)?;
+    let existed = a.output.exists();
+    let r = sanitized_export(&engine.core.capture(), &ids, &a.output, format, opts, &tmp, body_cfg, &DeadlineProgress(&deadline));
+    let log = match r {
+        Ok(log) => log,
+        Err(e) => {
+            // A half-written archive is no use; one that was there before is left alone.
+            if !existed {
+                let _ = std::fs::remove_file(&a.output);
+            }
+            return Err(deadline.explain(e, "sanitizing"));
+        }
+    };
     if let Some(p) = &a.log {
         let text = if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) { serde_json::to_string_pretty(&log)? } else { log.to_text() };
         std::fs::write(p, text).with_context(|| p.display().to_string())?;
@@ -590,7 +691,7 @@ fn mock(a: MockArgs) -> Result<()> {
     use quena_app_core::sanitize::SanitizeOptions;
     let deadline = Deadline::after(a.timeout);
     let mut opts: MockOptions = match &a.config {
-        Some(p) => json_file(p)?,
+        Some(p) => mock_options(&read_text(p)?).map_err(|e| usage(format!("{}: {e}", p.display())))?,
         None => MockOptions::default(),
     };
     if !a.hosts.is_empty() {
@@ -610,22 +711,39 @@ fn mock(a: MockArgs) -> Result<()> {
         Some(p) => opts.sanitize = Some(SanitizeOptions::preset(p).ok_or_else(|| usage(format!("--sanitize {p}: use credentials, support, gdpr or none")))?),
     }
     check_captures(&a.files)?;
-    let targets: Vec<&PathBuf> = a.wiremock.iter().chain(a.package.iter()).collect();
-    for p in &targets {
-        // A WireMock folder may exist already; its parent must.
-        let is_dir_target = a.wiremock.as_ref() == Some(*p) && !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
-        if is_dir_target {
+    if let Some(p) = &a.package {
+        if !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("quena-mocks")) {
+            return Err(usage(format!("--package {}: a mock package ends in .quena-mocks", p.display())));
+        }
+        check_writable(p).map_err(|e| usage(format!("--package {}: {e}", p.display())))?;
+    }
+    let mut wiremock_dir = None;
+    if let Some(p) = &a.wiremock {
+        if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) {
+            check_writable(p).map_err(|e| usage(format!("--wiremock {}: {e}", p.display())))?;
+        } else {
+            // A folder: it may exist already (its mappings and __files are replaced), its
+            // parent must; an existing file is not a folder.
+            if p.exists() && !p.is_dir() {
+                return Err(usage(format!("--wiremock {}: is a file, not a folder (use a folder or a .zip)", p.display())));
+            }
             let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
             if !parent.is_dir() {
-                return Err(usage(format!("{}: no such folder: {}", p.display(), parent.display())));
+                return Err(usage(format!("--wiremock {}: no such folder: {}", p.display(), parent.display())));
             }
-        } else {
-            check_writable(p).map_err(usage)?;
+            wiremock_dir = Some(p.as_path());
         }
     }
+    let mut outs = Vec::new();
+    outs.extend(a.wiremock.iter().map(|p| ("--wiremock", p)));
+    outs.extend(a.package.iter().map(|p| ("--package", p)));
+    check_outputs(&a.files, &outs, wiremock_dir)?;
     let (engine, ids) = load_captures(&a.files, a.quiet, &deadline)?;
     progress(a.quiet, "building mocks");
-    let set = mockgen::generate(&engine.core.capture(), &ids, &opts, true, &quena_formats::NoProgress)?;
+    let set = mockgen::generate(&engine.core.capture(), &ids, &opts, true, &DeadlineProgress(&deadline)).map_err(|e| deadline.explain(e, "building mocks"))?;
+    if deadline.passed() {
+        return Err(deadline.explain(anyhow!("cancelled"), "building mocks"));
+    }
     if let Some(p) = &a.wiremock {
         mockgen::write_wiremock(&set, p)?;
     }
@@ -862,11 +980,34 @@ impl Deadline {
         }
     }
 
+    fn passed(&self) -> bool {
+        self.at.is_some_and(|at| Instant::now() >= at)
+    }
+
+    /// An error of work that was cancelled by the deadline: the timeout (exit 3).
+    fn explain(&self, e: anyhow::Error, what: &str) -> anyhow::Error {
+        if self.passed() {
+            anyhow!("{what}: no result within --timeout {} s", self.secs)
+        } else {
+            e
+        }
+    }
+
     /// Time left (`Duration::MAX`: no deadline).
     fn remaining(&self) -> Duration {
         self.at.map_or(Duration::MAX, |at| {
             at.saturating_duration_since(Instant::now())
         })
+    }
+}
+
+/// Progress of work done in this process (sanitizing, building mocks): cancelled when the
+/// deadline has passed.
+struct DeadlineProgress<'a>(&'a Deadline);
+
+impl quena_formats::Progress for DeadlineProgress<'_> {
+    fn cancelled(&self) -> bool {
+        self.0.passed()
     }
 }
 
