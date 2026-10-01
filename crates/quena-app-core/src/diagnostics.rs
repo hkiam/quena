@@ -392,6 +392,8 @@ pub(crate) fn decode_param(s: &str) -> String {
 pub(crate) fn secret_param(name: &str) -> bool {
     let n = decode_param(name).trim().to_ascii_lowercase();
     SECRET_PARAMS.contains(&n.as_str()) || SECRET_PARAM_PARTS.iter().any(|p| n.contains(p)) || SECRET_PARAM_PREFIXES.iter().any(|p| n.starts_with(p))
+        // The word classifier of the sanitized export (`pwd`, `otpCode`, `accessKey` …).
+        || crate::sanitize::secret_name(&n)
 }
 
 /// `<n bytes>`, percent-encoded so the URL stays valid (it decodes to `<n bytes>`).
@@ -425,6 +427,10 @@ fn redact_param(p: &str) -> String {
 pub(crate) trait UrlRewrite {
     /// The user info of an absolute URL (`user:pass`).
     fn userinfo(&mut self, userinfo: &str) -> String;
+    /// The host of an absolute URL (name or IP literal, IPv6 without brackets, no port).
+    fn host(&mut self, host: &str) -> String {
+        host.to_string()
+    }
     /// The path (absolute URL) or everything before `?` (relative URL), as written.
     fn path(&mut self, path: &str) -> String {
         path.to_string()
@@ -482,14 +488,33 @@ pub(crate) fn rewrite_url(url: &str, r: &mut dyn UrlRewrite) -> String {
             let auth_end = after.find('/').unwrap_or(after.len());
             let authority = &after[..auth_end];
             out.push_str(&base[..i + 3]);
-            match authority.rsplit_once('@') {
+            let host_port = match authority.rsplit_once('@') {
                 Some((userinfo, host)) => {
                     out.push_str(&r.userinfo(userinfo));
                     out.push('@');
-                    out.push_str(host);
+                    host
                 }
-                None => out.push_str(authority),
+                None => authority,
+            };
+            // `host`, `host:port`, `[v6]`, `[v6]:port`.
+            let (open, host, rest) = match host_port.strip_prefix('[').and_then(|h| h.split_once(']')) {
+                Some((h, rest)) => ("[", h, rest),
+                None => match host_port.rsplit_once(':') {
+                    Some((h, p)) if p.bytes().all(|b| b.is_ascii_digit()) => ("", h, &host_port[h.len()..]),
+                    _ => ("", host_port, ""),
+                },
+            };
+            let new_host = r.host(host);
+            // A replaced IPv6 literal is no IPv6 literal any more: no brackets.
+            let brackets = !open.is_empty() && (new_host == host || new_host.contains(':'));
+            if brackets {
+                out.push('[');
             }
+            out.push_str(&new_host);
+            if brackets {
+                out.push(']');
+            }
+            out.push_str(rest);
             out.push_str(&r.path(&after[auth_end..]));
         }
         None => out.push_str(&r.path(base)),

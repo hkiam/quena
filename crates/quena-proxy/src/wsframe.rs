@@ -1,7 +1,9 @@
 //! WebSocket frame parsing for the message log (RFC 6455). Frames are forwarded
 //! raw and unchanged; a copy of each frame is logged (payload unmasked) so the
 //! WebSocket inspector can show messages. Record format in the log body:
-//!   dir(1) opcode(1) fin(1) reserved(1) ts_us(8 LE) len(4 LE) payload(len)
+//!   dir(1) opcode(1) fin(1) rsv(1) ts_us(8 LE) len(4 LE) payload(len)
+//! `rsv` holds the frame's RSV1-3 bits (RSV1 = 0x4: compressed with permessage-deflate);
+//! older logs have 0 there.
 
 use crate::body::BoxError;
 use bytes::{Buf, BytesMut};
@@ -117,7 +119,7 @@ pub fn record(dir: u8, frame: &Frame, ts_us: i64) -> Vec<u8> {
     r.push(dir);
     r.push(frame.opcode);
     r.push(frame.fin as u8);
-    r.push(0);
+    r.push(frame.raw.first().map_or(0, |b| (b >> 4) & 0x7));
     r.extend_from_slice(&ts_us.to_le_bytes());
     r.extend_from_slice(&(frame.payload.len() as u32).to_le_bytes());
     r.extend_from_slice(&frame.payload);

@@ -169,7 +169,7 @@ fn gdpr_export_contains_no_marker_and_loads_again() {
     let har_text = std::fs::read_to_string(&har).unwrap();
     assert_clean("HAR", &har_text);
     // Placeholders, kept structure, decoded bodies.
-    assert!(saz_all.contains("Authorization: Basic <24 bytes>") && saz_all.contains("Cookie: sid=<cookie-1>; theme=<cookie-2>"), "{saz_all}");
+    assert!(saz_all.contains("Authorization: Basic <token-") && saz_all.contains("Cookie: sid=<cookie-1>; theme=<cookie-2>"), "{saz_all}");
     assert!(saz_all.contains("Set-Cookie: session=<cookie-3>; Path=/; Secure; HttpOnly"), "{saz_all}");
     assert!(!saz_all.to_ascii_lowercase().contains("content-encoding:"), "{saz_all}");
     assert!(saz_all.contains(r#""token_type":"Bearer""#) && saz_all.contains(r#""email":"<personal-"#), "{saz_all}");

@@ -202,19 +202,47 @@ pub fn sanitized_export(
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let tmp = TempCapture(Capture::open(tmp_root.join(format!("{}-{nanos}", std::process::id())), body_cfg, true)?);
     let mut z = Sanitizer::new(opts);
-    let mut copied = Vec::with_capacity(ids.len());
     // Scrubbing is the first half of the work, writing the archive the second.
     let total = ids.len() as u64 * 2;
-    for (i, id) in ids.iter().enumerate() {
-        if p.cancelled() {
-            return Err(anyhow!("cancelled"));
+    // Scrubbing runs on a worker thread; this thread watches `p` (which need not be `Sync`)
+    // and passes a cancellation on through a flag the sanitizer checks inside large bodies.
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    z.set_cancel(cancel.clone());
+    let done = std::sync::atomic::AtomicU64::new(0);
+    let tmp_cap = &tmp.0;
+    let result = std::thread::scope(|sc| {
+        let worker = sc.spawn(|| {
+            let mut copied = Vec::with_capacity(ids.len());
+            for id in ids {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return None;
+                }
+                done.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(d) = cap.detail(*id) else { continue };
+                let Some((req, resp)) = cap.bodies_of(*id) else { continue };
+                let s = z.session(&d, &req, &resp);
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return None;
+                }
+                let (rb, sb) = (tmp_cap.bodies.store_bytes(&s.request), tmp_cap.bodies.store_bytes(&s.response));
+                copied.push(tmp_cap.insert(s.detail, rb, sb));
+            }
+            Some((copied, z))
+        });
+        while !worker.is_finished() {
+            if p.cancelled() {
+                cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            p.progress(done.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(1), total);
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        p.progress(i as u64, total);
-        let Some(d) = cap.detail(*id) else { continue };
-        let Some((req, resp)) = cap.bodies_of(*id) else { continue };
-        let s = z.session(&d, &req, &resp);
-        let (rb, sb) = (tmp.0.bodies.store_bytes(&s.request), tmp.0.bodies.store_bytes(&s.response));
-        copied.push(tmp.0.insert(s.detail, rb, sb));
+        worker.join()
+    });
+    let Some((copied, z)) = result.map_err(|_| anyhow!("sanitizing failed (internal error)"))? else {
+        return Err(anyhow!("cancelled"));
+    };
+    if p.cancelled() {
+        return Err(anyhow!("cancelled"));
     }
     let log = z.into_log();
     struct Half<'a>(&'a dyn quena_formats::Progress, u64);

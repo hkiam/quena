@@ -3,14 +3,22 @@
 //! without any model or network access.
 //!
 //! - Headers are all kept; only the values of sensitive ones are replaced (`Authorization`
-//!   keeps its scheme and the size, cookies keep their names and attributes).
-//! - URLs: user info and the values of secret parameters (the diagnostics rules plus the
-//!   OAuth list) are replaced; other values, path segments and fragments are scanned.
+//!   and its relatives keep their scheme, the credential gets the same pseudonym it gets in
+//!   bodies; cookies keep their names and attributes; integrity headers of changed bodies
+//!   are dropped).
+//! - Names are classified by one word-based rule for fields, parameters and headers
+//!   ([`secret_name`]): `pwd`, `otpCode`, `X-Api-Key` are secrets, `passenger` is not.
+//! - URLs: user info, the values of secret parameters, tokens in path segments
+//!   (`/reset/<token>`) and, with the `ips` option or own patterns, the host are replaced;
+//!   other values, path segments and fragments are scanned. URLs inside text are rewritten
+//!   the same way.
 //! - Bodies are decoded (Content-Encoding, charset) and scrubbed by their structure: JSON
 //!   (own tokenizer, so order, whitespace and number formats stay as written), form fields,
-//!   multipart parts, XML/SOAP element and attribute values, Server-Sent Events, WebSocket
-//!   messages; everything else is scanned as text. The result carries no Content-Encoding
-//!   and a matching Content-Length.
+//!   multipart parts, XML/SOAP element and attribute values (also named by a sibling or an
+//!   attribute: `{"name": "password", "value": …}`, `<Attribute Name="mail">`), HTML tags,
+//!   Server-Sent Events, WebSocket messages (inflated, fragments joined); everything else is
+//!   scanned as text (`key=value`, `key: value`, `Bearer …`, `Cookie:` lines …). The result
+//!   carries no Content-Encoding and a matching Content-Length.
 //! - Replacements are pseudonyms: the same value becomes the same `<email-3>` within one
 //!   export. The values are only kept as keyed hashes (random key per [`Sanitizer`]); the
 //!   numbers follow the order of appearance and say nothing about the value.
@@ -24,7 +32,7 @@ use std::io::Read;
 use std::sync::OnceLock;
 
 use crate::diagnostics::auth_facts::encode_component;
-use crate::diagnostics::{UrlRewrite, decode_param, has_scheme, redact_authenticate, redact_authorization, rewrite_set_cookie, rewrite_url, secret_param};
+use crate::diagnostics::{UrlRewrite, decode_param, has_scheme, redact_authenticate, rewrite_set_cookie, rewrite_url};
 use quena_body::Body;
 use quena_model::{Headers, SessionDetail, SessionId, SessionKind};
 use regex::Regex;
@@ -151,6 +159,41 @@ impl SanitizeOptions {
             "credentials" => SanitizeOptions { preset: "credentials".into(), emails: false, payment: false, binary: BinaryMode::Keep, ..base },
             _ => return None,
         })
+    }
+
+    /// The options for generating mocks from sessions: like `base`, but bodies and binary
+    /// bodies are kept whole (a mock response must stay a valid response).
+    pub fn for_mocks(base: &SanitizeOptions) -> SanitizeOptions {
+        SanitizeOptions { bodies: BodyMode::Keep, binary: BinaryMode::Keep, ..base.clone() }
+    }
+
+    /// Strict parse (CLI config files): unknown keys are an error that names them. Accepts
+    /// the options object itself or the app's saved wrapper `{"options": {…}, "format": …}`.
+    /// The lenient `Deserialize` (settings files, forward compatible) stays as it is.
+    pub fn from_json_strict(text: &str) -> Result<SanitizeOptions, String> {
+        let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("invalid JSON: {e}"))?;
+        let serde_json::Value::Object(map) = v else { return Err("expected a JSON object".into()) };
+        let wrapper = map.contains_key("options") && map.keys().all(|k| k == "options" || k == "format");
+        let obj = if wrapper {
+            match map.get("options") {
+                Some(serde_json::Value::Object(o)) => o.clone(),
+                _ => return Err("\"options\" must be an object".into()),
+            }
+        } else {
+            map
+        };
+        let known: Vec<String> = match serde_json::to_value(SanitizeOptions::default()) {
+            Ok(serde_json::Value::Object(d)) => d.keys().cloned().collect(),
+            _ => vec![],
+        };
+        let mut unknown: Vec<String> = obj.keys().filter(|k| !known.contains(k)).cloned().collect();
+        if !unknown.is_empty() {
+            unknown.sort();
+            return Err(format!("unknown option(s): {} (known: {})", unknown.join(", "), known.join(", ")));
+        }
+        let opts: SanitizeOptions = serde_json::from_value(serde_json::Value::Object(obj)).map_err(|e| format!("invalid options: {e}"))?;
+        opts.validate()?;
+        Ok(opts)
     }
 
     /// The first invalid pattern, if any.
@@ -476,6 +519,10 @@ fn encode(s: &str, enc: Enc) -> String {
 enum Ctx {
     Plain,
     Secret(Cat),
+    /// A weak secret name (`key`, `code`, `refresh`, `hash`): secret only when the value
+    /// looks like a credential ([`credential_value`]; `true` = the looser rule for URL and
+    /// form parameters). Numbers and booleans stay.
+    Weak(Cat, bool),
     Personal,
 }
 
@@ -486,6 +533,8 @@ impl Ctx {
             (Ctx::Secret(c), _) => Ctx::Secret(c),
             (_, Ctx::Secret(c)) => Ctx::Secret(c),
             (Ctx::Personal, _) | (_, Ctx::Personal) => Ctx::Personal,
+            // A weak name judges its own value; it does not make children secret.
+            (_, Ctx::Weak(c, l)) => Ctx::Weak(c, l),
             _ => Ctx::Plain,
         }
     }
@@ -521,8 +570,22 @@ pub struct Sanitizer {
     extra_params: Vec<String>,
     extra_fields: Vec<String>,
     depth: usize,
-    /// Scanning program code (JavaScript, CSS): no `name=value` rules.
+    /// Scanning program code (JavaScript, CSS): no bare `name=value` rule.
     code: bool,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Integrity headers (`Digest`, `Content-MD5`, `ETag` …) dropped with changed bodies.
+    integrity_dropped: usize,
+    /// Fragmented WebSocket messages written as one frame.
+    ws_joined: usize,
+    name_cache: std::cell::RefCell<HashMap<(u8, String), Ctx>>,
+    /// No name rules (`Content-Disposition`: `name="…"` names a field, it is no name).
+    no_kv: bool,
+}
+
+/// See [`Sanitizer::object_shape`].
+struct Shape {
+    indirect: Option<Ctx>,
+    person: bool,
 }
 
 impl Sanitizer {
@@ -548,6 +611,11 @@ impl Sanitizer {
             patterns,
             depth: 0,
             code: false,
+            cancel: None,
+            integrity_dropped: 0,
+            ws_joined: 0,
+            name_cache: Default::default(),
+            no_kv: false,
         }
     }
 
@@ -584,28 +652,46 @@ impl Sanitizer {
         self.log.sessions += 1;
         let before = self.log.total;
         let mut detail = d.clone();
-        if d.summary.kind != SessionKind::Tunnel {
-            detail.request.url = self.url(&d.request.url, Loc::Url);
-        }
+        detail.request.url = if d.summary.kind == SessionKind::Tunnel {
+            // CONNECT target `host:port`.
+            self.authority(&d.request.url, Loc::Url)
+        } else {
+            self.url(&d.request.url, Loc::Url)
+        };
         self.headers(&mut detail.request.headers);
         if let Some(r) = detail.response.as_mut() {
             self.headers(&mut r.headers);
         }
         let request = self.body(&mut detail.request.headers, req, Loc::Body);
+        let deflate = d.response.as_ref().and_then(|r| r.headers.get("sec-websocket-extensions")).is_some_and(|e| e.to_ascii_lowercase().contains("permessage-deflate"));
         let response = match detail.response.as_mut() {
             Some(r) if d.summary.kind == SessionKind::WebSocket => {
                 r.headers.remove("content-encoding");
-                self.ws_log(resp)
+                self.ws_log(resp, deflate)
             }
             Some(r) => self.body(&mut r.headers, resp, Loc::Body),
-            None if d.summary.kind == SessionKind::WebSocket => self.ws_log(resp),
+            None if d.summary.kind == SessionKind::WebSocket => self.ws_log(resp, deflate),
             None => Vec::new(),
         };
+        if self.ws_joined > 0 {
+            let note = format!("Fragmented WebSocket messages joined into one frame each: {}", self.ws_joined);
+            match self.log.notes.iter_mut().find(|n| n.starts_with("Fragmented WebSocket")) {
+                Some(n) => *n = note,
+                None => self.log.notes.push(note),
+            }
+        }
         self.meta(&mut detail);
         if self.log.total > before {
             self.log.touched.push(d.summary.id);
         }
         self.log.distinct_values = self.pseudonyms.len();
+        if self.integrity_dropped > 0 {
+            let note = format!("Integrity headers of changed bodies removed (Digest, Content-MD5, Repr-Digest, Content-Digest, ETag): {}", self.integrity_dropped);
+            match self.log.notes.iter_mut().find(|n| n.starts_with("Integrity headers")) {
+                Some(n) => *n = note,
+                None => self.log.notes.push(note),
+            }
+        }
         Sanitized { detail, request, response }
     }
 
@@ -613,8 +699,12 @@ impl Sanitizer {
 
     /// The replacement of `value` (`<email-3>`, raw), counted in the log.
     fn ph(&mut self, cat: Cat, loc: Loc, value: &str) -> String {
+        self.ph_label(cat, cat.label(), loc, value)
+    }
+
+    /// [`Self::ph`] counted as `cat`, named with `label`.
+    fn ph_label(&mut self, cat: Cat, label: &'static str, loc: Loc, value: &str) -> String {
         self.log.add(cat, loc);
-        let label = cat.label();
         if !self.opts.pseudonyms {
             return format!("<{label}>");
         }
@@ -636,12 +726,19 @@ impl Sanitizer {
     // -------------------------------------------------------------- names
 
     fn field_ctx(&self, name: &str) -> Ctx {
+        self.cached(0, name, |z, n| z.field_ctx_uncached(n))
+    }
+
+    fn field_ctx_uncached(&self, name: &str) -> Ctx {
         let n = name.trim().to_ascii_lowercase();
         if !self.extra_fields.is_empty() && self.extra_fields.contains(&n) {
             return Ctx::Secret(Cat::Custom);
         }
-        if self.opts.body_secrets && secret_field(&n) {
+        if self.opts.body_secrets && secret_field(name.trim()) {
             return Ctx::Secret(Cat::SecretField);
+        }
+        if self.opts.body_secrets && weak_secret_name(name) {
+            return Ctx::Weak(Cat::SecretField, false);
         }
         if self.opts.personal_fields && personal_name(&n) {
             return Ctx::Personal;
@@ -650,12 +747,20 @@ impl Sanitizer {
     }
 
     fn param_ctx(&self, name: &str) -> Ctx {
-        let n = decode_param(name).trim().to_ascii_lowercase();
+        self.cached(1, name, |z, n| z.param_ctx_uncached(n))
+    }
+
+    fn param_ctx_uncached(&self, name: &str) -> Ctx {
+        let d = decode_param(name);
+        let n = d.trim().to_ascii_lowercase();
         if !self.extra_params.is_empty() && self.extra_params.contains(&n) {
             return Ctx::Secret(Cat::Custom);
         }
-        if self.opts.url_secrets && secret_param(&n) {
+        if self.opts.url_secrets && secret_param_name(d.trim()) {
             return Ctx::Secret(Cat::UrlSecret);
+        }
+        if self.opts.url_secrets && weak_secret_name(&d) {
+            return Ctx::Weak(Cat::UrlSecret, true);
         }
         if self.opts.personal_fields && personal_name(&n) {
             return Ctx::Personal;
@@ -663,14 +768,85 @@ impl Sanitizer {
         Ctx::Plain
     }
 
+    /// Name classification is cached per kind (field, parameter, form field).
+    fn cached(&self, kind: u8, name: &str, f: impl Fn(&Self, &str) -> Ctx) -> Ctx {
+        if name.len() > 64 {
+            return f(self, name);
+        }
+        if let Some(c) = self.name_cache.borrow().get(&(kind, name.to_string())) {
+            return *c;
+        }
+        let c = f(self, name);
+        let mut cache = self.name_cache.borrow_mut();
+        if cache.len() > 8192 {
+            cache.clear();
+        }
+        cache.insert((kind, name.to_string()), c);
+        c
+    }
+
+    /// What the members of a JSON object say about it: a member naming another one
+    /// (`{"name": "password", "value": …}`) and whether it describes a person.
+    fn object_shape(&self, info: &[(String, Option<String>)], pkey: &str) -> Shape {
+        let mut indirect = None;
+        for (k, v) in info {
+            if is_name_key(k)
+                && let Some(v) = v
+                && self.names_a_field(k, v)
+            {
+                indirect = Some(self.field_ctx(v));
+            }
+        }
+        let person = self.opts.personal_fields && (person_word(pkey) || info.iter().any(|(k, _)| person_field(k)));
+        Shape { indirect, person }
+    }
+
+    /// The context of the member `key` (with string value `v`) of an object of `shape`.
+    fn member_ctx(&self, key: &str, v: Option<&str>, shape: &Shape) -> Ctx {
+        if let Some(v) = v
+            && self.names_a_field(key, v)
+        {
+            return Ctx::Plain;
+        }
+        if is_value_key(key)
+            && let Some(c) = shape.indirect
+        {
+            return c;
+        }
+        let own = self.field_ctx(key);
+        if own == Ctx::Personal && ambiguous_personal(key) && !shape.person {
+            return Ctx::Plain;
+        }
+        own
+    }
+
+    /// Whether cancellation was requested ([`Self::set_cancel`]).
+    fn stopped(&self) -> bool {
+        self.cancel.as_ref().is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// A flag that, once set, makes the sanitizer stop early (the session in progress then
+    /// gets placeholders instead of its bodies; the caller discards it).
+    pub fn set_cancel(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.cancel = Some(flag);
+    }
+
     /// Form fields: parameter names, field names and the body secret rules.
     fn form_ctx(&self, name: &str) -> Ctx {
-        let n = decode_param(name).trim().to_ascii_lowercase();
+        self.cached(2, name, |z, n| z.form_ctx_uncached(n))
+    }
+
+    fn form_ctx_uncached(&self, name: &str) -> Ctx {
+        let d = decode_param(name);
+        let n = d.trim().to_ascii_lowercase();
         if (!self.extra_params.is_empty() && self.extra_params.contains(&n)) || (!self.extra_fields.is_empty() && self.extra_fields.contains(&n)) {
             return Ctx::Secret(Cat::Custom);
         }
-        if self.opts.body_secrets && (secret_param(&n) || secret_field(&n)) {
+        if self.opts.body_secrets && secret_param_name(d.trim()) {
             return Ctx::Secret(Cat::SecretField);
+        }
+        if self.opts.body_secrets && weak_secret_name(&d) {
+            return Ctx::Weak(Cat::SecretField, true);
         }
         if self.opts.personal_fields && personal_name(&n) {
             return Ctx::Personal;
@@ -685,6 +861,8 @@ impl Sanitizer {
         match ctx {
             _ if v.trim().is_empty() => None,
             Ctx::Secret(cat) => Some(self.ph(cat, loc, v)),
+            Ctx::Weak(cat, loose) if credential_value(v, loose) => Some(self.ph(cat, loc, v)),
+            Ctx::Weak(..) => self.value(v, Ctx::Plain, loc),
             Ctx::Personal => Some(self.ph(Cat::PersonalField, loc, v)),
             Ctx::Plain => {
                 let t = v.trim_start();
@@ -712,6 +890,8 @@ impl Sanitizer {
 
     /// A JSON number in context `ctx`: `Some(placeholder string)` if it is replaced.
     fn number(&mut self, raw: &str, ctx: Ctx, loc: Loc) -> Option<String> {
+        // Numbers of weak names (`"key": 5`, `"code": 200`) stay numbers.
+        let ctx = if matches!(ctx, Ctx::Weak(..)) { Ctx::Plain } else { ctx };
         let r = match ctx {
             Ctx::Secret(cat) => Some(self.ph(cat, loc, raw)),
             Ctx::Personal => Some(self.ph(Cat::PersonalField, loc, raw)),
@@ -724,7 +904,7 @@ impl Sanitizer {
                     None
                 }
             }
-            Ctx::Plain => None,
+            Ctx::Plain | Ctx::Weak(..) => None,
         };
         if r.is_some() {
             self.log.numbers_as_strings += 1;
@@ -749,8 +929,16 @@ impl Sanitizer {
                 }
             }
         }
-        // key=value, "key": "value", <input name=… value=…>, URL user info.
-        if !self.code && (o.body_secrets || o.url_secrets || o.personal_fields || !self.extra_params.is_empty() || !self.extra_fields.is_empty()) {
+        // Credentials written like headers (`Bearer …`, `Cookie: …`).
+        if o.authorization || o.cookies {
+            self.credentials_in_text(s, loc, enc, &mut spans);
+        }
+        // URLs in text are rewritten as URLs (user info, parameters, path tokens, hosts).
+        if self.depth < 8 && (s.contains("://") || s.contains("url(") || s.contains("URL(")) {
+            self.urls_in_text(s, loc, &mut spans);
+        }
+        // key=value, key: value, "key": "value", <input name=… value=…>, URL user info.
+        if !self.no_kv && (o.body_secrets || o.url_secrets || o.personal_fields || !self.extra_params.is_empty() || !self.extra_fields.is_empty()) {
             self.key_values(s, loc, enc, &mut spans);
         }
         if o.body_secrets && s.contains("eyJ") {
@@ -761,18 +949,14 @@ impl Sanitizer {
                 }
             }
         }
-        if o.emails && (s.contains('@') || s.contains("%40")) {
+        if o.emails && (s.contains('@') || s.contains("%40") || s.contains("&#64;") || s.contains("&#x40;") || s.contains("&commat;")) {
             for m in re(&EMAIL).find_iter(s) {
-                let (mut a, b) = (m.start(), m.end());
-                // `%3Dname%40host` (an encoded `=` before): the escape is no part of it.
-                if a > 0 && s.as_bytes()[a - 1] == b'%' && s[a..].len() > 2 && s.as_bytes()[a].is_ascii_hexdigit() && s.as_bytes()[a + 1].is_ascii_hexdigit() {
-                    a += 2;
-                }
-                let e = &s[a..b];
-                if !email_ok(s, a, b, e) || !spans.free(a, b) {
+                let Some((a, b)) = email_at(s, m.start(), m.end()) else { continue };
+                if !spans.free(a, b) {
                     continue;
                 }
-                let p = self.ph(Cat::Email, loc, &e.replace("%40", "@"));
+                let norm = s[a..b].replace("%40", "@").replace("&#64;", "@").replace("&#x40;", "@").replace("&commat;", "@");
+                let p = self.ph(Cat::Email, loc, &norm);
                 spans.add(a, b, encode(&p, enc));
             }
         }
@@ -781,22 +965,33 @@ impl Sanitizer {
             return spans.apply(s);
         }
         // Spans that look like numbers but are none of the above.
-        let mut protect = spans.clone();
+        let mut protect = Spans::default();
+        for (a, (b, _)) in &spans.0 {
+            protect.add(*a, *b, String::new());
+        }
         for r in [&UUID, &DATE, &TIME] {
             for m in re(r).find_iter(s) {
-                protect.add(m.start(), m.end(), String::new());
+                if protect.free(m.start(), m.end()) {
+                    protect.add(m.start(), m.end(), String::new());
+                }
             }
         }
         let mut found: Vec<(usize, usize, Cat, String)> = Vec::new();
         if o.payment {
-            for m in re(&IBAN).find_iter(s) {
-                if let Some(end) = iban_at(s, m.start(), m.end()) {
-                    found.push((m.start(), end, Cat::Iban, s[m.start()..end].replace(' ', "")));
+            // A spaced candidate may run into the next IBAN: go on right after each one found.
+            let mut pos = 0;
+            while let Some(m) = re(&IBAN).find_at(s, pos) {
+                match iban_at(s, m.start(), m.end()) {
+                    Some(end) => {
+                        found.push((m.start(), end, Cat::Iban, s[m.start()..end].replace(' ', "").to_ascii_uppercase()));
+                        pos = end;
+                    }
+                    None => pos = m.start() + s[m.start()..].chars().next().map_or(1, char::len_utf8),
                 }
             }
             for m in re(&CARD).find_iter(s) {
                 let digits: String = m.as_str().chars().filter(char::is_ascii_digit).collect();
-                if number_boundary(s, m.start(), m.end()) && consistent_separators(m.as_str()) && card_number(&digits) {
+                if number_boundary(s, m.start(), m.end()) && card_layout(m.as_str()) && card_number(&digits) {
                     found.push((m.start(), m.end(), Cat::Card, digits));
                 }
             }
@@ -816,11 +1011,9 @@ impl Sanitizer {
             }
         }
         if o.phones {
-            for m in re(&PHONE).find_iter(s) {
-                if phone_at(s, m.start(), m.end()) {
-                    let digits: String = m.as_str().chars().filter(char::is_ascii_digit).collect();
-                    found.push((m.start(), m.end(), Cat::Phone, digits));
-                }
+            for (a, b) in phones(s) {
+                let digits: String = s[a..b].chars().filter(char::is_ascii_digit).collect();
+                found.push((a, b, Cat::Phone, digits));
             }
         }
         if o.ips {
@@ -847,10 +1040,87 @@ impl Sanitizer {
         spans.apply(s)
     }
 
+    /// The placeholder of a credential (`Authorization`, `Bearer …` in text): JWTs as `jwt`,
+    /// everything else as `token`, so the same value gets the same name wherever it appears.
+    fn credential_ph(&mut self, cat: Cat, loc: Loc, v: &str) -> String {
+        let jwt = re(&JWT).find(v).is_some_and(|m| m.start() == 0 && m.end() == v.len());
+        self.ph_label(cat, if jwt { "jwt" } else { "token" }, loc, v)
+    }
+
+    /// `Bearer …`, `Basic …`, `Negotiate …`, `NTLM …`, `Digest …` credentials and `Cookie:` /
+    /// `Set-Cookie:` lines anywhere in text.
+    fn credentials_in_text(&mut self, s: &str, loc: Loc, enc: Enc, spans: &mut Spans) {
+        if self.opts.authorization {
+            for c in caps(re(&AUTH_TEXT), s) {
+                let (scheme, cred) = (c.get(1).unwrap(), c.get(2).unwrap());
+                let v = cred.as_str();
+                let (a, mut b) = (cred.start(), cred.end());
+                if scheme.as_str().eq_ignore_ascii_case("digest") {
+                    if !v.contains('=') {
+                        continue;
+                    }
+                    // Digest parameters: up to the end of the line.
+                    b = s[a..].find(['\r', '\n']).map_or(s.len(), |i| a + i);
+                } else if !credential_like(v) {
+                    continue;
+                }
+                if spans.free(a, b) {
+                    let p = self.credential_ph(Cat::Authorization, loc, &s[a..b]);
+                    spans.add(a, b, encode(&p, enc));
+                }
+            }
+        }
+        if self.opts.cookies && (s.contains("ookie") || s.contains("OOKIE")) {
+            for c in caps(re(&COOKIE_LINE), s) {
+                let (name, value) = (c.get(1).unwrap(), c.get(2).unwrap());
+                if !spans.free(value.start(), value.end()) {
+                    continue;
+                }
+                let v = value.as_str().trim_end();
+                let new = if name.as_str().len() > 6 {
+                    rewrite_set_cookie(v, &mut |x| if x.is_empty() { String::new() } else { self.ph(Cat::Cookie, loc, x) })
+                } else {
+                    self.cookie_values(v, loc)
+                };
+                if new != v {
+                    spans.add(value.start(), value.start() + v.len(), if enc == Enc::Xml { encode(&new, Enc::Xml) } else { new });
+                }
+            }
+        }
+    }
+
+    /// Absolute URLs and CSS `url(…)` in text, rewritten like the request URL.
+    fn urls_in_text(&mut self, s: &str, loc: Loc, spans: &mut Spans) {
+        let mut found: Vec<(usize, usize)> = Vec::new();
+        if s.contains("://") {
+            for m in re(&URL_TEXT).find_iter(s) {
+                let t = m.as_str().trim_end_matches(['.', ',', ';', ':', '!', '?', '\'', '*']);
+                found.push((m.start(), m.start() + t.len()));
+            }
+        }
+        if s.contains("url(") || s.contains("URL(") {
+            for c in caps(re(&CSS_URL), s) {
+                let u = c.get(1).unwrap();
+                found.push((u.start(), u.end()));
+            }
+        }
+        for (a, b) in found {
+            if b <= a || !spans.free(a, b) {
+                continue;
+            }
+            self.depth += 1;
+            let new = self.url(&s[a..b], loc);
+            self.depth -= 1;
+            if new != s[a..b] {
+                spans.add(a, b, new);
+            }
+        }
+    }
+
     /// Secret / personal values named in free text.
     fn key_values(&mut self, s: &str, loc: Loc, enc: Enc, spans: &mut Spans) {
         if s.contains("://") && s.contains('@') && self.opts.url_secrets {
-            for c in re(&USERINFO).captures_iter(s) {
+            for c in caps(re(&USERINFO), s) {
                 let u = c.get(1).unwrap();
                 if spans.free(u.start(), u.end()) {
                     let p = self.ph(Cat::UserInfo, loc, u.as_str());
@@ -858,55 +1128,192 @@ impl Sanitizer {
                 }
             }
         }
-        if s.contains('=') {
-            for c in re(&KV).captures_iter(s) {
-                let (name, value) = (c.get(1).unwrap(), c.get(2).unwrap());
-                let ctx = self.form_ctx(name.as_str());
-                if ctx != Ctx::Plain && spans.free(value.start(), value.end()) {
-                    let v = decode_param(value.as_str());
-                    if let Some(p) = self.value(&v, ctx, loc) {
-                        // In text the pair is most likely part of a URL or form.
-                        spans.add(value.start(), value.end(), if enc == Enc::Xml { encode(&p, Enc::Xml) } else { encode(&p, Enc::Url) });
-                    }
-                }
-            }
-            if s.contains("<input") || s.contains("<INPUT") {
-                for tag in re(&INPUT).find_iter(s) {
-                    let attrs: Vec<(String, usize, usize)> = re(&ATTR)
-                        .captures_iter(tag.as_str())
-                        .map(|c| {
-                            let v = c.get(2).unwrap();
-                            (c[1].to_ascii_lowercase(), tag.start() + v.start() + 1, tag.start() + v.end() - 1)
-                        })
-                        .collect();
-                    let name = attrs.iter().find(|a| a.0 == "name").map(|a| s[a.1..a.2].to_string()).unwrap_or_default();
-                    let password = attrs.iter().any(|a| a.0 == "type" && s[a.1..a.2].eq_ignore_ascii_case("password"));
-                    let mut ctx = self.form_ctx(&name);
-                    if password && self.opts.body_secrets {
-                        ctx = Ctx::Secret(Cat::SecretField);
-                    }
-                    if let Some(v) = attrs.iter().find(|a| a.0 == "value")
-                        && ctx != Ctx::Plain
-                        && spans.free(v.1, v.2)
-                        && let Some(p) = self.value(&s[v.1..v.2], ctx, loc)
-                    {
-                        spans.add(v.1, v.2, encode(&p, Enc::Xml));
-                    }
-                }
-            }
+        // HTML: tags are handled by their attributes; no `name=value` rule inside them.
+        let tags: Vec<(usize, usize)> = if enc == Enc::Xml && s.contains('<') { re(&TAG).find_iter(s).map(|m| (m.start(), m.end())).collect() } else { Vec::new() };
+        if !tags.is_empty() {
+            self.html_tags(s, loc, &tags, spans);
         }
+        let in_tag = |i: usize| {
+            let k = tags.partition_point(|t| t.0 <= i);
+            k > 0 && tags[k - 1].1 > i
+        };
         if s.contains("\":") || s.contains("\" :") {
-            for c in re(&JSON_KV).captures_iter(s) {
+            for c in caps(re(&JSON_KV), s) {
                 let (name, value) = (c.get(1).unwrap(), c.get(2).unwrap());
                 let ctx = self.field_ctx(name.as_str());
                 if ctx != Ctx::Plain
                     && spans.free(value.start(), value.end())
+                    && !self.names_a_field(name.as_str(), value.as_str())
                     && let Some(p) = self.value(value.as_str(), ctx, loc)
                 {
                     spans.add(value.start(), value.end(), encode(&p, enc));
                 }
             }
         }
+        // `name: value`, `name = "value"`, `'name': 'value'` (YAML, JavaScript, logs, GraphQL
+        // arguments): only for secret and personal names.
+        if s.contains(':') || s.contains('=') {
+            for c in caps(re(&KV2), s) {
+                let (name, sep, value) = (c.get(1).unwrap(), c.get(2).unwrap(), c.get(3).unwrap());
+                let v = value.as_str();
+                let quoted = v.starts_with(['"', '\'']);
+                if in_tag(name.start()) || (!quoted && (sep.as_str() == "=" || self.code)) {
+                    continue;
+                }
+                let ctx = self.form_ctx(name.as_str());
+                if ctx == Ctx::Plain {
+                    continue;
+                }
+                let (a, b) = if quoted { (value.start() + 1, value.end() - 1) } else { (value.start(), value.start() + v.trim_end().len()) };
+                if a >= b || !spans.free(a, b) || self.names_a_field(name.as_str(), &s[a..b]) {
+                    continue;
+                }
+                if let Some(p) = self.value(&s[a..b], ctx, loc) {
+                    spans.add(a, b, encode(&p, enc));
+                }
+            }
+        }
+        if !self.code && s.contains('=') {
+            self.kv_pairs(s, 0, s.len(), loc, enc, spans, &in_tag, 0);
+        }
+    }
+
+    /// `name=value` pairs in `s[from..to]`; values that are URLs or hold pairs themselves
+    /// (`next=/login?password=…`) are looked into.
+    #[allow(clippy::too_many_arguments)]
+    fn kv_pairs(&mut self, s: &str, from: usize, to: usize, loc: Loc, enc: Enc, spans: &mut Spans, in_tag: &dyn Fn(usize) -> bool, depth: usize) {
+        let found: Vec<(usize, usize, usize, usize)> = caps(re(&KV), &s[from..to])
+            .into_iter()
+            .map(|c| {
+                let (n, v) = (c.get(1).unwrap(), c.get(2).unwrap());
+                (from + n.start(), from + n.end(), from + v.start(), from + v.end())
+            })
+            .collect();
+        let penc = if enc == Enc::Xml { Enc::Xml } else { Enc::Url };
+        for (na, nb, va, vb) in found {
+            if in_tag(na) {
+                continue;
+            }
+            let (name, value) = (&s[na..nb], &s[va..vb]);
+            let ctx = self.form_ctx(name);
+            if ctx != Ctx::Plain {
+                if spans.free(va, vb) {
+                    let v = decode_param(value);
+                    if !self.names_a_field(name, &v)
+                        && let Some(p) = self.value(&v, ctx, loc)
+                    {
+                        // In text the pair is most likely part of a URL or form.
+                        spans.add(va, vb, encode(&p, penc));
+                    }
+                }
+                continue;
+            }
+            if depth >= 3 || !spans.free(va, vb) {
+                continue;
+            }
+            if value.contains('?') || has_scheme(value) {
+                self.depth += 1;
+                let new = self.url(value, loc);
+                self.depth -= 1;
+                if new != value {
+                    spans.add(va, vb, new);
+                }
+            } else if value.contains('=') {
+                self.kv_pairs(s, va, vb, loc, enc, spans, in_tag, depth + 1);
+            } else if value.contains('%') {
+                // An encoded URL or pairs (`redirect=https%3A%2F%2F…%3Ftoken%3D…`).
+                let v = decode_param(value);
+                if (v.contains('=') || has_scheme(&v))
+                    && let Some(new) = self.value(&v, Ctx::Plain, loc)
+                {
+                    spans.add(va, vb, encode_component(&new));
+                }
+            }
+        }
+    }
+
+    /// HTML tags: `<input>` / `<meta>` / `<param>` values by their name (`csrf`, a password
+    /// field, `csrf-token`), URLs in `href` / `src` / `action` … rewritten as URLs.
+    fn html_tags(&mut self, s: &str, loc: Loc, tags: &[(usize, usize)], spans: &mut Spans) {
+        for &(ta, tb) in tags {
+            let tag = &s[ta..tb];
+            let tname: String = tag[1..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == ':').collect::<String>().to_ascii_lowercase();
+            // (name lower case, value start, value end)
+            let attrs: Vec<(String, usize, usize)> = re(&ATTR)
+                .captures_iter(tag)
+                .map(|c| {
+                    let v = c.get(2).unwrap();
+                    let q = v.as_str().starts_with(['"', '\'']);
+                    let (a, b) = if q { (v.start() + 1, v.end() - 1) } else { (v.start(), v.end()) };
+                    (c[1].to_ascii_lowercase(), ta + a, ta + b)
+                })
+                .collect();
+            let get = |n: &str| attrs.iter().find(|a| a.0 == n).map(|a| &s[a.1..a.2]);
+            for (an, a, b) in &attrs {
+                let (a, b) = (*a, *b);
+                let v = &s[a..b];
+                let url_attr = matches!(an.as_str(), "href" | "src" | "action" | "formaction" | "poster" | "cite" | "background" | "data" | "ping" | "manifest" | "longdesc" | "codebase" | "data-src" | "data-href" | "data-url");
+                if url_attr && (v.contains(['?', '#', '@', ';']) || v.contains("://") || v.contains('/')) && spans.free(a, b) {
+                    self.depth += 1;
+                    let new = self.url(v, loc);
+                    self.depth -= 1;
+                    if new != v {
+                        spans.add(a, b, new);
+                    }
+                }
+            }
+            if !matches!(tname.as_str(), "input" | "meta" | "param" | "textarea" | "option" | "button" | "data") {
+                continue;
+            }
+            // <meta http-equiv="refresh" content="0; url=…">
+            if tname == "meta"
+                && get("http-equiv").is_some_and(|v| v.eq_ignore_ascii_case("refresh"))
+                && let Some(c) = attrs.iter().find(|a| a.0 == "content")
+            {
+                let v = &s[c.1..c.2];
+                let new = self.refresh(v, loc);
+                if new != v && spans.free(c.1, c.2) {
+                    spans.add(c.1, c.2, encode(&new, Enc::Xml));
+                }
+                continue;
+            }
+            let name = get("name").or_else(|| get("property")).or_else(|| get("itemprop")).or_else(|| get("id")).unwrap_or("").to_string();
+            let password = get("type").is_some_and(|t| t.eq_ignore_ascii_case("password"));
+            let mut ctx = self.form_ctx(&name);
+            if password && self.opts.body_secrets {
+                ctx = Ctx::Secret(Cat::SecretField);
+            }
+            if ctx == Ctx::Plain {
+                continue;
+            }
+            for (an, a, b) in &attrs {
+                if (an == "value" || an == "content")
+                    && spans.free(*a, *b)
+                    && let Some(p) = self.value(&s[*a..*b], ctx, loc)
+                {
+                    spans.add(*a, *b, encode(&p, Enc::Xml));
+                }
+            }
+        }
+    }
+
+    /// `Refresh: 0; url=…` (header or `<meta http-equiv>`).
+    fn refresh(&mut self, v: &str, loc: Loc) -> String {
+        let lower = v.to_ascii_lowercase();
+        match lower.find("url=") {
+            Some(i) => {
+                let u = v[i + 4..].trim_matches(['\'', '"', ' ']);
+                let start = v[i + 4..].find(u).map_or(i + 4, |k| i + 4 + k);
+                format!("{}{}{}", &v[..start], self.url(u, loc), &v[start + u.len()..])
+            }
+            None => self.scrub(v, loc, Enc::Raw).into_owned(),
+        }
+    }
+
+    /// Whether `value` of the field `name` is itself a field name (`"name": "password"`,
+    /// `"key": "email"`): the value names another value and is no secret or person.
+    fn names_a_field(&self, name: &str, value: &str) -> bool {
+        is_name_key(name) && value.len() <= 64 && value.bytes().all(|b| b.is_ascii_alphabetic() || b"_-. :".contains(&b)) && self.field_ctx(value) != Ctx::Plain
     }
 
     // -------------------------------------------------------------- URLs
@@ -923,14 +1330,11 @@ impl Sanitizer {
         let mut out = Vec::with_capacity(h.0.len());
         for (name, value) in std::mem::take(&mut h.0) {
             let lower = name.to_ascii_lowercase();
+            let words = name_words(&lower);
+            // `X-Forwarded-Authorization` …, and `X-Basic: Basic …` (a scheme in the value).
+            let scheme_value = value.trim_start().split_once(' ').is_some_and(|(s, _)| ["basic", "bearer", "digest", "negotiate", "ntlm"].contains(&s.to_ascii_lowercase().as_str()));
+            let authz = (lower.contains("authorization") && !lower.starts_with("access-control-")) || (scheme_value && words.iter().any(|w| matches!(w.as_str(), "bearer" | "basic" | "negotiate" | "auth" | "token")));
             let new = match lower.as_str() {
-                "authorization" | "proxy-authorization" if o.authorization => {
-                    let r = redact_authorization(&value);
-                    if r != value {
-                        self.log.add(Cat::Authorization, Loc::Header);
-                    }
-                    r
-                }
                 "www-authenticate" | "proxy-authenticate" if o.authorization => {
                     let r = redact_authenticate(&value);
                     if r != value {
@@ -938,14 +1342,26 @@ impl Sanitizer {
                     }
                     r
                 }
+                _ if authz && o.authorization => self.authorization(&value),
                 "cookie" if o.cookies => self.cookie(&value),
                 "set-cookie" if o.cookies => rewrite_set_cookie(&value, &mut |v| if v.is_empty() { String::new() } else { self.ph(Cat::Cookie, Loc::Header, v) }),
-                "location" | "referer" | "content-location" | ":path" | "x-original-url" | "x-rewrite-url" => {
+                "sec-websocket-protocol" if o.secret_headers => self.ws_protocols(&value),
+                "location" | "referer" | "content-location" | ":path" | "x-original-url" | "x-rewrite-url" | "origin" | "x-forwarded-uri" | "x-original-uri" | "x-quena-mapped-from" => {
                     self.url(&value, Loc::Header)
                 }
-                "content-length" | "content-type" | "content-encoding" | "transfer-encoding" | "date" | "host" | ":authority" | ":method" | ":scheme" | ":status" => value,
+                "refresh" => self.refresh(&value, Loc::Header),
+                "content-disposition" => {
+                    self.no_kv = true;
+                    let v = self.scrub(&value, Loc::Header, Enc::Raw).into_owned();
+                    self.no_kv = false;
+                    v
+                }
+                "link" => self.link(&value),
+                "host" | ":authority" | "x-forwarded-host" | "x-original-host" => self.authority(&value, Loc::Header),
+                "content-length" | "content-type" | "content-encoding" | "transfer-encoding" | "date" | ":method" | ":scheme" | ":status" => value,
                 _ if !value.trim().is_empty() && self.extra_headers.contains(&lower) => self.ph(Cat::Custom, Loc::Header, value.trim()),
                 _ if !value.trim().is_empty() && o.secret_headers && secret_header(&lower) => self.ph(Cat::SecretHeader, Loc::Header, value.trim()),
+                _ if !value.trim().is_empty() && o.personal_fields && personal_header(&lower) => self.ph(Cat::PersonalField, Loc::Header, value.trim()),
                 _ => self.scrub(&value, Loc::Header, Enc::Raw).into_owned(),
             };
             out.push((name, new));
@@ -953,16 +1369,126 @@ impl Sanitizer {
         h.0 = out;
     }
 
+    /// `Authorization` and its relatives: the scheme stays, the credential becomes a pseudonym
+    /// (`Bearer <token-3>`), the same one it gets in bodies and URLs.
+    fn authorization(&mut self, v: &str) -> String {
+        let v = v.trim();
+        if v.is_empty() {
+            return String::new();
+        }
+        let scheme_like = |s: &str| s.len() <= 32 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') && s.bytes().any(|b| b.is_ascii_alphabetic());
+        match v.split_once(|c: char| c.is_ascii_whitespace()) {
+            Some((scheme, rest)) if scheme_like(scheme) && !rest.trim().is_empty() => format!("{scheme} {}", self.credential_ph(Cat::Authorization, Loc::Header, rest.trim())),
+            None if scheme_like(v) && ["basic", "bearer", "digest", "negotiate", "ntlm", "kerberos", "hoba", "mutual", "hawk", "oauth", "token", "dpop"].contains(&v.to_ascii_lowercase().as_str()) => {
+                v.to_string()
+            }
+            _ => self.credential_ph(Cat::Authorization, Loc::Header, v),
+        }
+    }
+
+    /// `Sec-WebSocket-Protocol`: protocol names stay; tokens passed as subprotocols (a value
+    /// after `access_token`, `base64url.bearer.authorization.k8s.io.…`, long random strings)
+    /// are replaced.
+    fn ws_protocols(&mut self, v: &str) -> String {
+        let mut prev_secret = false;
+        v.split(',')
+            .map(|t| {
+                let tok = t.trim();
+                let lead = &t[..t.len() - t.trim_start().len()];
+                let lower = tok.to_ascii_lowercase();
+                let digits = tok.bytes().any(|b| b.is_ascii_digit());
+                let name = secret_name(tok) && !digits;
+                let secret = !tok.is_empty() && !name && (prev_secret || lower.contains("bearer") || lower.contains("token") || (tok.len() >= 16 && digits && tok.bytes().any(|b| b.is_ascii_alphabetic())));
+                prev_secret = name;
+                if secret { format!("{lead}{}", self.credential_ph(Cat::SecretHeader, Loc::Header, tok)) } else { t.to_string() }
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// `Link: <url>; rel=…`: the URLs rewritten.
+    fn link(&mut self, v: &str) -> String {
+        let mut out = String::with_capacity(v.len());
+        let mut rest = v;
+        while let Some(a) = rest.find('<') {
+            let Some(b) = rest[a..].find('>') else { break };
+            out.push_str(&rest[..=a]);
+            out.push_str(&self.url(&rest[a + 1..a + b], Loc::Header));
+            out.push('>');
+            rest = &rest[a + b + 1..];
+        }
+        out.push_str(rest);
+        self.scrub(&out, Loc::Header, Enc::Raw).into_owned()
+    }
+
+    /// `host[:port]` (`Host`, `:authority`, a CONNECT target): IP literals (with the `ips`
+    /// option) and own patterns are replaced, host names stay.
+    fn authority(&mut self, v: &str, loc: Loc) -> String {
+        let t = v.trim();
+        let (host, port) = if let Some(rest) = t.strip_prefix('[') {
+            match rest.split_once(']') {
+                Some((h, p)) => (h, p),
+                None => (t, ""),
+            }
+        } else {
+            match t.rsplit_once(':') {
+                Some((h, p)) if !h.contains(':') && p.bytes().all(|b| b.is_ascii_digit()) => (h, &t[h.len()..]),
+                _ => (t, ""),
+            }
+        };
+        let new = self.host(host, loc);
+        if new == host {
+            return v.to_string();
+        }
+        format!("{new}{port}")
+    }
+
+    /// A host name or IP literal (without brackets or port).
+    fn host(&mut self, host: &str, loc: Loc) -> String {
+        if host.is_empty() || host.starts_with('<') {
+            return host.to_string();
+        }
+        let bare = host.trim_start_matches('[').trim_end_matches(']');
+        if self.opts.ips {
+            let ip = match bare.parse::<std::net::IpAddr>() {
+                Ok(std::net::IpAddr::V4(a)) => !a.is_loopback() && !a.is_unspecified() && !a.is_broadcast(),
+                Ok(std::net::IpAddr::V6(a)) => !a.is_loopback() && !a.is_unspecified(),
+                Err(_) => false,
+            };
+            if ip {
+                return self.ph(Cat::Ip, loc, &bare.to_ascii_lowercase());
+            }
+        }
+        if self.patterns.is_empty() {
+            return host.to_string();
+        }
+        let mut spans = Spans::default();
+        for i in 0..self.patterns.len() {
+            let found: Vec<(usize, usize)> = self.patterns[i].find_iter(host).filter(|m| !m.is_empty()).map(|m| (m.start(), m.end())).collect();
+            for (a, b) in found {
+                if spans.free(a, b) {
+                    let p = self.ph(Cat::Custom, loc, &host[a..b]);
+                    spans.add(a, b, p);
+                }
+            }
+        }
+        spans.apply(host).into_owned()
+    }
+
     /// `Cookie`: names kept, values replaced.
     fn cookie(&mut self, v: &str) -> String {
+        self.cookie_values(v, Loc::Header)
+    }
+
+    fn cookie_values(&mut self, v: &str, loc: Loc) -> String {
         v.split(';')
             .map(|c| {
                 let lead = &c[..c.len() - c.trim_start().len()];
                 match c.trim().split_once('=') {
-                    Some((n, val)) if !val.trim().is_empty() => format!("{lead}{}={}", n.trim(), self.ph(Cat::Cookie, Loc::Header, val.trim())),
+                    Some((n, val)) if !val.trim().is_empty() => format!("{lead}{}={}", n.trim(), self.ph(Cat::Cookie, loc, val.trim())),
                     Some(_) => c.to_string(),
                     None if c.trim().is_empty() => c.to_string(),
-                    None => format!("{lead}{}", self.ph(Cat::Cookie, Loc::Header, c.trim())),
+                    None => format!("{lead}{}", self.ph(Cat::Cookie, loc, c.trim())),
                 }
             })
             .collect::<Vec<_>>()
@@ -979,47 +1505,87 @@ impl Sanitizer {
         }
         let ct = headers.get("content-type").unwrap_or("").to_string();
         let mime = ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
-        let decoded = try_decode(headers, body, MAX_DECODED + 1);
+        let encoded = headers.get("content-encoding").map(str::trim).is_some_and(|c| !c.is_empty() && !c.eq_ignore_ascii_case("identity"));
+        let decoded = decode_cut(headers, body, MAX_DECODED + 1);
         headers.remove("content-encoding");
+        let mut changed = encoded;
         let out = match decoded {
             Err(e) => {
                 self.log.add(Cat::Undecodable, loc);
+                changed = true;
                 format!("<body removed: could not be decoded ({e}), {} {}>", size_label(body.len()), label_mime(&mime)).into_bytes()
             }
-            Ok(b) => match self.opts.bodies {
-                BodyMode::Drop => {
-                    self.log.add(Cat::BodyRemoved, loc);
-                    Vec::new()
-                }
-                BodyMode::Placeholder => {
-                    self.log.add(Cat::BodyRemoved, loc);
-                    format!("<body removed: {} {}>", size_label(b.len() as u64), label_mime(&mime)).into_bytes()
-                }
-                BodyMode::Keep if b.len() > MAX_DECODED => {
-                    self.log.add(Cat::BodyRemoved, loc);
-                    format!("<body removed: larger than {} decoded, {}>", size_label(MAX_DECODED as u64), label_mime(&mime)).into_bytes()
-                }
-                mode => {
-                    let limit = (self.opts.truncate_kib.max(1) as usize) << 10;
-                    let big = b.len() > MAX_DECODED;
-                    let b = if big { &b[..MAX_DECODED] } else { &b[..] };
-                    let mut out = if big { self.text_bytes(b, &ct, headers, loc) } else { self.content(b, &ct, headers, loc) };
-                    if mode == BodyMode::Truncate && out.len() > limit {
-                        let mut end = limit;
-                        if std::str::from_utf8(&out).is_ok() {
-                            while end > 0 && (out[end] & 0xc0) == 0x80 {
+            Ok((b, cut)) => {
+                let out = match self.opts.bodies {
+                    BodyMode::Drop => {
+                        self.log.add(Cat::BodyRemoved, loc);
+                        Vec::new()
+                    }
+                    BodyMode::Placeholder => {
+                        self.log.add(Cat::BodyRemoved, loc);
+                        format!("<body removed: {} {}>", size_label(b.len() as u64), label_mime(&mime)).into_bytes()
+                    }
+                    BodyMode::Keep if b.len() > MAX_DECODED => {
+                        self.log.add(Cat::BodyRemoved, loc);
+                        format!("<body removed: larger than {} decoded, {}>", size_label(MAX_DECODED as u64), label_mime(&mime)).into_bytes()
+                    }
+                    BodyMode::Keep => {
+                        let mut out = self.content(&b, &ct, headers, loc);
+                        if cut {
+                            out.extend_from_slice(format!("…<decoding stopped after {} bytes: the data is damaged or cut>", b.len()).as_bytes());
+                            self.log.add(Cat::BodyTruncated, loc);
+                        }
+                        out
+                    }
+                    BodyMode::Truncate => {
+                        let limit = (self.opts.truncate_kib.max(1) as usize) << 10;
+                        // Small enough: scrubbed whole (its structure is understood), then cut.
+                        // Larger: only a prefix is scrubbed (as text, a margin beyond the cut so
+                        // values crossing it are seen whole).
+                        let full = b.len() <= limit || b.len() <= TRUNCATE_WHOLE;
+                        let mut out = if full {
+                            self.content(&b, &ct, headers, loc)
+                        } else {
+                            let mut end = (limit + TRUNCATE_MARGIN).min(b.len());
+                            while end > 0 && end < b.len() && (b[end] & 0xc0) == 0x80 {
                                 end -= 1;
                             }
+                            self.content(&b[..end], &ct, headers, loc)
+                        };
+                        if out.len() > limit {
+                            let mut end = limit;
+                            if std::str::from_utf8(&out).is_ok() {
+                                while end > 0 && (out[end] & 0xc0) == 0x80 {
+                                    end -= 1;
+                                }
+                            }
+                            out.truncate(end);
+                            let total = if b.len() > MAX_DECODED { format!("more than {}", size_label(MAX_DECODED as u64)) } else { size_label(b.len() as u64) };
+                            out.extend_from_slice(format!("…<truncated, {total} decoded>").as_bytes());
+                            self.log.add(Cat::BodyTruncated, loc);
+                        } else if cut {
+                            out.extend_from_slice(format!("…<decoding stopped after {} bytes: the data is damaged or cut>", b.len()).as_bytes());
+                            self.log.add(Cat::BodyTruncated, loc);
                         }
-                        let cut = out.len() - end;
-                        out.truncate(end);
-                        out.extend_from_slice(format!("…<truncated {cut} bytes>").as_bytes());
-                        self.log.add(Cat::BodyTruncated, loc);
+                        out
                     }
-                    out
-                }
-            },
+                };
+                changed = changed || out != b;
+                out
+            }
         };
+        if self.stopped() {
+            return b"<cancelled>".to_vec();
+        }
+        if changed {
+            // Integrity metadata of the original bytes no longer matches.
+            for h in INTEGRITY_HEADERS {
+                if headers.contains(h) {
+                    headers.remove(h);
+                    self.integrity_dropped += 1;
+                }
+            }
+        }
         if headers.contains("content-length") {
             headers.set("content-length", out.len().to_string());
         }
@@ -1037,7 +1603,7 @@ impl Sanitizer {
         if !is_text(&mime, b) {
             return self.binary(b, &mime, loc, Cat::BinaryRemoved);
         }
-        self.text_bytes(b, ct, headers, loc)
+        self.text_bytes(b, ct, headers, loc).unwrap_or_else(|| self.binary(b, &mime, loc, Cat::BinaryRemoved))
     }
 
     /// A binary body or part.
@@ -1052,17 +1618,41 @@ impl Sanitizer {
         }
     }
 
-    /// Text in any charset → scrubbed UTF-8 (the Content-Type then says `charset=utf-8`).
-    fn text_bytes(&mut self, b: &[u8], ct: &str, headers: &mut Headers, loc: Loc) -> Vec<u8> {
+    /// Text in any charset → scrubbed UTF-8 (the Content-Type then says `charset=utf-8`);
+    /// `None` when the bytes are no text after all (binary data sent as `text/*`). Invalid
+    /// UTF-8 without control bytes is read as windows-1252.
+    fn text_bytes(&mut self, b: &[u8], ct: &str, headers: &mut Headers, loc: Loc) -> Option<Vec<u8>> {
         let detected = quena_body::charset::detect(Some(ct).filter(|c| !c.is_empty()), &b[..b.len().min(64 << 10)]);
-        let text: Cow<str> = if detected.name().eq_ignore_ascii_case("utf-8") {
-            String::from_utf8_lossy(b)
+        let name = detected.name().to_ascii_lowercase();
+        let wide = name.starts_with("utf-16");
+        let control = |t: &str| t.chars().filter(|c| (c.is_control() && !matches!(c, '\n' | '\r' | '\t' | '\u{c}')) || *c == '\u{fffd}').count();
+        let text: Cow<str> = if name == "utf-8" {
+            match std::str::from_utf8(b) {
+                Ok(t) => Cow::Borrowed(t),
+                Err(e) if e.error_len().is_none() => Cow::Owned(String::from_utf8_lossy(b).into_owned()),
+                Err(_) => {
+                    if b.contains(&0) {
+                        return None;
+                    }
+                    let (t, _) = quena_body::charset::decode(b, quena_body::charset::for_label("windows-1252")?);
+                    set_charset_utf8(headers);
+                    Cow::Owned(t.into_owned())
+                }
+            }
         } else {
+            if !wide && b.contains(&0) {
+                return None;
+            }
             let (t, _) = quena_body::charset::decode(b, detected.encoding);
             set_charset_utf8(headers);
             Cow::Owned(t.into_owned())
         };
-        self.text(&text, ct, loc).into_bytes()
+        // Mostly control characters: binary.
+        let sample: String = text.chars().take(8192).collect();
+        if !sample.is_empty() && control(&sample) * 10 > sample.chars().count() {
+            return None;
+        }
+        Some(self.text(&text, ct, loc).into_bytes())
     }
 
     /// Text by its type.
@@ -1088,7 +1678,30 @@ impl Sanitizer {
             return out;
         }
         self.code = mime.contains("javascript") || mime.contains("ecmascript") || mime == "text/css";
-        let out = self.scrub(s, loc, if html { Enc::Xml } else { Enc::Raw }).into_owned();
+        let enc = if html { Enc::Xml } else { Enc::Raw };
+        let out = if s.len() <= 4 * TEXT_CHUNK {
+            self.scrub(s, loc, enc).into_owned()
+        } else {
+            // Large text in pieces ending at line breaks: bounded work per step and a chance
+            // to stop when the export is cancelled.
+            let mut out = String::with_capacity(s.len());
+            let mut pos = 0;
+            while pos < s.len() {
+                let mut end = (pos + TEXT_CHUNK).min(s.len());
+                while !s.is_char_boundary(end) {
+                    end += 1;
+                }
+                if end < s.len() {
+                    end = s[end..].find('\n').map_or(s.len(), |i| end + i + 1);
+                }
+                out.push_str(&self.scrub(&s[pos..end], loc, enc));
+                pos = end;
+                if self.stopped() {
+                    break;
+                }
+            }
+            out
+        };
         self.code = false;
         out
     }
@@ -1139,23 +1752,33 @@ impl Sanitizer {
 
     /// JSON with its formatting kept; `None` if `s` is not valid JSON.
     fn json(&mut self, s: &str, loc: Loc) -> Option<String> {
-        let mut p = JsonParser { b: s.as_bytes(), s, i: 0, out: String::with_capacity(s.len() + 16), depth: 0 };
+        let mut p = JsonParser { b: s.as_bytes(), s, i: 0, out: String::with_capacity(s.len() + 16), depth: 0, n: 0 };
         p.ws();
-        p.value(self, Ctx::Plain, loc).ok()?;
+        p.value(self, Ctx::Plain, loc, "").ok()?;
         p.ws();
         (p.i == p.b.len()).then_some(p.out)
     }
 
     /// XML with element and attribute values scrubbed (everything else as written);
-    /// `None` if `s` is not well-formed.
+    /// `None` if `s` is not well-formed. An element named by an attribute
+    /// (`<Parameter name="password">`, `<Attribute Name="mail">`, `<property name="client_secret"
+    /// value="…"/>`) takes the context of that name; wrappers such as `UsernameToken` or
+    /// `Assertion` only make their direct text secret, their children are judged by their own
+    /// names (`Password`, `Nonce` yes; `Created`, `Type` attributes no).
     fn xml(&mut self, s: &str, loc: Loc) -> Option<String> {
         use quick_xml::events::Event;
         let mut r = quick_xml::Reader::from_str(s);
-        let mut stack: Vec<Ctx> = Vec::new();
+        // (context of direct text, context passed to children, local name)
+        let mut stack: Vec<(Ctx, Ctx, String)> = Vec::new();
         let mut edits: Vec<(usize, usize, String)> = Vec::new();
         let mut text: Option<(usize, usize)> = None;
         let mut seen_element = false;
+        let mut n = 0usize;
         loop {
+            n += 1;
+            if n.is_multiple_of(4096) && self.stopped() {
+                return None;
+            }
             let start = r.buffer_position() as usize;
             let ev = r.read_event().ok()?;
             let end = r.buffer_position() as usize;
@@ -1164,7 +1787,7 @@ impl Sanitizer {
                 continue;
             }
             if let Some((a, b)) = text.take() {
-                let ctx = stack.last().copied().unwrap_or(Ctx::Plain);
+                let ctx = stack.last().map_or(Ctx::Plain, |e| e.0);
                 let raw = &s[a..b];
                 match quick_xml::escape::unescape(raw) {
                     Ok(t) => {
@@ -1184,47 +1807,77 @@ impl Sanitizer {
                     seen_element = true;
                     let empty = s[start..end].ends_with("/>");
                     let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
-                    let parent = stack.last().copied().unwrap_or(Ctx::Plain);
-                    let ctx = parent.child(self.field_ctx(&name));
-                    let mut changed = false;
-                    let mut attrs = Vec::new();
+                    let lname = name.to_ascii_lowercase();
+                    let (parent, pname) = stack.last().map_or((Ctx::Plain, String::new()), |e| (e.1, e.2.clone()));
+                    // (qualified key, local name, raw value, unescaped value)
+                    let mut attrs: Vec<(String, String, String, Option<String>)> = Vec::new();
                     for a in e.attributes().with_checks(false) {
                         let a = a.ok()?;
                         let key = String::from_utf8_lossy(a.key.as_ref()).into_owned();
                         let local = String::from_utf8_lossy(a.key.local_name().as_ref()).into_owned();
                         let raw = String::from_utf8_lossy(&a.value).into_owned();
+                        let un = quick_xml::escape::unescape(&raw).ok().map(Cow::into_owned);
+                        attrs.push((key, local, raw, un));
+                    }
+                    let indirect = attrs.iter().find_map(|(k, local, _, v)| {
+                        let v = v.as_deref()?;
+                        (!k.starts_with("xmlns") && is_name_key(local) && self.names_a_field(local, v)).then(|| self.field_ctx(v))
+                    });
+                    let mut own = self.field_ctx(&name);
+                    if own == Ctx::Personal && ambiguous_personal(&name) && !person_word(&pname) {
+                        own = Ctx::Plain;
+                    }
+                    let mut text_ctx = parent.child(own);
+                    let mut child_ctx = if XML_WRAPPERS.contains(&lname.as_str()) { parent } else { text_ctx };
+                    if let Some(c) = indirect {
+                        text_ctx = text_ctx.child(c);
+                        child_ctx = child_ctx.child(c);
+                    }
+                    let mut changed = false;
+                    let mut out_attrs = Vec::with_capacity(attrs.len());
+                    for (key, local, raw, un) in attrs {
                         let mut value = raw.clone();
-                        if !key.starts_with("xmlns") {
+                        if !key.starts_with("xmlns")
+                            && let Some(v) = un
+                        {
                             // Attributes describe the element (`<Password Type="…">`): the
                             // context of the parent applies, not the element's own.
-                            let actx = parent.child(self.field_ctx(&local));
-                            if let Ok(v) = quick_xml::escape::unescape(&raw)
-                                && let Some(new) = self.value(&v, actx, loc)
-                            {
+                            let actx = if is_name_key(&local) && self.names_a_field(&local, &v) {
+                                Ctx::Plain
+                            } else if is_value_key(&local) && let Some(c) = indirect {
+                                parent.child(c)
+                            } else {
+                                let mut a = self.field_ctx(&local);
+                                if a == Ctx::Personal && ambiguous_personal(&local) && !person_word(&name) {
+                                    a = Ctx::Plain;
+                                }
+                                parent.child(a)
+                            };
+                            if let Some(new) = self.value(&v, actx, loc) {
                                 value = quick_xml::escape::escape(new.as_str()).into_owned();
                                 changed = true;
                             }
                         }
-                        attrs.push((key, value));
+                        out_attrs.push((key, value));
                     }
                     if changed {
                         let qname = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                         let mut tag = format!("<{qname}");
-                        for (k, v) in attrs {
+                        for (k, v) in out_attrs {
                             tag.push_str(&format!(" {k}=\"{}\"", v.replace('"', "&quot;")));
                         }
                         tag.push_str(if empty { "/>" } else { ">" });
                         edits.push((start, end, tag));
                     }
                     if !empty {
-                        stack.push(ctx);
+                        stack.push((text_ctx, child_ctx, name));
                     }
                 }
                 Event::End(_) => {
                     stack.pop();
                 }
                 Event::CData(c) => {
-                    let ctx = stack.last().copied().unwrap_or(Ctx::Plain);
+                    let ctx = stack.last().map_or(Ctx::Plain, |e| e.0);
                     let t = String::from_utf8_lossy(&c).into_owned();
                     if let Some(new) = self.value(&t, ctx, loc) {
                         edits.push((start, end, format!("<![CDATA[{}]]>", new.replace("]]>", "]] >"))));
@@ -1298,13 +1951,8 @@ impl Sanitizer {
             let mut name = String::new();
             let mut file = false;
             let mut pct = String::new();
-            let mut new_head = Vec::new();
             for line in head.split('\n') {
-                let line = line.trim_end_matches('\r');
-                let Some((k, v)) = line.split_once(':') else {
-                    new_head.push(line.to_string());
-                    continue;
-                };
+                let Some((k, v)) = line.trim_end_matches('\r').split_once(':') else { continue };
                 let lk = k.trim().to_ascii_lowercase();
                 if lk == "content-disposition" {
                     name = disposition_param(v, "name").unwrap_or_default();
@@ -1312,12 +1960,13 @@ impl Sanitizer {
                 } else if lk == "content-type" {
                     pct = v.trim().to_string();
                 }
-                new_head.push(format!("{k}:{}", self.scrub(v, loc, Enc::Raw)));
             }
-            out.extend_from_slice(new_head.join("\r\n").as_bytes());
-            out.extend_from_slice(&part[head_len..head_len + sep]);
             let pmime = pct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
             let ctx = self.form_ctx(&name);
+            let mut part_headers = Headers::new();
+            if !pct.is_empty() {
+                part_headers.push("Content-Type", pct.clone());
+            }
             let new_content: Vec<u8> = if file && self.opts.binary == BinaryMode::Placeholder {
                 self.binary(content, &pmime, loc, Cat::FileRemoved)
             } else if !is_text(&pmime, content) {
@@ -1326,9 +1975,34 @@ impl Sanitizer {
                 let t = String::from_utf8_lossy(content);
                 self.value(&t, ctx, loc).map(String::into_bytes).unwrap_or_else(|| content.to_vec())
             } else {
-                let mut dummy = Headers::new();
-                self.text_bytes(content, &pct, &mut dummy, loc)
+                match self.text_bytes(content, &pct, &mut part_headers, loc) {
+                    Some(t) => t,
+                    None if file => content.to_vec(),
+                    None => self.binary(content, &pmime, loc, Cat::BinaryRemoved),
+                }
             };
+            // The part's Content-Type follows a conversion to UTF-8.
+            let new_ct = part_headers.get("content-type").map(str::to_string);
+            let mut new_head = Vec::new();
+            for line in head.split('\n') {
+                let line = line.trim_end_matches('\r');
+                let Some((k, v)) = line.split_once(':') else {
+                    new_head.push(line.to_string());
+                    continue;
+                };
+                if k.trim().eq_ignore_ascii_case("content-type")
+                    && let Some(c) = new_ct.as_deref().filter(|c| *c != pct)
+                {
+                    new_head.push(format!("{k}: {c}"));
+                    continue;
+                }
+                self.no_kv = k.trim().eq_ignore_ascii_case("content-disposition");
+                let v = self.scrub(v, loc, Enc::Raw).into_owned();
+                self.no_kv = false;
+                new_head.push(format!("{k}:{v}"));
+            }
+            out.extend_from_slice(new_head.join("\r\n").as_bytes());
+            out.extend_from_slice(&part[head_len..head_len + sep]);
             out.extend_from_slice(&new_content);
             out.extend_from_slice(&part[content_end..]);
         }
@@ -1337,8 +2011,11 @@ impl Sanitizer {
     }
 
     /// The WebSocket frame log (see `quena-proxy::wsframe`): text messages scrubbed,
-    /// binary ones per the binary option.
-    fn ws_log(&mut self, body: &Body) -> Vec<u8> {
+    /// binary ones per the binary option. Messages compressed with `permessage-deflate`
+    /// (RSV1 in the record, or an invalid text frame of a session that negotiated it) are
+    /// inflated with the per-direction context and written uncompressed; fragmented messages
+    /// are joined and written as one frame.
+    fn ws_log(&mut self, body: &Body, deflate: bool) -> Vec<u8> {
         let mut b = Vec::new();
         let _ = body.stream(0, false).take(MAX_DECODED as u64 * 4).read_to_end(&mut b);
         if b.is_empty() {
@@ -1348,55 +2025,128 @@ impl Sanitizer {
             self.log.add(Cat::BodyRemoved, Loc::Ws);
             return Vec::new();
         }
-        let limit = (self.opts.truncate_kib.max(1) as usize) << 10;
         let mut out = Vec::with_capacity(b.len());
+        // Inflate contexts per direction; `None` once a message could not be inflated.
+        let mut inflate: [Option<flate2::Decompress>; 2] = [Some(flate2::Decompress::new(false)), Some(flate2::Decompress::new(false))];
+        // The message being assembled: (record header of its first frame, payload, frames).
+        let mut pending: [Option<WsPending>; 2] = [None, None];
+        let mut joined = 0usize;
         let mut pos = 0;
-        let mut text_message = false;
+        let mut n = 0usize;
         while pos + 16 <= b.len() {
+            n += 1;
+            if n.is_multiple_of(256) && self.stopped() {
+                return b"<cancelled>".to_vec();
+            }
             let len = u32::from_le_bytes(b[pos + 12..pos + 16].try_into().unwrap()) as usize;
             let Some(payload) = b.get(pos + 16..pos + 16 + len) else { break };
-            let (opcode, fin) = (b[pos + 1], b[pos + 2] != 0);
-            let is_text = opcode == 1 || (opcode == 0 && text_message);
-            if opcode == 1 || opcode == 2 {
-                text_message = opcode == 1 && !fin;
-            } else if opcode == 0 && fin {
-                text_message = false;
-            }
-            let mut new: Vec<u8> = if is_text {
-                self.log.ws_messages += 1;
-                let t = String::from_utf8_lossy(payload);
-                let tt = t.trim_start();
-                let json = if tt.starts_with('{') || tt.starts_with('[') { self.json(&t, Loc::Ws) } else { None };
-                json.unwrap_or_else(|| self.scrub(&t, Loc::Ws, Enc::Raw).into_owned()).into_bytes()
-            } else if opcode == 8 && payload.len() > 2 {
-                let mut v = payload[..2].to_vec();
-                v.extend_from_slice(self.scrub(&String::from_utf8_lossy(&payload[2..]), Loc::Ws, Enc::Raw).as_bytes());
-                v
-            } else if opcode == 2 || opcode == 0 || ((opcode == 9 || opcode == 0xa) && !payload.is_empty()) {
-                if self.opts.binary == BinaryMode::Placeholder && !payload.is_empty() {
-                    self.log.add(Cat::BinaryRemoved, Loc::Ws);
-                    format!("<binary message removed: {}>", size_label(payload.len() as u64)).into_bytes()
-                } else {
-                    payload.to_vec()
-                }
-            } else {
-                payload.to_vec()
-            };
-            if self.opts.bodies == BodyMode::Truncate && new.len() > limit && is_text {
-                let mut end = limit;
-                while end > 0 && (new[end] & 0xc0) == 0x80 {
-                    end -= 1;
-                }
-                new.truncate(end);
-                new.extend_from_slice("…<truncated>".as_bytes());
-                self.log.add(Cat::BodyTruncated, Loc::Ws);
-            }
-            out.extend_from_slice(&b[pos..pos + 12]);
-            out.extend_from_slice(&(new.len() as u32).to_le_bytes());
-            out.extend_from_slice(&new);
+            let mut head: [u8; 12] = b[pos..pos + 12].try_into().unwrap();
+            let (dir, opcode, fin) = (head[0] as usize & 1, head[1], head[2] != 0);
             pos += 16 + len;
+            match opcode {
+                1 | 2 if !fin => {
+                    if let Some(p) = pending[dir].take() {
+                        // A new message before the old one ended: write what there was.
+                        let msg = self.ws_message(p.0, &p.1, deflate, &mut inflate[dir]);
+                        ws_record(&mut out, p.0, &msg);
+                    }
+                    pending[dir] = Some((head, payload.to_vec(), 1));
+                    continue;
+                }
+                0 => {
+                    match pending[dir].as_mut() {
+                        Some(p) => {
+                            p.1.extend_from_slice(payload);
+                            p.2 += 1;
+                        }
+                        None => {
+                            // A continuation without its start (the log began mid-message).
+                            head[1] = 2;
+                            pending[dir] = Some((head, payload.to_vec(), 1));
+                        }
+                    }
+                    if fin && let Some(p) = pending[dir].take() {
+                        if p.2 > 1 {
+                            joined += 1;
+                        }
+                        let msg = self.ws_message(p.0, &p.1, deflate, &mut inflate[dir]);
+                        ws_record(&mut out, p.0, &msg);
+                    }
+                    continue;
+                }
+                1 | 2 => {
+                    let msg = self.ws_message(head, payload, deflate, &mut inflate[dir]);
+                    ws_record(&mut out, head, &msg);
+                }
+                8 if payload.len() > 2 => {
+                    let mut v = payload[..2].to_vec();
+                    v.extend_from_slice(self.scrub(&String::from_utf8_lossy(&payload[2..]), Loc::Ws, Enc::Raw).as_bytes());
+                    ws_record(&mut out, head, &v);
+                }
+                9 | 0xa if !payload.is_empty() && self.opts.binary == BinaryMode::Placeholder => {
+                    self.log.add(Cat::BinaryRemoved, Loc::Ws);
+                    ws_record(&mut out, head, format!("<binary message removed: {}>", size_label(payload.len() as u64)).as_bytes());
+                }
+                _ => ws_record(&mut out, head, payload),
+            }
+        }
+        for dir in 0..2 {
+            if let Some(p) = pending[dir].take() {
+                let msg = self.ws_message(p.0, &p.1, deflate, &mut inflate[dir]);
+                ws_record(&mut out, p.0, &msg);
+            }
+        }
+        if joined > 0 {
+            self.ws_joined += joined;
         }
         out
+    }
+
+    /// One complete data message (record header of its first frame, payload as logged).
+    fn ws_message(&mut self, head: [u8; 12], payload: &[u8], deflate: bool, inflate: &mut Option<flate2::Decompress>) -> Vec<u8> {
+        let text = head[1] == 1;
+        let rsv1 = head[3] & 0x4 != 0;
+        // Old logs have no RSV bits: a text message that is no UTF-8 in a deflate session.
+        let compressed = deflate && !payload.is_empty() && (rsv1 || (head[3] == 0 && text && std::str::from_utf8(payload).is_err()));
+        let data: Cow<[u8]> = if compressed {
+            match inflate.as_mut().and_then(|d| ws_inflate(d, payload)) {
+                Some(d) => Cow::Owned(d),
+                None => {
+                    // The shared context is lost: later messages cannot be inflated either.
+                    *inflate = None;
+                    self.log.add(Cat::Undecodable, Loc::Ws);
+                    return format!("<compressed message removed: {}>", size_label(payload.len() as u64)).into_bytes();
+                }
+            }
+        } else {
+            Cow::Borrowed(payload)
+        };
+        if !text {
+            if self.opts.binary == BinaryMode::Placeholder && !data.is_empty() {
+                self.log.add(Cat::BinaryRemoved, Loc::Ws);
+                return format!("<binary message removed: {}>", size_label(data.len() as u64)).into_bytes();
+            }
+            return data.into_owned();
+        }
+        self.log.ws_messages += 1;
+        let Ok(t) = std::str::from_utf8(&data) else {
+            self.log.add(Cat::Undecodable, Loc::Ws);
+            return format!("<text message removed: not UTF-8, {}>", size_label(data.len() as u64)).into_bytes();
+        };
+        let tt = t.trim_start();
+        let json = if tt.starts_with('{') || tt.starts_with('[') { self.json(t, Loc::Ws) } else { None };
+        let mut new = json.unwrap_or_else(|| self.scrub(t, Loc::Ws, Enc::Raw).into_owned()).into_bytes();
+        let limit = (self.opts.truncate_kib.max(1) as usize) << 10;
+        if self.opts.bodies == BodyMode::Truncate && new.len() > limit {
+            let mut end = limit;
+            while end > 0 && (new[end] & 0xc0) == 0x80 {
+                end -= 1;
+            }
+            new.truncate(end);
+            new.extend_from_slice("…<truncated>".as_bytes());
+            self.log.add(Cat::BodyTruncated, Loc::Ws);
+        }
+        new
     }
 
     // -------------------------------------------------------------- metadata
@@ -1453,6 +2203,10 @@ impl Sanitizer {
             let lk = k.to_ascii_lowercase();
             let v = match lk.as_str() {
                 "x-clientip" | "x-hostip" | "x-client-ip" | "x-egressip" if o.ips && !v.is_empty() => self.ph(Cat::Ip, Loc::Meta, &v),
+                "x-overridehost" | "x-hostheader" | "x-original-host" => self.authority(&v, Loc::Meta),
+                "x-quena-mapped-from" | "x-originalurl" | "x-redirecturl" => self.url(&v, Loc::Meta),
+                "x-autoauth" | "x-password" | "x-pwd" | "x-credentials" if o.body_secrets && !v.is_empty() => self.ph(Cat::SecretField, Loc::Meta, &v),
+                "x-username" | "x-user" | "x-userid" | "x-user-name" if o.personal_fields && !v.is_empty() => self.ph(Cat::PersonalField, Loc::Meta, &v),
                 "x-processinfo" | "x-processname" if o.process && !v.is_empty() => {
                     let name = v.rsplit_once(':').map_or(v.as_str(), |(n, _)| n).to_string();
                     self.ph(Cat::Process, Loc::Meta, &name)
@@ -1462,6 +2216,51 @@ impl Sanitizer {
             d.extra_flags.push((k, v));
         }
     }
+}
+
+/// A data message being assembled: record header of its first frame, payload, frames.
+type WsPending = ([u8; 12], Vec<u8>, usize);
+
+/// One frame record (see `quena-proxy::wsframe`), written complete and uncompressed.
+fn ws_record(out: &mut Vec<u8>, head: [u8; 12], payload: &[u8]) {
+    out.push(head[0]);
+    out.push(head[1]);
+    out.push(1);
+    out.push(0);
+    out.extend_from_slice(&head[4..12]);
+    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    out.extend_from_slice(payload);
+}
+
+/// Inflate one `permessage-deflate` message (RFC 7692: raw deflate, the trailing
+/// `00 00 ff ff` removed by the sender) with the direction's context.
+fn ws_inflate(d: &mut flate2::Decompress, payload: &[u8]) -> Option<Vec<u8>> {
+    let mut input = payload.to_vec();
+    input.extend_from_slice(&[0, 0, 0xff, 0xff]);
+    let mut out = Vec::with_capacity(payload.len() * 3 + 64);
+    let start_in = d.total_in();
+    loop {
+        let consumed = (d.total_in() - start_in) as usize;
+        if out.len() >= MAX_DECODED {
+            return None;
+        }
+        if out.capacity() - out.len() < 4096 {
+            out.reserve(out.capacity().max(4096));
+        }
+        let (before_in, before_out) = (d.total_in(), d.total_out());
+        let st = d.decompress_vec(&input[consumed..], &mut out, flate2::FlushDecompress::Sync).ok()?;
+        let done_in = (d.total_in() - start_in) as usize >= input.len();
+        if d.total_in() == before_in && d.total_out() == before_out && !done_in {
+            return None;
+        }
+        if matches!(st, flate2::Status::StreamEnd) || (done_in && d.total_out() == before_out) {
+            break;
+        }
+        if done_in && out.len() < out.capacity() {
+            break;
+        }
+    }
+    Some(out)
 }
 
 /// `ip:port`, `[v6]:port`, `ip` → (ip, port).
@@ -1490,14 +2289,36 @@ impl UrlRewrite for UrlScrub<'_> {
         }
         encode_component(&self.s.ph(Cat::UserInfo, self.loc, userinfo))
     }
+    fn host(&mut self, host: &str) -> String {
+        let new = self.s.host(host, self.loc);
+        if new == host { new } else { encode_component(&new) }
+    }
     fn path(&mut self, path: &str) -> String {
+        let mut prev = String::new();
         path.split('/')
             .map(|seg| {
-                let d = decode_param(&seg.replace('+', "%2B"));
-                match self.s.scrub(&d, self.loc, Enc::Raw) {
-                    Cow::Owned(n) => encode_component(&n),
-                    Cow::Borrowed(_) => seg.to_string(),
+                // `segment;name=value` (matrix parameters, `;jsessionid=…`).
+                let (main, matrix) = match seg.split_once(';') {
+                    Some((m, x)) => (m, Some(x)),
+                    None => (seg, None),
+                };
+                let d = decode_param(&main.replace('+', "%2B"));
+                let mut out = if self.s.opts.url_secrets && path_token(&prev, &d) {
+                    encode_component(&self.s.ph(Cat::UrlSecret, self.loc, &d))
+                } else {
+                    match self.s.scrub(&d, self.loc, Enc::Raw) {
+                        Cow::Owned(n) => encode_component(&n),
+                        Cow::Borrowed(_) => main.to_string(),
+                    }
+                };
+                if let Some(x) = matrix {
+                    for piece in x.split(';') {
+                        out.push(';');
+                        out.push_str(&self.param(piece));
+                    }
                 }
+                prev = d.to_ascii_lowercase();
+                out
             })
             .collect::<Vec<_>>()
             .join("/")
@@ -1523,6 +2344,29 @@ impl UrlRewrite for UrlScrub<'_> {
     }
 }
 
+/// Whether the path segment `seg` after the segment `prev` (lower case) is a token:
+/// `/token/…`, `/api-key/…` (6+ characters with a digit, or 12+), `/reset/…`, `/verify/…`,
+/// `/invite/…`, `/magic/…` … (16+ characters mixing letters and digits, or 24+).
+fn path_token(prev: &str, seg: &str) -> bool {
+    const STRONG: &[&str] = &["token", "tokens", "secret", "secrets", "key", "keys", "apikey", "api-key", "api_key", "password", "passwords", "session", "sessions", "jwt", "otp"];
+    const ACTION: &[&str] = &[
+        "reset", "verify", "verification", "confirm", "confirmation", "invite", "invites", "invitation", "invitations", "magic", "magic-link", "magiclink", "activate",
+        "activation", "unsubscribe", "password-reset", "reset-password", "passwordreset", "recover", "recovery", "sso", "login", "signin", "sign-in", "auth", "share",
+        "s", "t", "download-token", "accept",
+    ];
+    let alnum = seg.bytes().filter(|b| b.is_ascii_alphanumeric()).count();
+    let digits = seg.bytes().any(|b| b.is_ascii_digit());
+    let letters = seg.bytes().any(|b| b.is_ascii_alphabetic());
+    let tokenish = !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.~=+".contains(&b)) && !seg.contains("..");
+    if !tokenish {
+        return false;
+    }
+    if STRONG.contains(&prev) {
+        return (alnum >= 6 && digits && letters) || alnum >= 12;
+    }
+    ACTION.contains(&prev) && ((alnum >= 16 && digits && letters) || alnum >= 24)
+}
+
 // ------------------------------------------------------------------ JSON
 
 /// A JSON tokenizer that copies its input and replaces scalar values.
@@ -1532,6 +2376,8 @@ struct JsonParser<'a> {
     i: usize,
     out: String,
     depth: usize,
+    /// Values seen (cancellation is checked every few thousand).
+    n: usize,
 }
 
 impl JsonParser<'_> {
@@ -1543,14 +2389,18 @@ impl JsonParser<'_> {
         self.out.push_str(&self.s[start..self.i]);
     }
 
-    fn value(&mut self, z: &mut Sanitizer, ctx: Ctx, loc: Loc) -> Result<(), ()> {
+    fn value(&mut self, z: &mut Sanitizer, ctx: Ctx, loc: Loc, key: &str) -> Result<(), ()> {
         self.depth += 1;
         if self.depth > 512 {
             return Err(());
         }
+        self.n += 1;
+        if self.n.is_multiple_of(4096) && z.stopped() {
+            return Err(());
+        }
         let r = match self.b.get(self.i).ok_or(())? {
-            b'{' => self.object(z, ctx, loc),
-            b'[' => self.array(z, ctx, loc),
+            b'{' => self.object(z, ctx, loc, key),
+            b'[' => self.array(z, ctx, loc, key),
             b'"' => {
                 let (a, v) = self.string()?;
                 match z.value(&v, ctx, loc) {
@@ -1591,7 +2441,10 @@ impl JsonParser<'_> {
         r
     }
 
-    fn object(&mut self, z: &mut Sanitizer, ctx: Ctx, loc: Loc) -> Result<(), ()> {
+    fn object(&mut self, z: &mut Sanitizer, ctx: Ctx, loc: Loc, pkey: &str) -> Result<(), ()> {
+        let info = if self.depth < 64 { self.peek_object() } else { Vec::new() };
+        let shape = z.object_shape(&info, pkey);
+        let mut idx = 0;
         self.out.push('{');
         self.i += 1;
         self.ws();
@@ -1617,8 +2470,11 @@ impl JsonParser<'_> {
             self.out.push(':');
             self.i += 1;
             self.ws();
-            let child = ctx.child(z.field_ctx(&key));
-            self.value(z, child, loc)?;
+            let v = info.get(idx).filter(|m| m.0 == key).and_then(|m| m.1.as_deref());
+            idx += 1;
+            let own = z.member_ctx(&key, v, &shape);
+            let child = ctx.child(own);
+            self.value(z, child, loc, &key)?;
             self.ws();
             match self.b.get(self.i) {
                 Some(b',') => {
@@ -1636,7 +2492,91 @@ impl JsonParser<'_> {
         }
     }
 
-    fn array(&mut self, z: &mut Sanitizer, ctx: Ctx, loc: Loc) -> Result<(), ()> {
+    /// The members of the object at `i` (key, string value) without consuming it; empty
+    /// when it is not well-formed.
+    fn peek_object(&mut self) -> Vec<(String, Option<String>)> {
+        let i = self.i;
+        let mut out = Vec::new();
+        let ok = self.skim_object(&mut out).is_ok();
+        self.i = i;
+        if ok { out } else { Vec::new() }
+    }
+
+    fn skim_object(&mut self, out: &mut Vec<(String, Option<String>)>) -> Result<(), ()> {
+        self.i += 1;
+        self.skip_ws();
+        if self.b.get(self.i) == Some(&b'}') {
+            return Ok(());
+        }
+        loop {
+            if self.b.get(self.i) != Some(&b'"') {
+                return Err(());
+            }
+            let (_, key) = self.string()?;
+            self.skip_ws();
+            if self.b.get(self.i) != Some(&b':') {
+                return Err(());
+            }
+            self.i += 1;
+            self.skip_ws();
+            let v = if self.b.get(self.i) == Some(&b'"') { Some(self.string()?.1) } else { self.skip_value(0)?; None };
+            out.push((key, v));
+            self.skip_ws();
+            match self.b.get(self.i) {
+                Some(b',') => {
+                    self.i += 1;
+                    self.skip_ws();
+                }
+                Some(b'}') => return Ok(()),
+                _ => return Err(()),
+            }
+        }
+    }
+
+    fn skip_ws(&mut self) {
+        while self.i < self.b.len() && matches!(self.b[self.i], b' ' | b'\t' | b'\n' | b'\r') {
+            self.i += 1;
+        }
+    }
+
+    /// Skip a value (no output).
+    fn skip_value(&mut self, depth: usize) -> Result<(), ()> {
+        if depth > 512 {
+            return Err(());
+        }
+        match *self.b.get(self.i).ok_or(())? {
+            b'"' => {
+                self.string()?;
+            }
+            open @ (b'{' | b'[') => {
+                let close = if open == b'{' { b'}' } else { b']' };
+                self.i += 1;
+                loop {
+                    self.skip_ws();
+                    match *self.b.get(self.i).ok_or(())? {
+                        c if c == close => {
+                            self.i += 1;
+                            return Ok(());
+                        }
+                        b',' | b':' => self.i += 1,
+                        _ => self.skip_value(depth + 1)?,
+                    }
+                }
+            }
+            _ => {
+                let start = self.i;
+                while self.i < self.b.len() && !matches!(self.b[self.i], b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r' | b':') {
+                    self.i += 1;
+                }
+                if self.i == start {
+                    return Err(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn array(&mut self, z: &mut Sanitizer, ctx: Ctx, loc: Loc, key: &str) -> Result<(), ()> {
         self.out.push('[');
         self.i += 1;
         self.ws();
@@ -1646,7 +2586,7 @@ impl JsonParser<'_> {
             return Ok(());
         }
         loop {
-            self.value(z, ctx, loc)?;
+            self.value(z, ctx, loc, key)?;
             self.ws();
             match self.b.get(self.i) {
                 Some(b',') => {
@@ -1721,25 +2661,25 @@ impl JsonParser<'_> {
 
 // ------------------------------------------------------------------ spans
 
-/// Non-overlapping replacements in a string.
+/// Non-overlapping replacements in a string, ordered by start (lookups are logarithmic, so
+/// texts with many findings stay linear).
 #[derive(Default, Clone)]
-struct Spans(Vec<(usize, usize, String)>);
+struct Spans(BTreeMap<usize, (usize, String)>);
 
 impl Spans {
     fn free(&self, a: usize, b: usize) -> bool {
-        a < b && !self.0.iter().any(|(x, y, _)| a < *y && *x < b)
+        a < b && self.0.range(..b).next_back().is_none_or(|(_, (end, _))| *end <= a)
     }
     fn add(&mut self, a: usize, b: usize, r: String) {
-        self.0.push((a, b, r));
+        self.0.insert(a, (b, r));
     }
-    fn apply<'a>(mut self, s: &'a str) -> Cow<'a, str> {
+    fn apply<'a>(self, s: &'a str) -> Cow<'a, str> {
         if self.0.is_empty() {
             return Cow::Borrowed(s);
         }
-        self.0.sort_by_key(|x| x.0);
         let mut out = String::with_capacity(s.len());
         let mut pos = 0;
-        for (a, b, r) in self.0 {
+        for (a, (b, r)) in self.0 {
             out.push_str(&s[pos..a]);
             out.push_str(&r);
             pos = b;
@@ -1751,21 +2691,157 @@ impl Spans {
 
 // ------------------------------------------------------------------ names
 
-/// Body field names whose values are secrets (lower case).
-fn secret_field(n: &str) -> bool {
-    const EXACT: &[&str] = &["code", "otp", "totp", "nonce", "sig", "auth", "sid", "pin", "cvv", "cvc", "cvv2", "tan", "passcode", "code_verifier", "code_challenge", "login_hint", "authorization", "cookie", "set-cookie", "privatekey", "private_key"];
-    const PARTS: &[&str] = &["token", "password", "passwd", "passwort", "kennwort", "secret", "signature", "apikey", "api_key", "api-key", "credential", "jwt", "assertion", "samlresponse", "samlrequest", "ticket", "session"];
-    // Metadata about secrets, not secrets: `token_type`, `token_endpoint` (OpenID discovery),
-    // `revocation_endpoint_auth_methods_supported`, `session_state_url` … URLs among them are
-    // still scrubbed as URLs.
-    const NOT: &[&str] = &[
-        "type", "count", "length", "size", "enabled", "required", "expires_in", "expiresin", "expiry", "expires_at", "issued_at", "ttl", "timeout", "policy", "hint_type",
-        "endpoint", "uri", "url", "supported", "methods",
-    ];
-    if NOT.iter().any(|x| n.ends_with(x)) {
+/// The words of a field, parameter or header name, lower case: split at every character that
+/// is no letter or digit, at camelCase humps (`apiKey`, `APIKey`) and between letters and
+/// digits (`otp2`).
+pub(crate) fn name_words(n: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let chars: Vec<char> = n.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if !c.is_alphanumeric() {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+        if !cur.is_empty() {
+            let p = chars[i - 1];
+            let next_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+            let hump = (p.is_lowercase() && c.is_uppercase()) || (p.is_uppercase() && c.is_uppercase() && next_lower);
+            let digit = p.is_ascii_digit() != c.is_ascii_digit();
+            if hump || digit {
+                out.push(std::mem::take(&mut cur));
+            }
+        }
+        cur.extend(c.to_lowercase());
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// Whether values named `n` (a JSON / XML / form / multipart field, a query parameter, a
+/// header) are secrets. One classifier for every place: the name is split into words
+/// ([`name_words`]) and the words are matched, so `passenger`, `compass` or `keyboard` are no
+/// secrets while `pass`, `pwd`, `otpCode`, `X-Api-Key` or `client_secret` are. Metadata about
+/// secrets (`token_type`, `password_length`, `token_endpoint`, `expires_in` …) is not secret.
+pub(crate) fn secret_name(n: &str) -> bool {
+    let w = name_words(n);
+    if w.is_empty() {
         return false;
     }
-    EXACT.contains(&n) || PARTS.iter().any(|p| n.contains(p)) || n.starts_with("x-amz-") || n.starts_with("x-goog-")
+    let joined = w.concat();
+    const EXACT: &[&str] = &[
+        "saml", "sig", "nonce", "otp", "totp", "hotp", "auth", "sid", "pin", "cvv", "cvc", "cvv2", "cvn", "tan", "pw", "pwd", "pass", "passwd",
+        "passcode", "bearer", "csrf", "xsrf", "mfa", "codeverifier", "codechallenge", "loginhint", "idtokenhint", "privatekey", "authorization", "proxyauthorization",
+        "cookie", "setcookie", "jwt", "assertion", "ticket", "credential", "credentials", "apikey", "secret", "signature", "hmac", "authcode", "authkey", "sessionkey",
+        "samlresponse", "samlrequest", "samlart", "relaystate", "wresult", "mnemonic", "seedphrase",
+    ];
+    if EXACT.contains(&joined.as_str()) {
+        return true;
+    }
+    // Metadata about a secret.
+    const NOT_LAST: &[&str] = &[
+        "type", "types", "count", "length", "len", "size", "enabled", "enable", "required", "expires", "expiry", "expiration", "ttl", "timeout", "policy", "endpoint",
+        "endpoints", "uri", "url", "urls", "supported", "methods", "method", "name", "names", "format", "mode", "status", "label", "version", "path", "domain", "header",
+        "headers", "field", "fields", "param", "params", "parameter", "parameters", "prefix", "location", "scope", "scopes", "strength", "rules", "at", "in", "kind",
+        "visible", "lifetime", "duration", "age", "valid", "validity", "algorithm", "alg", "algs", "provider", "providers", "store", "storage", "file", "dir", "hint",
+        "placeholder", "pattern", "description", "title", "text", "message", "error", "errors", "changed", "updated", "created", "used", "set", "mask", "masked", "attempts",
+        "retries", "complexity", "min", "max", "minimum", "maximum",
+    ];
+    const NOT_ANY: &[&str] = &["expires", "expiry", "expiration", "issued", "supported", "endpoint"];
+    let last = w.last().map(String::as_str).unwrap_or("");
+    if (NOT_LAST.contains(&last) && w.len() > 1) || w.iter().any(|x| NOT_ANY.contains(&x.as_str())) {
+        return false;
+    }
+    const WORDS: &[&str] = &[
+        "pwd", "pw", "pass", "passwd", "password", "passwords", "passwort", "kennwort", "passphrase", "passcode", "secret", "secrets", "token", "tokens", "bearer",
+        "apikey", "credential", "credentials", "signature", "session", "sessionid", "cookie", "cookies", "csrf", "xsrf", "otp", "totp", "hotp", "mfa", "jwt",
+        "assertion", "ticket", "privatekey", "saml", "samlresponse", "samlrequest", "pin", "nonce", "sig", "hmac", "cvv", "cvc", "mnemonic", "accesstoken",
+        "refreshtoken", "idtoken", "authtoken", "clientsecret", "jsessionid", "phpsessid", "aspsessionid",
+    ];
+    if w.iter().any(|x| WORDS.contains(&x.as_str())) {
+        return true;
+    }
+    // Compounds written without separators (`clientsecret`, `x_apikey`, `jsessionid`).
+    const PARTS: &[&str] = &[
+        "password", "passwd", "passwort", "kennwort", "passphrase", "apikey", "accesskey", "secretkey", "privatekey", "clientsecret", "credential", "csrf", "xsrf",
+        "samlresponse", "samlrequest", "sessionid", "sessiontoken", "accesstoken", "refreshtoken", "idtoken", "authtoken", "authcode", "authkey", "bearertoken", "otpcode",
+        "mfacode",
+    ];
+    if PARTS.iter().any(|p| joined.contains(p)) || ["token", "tokens", "secret", "signature"].iter().any(|p| joined.ends_with(p)) {
+        return true;
+    }
+    // Word pairs.
+    for pair in w.windows(2) {
+        let (a, b) = (pair[0].as_str(), pair[1].as_str());
+        let hit = match b {
+            "key" | "keys" => matches!(
+                a,
+                "access" | "secret" | "api" | "auth" | "private" | "session" | "signing" | "sign" | "encryption" | "encrypt" | "master" | "subscription" | "client" | "app"
+                    | "consumer" | "shared" | "crypto" | "license" | "ssh" | "gpg" | "pgp" | "hmac" | "aes" | "account" | "storage" | "service" | "recovery" | "secure"
+            ),
+            "code" | "codes" => matches!(
+                a,
+                "auth" | "authorization" | "recovery" | "verification" | "verify" | "otp" | "mfa" | "totp" | "sms" | "reset" | "confirmation" | "confirm" | "activation"
+                    | "security" | "access" | "backup" | "login" | "device" | "user" | "pairing" | "pin" | "invite" | "invitation" | "secret" | "fa" | "challenge" | "one"
+                    | "email" | "phone" | "magic"
+            ),
+            "answer" | "answers" => matches!(a, "security" | "secret" | "recovery" | "challenge"),
+            "phrase" => matches!(a, "pass" | "secret" | "recovery" | "seed"),
+            "number" => matches!(a, "pin" | "tan" | "cvv"),
+            _ => false,
+        };
+        if hit {
+            return true;
+        }
+    }
+    false
+}
+
+/// Names that are secrets only with a value that looks like one (`"key": "title"` is an i18n
+/// key, `"key": "sk_live_…"` an API key; `"code": "DE"` or `200`, `?code=` of OAuth).
+pub(crate) fn weak_secret_name(n: &str) -> bool {
+    matches!(name_words(n).concat().as_str(), "key" | "code" | "refresh" | "hash")
+}
+
+/// Whether `v` looks like a credential: no spaces, and long and random enough. Fields need
+/// 16+ characters mixing letters and digits or both cases with some variety; parameters
+/// (`loose`) 6+ characters with a digit, or upper case with a token character (OAuth codes
+/// are often short), but not a plain word, number or language code.
+fn credential_value(v: &str, loose: bool) -> bool {
+    let v = v.trim();
+    if v.is_empty() || v.contains(char::is_whitespace) || v.starts_with('<') {
+        return false;
+    }
+    let letters = v.bytes().any(|b| b.is_ascii_alphabetic());
+    let digits = v.bytes().any(|b| b.is_ascii_digit());
+    let upper = v.bytes().any(|b| b.is_ascii_uppercase());
+    let lower = v.bytes().any(|b| b.is_ascii_lowercase());
+    let special = v.bytes().any(|b| b"-_.~+/=".contains(&b));
+    let mut distinct: Vec<u8> = v.bytes().collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    if loose {
+        return v.len() >= 6 && letters && (digits || (special && upper)) && distinct.len() >= 5;
+    }
+    v.len() >= 16 && distinct.len() >= 8 && ((letters && digits) || (upper && lower))
+}
+
+/// Body field names whose values are secrets.
+fn secret_field(n: &str) -> bool {
+    let l = n.to_ascii_lowercase();
+    secret_name(n) || l.starts_with("x-amz-") || l.starts_with("x-goog-")
+}
+
+/// Query / form parameter names whose values are secrets: the field rules plus the short
+/// names of OAuth (`state`) and signed URLs (Azure SAS, AWS, GCS).
+fn secret_param_name(n: &str) -> bool {
+    const EXACT: &[&str] = &["state", "se", "sp", "sv", "sr", "st", "spr", "srt", "ss", "si", "sdd", "skoid", "sktid", "skt", "ske", "sks", "skv", "x-amz-credential"];
+    let l = n.trim().to_ascii_lowercase();
+    EXACT.contains(&l.as_str()) || secret_field(n.trim())
 }
 
 /// Names of personal data fields (lower case, with or without `_`, `-`, `.`).
@@ -1777,7 +2853,7 @@ fn personal_name(n: &str) -> bool {
         "svnr", "rvnr", "taxid", "taxnumber", "steuerid", "steuernummer", "vorname", "nachname", "geburtsname", "hausnummer", "housenumber", "anschrift", "adresse",
         "handy", "telefon", "passport", "passportnumber", "idnumber", "nationalid", "ausweisnummer", "personalausweisnummer", "gender", "geschlecht", "nationality",
         "staatsangehoerigkeit", "staatsangehörigkeit", "religion", "accountnumber", "kontonummer", "cardholder", "cardholdername", "kontoinhaber", "socialsecuritynumber",
-        "sozialversicherungsnummer", "lat", "lng", "latitude", "longitude", "geolocation",
+        "sozialversicherungsnummer", "nameid", "upn", "lat", "lng", "latitude", "longitude", "geolocation",
     ];
     const PARTS: &[&str] = &[
         "firstname", "lastname", "fullname", "surname", "email", "phone", "mobile", "street", "strasse", "straße", "postalcode", "zipcode", "birth", "geburt", "iban",
@@ -1789,11 +2865,30 @@ fn personal_name(n: &str) -> bool {
 /// Header names whose values are secrets (lower case).
 fn secret_header(n: &str) -> bool {
     const PARTS: &[&str] = &["token", "secret", "signature", "apikey", "api-key", "api_key", "csrf", "xsrf", "session", "credential", "password", "passwd", "jwt"];
-    const NOT: &[&str] = &["sec-websocket-key", "sec-websocket-accept", "access-control-allow-headers", "access-control-expose-headers", "access-control-request-headers"];
+    const NOT: &[&str] = &[
+        "sec-websocket-key", "sec-websocket-accept", "sec-websocket-extensions", "sec-websocket-version", "access-control-allow-headers", "access-control-expose-headers",
+        "access-control-request-headers", "access-control-allow-credentials", "x-ms-client-principal-name", "x-ms-client-principal-idp",
+    ];
     if NOT.contains(&n) {
         return false;
     }
-    PARTS.iter().any(|p| n.contains(p)) || n.ends_with("-key") || n.starts_with("x-auth") || n == "x-amz-security-token" || n == "dpop"
+    PARTS.iter().any(|p| n.contains(p))
+        || secret_name(n)
+        || n.ends_with("-key")
+        || n.starts_with("x-auth")
+        || n.starts_with("x-ms-client-principal")
+        || matches!(n, "x-amz-security-token" | "dpop" | "x-access" | "x-autoauth" | "x-pwd" | "x-pass")
+}
+
+/// Header names whose values identify a person (`X-Forwarded-User`, `X-Remote-User`,
+/// `X-MS-CLIENT-PRINCIPAL-NAME`, client certificates …); not `User-Agent`.
+fn personal_header(n: &str) -> bool {
+    let w = name_words(n);
+    if w.iter().any(|x| x == "agent") || n.starts_with("sec-ch-") {
+        return false;
+    }
+    let cert = n.contains("client-cert") || n.contains("ssl-client") || n.contains("client-dn") || n.contains("clientcert") || n.contains("client-subject");
+    cert || w.iter().any(|x| matches!(x.as_str(), "user" | "username" | "principal" | "email" | "mail" | "upn" | "login")) || personal_name(&w.iter().filter(|x| *x != "x").cloned().collect::<String>())
 }
 
 fn disposition_param(v: &str, name: &str) -> Option<String> {
@@ -1813,12 +2908,12 @@ macro_rules! regexes {
 
 regexes! {
     JWT = r"eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)?";
-    EMAIL = r"(?i)[a-z0-9][a-z0-9._+\-]{0,63}(?:@|%40)(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}";
-    IBAN = r"\b[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]){11,30}\b";
+    EMAIL = r"(?i)[\p{L}\p{N}][\p{L}\p{N}._+'\-]{0,63}(?:@|%40|&#64;|&#x40;|&commat;)(?:[\p{L}\p{N}](?:[\p{L}\p{N}\-]{0,61}[\p{L}\p{N}])?\.)+\p{L}{2,24}";
+    IBAN = r"(?i)[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]){11,30}";
     CARD = r"\b[0-9](?:[ \-]?[0-9]){12,18}\b";
     TAX_ID = r"\b[1-9][0-9](?: ?[0-9]{3}){3}\b";
     SVNR = r"\b[0-9]{2} ?[0-9]{6} ?[A-Z] ?[0-9]{3}\b";
-    PHONE = r"(?:\+[1-9]|\(0\)|\b0)[0-9 ()\-/]{6,22}[0-9]";
+    PHONE = r"(?:\+[1-9]|\(0\)|\(0[1-9][0-9]{0,4}\)|\b0)[0-9 ()\-/]{6,22}[0-9]";
     IPV4 = r"\b(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\b";
     IPV6 = r"(?i)(?:[0-9a-f]{1,4}:){1,7}(?:(?::[0-9a-f]{1,4}){1,7}|[0-9a-f]{1,4}|:)|::(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{1,4}";
     UUID = r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b";
@@ -1827,8 +2922,60 @@ regexes! {
     KV = r#"([A-Za-z0-9_.\-\[\]]{1,64})=([^&\s"'<>;,]+)"#;
     JSON_KV = r#""([A-Za-z0-9_\-.$@]{1,64})"\s*:\s*"((?:[^"\\]|\\.)*)""#;
     USERINFO = r"(?i)\b[a-z][a-z0-9+.\-]*://([^/\s@'<>?#]+)@";
-    INPUT = r"(?i)<input\b[^>]*>";
-    ATTR = r#"([A-Za-z\-]+)\s*=\s*("[^"]*"|'[^']*')"#;
+    TAG = r#"<[A-Za-z][A-Za-z0-9:\-]*(?:\s[^<>]*)?/?>"#;
+    ATTR = r#"([A-Za-z_:][A-Za-z0-9_:.\-]*)\s*=\s*("[^"]*"|'[^']*'|[^\s"'<>=`]+)"#;
+    KV2 = r#"(?:^|[^A-Za-z0-9_\-.$@])["']?([A-Za-z_$@][A-Za-z0-9_.\-$@]{0,63})["']?[ \t]*([:=])[ \t]*("(?:[^"\\\r\n]|\\.)*"|'(?:[^'\\\r\n]|\\.)*'|[^\s=,;&<>"'{}()\[\]][^\r\n,;&<>"'{}()\[\]]*)"#;
+    AUTH_TEXT = r"(?i)\b(Bearer|Basic|Negotiate|NTLM|Digest)[ \t]+([A-Za-z0-9._~+/=\-]{8,})";
+    COOKIE_LINE = r"(?im)^[ \t]*(set-cookie|cookie)[ \t]*:[ \t]*([^\r\n]+)";
+    URL_TEXT = r#"(?i)\b(?:https?|wss?|ftps?)://[^\s"'<>()\[\]{}\\^`|]+"#;
+    CSS_URL = r#"(?i)\burl\(\s*["']?([^"')\s]+)"#;
+}
+
+/// A match of a group (see [`caps`]).
+#[derive(Clone, Copy)]
+struct Mt<'h> {
+    s: &'h str,
+    a: usize,
+    b: usize,
+}
+
+impl<'h> Mt<'h> {
+    fn start(&self) -> usize {
+        self.a
+    }
+    fn end(&self) -> usize {
+        self.b
+    }
+    fn as_str(&self) -> &'h str {
+        &self.s[self.a..self.b]
+    }
+}
+
+/// The groups of one match (see [`caps`]).
+struct Caps<'h> {
+    s: &'h str,
+    g: Vec<Option<(usize, usize)>>,
+}
+
+impl<'h> Caps<'h> {
+    fn get(&self, i: usize) -> Option<Mt<'h>> {
+        self.g.get(i).copied().flatten().map(|(a, b)| Mt { s: self.s, a, b })
+    }
+}
+
+/// Every match of `r` in `s` with its groups: the matches are found with the fast
+/// (DFA) engines, the groups resolved on the match alone, so large texts stay fast (group
+/// searches over a whole large text use the slow NFA engine).
+fn caps<'h>(r: &Regex, s: &'h str) -> Vec<Caps<'h>> {
+    let mut out = Vec::new();
+    for m in r.find_iter(s) {
+        let sub = &s[m.start()..m.end()];
+        if let Some(c) = r.captures(sub) {
+            let g = (0..c.len()).map(|i| c.get(i).map(|x| (m.start() + x.start(), m.start() + x.end()))).collect();
+            out.push(Caps { s, g });
+        }
+    }
+    out
 }
 
 fn re(r: &'static (OnceLock<Regex>, &'static str)) -> &'static Regex {
@@ -1838,14 +2985,118 @@ fn re(r: &'static (OnceLock<Regex>, &'static str)) -> &'static Regex {
 /// File extensions that look like top-level domains (`logo@2x.png`).
 const NOT_TLDS: &[&str] = &["png", "jpg", "jpeg", "gif", "svg", "webp", "avif", "ico", "js", "mjs", "css", "map", "json", "html", "htm", "woff", "woff2", "ttf", "otf", "eot", "pdf", "txt", "xml", "mp4", "webm", "mp3", "wasm"];
 
-fn email_ok(s: &str, a: usize, b: usize, e: &str) -> bool {
-    let tld = e.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    if NOT_TLDS.contains(&tld.as_str()) {
-        return false;
+/// The e-mail address in the candidate `s[a..b]`, if it is one: an escape (`%3D`) before it
+/// is no part of it, an apostrophe only between letters (`o'brien`), a file extension after
+/// it (`max@firma.de.pdf`) is cut off, `_` counts as a boundary (`invoice_max@firma.de_1.pdf`).
+fn email_at(s: &str, a: usize, b: usize) -> Option<(usize, usize)> {
+    let mut a = a;
+    let bytes = s.as_bytes();
+    // `%3Dname%40host`, `mailto%3Aname%40host` (an escape before): no part of it.
+    if a > 0 && bytes[a - 1] == b'%' && b - a > 2 && bytes[a].is_ascii_hexdigit() && bytes[a + 1].is_ascii_hexdigit() {
+        a += 2;
     }
-    let next = s[b..].chars().next();
+    let at = ["@", "%40", "&#64;", "&#x40;", "&commat;"].iter().filter_map(|sep| s[a..b].find(sep)).min()? + a;
+    // An apostrophe not between two letters starts the address after it.
+    let local = &s[a..at];
+    let mut start = a;
+    for (i, c) in local.char_indices() {
+        if c == '\'' {
+            let prev = local[..i].chars().next_back();
+            let next = local[i + 1..].chars().next();
+            if !(prev.is_some_and(char::is_alphabetic) && next.is_some_and(char::is_alphabetic)) {
+                start = a + i + 1;
+            }
+        }
+    }
+    let a = start;
+    if a >= at || !s[a..].chars().next().is_some_and(char::is_alphanumeric) {
+        return None;
+    }
     let prev = s[..a].chars().next_back();
-    !next.is_some_and(|c| c.is_alphanumeric() || c == '-' || c == '_') && !prev.is_some_and(|c| c.is_alphanumeric())
+    let after_escape = a >= 3 && bytes[a - 3] == b'%' && bytes[a - 2].is_ascii_hexdigit() && bytes[a - 1].is_ascii_hexdigit();
+    if prev.is_some_and(|c| c.is_alphanumeric()) && !after_escape {
+        return None;
+    }
+    let mut b = b;
+    loop {
+        let e = &s[a..b];
+        let domain = &s[at..b];
+        let tld = e.rsplit('.').next().unwrap_or("").to_lowercase();
+        if NOT_TLDS.contains(&tld.as_str()) {
+            // `john.doe@example.com.txt`: try without the extension.
+            let cut = b - tld.len() - 1;
+            if s[at..cut].contains('.') {
+                b = cut;
+                continue;
+            }
+            return None;
+        }
+        if !domain.contains('.') {
+            return None;
+        }
+        let next = s[b..].chars().next();
+        let after = s[b..].chars().nth(1);
+        if next.is_some_and(|c| c.is_alphanumeric() || c == '-') || (next == Some('.') && after.is_some_and(|c| c.is_alphanumeric()) && !NOT_TLDS.iter().any(|t| s[b + 1..].to_lowercase().starts_with(t))) {
+            return None;
+        }
+        return Some((a, b));
+    }
+}
+
+/// A credential after an authorization scheme in text (`Bearer abc.def`), not a word
+/// (`Basic information`): it has a digit or a base64 / token character, or mixed case.
+fn credential_like(v: &str) -> bool {
+    let digit = v.bytes().any(|b| b.is_ascii_digit());
+    let special = v.bytes().any(|b| b"+/=._~-".contains(&b));
+    let mixed = v.bytes().any(|b| b.is_ascii_uppercase()) && v.bytes().any(|b| b.is_ascii_lowercase());
+    digit || (special && v.len() >= 12) || (mixed && v.len() >= 16)
+}
+
+/// Field names that name another value (`{"name": "password", "value": "…"}`).
+fn is_name_key(n: &str) -> bool {
+    matches!(
+        n.to_ascii_lowercase().as_str(),
+        "name" | "key" | "field" | "fieldname" | "field_name" | "id" | "attribute" | "attributename" | "attr" | "param" | "parameter" | "paramname" | "property" | "claim" | "claimtype" | "friendlyname" | "label" | "itemprop"
+    )
+}
+
+/// Personal field names that also name things other than persons (`name` of a product).
+fn ambiguous_personal(n: &str) -> bool {
+    matches!(name_words(n).concat().as_str(), "name" | "displayname" | "title")
+}
+
+/// A field that only a person has (`email`, `firstName`, `phone`, `birthDate` …).
+fn person_field(n: &str) -> bool {
+    let j = name_words(n).concat();
+    ["email", "mail", "firstname", "lastname", "surname", "givenname", "familyname", "fullname", "username", "phone", "mobile", "telefon", "birth", "geburt", "vorname", "nachname", "middlename", "nickname", "gender"]
+        .iter()
+        .any(|p| j.contains(p))
+        || matches!(j.as_str(), "dob" | "ssn" | "upn")
+}
+
+/// A key or element name that holds a person (`user`, `customer`, `author` …).
+fn person_word(n: &str) -> bool {
+    const P: &[&str] = &[
+        "user", "users", "customer", "customers", "contact", "contacts", "person", "persons", "people", "author", "authors", "owner", "owners", "member", "members",
+        "employee", "employees", "patient", "patients", "profile", "recipient", "recipients", "sender", "buyer", "seller", "guest", "guests", "passenger", "passengers",
+        "driver", "student", "teacher", "applicant", "holder", "payer", "payee", "beneficiary", "subscriber", "attendee", "attendees", "participant", "participants",
+        "candidate", "account", "me", "reporter", "assignee", "creator", "manager", "friend", "friends", "partner", "kunde", "kunden", "nutzer", "benutzer",
+        "mitarbeiter", "ansprechpartner", "absender", "empfaenger", "inhaber", "principal", "subject", "signer", "approver", "reviewer", "requester", "cardholder",
+        "accountholder", "billing", "shipping", "identity",
+    ];
+    name_words(n).iter().any(|w| P.contains(&w.as_str()))
+}
+
+/// XML elements (lower case local names) that wrap credentials: their direct text is judged
+/// by their name, their children by their own names.
+const XML_WRAPPERS: &[&str] = &[
+    "usernametoken", "security", "assertion", "encryptedassertion", "signature", "signedinfo", "keyinfo", "securitytokenreference", "requestsecuritytoken",
+    "requestsecuritytokenresponse", "requestedsecuritytoken", "attributestatement", "authnstatement", "subject",
+];
+
+/// Field names that hold the value named by a sibling [`is_name_key`] field.
+fn is_value_key(n: &str) -> bool {
+    matches!(n.to_ascii_lowercase().as_str(), "value" | "values" | "val" | "content" | "attributevalue" | "text" | "data" | "default" | "defaultvalue" | "current" | "currentvalue")
 }
 
 /// Digits not continued by other digits (also across `.`/`,`, i.e. no decimals).
@@ -1861,10 +3112,16 @@ fn number_boundary(s: &str, a: usize, b: usize) -> bool {
         || ((next == Some(b'.') || next == Some(b',') || next == Some(b'-')) && after.is_some_and(|c| c.is_ascii_digit())))
 }
 
-/// All separators in a card number are the same (or none).
-fn consistent_separators(m: &str) -> bool {
+/// A card number as written: no separators, the same separator throughout, or groups of
+/// four (`4111 1111-1111 1111`) or the Amex layout 4-6-5.
+fn card_layout(m: &str) -> bool {
     let seps: Vec<char> = m.chars().filter(|c| !c.is_ascii_digit()).collect();
-    seps.windows(2).all(|w| w[0] == w[1])
+    if seps.windows(2).all(|w| w[0] == w[1]) {
+        return true;
+    }
+    let groups: Vec<usize> = m.split([' ', '-']).map(str::len).collect();
+    let fours = groups.len() >= 3 && groups[..groups.len() - 1].iter().all(|&g| g == 4) && (1..=4).contains(groups.last().unwrap());
+    fours || groups == [4, 6, 5] || groups == [4, 6, 4]
 }
 
 /// Luhn checksum.
@@ -1923,15 +3180,49 @@ pub fn iban(s: &str) -> bool {
     rem == 1
 }
 
-/// The end of a valid IBAN in `s[a..b]` (a spaced match may have run into the next word).
+/// IBAN lengths by country (the common ones; others are accepted in upper case at any length).
+const IBAN_LEN: &[(&str, usize)] = &[
+    ("AD", 24), ("AE", 23), ("AL", 28), ("AT", 20), ("AZ", 28), ("BA", 20), ("BE", 16), ("BG", 22), ("BH", 22), ("BR", 29), ("CH", 21), ("CR", 22), ("CY", 28),
+    ("CZ", 24), ("DE", 22), ("DK", 18), ("DO", 28), ("EE", 20), ("ES", 24), ("FI", 18), ("FO", 18), ("FR", 27), ("GB", 22), ("GE", 22), ("GI", 23), ("GL", 18),
+    ("GR", 27), ("GT", 28), ("HR", 21), ("HU", 28), ("IE", 22), ("IL", 23), ("IS", 26), ("IT", 27), ("JO", 30), ("KW", 30), ("KZ", 20), ("LB", 28), ("LI", 21),
+    ("LT", 20), ("LU", 20), ("LV", 21), ("MC", 27), ("MD", 24), ("ME", 22), ("MK", 19), ("MR", 27), ("MT", 31), ("MU", 30), ("NL", 18), ("NO", 15), ("PK", 24),
+    ("PL", 28), ("PS", 29), ("PT", 25), ("QA", 29), ("RO", 24), ("RS", 22), ("SA", 24), ("SE", 24), ("SI", 19), ("SK", 24), ("SM", 27), ("TN", 24), ("TR", 26),
+    ("UA", 29), ("VG", 24), ("XK", 20),
+];
+
+/// The end of a valid IBAN starting at `a` (the candidate `s[a..b]` may have run into the
+/// next word). Not inside a longer token (`_` counts as a boundary); lower case only for
+/// known countries at their length.
 fn iban_at(s: &str, a: usize, b: usize) -> Option<usize> {
-    let m = &s[a..b];
-    if iban(m) {
-        return Some(b);
+    let bytes = s.as_bytes();
+    if a > 0 && bytes[a - 1].is_ascii_alphanumeric() {
+        return None;
     }
-    let mut ends: Vec<usize> = m.match_indices(' ').map(|(i, _)| a + i).collect();
-    ends.reverse();
-    ends.into_iter().find(|&e| iban(&s[a..e]))
+    let m = &s[a..b];
+    let upper = m.to_ascii_uppercase();
+    let known = IBAN_LEN.iter().find(|(c, _)| upper.starts_with(c)).map(|(_, n)| *n);
+    let boundary = |e: usize| bytes.get(e).is_none_or(|c| !c.is_ascii_alphanumeric());
+    // Ends after each character: (end, compact length).
+    let mut ends: Vec<(usize, usize)> = Vec::new();
+    let mut n = 0;
+    for (i, c) in m.char_indices() {
+        if c != ' ' {
+            n += 1;
+            ends.push((a + i + 1, n));
+        }
+    }
+    let cands: Vec<usize> = match known {
+        Some(len) => ends.iter().filter(|(_, k)| *k == len).map(|(e, _)| *e).collect(),
+        None if m.bytes().all(|c| !c.is_ascii_lowercase()) => ends.iter().rev().filter(|(e, k)| *k >= 15 && (*e == b || bytes[*e] == b' ')).map(|(e, _)| *e).collect(),
+        None => Vec::new(),
+    };
+    // `De89…` or `dE89…` is no IBAN; `DE89 abcd …` (lower case account letters) may be.
+    let case_ok = |e: usize| {
+        let c = &s[a..e];
+        let lower = c.bytes().any(|x| x.is_ascii_lowercase());
+        !lower || c[..2].bytes().all(|x| x.is_ascii_lowercase()) || c[..2].bytes().all(|x| x.is_ascii_uppercase())
+    };
+    cands.into_iter().find(|&e| boundary(e) && case_ok(e) && iban(&s[a..e].to_ascii_uppercase()))
 }
 
 /// German tax identification number (11 digits, digit distribution and ISO 7064 check).
@@ -1983,8 +3274,39 @@ pub fn social_security(s: &str) -> bool {
     sum % 10 == (b[11] - b'0') as u32
 }
 
+/// Phone numbers in `s`. A candidate that is no phone number as a whole (it ran into the
+/// next number: `030 1234567 / 0170 1234567`) is tried shorter, at its group boundaries, and
+/// the search goes on right after its start.
+fn phones(s: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while pos < s.len() {
+        let Some(m) = re(&PHONE).find_at(s, pos) else { break };
+        let (a, b) = (m.start(), m.end());
+        let mut end = phone_at(s, a, b).then_some(b);
+        if end.is_none() {
+            let cand = &s[a..b];
+            let cuts: Vec<usize> = cand.char_indices().filter(|(i, c)| *i > 0 && matches!(c, ' ' | '/' | '-' | '(') && cand[..*i].ends_with(|x: char| x.is_ascii_digit() || x == ')')).map(|(i, _)| i).collect();
+            // Prefer a cut where the rest starts like the next number (`0…`, `+…`, `(…`).
+            let next_number = |e: usize| s[e..b].trim_start_matches([' ', '/', '-', ',', ';']).starts_with(['+', '0', '(']);
+            end = cuts.iter().rev().map(|i| a + i).find(|&e| next_number(e) && phone_at(s, a, e)).or_else(|| cuts.iter().rev().map(|i| a + i).find(|&e| phone_at(s, a, e)));
+        }
+        match end {
+            Some(e) => {
+                out.push((a, e));
+                pos = e;
+            }
+            None => {
+                pos = a + s[a..].chars().next().map_or(1, char::len_utf8);
+            }
+        }
+    }
+    out
+}
+
 /// Whether the phone candidate `s[a..b]` is a phone number: `+` or `00`/`0` prefix with an
-/// area code, 8–15 digits, consistent separators, no date, not inside a longer token.
+/// area code (`(030)` too), 8–15 digits, consistent separators, no date, not inside a longer
+/// token.
 fn phone_at(s: &str, a: usize, b: usize) -> bool {
     let m = &s[a..b];
     let bytes = s.as_bytes();
@@ -2015,11 +3337,13 @@ fn phone_at(s: &str, a: usize, b: usize) -> bool {
     if m.starts_with("(0)") {
         return true;
     }
-    if m.starts_with("00") {
-        return separated && !m.starts_with("000");
+    // `(030) 1234567`: the area code in parentheses.
+    let core = if m.starts_with("(0") { &m[1..] } else { m };
+    if core.starts_with("00") {
+        return separated && !core.starts_with("000");
     }
     // National: `0` and an area code (second digit 1-9).
-    if m.as_bytes().get(1).is_none_or(|&c| c == b'0' || !c.is_ascii_digit() && c != b'(') && !m.starts_with("0(") {
+    if core.as_bytes().get(1).is_none_or(|&c| c == b'0' || !c.is_ascii_digit() && c != b'(') && !core.starts_with("0(") {
         return false;
     }
     if !separated {
@@ -2038,6 +3362,11 @@ fn ipv4_at(s: &str, a: usize, b: usize) -> bool {
     let prev = a.checked_sub(1).map(|i| bytes[i]);
     let next = bytes.get(b).copied();
     if prev == Some(b'.') || (next == Some(b'.') && bytes.get(b + 1).is_some_and(u8::is_ascii_digit)) {
+        return false;
+    }
+    // A version (`version 1.2.3.4`, `ver. 10.0.0.1`, `v1.2.3.4`), not an address.
+    let before = s[..a].trim_end_matches([' ', ':', '=', '.', '/']).to_ascii_lowercase();
+    if before.ends_with("version") || before.ends_with("ver") || before.ends_with('v') && !before.ends_with("dev") || before.ends_with("build") || before.ends_with("release") {
         return false;
     }
     !matches!(&s[a..b], "127.0.0.1" | "0.0.0.0" | "255.255.255.255")
@@ -2066,7 +3395,7 @@ fn is_text(mime: &str, b: &[u8]) -> bool {
         let p = &b[..b.len().min(8 << 10)];
         return quena_body::charset::utf8_valid_prefix(p) && !p.contains(&0);
     }
-    if quena_body::charset::is_textual(Some(mime)) {
+    if quena_body::charset::is_textual(Some(mime)) || mime.contains("yaml") || mime.contains("graphql") || mime.contains("toml") {
         return true;
     }
     let binary = mime.starts_with("image/") || mime.starts_with("audio/") || mime.starts_with("video/") || mime.starts_with("font/") || mime.contains("octet-stream") || mime.contains("zip") || mime.contains("pdf") || mime.contains("protobuf") || mime.contains("grpc") || mime.contains("wasm") || mime.contains("msgpack") || mime.contains("compressed") || mime.contains("tar");
@@ -2101,18 +3430,47 @@ fn set_charset_utf8(h: &mut Headers) {
     h.set("content-type", parts.join("; "));
 }
 
-/// The body without its Content-Encoding (at most `limit` bytes); an error when the encoding
-/// is unknown or the data cannot be decoded at all.
-fn try_decode(headers: &Headers, body: &Body, limit: usize) -> Result<Vec<u8>, String> {
+/// Headers describing the exact bytes of a body (dropped when the body changes).
+const INTEGRITY_HEADERS: &[&str] = &["digest", "content-md5", "repr-digest", "content-digest", "etag"];
+
+/// Large text is scanned in pieces of about this size (ending at line breaks).
+const TEXT_CHUNK: usize = 256 << 10;
+
+/// Bodies up to this size are scrubbed whole before truncating (their structure is kept).
+const TRUNCATE_WHOLE: usize = 1 << 20;
+/// When only a prefix is scrubbed, this much more than the kept part.
+const TRUNCATE_MARGIN: usize = 64 << 10;
+
+fn short_error(e: &str) -> String {
+    if e.len() > 80 { format!("{}…", &e[..e.char_indices().take_while(|(i, _)| *i < 80).last().map_or(0, |(i, c)| i + c.len_utf8())]) } else { e.to_string() }
+}
+
+/// The body without its Content-Encoding (at most `limit` bytes) and whether decoding
+/// stopped at damaged or cut data (the part decoded so far is returned); an error when the
+/// encoding is unknown or nothing could be decoded.
+fn decode_cut(headers: &Headers, body: &Body, limit: usize) -> Result<(Vec<u8>, bool), String> {
     match headers.get("content-encoding").map(str::trim).filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("identity")) {
-        Some(ce) => quena_body::decode::decode_prefix(body, ce, limit, &quena_body::decode::NoProgress).map_err(|e| {
-            let e = e.to_string();
-            if e.len() > 80 { format!("{}…", &e[..e.char_indices().take_while(|(i, _)| *i < 80).last().map_or(0, |(i, c)| i + c.len_utf8())]) } else { e }
-        }),
+        Some(ce) => {
+            let encs = quena_body::decode::parse_encodings(ce).map_err(|e| short_error(&format!("unknown content encoding {e}")))?;
+            let mut reader = quena_body::decode::decoding_reader(Box::new(body.stream(0, false)), &encs);
+            let mut out = Vec::new();
+            let mut buf = vec![0u8; 64 << 10];
+            while out.len() < limit {
+                let want = buf.len().min(limit - out.len());
+                match reader.read(&mut buf[..want]) {
+                    Ok(0) => break,
+                    Ok(n) => out.extend_from_slice(&buf[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) if out.is_empty() => return Err(short_error(&e.to_string())),
+                    Err(_) => return Ok((out, true)),
+                }
+            }
+            Ok((out, false))
+        }
         None => {
             let mut v = Vec::new();
             body.stream(0, false).take(limit as u64).read_to_end(&mut v).map_err(|e| e.to_string())?;
-            Ok(v)
+            Ok((v, false))
         }
     }
 }
@@ -2120,7 +3478,7 @@ fn try_decode(headers: &Headers, body: &Body, limit: usize) -> Result<Vec<u8>, S
 /// The body without its Content-Encoding (at most `limit` bytes); the stored bytes when the
 /// encoding is unknown or broken.
 pub fn decoded_body(headers: &Headers, body: &Body, limit: usize) -> Vec<u8> {
-    try_decode(headers, body, limit).unwrap_or_else(|_| {
+    decode_cut(headers, body, limit).map(|(b, _)| b).unwrap_or_else(|_| {
         let mut v = Vec::new();
         let _ = body.stream(0, false).take(limit as u64).read_to_end(&mut v);
         v
@@ -2211,7 +3569,9 @@ mod tests {
         assert_eq!(text(&mut s, "card 4111 1111 1111 1111 exp"), "card <card-1> exp");
         assert_eq!(text(&mut s, "card 4111-1111-1111-1111"), "card <card-1>");
         // Inside longer digit runs, decimals, mixed separators, millisecond timestamps.
-        for neg in ["41111111111111110", "x14111111111111111", "4111111111111111.5", "4111 1111-1111 1111", "ts 1700000000000 and 1712345678901", "id 4111111111111111_2"] {
+        // Groups of four with mixed separators are still a card.
+        assert_eq!(text(&mut s, "card 4111 1111-1111 1111"), "card <card-1>");
+        for neg in ["41111111111111110", "x14111111111111111", "4111111111111111.5", "4111 11-111111 1111", "ts 1700000000000 and 1712345678901", "id 4111111111111111_2"] {
             assert_eq!(text(&mut s, neg), neg, "{neg}");
         }
     }
@@ -2305,7 +3665,8 @@ mod tests {
         let all: String = h.iter().map(|(k, v)| format!("{k}: {v}\n")).collect();
         assert!(!all.contains("SECRET") && !all.contains("max@") && !all.contains("dXNlcjpT"), "{all}");
         assert_eq!(h.len(), 10, "all headers are kept");
-        assert_eq!(h.get("authorization"), Some("Bearer <40 bytes>"));
+        assert_eq!(h.get("authorization"), Some("Bearer <jwt-1>"));
+        assert_eq!(h.get("proxy-authorization"), Some("Basic <token-1>"));
         assert_eq!(h.get("cookie"), Some("sid=<cookie-1>; theme=<cookie-2>; <cookie-3>"));
         assert_eq!(h.get("accept"), Some("application/json"));
         assert_eq!(h.get("sec-websocket-key"), Some("dGhlIHNhbXBsZSBub25jZQ=="));
@@ -2365,7 +3726,7 @@ mod tests {
         let xml = r#"<?xml version="1.0"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Header><wsse:Security><wsse:Password Type="x">SECRET-PW</wsse:Password></wsse:Security></soap:Header><soap:Body><Customer email="max@example.com" id="1"><Vorname>Max</Vorname><Note>a &amp; b, 203.0.113.7</Note><![CDATA[mail max@example.com]]></Customer></soap:Body></soap:Envelope>"#;
         let out = s.xml(xml, Loc::Body).unwrap();
         assert!(!out.contains("SECRET") && !out.contains("max@") && !out.contains(">Max<") && !out.contains("203.0.113.7"), "{out}");
-        assert!(out.contains("<wsse:Password Type=\"x\">&lt;token-") && out.contains(r#"<Customer email="&lt;personal-2&gt;" id="1">"#) && out.contains("<Note>a &amp; b, &lt;ip-1&gt;</Note>"), "{out}");
+        assert!(out.contains("<wsse:Password Type=\"x\">&lt;token-") && out.contains(r#"<Customer email="&lt;personal-"#) && out.contains("<Note>a &amp; b, &lt;ip-1&gt;</Note>"), "{out}");
         assert!(out.contains("<![CDATA[mail <email-1>]]>"), "{out}");
         assert!(quick_xml::Reader::from_str(&out).read_event().is_ok());
         assert!(s.xml("<a><b></a>", Loc::Body).is_none());
@@ -2418,7 +3779,7 @@ mod tests {
         let mut s = Sanitizer::new(SanitizeOptions { bodies: BodyMode::Truncate, truncate_kib: 1, ..Default::default() });
         let out = s.session(&d, &st.store_bytes(&b"a".repeat(3000)), &st.store_bytes(b"\x89PNG\x00\x00"));
         assert_eq!(out.response, b"<binary body removed: 6 bytes image/png>");
-        assert!(out.request.len() < 1100 && out.request.ends_with("…<truncated 1976 bytes>".as_bytes()));
+        assert!(out.request.len() < 1100 && out.request.ends_with("…<truncated, 3 KB decoded>".as_bytes()), "{}", String::from_utf8_lossy(&out.request));
         assert_eq!(out.detail.request.headers.get("content-length"), Some(out.request.len().to_string().as_str()));
         let mut s = Sanitizer::new(SanitizeOptions { bodies: BodyMode::Placeholder, ..Default::default() });
         let out = s.session(&d, &st.store_bytes(&b"a".repeat(3000)), &Body::empty());
@@ -2475,6 +3836,198 @@ mod tests {
         assert!(s.log().count_at("email", "ws") == 1 && s.log().count_at("ip", "meta") >= 2 && s.log().count("process") == 1);
         let text = s.log().to_text();
         assert!(text.contains("E-mail addresses: 2") && text.contains("Sessions with replacements (numbers in the original capture): 7"), "{text}");
+    }
+
+    #[test]
+    fn name_classifier() {
+        assert_eq!(name_words("otpCode"), ["otp", "code"]);
+        assert_eq!(name_words("APIKey"), ["api", "key"]);
+        assert_eq!(name_words("X-Amz-Security-Token"), ["x", "amz", "security", "token"]);
+        assert_eq!(name_words("SAMLResponse"), ["saml", "response"]);
+        for n in [
+            "pwd", "pass", "passphrase", "pin_code", "pinCode", "otpCode", "mfaCode", "verificationCode", "recoveryCode", "securityAnswer", "bearer", "accessKey",
+            "secretAccessKey", "authCode", "csrf", "_csrf", "xsrf-token", "csrfmiddlewaretoken", "SAMLResponse", "SAMLRequest", "client_secret",
+            "clientsecret", "api_key", "x-api-key", "access_token", "refresh_token", "id_token", "sessionid", "JSESSIONID", "session_state", "password", "new_password",
+            "Passwort", "privateKey", "authenticity_token", "__RequestVerificationToken", "SignatureValue", "Nonce", "user_code", "backup_codes", "seed_phrase",
+        ] {
+            assert!(secret_name(n), "{n}");
+        }
+        for n in [
+            "passenger", "compass", "keyboard", "keyName", "author", "token_type", "tokenType", "password_length", "token_endpoint", "expires_in", "jwks_uri",
+            "revocation_endpoint_auth_methods_supported", "id_token_signing_alg_values_supported", "session_url", "public_key", "monkey", "secretary", "bypass_count",
+            "refreshInterval", "sec-websocket-key", "username", "email", "type", "code_challenge_method", "spinner",
+        ] {
+            assert!(!secret_name(n), "{n}");
+        }
+        // Weak names: secret only with a credential-like value.
+        for n in ["key", "code", "refresh", "hash", "Key"] {
+            assert!(weak_secret_name(n) && !secret_name(n), "{n}");
+        }
+        assert!(!weak_secret_name("keyboard") && !weak_secret_name("zip_code"));
+        assert!(credential_value("sk_live_51H8xQ2eZvKYlo2C0aBcD", false) && !credential_value("title", false) && !credential_value("user-settings-panel", false));
+        assert!(credential_value("AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY", true) && credential_value("SECRET-CODE", true) && credential_value("REFCODE1", true));
+        assert!(!credential_value("DE", true) && !credential_value("200", true) && !credential_value("de-DE", true) && !credential_value("Settings", true));
+        // Parameters: also the short OAuth and signed-URL names; `token_type=bearer` is none.
+        assert!(secret_param_name("state") && secret_param_name("sig") && secret_param_name("X-Amz-Signature"));
+        assert!(!secret_param_name("token_type") && !secret_param_name("lang"));
+        // Headers.
+        for n in ["x-api-key", "x-csrf-token", "x-session", "bearer", "x-auth", "x-ms-client-principal", "x-ms-token-aad-id-token", "ocp-apim-subscription-key", "x-access"] {
+            assert!(secret_header(n), "{n}");
+        }
+        for n in ["sec-websocket-key", "x-request-id", "accept", "x-ms-client-principal-name", "content-security-policy"] {
+            assert!(!secret_header(n), "{n}");
+        }
+        for n in ["x-forwarded-user", "x-remote-user", "x-ms-client-principal-name", "x-auth-request-email", "x-ssl-client-dn", "x-client-cert", "x-ssl-client-cert"] {
+            assert!(personal_header(n), "{n}");
+        }
+        assert!(!personal_header("user-agent") && !personal_header("x-request-id"));
+    }
+
+    #[test]
+    fn email_detection() {
+        for (src, want) in [
+            ("max@firma.de.pdf", "<email-1>.pdf"),
+            ("filename=\"john.doe@example.com.txt\"", "filename=\"<email-1>.txt\""),
+            ("invoice_john.doe@example.com_DE89370400440532013000.pdf", "<email-1>_<iban-1>.pdf"),
+            ("o'brien@firma.ie", "<email-1>"),
+            ("'max@firma.de'", "'<email-1>'"),
+            ("john&#64;example.com and x&#x40;y.de and a&commat;b.org", "<email-1> and <email-2> and <email-3>"),
+            ("jürgen.müller@bücher.de", "<email-1>"),
+            ("mailto%3Ajohn%40example.com", "mailto%3A<email-1>"),
+        ] {
+            assert_eq!(text(&mut z("support"), src), want, "{src}");
+        }
+        let mut s = z("support");
+        for neg in ["logo@2x.png", "a@b", "user@localhost", "font@1.2.3"] {
+            assert_eq!(text(&mut s, neg), neg);
+        }
+    }
+
+    #[test]
+    fn phone_detection_retries_shorter() {
+        let mut s = z("gdpr");
+        for (src, want) in [
+            ("030 1234567 / 0170 1234567", "<phone-1> / <phone-2>"),
+            ("(030) 1234567 und 0170 1234567", "<phone-1> und <phone-2>"),
+            ("phone (030) 123-4567", "phone <phone-1>"),
+            ("x +1 (555) 123-4567 0049 30 1234567 y", "x <phone-3> <phone-4> y"),
+            ("Tel. +49 30 1234 5678 ok", "Tel. <phone-5> ok"),
+        ] {
+            assert_eq!(text(&mut s, src), want, "{src}");
+        }
+        for neg in ["version 1.2.3.4", "ver 10.0.0.1", "2024-01-15 10:30:00"] {
+            assert_eq!(text(&mut s, neg), neg);
+        }
+        assert_eq!(text(&mut s, "iban de89 3704 0044 0532 0130 00 and GB82 WEST 1234 5698 7654 32"), "iban <iban-1> and <iban-2>");
+    }
+
+    #[test]
+    fn key_values_in_text() {
+        let mut s = z("support");
+        for (src, want) in [
+            ("url=https://h.test/?token=T1 x", "url=https://h.test/?token=%3Ctoken-1%3E x"),
+            ("next=/login?password=P1", "next=/login?password=%3Ctoken-2%3E"),
+            ("secret: C1\nother: ok", "secret: <token-3>\nother: ok"),
+            ("password = \"quoted secret\"; 'api_key': 'K1'", "password = \"<token-4>\"; 'api_key': '<token-5>'"),
+            ("login(password: \"G1\", user: \"u\")", "login(password: \"<token-6>\", user: \"u\")"),
+            ("Authorization: Bearer abc.DEF-123456", "Authorization: Bearer <token-7>"),
+            ("Cookie: s=CK1; t=CK2", "Cookie: s=<cookie-1>; t=<cookie-2>"),
+            ("token_type=bearer&access_token=A1", "token_type=bearer&access_token=%3Ctoken-8%3E"),
+            ("Basic information and Digest authentication", "Basic information and Digest authentication"),
+        ] {
+            assert_eq!(text(&mut s, src), want, "{src}");
+        }
+        // Program code: no bare `name=value`, but quoted secrets, JSON pairs and URLs.
+        let js = r#"var code=n.code; let password="JSPW"; fetch("https://h.test/x?access_token=JSAT"); x.secret = 'JSS';"#;
+        let out = s.text(js, "application/javascript", Loc::Body);
+        assert!(out.starts_with("var code=n.code;") && !out.contains("JSPW") && !out.contains("JSAT") && !out.contains("JSS"), "{out}");
+        let css = ".a{background:url(/i.png?token=CSST)}";
+        assert!(!s.text(css, "text/css", Loc::Body).contains("CSST"));
+        let yaml = "password: YP\napi_key: \"YK\"\nname: app\n";
+        let out = s.text(yaml, "application/yaml", Loc::Body);
+        assert!(out.starts_with("password: <token-") && out.contains("api_key: \"<token-") && out.ends_with("\"\nname: app\n"), "{out}");
+        // HTML: unquoted attributes, no `name=value` rule inside tags (no broken markup).
+        let html = r#"<form action="/login?sid=FS"><input name=password value=UQ><input type=hidden name=csrf value=CS><meta name="csrf-token" content="MT"><a href="/reset?token=HR&amp;x=1">r</a></form>"#;
+        let out = s.text(html, "text/html", Loc::Body);
+        for m in ["FS", "UQ", "CS\"", "=CS", "MT", "HR"] {
+            assert!(!out.contains(m), "{m}: {out}");
+        }
+        assert!(out.contains("<input name=password value=&lt;token-") && out.contains("&amp;x=1") && out.matches('<').count() == html.matches('<').count(), "{out}");
+    }
+
+    #[test]
+    fn name_value_pairs() {
+        let mut s = z("gdpr");
+        let src = r#"{"fields":[{"name":"password","value":"NV1"},{"key":"email","value":"nv@example.com"},{"Name":"client_secret","Value":"NV3"},{"name":"color","value":"blue"}],"product":{"name":"Widget"},"customer":{"name":"Max Muster","email":"m@x.de"},"schema":{"name":"password","type":"string"},"headers":[{"name":"Accept","value":"json"}]}"#;
+        let out = s.json(src, Loc::Body).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(!out.contains("NV1") && !out.contains("nv@") && !out.contains("NV3") && !out.contains("Max Muster"), "{out}");
+        assert_eq!(v["fields"][0]["name"], "password");
+        assert_eq!(v["fields"][3]["value"], "blue");
+        assert_eq!(v["product"]["name"], "Widget");
+        assert_eq!(v["schema"]["name"], "password");
+        assert_eq!(v["headers"][0]["value"], "json");
+        let xml = r#"<r><Attribute Name="mail"><AttributeValue>saml@example.com</AttributeValue></Attribute><Parameter name="password">XP</Parameter><property name="client_secret" value="XC"/><Item name="Widget"/><wsse:UsernameToken xmlns:wsse="w"><wsse:Username>WU</wsse:Username><wsse:Password Type="PasswordText">WP</wsse:Password><wsu:Created xmlns:wsu="u">2024-01-01</wsu:Created></wsse:UsernameToken></r>"#;
+        let out = s.xml(xml, Loc::Body).unwrap();
+        for m in ["saml@", ">XP<", "\"XC\"", ">WU<", ">WP<"] {
+            assert!(!out.contains(m), "{m}: {out}");
+        }
+        assert!(out.contains(r#"Name="mail""#) && out.contains(r#"<Item name="Widget"/>"#) && out.contains(r#"Type="PasswordText""#) && out.contains("2024-01-01") && out.contains("<wsse:Username>&lt;personal-"), "{out}");
+        // Support: the user name is no token.
+        let mut s = z("support");
+        let out = s.xml(xml, Loc::Body).unwrap();
+        assert!(out.contains(">WU<") && !out.contains(">WP<"), "{out}");
+    }
+
+    #[test]
+    fn hosts_tunnels_and_patterns() {
+        let mut s = Sanitizer::new(SanitizeOptions { patterns: vec![r"intranet\.corp\.example".into()], ..SanitizeOptions::preset("gdpr").unwrap() });
+        assert_eq!(s.url("https://203.0.113.5:8443/a?x=1", Loc::Url), "https://%3Cip-1%3E:8443/a?x=1");
+        assert_eq!(s.url("https://[2001:db8::5]/a", Loc::Url), "https://%3Cip-2%3E/a");
+        assert_eq!(s.url("https://app.intranet.corp.example/x", Loc::Url), "https://app.%3Credacted-1%3E/x");
+        assert_eq!(s.url("https://api.example.com/x", Loc::Url), "https://api.example.com/x");
+        assert_eq!(s.authority("203.0.113.5:443", Loc::Url), "<ip-1>:443");
+        let mut h = headers(&[("Host", "203.0.113.5"), (":authority", "api.example.com")]);
+        s.headers(&mut h);
+        assert_eq!(h.get("host"), Some("<ip-1>"));
+        assert_eq!(h.get(":authority"), Some("api.example.com"));
+        // Support keeps IP hosts.
+        let mut s = z("support");
+        assert_eq!(s.url("https://203.0.113.5/a", Loc::Url), "https://203.0.113.5/a");
+        // Tokens in path segments.
+        assert_eq!(s.url("https://h.test/reset/aB3dE6gH9jK2mN5pQ8rS/confirm", Loc::Url), "https://h.test/reset/%3Ctoken-1%3E/confirm");
+        assert_eq!(s.url("https://h.test/token/SECRETPATH1;jsessionid=JS1", Loc::Url), "https://h.test/token/%3Ctoken-2%3E;jsessionid=%3Ctoken-3%3E");
+        assert_eq!(s.url("https://h.test/verify/12345/api/token/refresh", Loc::Url), "https://h.test/verify/12345/api/token/refresh");
+    }
+
+    #[test]
+    fn weak_names_judge_their_values() {
+        let mut s = z("support");
+        let src = r#"{"items":[{"key":"title","label":"Title"},{"key":5},{"code":"DE"},{"code":200},{"refresh":30},{"key":"sk_live_51H8xQ2eZvKYlo2C0aBcD"},{"credentials":{"key":"k1"}},{"fields":[{"name":"key","value":"x"}]}]}"#;
+        let out = s.json(src, Loc::Body).unwrap();
+        for keep in [r#""key":"title""#, r#""key":5"#, r#""code":"DE""#, r#""code":200"#, r#""refresh":30"#] {
+            assert!(out.contains(keep), "{keep}: {out}");
+        }
+        assert!(!out.contains("sk_live") && !out.contains("\"k1\""), "{out}");
+        assert_eq!(s.log().numbers_as_strings, 0);
+        let u = s.url("https://maps.test/api?key=AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY&code=DE&lang=de", Loc::Url);
+        assert!(!u.contains("AIzaSy") && u.contains("&code=DE&lang=de"), "{u}");
+        assert_eq!(s.form("key=title&code=DE", Loc::Body), "key=title&code=DE");
+        assert!(!s.form("key=sk_live_51H8xQ2eZvKYlo2C0aBcD", Loc::Body).contains("sk_live"));
+    }
+
+    #[test]
+    fn strict_options_and_mock_options() {
+        let o = SanitizeOptions::from_json_strict(r#"{"preset":"custom","phones":true}"#).unwrap();
+        assert!(o.phones);
+        let o = SanitizeOptions::from_json_strict(r#"{"options":{"preset":"gdpr","ips":true},"format":"har"}"#).unwrap();
+        assert_eq!(o.preset, "gdpr");
+        let e = SanitizeOptions::from_json_strict(r#"{"phone":true,"emials":false}"#).unwrap_err();
+        assert!(e.contains("emials") && e.contains("phone"), "{e}");
+        assert!(SanitizeOptions::from_json_strict(r#"{"patterns":["("]}"#).is_err());
+        assert!(SanitizeOptions::from_json_strict("[]").is_err());
+        let m = SanitizeOptions::for_mocks(&SanitizeOptions::preset("gdpr").unwrap());
+        assert!(m.bodies == BodyMode::Keep && m.binary == BinaryMode::Keep && m.phones);
     }
 
     #[test]
