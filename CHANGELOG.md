@@ -8,6 +8,21 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Sanitized export for sharing** (*File → Export Sessions → Sanitized for Sharing*): a
+  SAZ/HAR copy for vendors or support with credentials, tokens, secret URL parameters and
+  secret body fields replaced, and — with the *GDPR strict* preset — e-mail addresses, phone
+  numbers, IBANs and card numbers (check digits), IP addresses, personal fields, tax and
+  social security numbers and process names. Deterministic and local (no AI), structure-
+  preserving for JSON, forms, multipart, XML, HTML, SSE and WebSocket messages, stable
+  pseudonyms (`<email-3>`), bodies keep/cut/placeholder, own names and patterns; a redaction
+  log is shown and stored in the archive (`QUENA-REDACTION.txt`, HAR `log.comment`).
+- **Mocks from a capture** (*Mocks from Sessions…*): recorded sessions become Mock Rules at
+  once, a shareable `.quena-mocks` package (import in Mock Rules, also by drag and drop), or
+  a WireMock export (mappings, `__files`, scenarios for sequences). Options for hosts, static
+  resources, ignored query parameters, responses in recorded order, body matching, latency,
+  preflights, error responses and sanitizing.
+- Mock Rules match request bodies as JSON (`BODYJSON:`) and GraphQL operations (`GRAPHQL:`).
+- `quena-cli sanitize` and `quena-cli mock`.
 - **Diagnostics in CI**: `quena-cli`, a command line program without a window, runs the
   diagnostics on HAR/SAZ files (e.g. recorded by Playwright or Cypress tests) and turns the
   report into a quality gate: `--fail-on`, comparison with a `--baseline` report (only new or
@@ -51,6 +66,8 @@ contain breaking changes (settings, file formats, plugin API).
   confirmation first; Enter confirms, Esc cancels.
 
 ### Fixed
+- Mock Rules: `METHOD:` combined with `URLWithBody:` never matched, because the request body
+  was not buffered for the inner pattern.
 - *Timeline*: the session that ends last was cut off at the right edge, and long time spans
   were labelled in thousands of seconds; the axis now uses clock units (ms, s, min, h, d) and
   shows the date when the sessions span more than a day.

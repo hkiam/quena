@@ -39,6 +39,44 @@ sessions after a crash*). You can also open unfinished captures any time with
 *File → Recover Previous Capture…*. With *Keep capture data after exit*, captures are kept
 after a clean exit as well.
 
+## Sanitized export for sharing
+
+Captures sent to a vendor or a support team usually carry session cookies, tokens and
+personal data. *File → Export Sessions → Sanitized for Sharing (SAZ/HAR)…* (also in the
+session list's context menu) writes a copy without them — the selection if more than one
+session is selected, else all sessions. The analysis is deterministic and runs locally; no
+AI model and no network are involved.
+
+| Preset | Replaces |
+|---|---|
+| **Support** | credentials and tokens (Authorization, cookies, secret headers, secret URL parameters, secret fields in JSON/form/XML bodies, JWTs anywhere), e-mail addresses, IBANs and card numbers |
+| **GDPR strict** | in addition phone numbers, IP addresses (headers, bodies, client and server address), fields named like personal data (`name`, `street`, `birthDate`, `telefon` …), tax ids and social security numbers, process names; bodies are cut to 64 KiB |
+| **Custom** | any combination, plus your own header, parameter and field names and regular expressions |
+
+* **Structure stays intact.** All headers are kept, only sensitive values change
+  (`Authorization: Bearer <812 bytes>`, `Cookie: sid=<cookie-1>`). JSON, forms, multipart,
+  XML/SOAP, HTML forms, server-sent events and WebSocket text messages are scrubbed field by
+  field and stay valid. Bodies are written decoded (no `Content-Encoding`).
+* **Pseudonyms keep relations visible.** The same value becomes the same placeholder within
+  one export (`<email-3>` in the request and in the response), but cannot be traced back.
+* **Few false alarms.** IBANs and card numbers are checked with their check digits; phone
+  numbers need a country or area prefix; timestamps, ids, versions and UUIDs are left alone.
+* **Bodies** can be kept (sanitized), cut to a size, replaced by a placeholder
+  (`<body removed: 12 KB application/json>`) or dropped; binary bodies (images, fonts, PDF,
+  archives) and uploaded files become placeholders.
+* **Redaction log.** After the export Quena lists what was replaced, by category and place
+  (header, URL, body, WebSocket) — never the values. The SAZ contains it as
+  `QUENA-REDACTION.txt`, the HAR in `log.comment` and `log._quenaRedaction`.
+  **Open Sanitized File** adds the copy to the session list for a final check.
+
+!!! warning "Check before you share"
+    Automatic detection cannot know every field of every application — a customer number
+    in a custom format is just a number. Add your own names and patterns under *Custom*,
+    and look through the sanitized file before you send it.
+
+The same export runs on the command line: `quena-cli sanitize capture.har -o shared.har
+--preset gdpr` ([Diagnostics in CI](ci.md#sanitize-and-mocks)).
+
 ## Saving bodies
 
 - *File → Save → Response Body…* / *Request Body…*, the context menu (*Save*), or the

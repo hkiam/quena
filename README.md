@@ -59,6 +59,10 @@ Quena is an independent, open-source take on this kind of tool, with its own des
   Composer and inspectors that pick the right view for the content. Coming from Fiddler
   Classic? Your `.saz` sessions and `.farx` rules import directly, and the filter syntax and
   shortcuts will feel familiar — see [Coming from Fiddler Classic](docs/coming-from-fiddler.md).
+- **Share safely, mock instantly.** Export a capture for a vendor or support team with
+  credentials, tokens and — with the GDPR preset — personal data replaced by stable
+  pseudonyms, with a redaction log. Or turn a capture into mocks (Mock Rules, a shareable
+  package, or WireMock) to test the frontend without its backend.
 - **Powerful.** Breakpoints and tampering, mock rules, replay, JavaScript rules,
   WASM plugins, enterprise authentication (NTLM/Kerberos), PAC, mTLS, bandwidth simulation,
   and inspectors for WebSocket, SSE, gRPC, SOAP, OData and MTOM.
@@ -207,7 +211,10 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 <td valign="top" width="50%">
 
 ### Change & replay
-- **Mock Rules** with `.farx` import/export
+- **Mock Rules** with `.farx` import/export; **mocks from sessions** (rules, `.quena-mocks`
+  packages, WireMock export)
+- **Sanitized export** (SAZ/HAR) for sharing: credentials, tokens and personal data replaced,
+  with a redaction log
 - **Breakpoints & tamper** before request / after response
 - **Composer** (parsed, raw, history) with **cURL import**
 - Replay: again, unconditionally, *n* times, sequentially, with edit

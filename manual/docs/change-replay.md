@@ -116,6 +116,8 @@ the **Mock Rules** tab (*Capture → Mock Rules*).
 | `METHOD:POST /login` | the method matches and the rest of the pattern matches |
 | `HEADER:Accept=json` | a request header contains the value |
 | `URLWithBody:/soap regex:GetOrder` | the URL pattern matches and the request body matches the regex |
+| `BODYJSON:EXACT:https://example.com/api/search {"q":"shoes"}` | the URL pattern matches and the request body is this JSON (key order and spacing do not matter; `"${json-unit.ignore}"` matches any value) |
+| `GRAPHQL:/graphql {"operationName":"Cart","variables":{"id":1}}` | the URL pattern matches and the GraphQL request has this operation name and variables |
 
 ### Actions
 
@@ -186,6 +188,12 @@ A `dir:` action uses the rest after a `prefix:` match; with a `regex:` match it 
 
 A remapped session is listed with its **new** URL; its comment names the original one, and
 the session flags `x-quena-mapped-from` and `x-quena-mapped-to` keep both ends.
+
+### Mocks from sessions
+
+*Mocks from Sessions…* (in the Mock Rules tab, the session list's context menu and *File →
+Export Sessions → Mocks…*) turns recorded sessions into a complete set of rules with their
+responses, or into a WireMock export — see [Mocks from a capture](mocks.md).
 
 ### Import and export (`.farx`)
 

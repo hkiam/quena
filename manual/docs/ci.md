@@ -215,6 +215,40 @@ processes can share it.
     The cache holds compiled machine code that `quena-cli` loads as it is. Share a cache
     folder or volume only between jobs you trust, and never make it writable for everyone.
 
+## Sanitize and mocks
+
+Two more commands take captures as input:
+
+```sh
+# A copy for a vendor or support team (see Archives → Sanitized export).
+quena-cli sanitize captures/*.har -o shared.har --preset gdpr --log redaction.json
+
+# Mocks for frontend tests without the backend (see Mocks from a capture).
+quena-cli mock captures/*.har --wiremock wiremock/ --sequence
+quena-cli mock captures/*.har --package shop.quena-mocks --host api.example.com
+```
+
+| `sanitize` option | Effect |
+|---|---|
+| `-o PATH` | the sanitized archive, `.saz` or `.har` |
+| `--preset` | `support` (default), `gdpr`, or `credentials` (only credentials and tokens) |
+| `--config FILE` | sanitize options as JSON (as the app saves them), instead of a preset |
+| `--log PATH` | also write the redaction log (`.json`, or text) |
+
+| `mock` option | Effect |
+|---|---|
+| `--wiremock PATH` | WireMock mappings and `__files` (a folder, or `.zip`) |
+| `--package PATH` | a Quena mock package (`.quena-mocks`) |
+| `--host HOST` | only these hosts (repeatable) |
+| `--sequence` | several recordings of a request answer in recorded order |
+| `--exact-query` | match the query string exactly |
+| `--include-static`, `--latency` | include static resources; answer after the recorded latency |
+| `--sanitize PRESET` | `credentials` (default), `support`, `gdpr` or `none` |
+| `--config FILE` | all mock options as JSON; flags win |
+
+Both need no plugins and use the exit codes below (2 for unreadable captures or a wrong
+output type, 3 for other failures).
+
 ## Exit codes
 
 | Code | Meaning |

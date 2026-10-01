@@ -75,6 +75,7 @@ nav:
       - Session list: sessions.md
       - Inspect: inspect.md
       - Change and replay: change-replay.md
+      - Mocks from a capture: mocks.md
       - Analyze: analyze.md
       - Diagnostics: diagnostics.md
       - Diagnostics in CI: ci.md
