@@ -10,6 +10,40 @@ export async function addRulesFromSelection(exact = false) {
   set({ activeTab: "autoresponder", arNonce: Date.now() });
 }
 
+/** The Mocks dialog (selected or visible sessions). */
+export function mocksFromSelection(target?: "apply" | "package" | "wiremock") {
+  set({ dialog: { kind: "mocks", selected: [...get().selection].sort((a, b) => a - b), target } });
+}
+
+// ---- Quena mock packages (.quena-mocks)
+
+export const isMockPackageName = (name: string) => /\.quena-mocks$/i.test(name);
+
+/** Largest package accepted by drag and drop (sent in one piece). */
+const MAX_DROPPED_PACKAGE = 512 << 20;
+
+/** Import dropped package files (added on top of the rules). */
+export async function importMockPackageFiles(files: File[]) {
+  for (const f of files) {
+    if (f.size > MAX_DROPPED_PACKAGE) {
+      say(t("{name}: too large to drop, use Import package… instead", { name: f.name }), "error");
+      continue;
+    }
+    try {
+      const pkg = await api.mockImportPackageData(f.name, new Uint8Array(await f.arrayBuffer()), false);
+      say(t("Package {name}: {n} rules imported", { name: pkg.name, n: pkg.rules }));
+    } catch (e) {
+      say(`${f.name}: ${e}`, "error");
+    }
+  }
+  set({ activeTab: "autoresponder", arNonce: Date.now() });
+}
+
+/** Yes/no question in the app's confirm dialog. */
+export function confirmText(title: string, message: string, confirm: string): Promise<boolean> {
+  return new Promise((resolve) => set({ dialog: { kind: "confirm", title, message, confirm, resolve } }));
+}
+
 // ---- Map Remote / Map Local: plain mock rules built from two small forms.
 
 export type MappingKind = "remote" | "local";

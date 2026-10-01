@@ -3142,3 +3142,67 @@ table.plugins-table .pl-applies {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* mocks from sessions */
+.mocks-dialog {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.mocks-preview {
+  min-height: 0;
+}
+.mocks-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+}
+.mocks-list {
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--border);
+}
+.mocks-url {
+  word-break: break-all;
+}
+.mocks-error {
+  color: var(--pill-err-fg);
+}
+.mocks-actions {
+  justify-content: flex-end;
+}
+.ar-packages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  flex-basis: 100%;
+}
+.ar-package {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 2px 1px 6px;
+}
+.ar-package-x {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+/* Long dialogs (Mocks from Sessions, Sanitized export): the buttons stay visible at the
+   bottom while the options scroll. */
+.modal-body .mocks-actions,
+.modal-body .modal-footer.inline.sticky {
+  position: sticky;
+  bottom: -10px; /* the body's bottom padding */
+  margin: 8px -12px -10px;
+  padding: 8px 12px 10px;
+  background: var(--panel-bg);
+  border-top: 1px solid var(--border);
+  z-index: 1;
+}

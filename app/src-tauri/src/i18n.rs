@@ -49,6 +49,8 @@ fn de(en: &str) -> Option<&'static str> {
         "HTTP Archive (HAR)…" => "HTTP-Archiv (HAR)…",
         "SAZ Archive…" => "SAZ-Archiv…",
         "cURL Script…" => "cURL-Skript…",
+        "Sanitized for Sharing (SAZ/HAR)…" => "Bereinigt zum Weitergeben (SAZ/HAR)…",
+        "Mocks…" => "Mocks…",
         "URL" => "URL",
         "Summary" => "Zusammenfassung",
         "Headers Only" => "Nur Header",

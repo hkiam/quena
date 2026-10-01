@@ -1,7 +1,7 @@
 // File menu: archives (SAZ/HAR), bodies, cURL scripts.
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
-import { get, say } from "./store";
+import { get, say, set } from "./store";
 import { buildCurl } from "./lib/http";
 import { snippetBody } from "./lib/bodytext";
 import { plural, t } from "./i18n";
@@ -78,6 +78,14 @@ export async function handleFileMenu(id: string): Promise<boolean> {
       say(t("cURL script written to {path}", { path }));
       return true;
     }
+    case "file.export-mocks":
+      set({ dialog: { kind: "mocks", selected } });
+      return true;
+    case "file.export-sanitized":
+      if (!get().listTotal) say(t("There are no sessions to save"), "error");
+      // Like the other exports: a multiple selection, else everything in the list.
+      else set({ dialog: { kind: "sanitize", selected: selected.length > 1 ? selected : [] } });
+      return true;
     case "file.save-response-body":
     case "file.save-request-body": {
       const sid = get().focusId;

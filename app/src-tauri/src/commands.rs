@@ -402,6 +402,32 @@ async fn import_archive(core: State<'_, Core>, path: String) -> R<u64> {
     blocking(move || core.import_archive(path.into()).map_err(e)).await
 }
 
+/// Sanitized export (SAZ/HAR by `format` or the extension); the event `export-sanitized`
+/// carries the redaction log when the job is done.
+#[tauri::command]
+async fn export_sanitized(
+    core: State<'_, Core>,
+    ids: Vec<SessionId>,
+    path: String,
+    format: Option<quena_app_core::archive::ArchiveFormat>,
+    options: quena_app_core::sanitize::SanitizeOptions,
+) -> R<u64> {
+    let core = core.inner().clone();
+    blocking(move || core.export_sanitized(ids, path.into(), format, options).map_err(e)).await
+}
+
+/// The presets of the sanitized export (`support`, `gdpr`), for the dialog.
+#[tauri::command]
+async fn sanitize_presets() -> R<Vec<quena_app_core::sanitize::SanitizeOptions>> {
+    Ok(["support", "gdpr"].iter().filter_map(|p| quena_app_core::sanitize::SanitizeOptions::preset(p)).collect())
+}
+
+/// Show a file in the file manager.
+#[tauri::command]
+async fn reveal_path(path: String) -> R<()> {
+    quena_platform::reveal(std::path::Path::new(&path)).map_err(e)
+}
+
 /// One chunk of a file dropped onto the window (raw body; name, offset etc. in headers).
 #[tauri::command]
 async fn drop_chunk(core: State<'_, Core>, request: tauri::ipc::Request<'_>) -> R<Option<u64>> {
@@ -534,6 +560,62 @@ async fn ar_import_farx(core: State<'_, Core>, path: String) -> R<AutoResponderS
 async fn ar_export_farx(core: State<'_, Core>, path: String) -> R<()> {
     let r = rules(core.inner())?;
     std::fs::write(path, quena_app_core::rules::export_farx(&r.autoresponder())).map_err(e)
+}
+
+// ------------------------------------------------------------------ mocks from sessions
+
+use quena_app_core::mockgen::{MockOptions, MockPackage, MockPreview};
+
+#[tauri::command]
+async fn mock_preview(core: State<'_, Core>, ids: Vec<SessionId>, opts: MockOptions) -> R<MockPreview> {
+    let core = core.inner().clone();
+    blocking(move || core.mock_preview(ids, opts).map_err(e)).await
+}
+
+#[tauri::command]
+async fn mock_export_wiremock(core: State<'_, Core>, ids: Vec<SessionId>, path: String, opts: MockOptions) -> R<u64> {
+    core.mock_export_wiremock(ids, path.into(), opts).map_err(e)
+}
+
+#[tauri::command]
+async fn mock_export_package(core: State<'_, Core>, ids: Vec<SessionId>, path: String, opts: MockOptions) -> R<u64> {
+    core.mock_export_package(ids, path.into(), opts).map_err(e)
+}
+
+#[tauri::command]
+async fn mock_apply(core: State<'_, Core>, ids: Vec<SessionId>, opts: MockOptions, name: String) -> R<u64> {
+    core.mock_apply(ids, opts, name).map_err(e)
+}
+
+#[tauri::command]
+async fn mock_import_package(core: State<'_, Core>, path: String, replace: bool) -> R<MockPackage> {
+    let core = core.inner().clone();
+    blocking(move || core.mock_import_package(path.into(), replace).map_err(e)).await
+}
+
+/// A package dropped onto the Mock Rules tab (raw bytes; name and mode in headers).
+#[tauri::command]
+async fn mock_import_package_data(core: State<'_, Core>, request: tauri::ipc::Request<'_>) -> R<MockPackage> {
+    let h = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let name = percent_encoding::percent_decode_str(&h("quena-mock-name")).decode_utf8_lossy().into_owned();
+    let replace = h("quena-mock-replace") == "1";
+    let data = match request.body() {
+        tauri::ipc::InvokeBody::Raw(b) => b.clone(),
+        _ => return Err("expected raw bytes".into()),
+    };
+    let core = core.inner().clone();
+    blocking(move || core.mock_import_package_bytes(&name, &data, replace).map_err(e)).await
+}
+
+#[tauri::command]
+async fn mock_remove_package(core: State<'_, Core>, name: String) -> R<usize> {
+    let core = core.inner().clone();
+    blocking(move || core.mock_remove_package(&name).map_err(e)).await
+}
+
+#[tauri::command]
+async fn mock_packages(core: State<'_, Core>) -> R<Vec<MockPackage>> {
+    Ok(core.mock_packages())
 }
 
 #[tauri::command]
@@ -780,6 +862,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         parse_curl,
         export_archive,
         import_archive,
+        export_sanitized,
+        sanitize_presets,
+        reveal_path,
         timers,
         ui_language,
         set_language,
@@ -800,6 +885,14 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         ar_add_sessions,
         ar_import_farx,
         ar_export_farx,
+        mock_preview,
+        mock_export_wiremock,
+        mock_export_package,
+        mock_apply,
+        mock_import_package,
+        mock_import_package_data,
+        mock_remove_package,
+        mock_packages,
         bp_get,
         bp_set,
         bp_paused,

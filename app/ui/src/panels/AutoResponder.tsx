@@ -1,10 +1,10 @@
 // Mock Rules tab: rules, rule editor, .farx import/export.
 import { useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { api, type ArRule, type ArState } from "../api";
-import { say, useStore } from "../store";
+import { api, type ArRule, type ArState, type MockPackage } from "../api";
+import { say, set, useStore } from "../store";
 import { showContextMenu } from "../components/ContextMenu";
-import { mapLocalRule, mapRemoteRule, type MappingKind } from "./autoresponderActions";
+import { confirmText, importMockPackageFiles, isMockPackageName, mapLocalRule, mapRemoteRule, mocksFromSelection, type MappingKind } from "./autoresponderActions";
 import { plural, t } from "../i18n";
 
 const MATCH_TEMPLATES = ["*", "EXACT:https://example.com/path", "prefix:https://example.com/api/", "regex:(?i)^https://.*\\.example\\.com/api/(.*)$", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json", "URLWithBody:/soap regex:GetOrder"];
@@ -12,6 +12,7 @@ const ACTIONS = ["dir:/path/to/folder", "https://staging.example.com/api/", "htt
 
 export default function AutoResponderPanel() {
   const [st, setSt] = useState<ArState | null>(null);
+  const [packages, setPackages] = useState<MockPackage[]>([]);
   const [sel, setSel] = useState<number | null>(null);
   const [edit, setEdit] = useState<{ match: string; action: string; latency: number }>({ match: "", action: "", latency: 0 });
   const [over, setOver] = useState(false);
@@ -22,6 +23,7 @@ export default function AutoResponderPanel() {
 
   useEffect(() => {
     api.arGet().then(setSt);
+    api.mockPackages().then(setPackages, () => setPackages([]));
   }, [nonce]);
   // Refresh hit counters now and then.
   useEffect(() => {
@@ -65,6 +67,27 @@ export default function AutoResponderPanel() {
     say(t("{name} rule added", { name: r.comment }));
     setMapping(null);
   };
+  const importPackage = async (replace: boolean) => {
+    const p = await open({ multiple: false, filters: [{ name: t("Quena mock package"), extensions: ["quena-mocks", "zip"] }] });
+    if (typeof p !== "string") return;
+    try {
+      const pkg = await api.mockImportPackage(p, replace);
+      say(pkg.rejected ? t("Package {name}: {n} rules imported, {m} unsafe rules left out", { name: pkg.name, n: pkg.rules, m: pkg.rejected }) : t("Package {name}: {n} rules imported", { name: pkg.name, n: pkg.rules }));
+      set({ arNonce: Date.now() });
+    } catch (e) {
+      say(String(e), "error");
+    }
+  };
+  const removePackage = async (name: string) => {
+    if (!(await confirmText(t("Remove package"), t("Remove the package {name} with its rules and response files?", { name }), t("Remove")))) return;
+    try {
+      const n = await api.mockRemovePackage(name);
+      say(plural(n, "Package removed ({n} rule)", "Package removed ({n} rules)"));
+      set({ arNonce: Date.now() });
+    } catch (e) {
+      say(String(e), "error");
+    }
+  };
   const move = (d: number) => {
     if (!selected) return;
     const i = st.rules.findIndex((r) => r.id === selected.id);
@@ -79,7 +102,7 @@ export default function AutoResponderPanel() {
     <div
       className={`ar ${over ? "drop" : ""}`}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes("quena/sessions")) {
+        if (e.dataTransfer.types.includes("quena/sessions") || e.dataTransfer.types.includes("Files")) {
           e.preventDefault();
           setOver(true);
         }
@@ -87,6 +110,14 @@ export default function AutoResponderPanel() {
       onDragLeave={() => setOver(false)}
       onDrop={async (e) => {
         setOver(false);
+        const files = [...e.dataTransfer.files];
+        if (files.length && files.every((f) => isMockPackageName(f.name))) {
+          // A mock package: imported here, not by the window's archive drop.
+          e.preventDefault();
+          e.stopPropagation();
+          await importMockPackageFiles(files);
+          return;
+        }
         const ids = JSON.parse(e.dataTransfer.getData("quena/sessions") || "[]") as number[];
         if (!ids.length) return;
         const n = await api.arAddSessions(ids, true);
@@ -125,6 +156,20 @@ export default function AutoResponderPanel() {
         >
           {t("Add mapping…")}
         </button>
+        <button title={t("Mock rules from the selected or visible sessions; also as Quena mock package or WireMock export")} onClick={() => mocksFromSelection("apply")}>
+          {t("Create from sessions…")}
+        </button>
+        <button
+          onClick={(e) => {
+            const b = e.currentTarget.getBoundingClientRect();
+            showContextMenu(b.left, b.bottom, [
+              { label: t("Add to the rules…"), action: () => void importPackage(false) },
+              { label: t("Replace all rules…"), action: () => void importPackage(true) },
+            ]);
+          }}
+        >
+          {t("Import package…")}
+        </button>
         <button
           onClick={async () => {
             const p = await open({ multiple: false, filters: [{ name: t("Mock rules (.farx)"), extensions: ["farx", "xml"] }] });
@@ -149,6 +194,19 @@ export default function AutoResponderPanel() {
         >
           {t("Export…")}
         </button>
+        {packages.length > 0 && (
+          <div className="ar-packages">
+            <span className="muted">{t("Packages:")}</span>
+            {packages.map((p) => (
+              <span key={p.name} className="ar-package" title={p.dir}>
+                <span className="mono">{p.name}</span> <span className="muted small">{plural(p.rules, "{n} rule", "{n} rules")}</span>
+                <button className="ar-package-x" title={t("Remove package")} onClick={() => void removePackage(p.name)}>
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div className="ar-list">
         <table className="kv ar-table">

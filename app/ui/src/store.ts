@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { NetworkProfile } from "./lib/diagReport";
-import type { FilterSettings, JobInfo, LogEntry, SessionId, Settings, Sort, Status } from "./api";
+import type { FilterSettings, JobInfo, LogEntry, SanitizedExport, SessionId, Settings, Sort, Status } from "./api";
 import { t } from "./i18n";
 
 export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "structure" | "diagnostics";
@@ -188,6 +188,11 @@ export type Dialog =
   | { kind: "https" }
   | { kind: "plugins" }
   | { kind: "rules" }
+  /** Mocks from sessions; the dialog offers the selected or the visible sessions. */
+  | { kind: "mocks"; selected: SessionId[]; target?: "apply" | "package" | "wiremock" }
+  /** Sanitized export of the selected (else all) sessions, and its redaction log afterwards. */
+  | { kind: "sanitize"; selected: SessionId[] }
+  | { kind: "sanitize-result"; result: SanitizedExport }
   | { kind: "choose-layout" }
   | { kind: "compare"; a: string; b: string; titleA: string; titleB: string }
   | { kind: "prompt"; title: string; label: string; initial: string; resolve: (v: string | null) => void }

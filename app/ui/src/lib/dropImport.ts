@@ -27,6 +27,13 @@ async function send(file: File) {
 }
 
 export async function importDropped(files: File[]) {
+  // Mock packages go to Mock Rules.
+  const packages = files.filter((f) => /\.quena-mocks$/i.test(f.name));
+  if (packages.length) {
+    files = files.filter((f) => !packages.includes(f));
+    await import("../panels/autoresponderActions").then((m) => m.importMockPackageFiles(packages));
+    if (!files.length) return;
+  }
   const ok = files.filter((f) => isArchiveName(f.name));
   const skipped = files.length - ok.length;
   if (skipped) say(plural(skipped, "{n} file skipped: only .saz and .har archives can be dropped", "{n} files skipped: only .saz and .har archives can be dropped"), ok.length ? undefined : "error");

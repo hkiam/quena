@@ -12,6 +12,9 @@ const CompareView = lazy(() => import("./CompareView").then((m) => ({ default: m
 const DeviceAssistant = lazy(() => import("./DeviceDialog").then((m) => ({ default: m.DeviceAssistant })));
 const PluginsPanel = lazy(() => import("./PluginsDialog").then((m) => ({ default: m.PluginsPanel })));
 const RulesEditor = lazy(() => import("./RulesEditor").then((m) => ({ default: m.RulesEditor })));
+const SanitizeDialog = lazy(() => import("./SanitizeDialog").then((m) => ({ default: m.SanitizeDialog })));
+const SanitizeResult = lazy(() => import("./SanitizeDialog").then((m) => ({ default: m.SanitizeResult })));
+const MocksDialog = lazy(() => import("./MocksDialog").then((m) => ({ default: m.MocksDialog })));
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { currentLang, plural, t } from "../i18n";
@@ -828,6 +831,24 @@ function DialogBody({ d }: { d: Dialog }) {
       return (
         <Modal title={t("Rules Script")} onClose={close} wide>
           <RulesEditor />
+        </Modal>
+      );
+    case "mocks":
+      return (
+        <Modal title={t("Mocks from Sessions")} onClose={close} wide>
+          <MocksDialog selected={d.selected} target={d.target} onDone={close} />
+        </Modal>
+      );
+    case "sanitize":
+      return (
+        <Modal title={t("Sanitized Export")} onClose={close} wide>
+          <SanitizeDialog selected={d.selected} onClose={close} />
+        </Modal>
+      );
+    case "sanitize-result":
+      return (
+        <Modal title={t("Sanitized Export: Redaction Log")} onClose={close} wide>
+          <SanitizeResult result={d.result} onClose={close} />
         </Modal>
       );
   }

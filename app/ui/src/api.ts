@@ -389,7 +389,62 @@ export interface Settings {
   scriptingEnabled: boolean;
   throttleKbps: number;
   throttleLatencyMs: number;
+  /** Last options of the sanitized export. */
+  sanitize?: SanitizeExportSettings;
   ui: unknown;
+}
+
+/** What the sanitized export replaces (crates/quena-app-core/src/sanitize.rs). */
+export interface SanitizeOptions {
+  preset: "support" | "gdpr" | "credentials" | "custom";
+  authorization: boolean;
+  cookies: boolean;
+  secretHeaders: boolean;
+  urlSecrets: boolean;
+  bodySecrets: boolean;
+  emails: boolean;
+  payment: boolean;
+  phones: boolean;
+  ips: boolean;
+  personalFields: boolean;
+  nationalIds: boolean;
+  process: boolean;
+  bodies: "keep" | "truncate" | "placeholder" | "drop";
+  truncateKib: number;
+  binary: "keep" | "placeholder";
+  pseudonyms: boolean;
+  extraHeaders: string[];
+  extraParams: string[];
+  extraFields: string[];
+  patterns: string[];
+}
+
+export interface SanitizeExportSettings {
+  options: SanitizeOptions;
+  format: "saz" | "har";
+}
+
+/** What was replaced, without the values. */
+export interface RedactionLog {
+  preset: string;
+  sessions: number;
+  /** Session numbers (original capture) with replacements. */
+  touched: number[];
+  total: number;
+  byCategory: Record<string, number>;
+  byLocation: Record<string, number>;
+  counts: { category: string; location: string; count: number }[];
+  distinctValues: number;
+  numbersAsStrings: number;
+  wsMessages: number;
+  notes: string[];
+}
+
+/** Payload of the `export-sanitized` event. */
+export interface SanitizedExport {
+  path: string;
+  format: "saz" | "har";
+  log: RedactionLog;
 }
 
 export interface FindOptions {
@@ -462,6 +517,71 @@ export interface ArState {
   unmatchedPassthrough: boolean;
   enableLatency: boolean;
   rules: ArRule[];
+}
+
+/** Options for mocks from sessions (crates/quena-app-core/src/mockgen.rs). */
+export interface MockOptions {
+  hosts: string[];
+  includeStatic: boolean;
+  query: "exact" | "ignore";
+  ignoreParams: string[];
+  repeats: "last" | "sequence";
+  matchBody: boolean;
+  latency: boolean;
+  includePreflight: boolean;
+  includeErrors: boolean;
+  /** Sanitize preset ("credentials" = only credentials and tokens); null = as recorded. */
+  sanitize: "credentials" | "support" | "gdpr" | null;
+  keepSetCookie: boolean;
+}
+
+export type MockSkipReason =
+  | "noResponse"
+  | "incomplete"
+  | "truncated"
+  | "tunnel"
+  | "webSocket"
+  | "host"
+  | "static"
+  | "preflight"
+  | "errorStatus"
+  | "notModified"
+  | "superseded"
+  | "duplicate";
+
+export interface MockSequence {
+  group: number;
+  index: number;
+  len: number;
+}
+
+export interface MockPreview {
+  sessions: number;
+  mappings: number;
+  sequences: number;
+  hosts: string[];
+  skippedByReason: Partial<Record<MockSkipReason, number>>;
+  skipped: { id: SessionId; method: string; url: string; reason: MockSkipReason }[];
+  entries: { session: SessionId; method: string; url: string; status: number; bodyMatch: boolean; sequence: MockSequence | null }[];
+}
+
+export interface MockPackage {
+  name: string;
+  dir: string;
+  rules: number;
+  rejected: number;
+  created: number | null;
+}
+
+/** Event `mocks`: a mock job finished. */
+export interface MockJobResult {
+  job: number;
+  target: "wiremock" | "package" | "apply";
+  path: string;
+  name: string | null;
+  mappings: number;
+  sequences: number;
+  skipped: number;
 }
 
 export interface BpState {
@@ -629,6 +749,12 @@ export const api = {
   caExport: (path: string, der: boolean) => invoke<void>("ca_export", { path, der }),
   exportArchive: (ids: SessionId[], path: string) => invoke<number>("export_archive", { ids, path }),
   importArchive: (path: string) => invoke<number>("import_archive", { path }),
+  /** Job id; the event `export-sanitized` follows when it is done. */
+  exportSanitized: (ids: SessionId[], path: string, format: "saz" | "har", options: SanitizeOptions) =>
+    invoke<number>("export_sanitized", { ids, path, format, options }),
+  revealPath: (path: string) => invoke<void>("reveal_path", { path }),
+  /** [support, gdpr] */
+  sanitizePresets: () => invoke<SanitizeOptions[]>("sanitize_presets"),
   dropChunk: (id: string, name: string, offset: number, data: Uint8Array, last: boolean) =>
     tauriInvoke<number | null>("drop_chunk", data, {
       headers: { "quena-drop-id": id, "quena-drop-name": encodeURIComponent(name), "quena-drop-offset": String(offset), "quena-drop-last": last ? "1" : "0" },
@@ -647,6 +773,15 @@ export const api = {
   arAddSessions: (ids: SessionId[], exact: boolean) => invoke<number>("ar_add_sessions", { ids, exact }),
   arImportFarx: (path: string) => invoke<ArState>("ar_import_farx", { path }),
   arExportFarx: (path: string) => invoke<void>("ar_export_farx", { path }),
+  mockPreview: (ids: SessionId[], opts: MockOptions) => invoke<MockPreview>("mock_preview", { ids, opts }),
+  mockExportWiremock: (ids: SessionId[], path: string, opts: MockOptions) => invoke<number>("mock_export_wiremock", { ids, path, opts }),
+  mockExportPackage: (ids: SessionId[], path: string, opts: MockOptions) => invoke<number>("mock_export_package", { ids, path, opts }),
+  mockApply: (ids: SessionId[], opts: MockOptions, name: string) => invoke<number>("mock_apply", { ids, opts, name }),
+  mockImportPackage: (path: string, replace: boolean) => invoke<MockPackage>("mock_import_package", { path, replace }),
+  mockImportPackageData: (name: string, data: Uint8Array, replace: boolean) =>
+    tauriInvoke<MockPackage>("mock_import_package_data", data, { headers: { "quena-mock-name": encodeURIComponent(name), "quena-mock-replace": replace ? "1" : "0" } }),
+  mockRemovePackage: (name: string) => invoke<number>("mock_remove_package", { name }),
+  mockPackages: () => invoke<MockPackage[]>("mock_packages"),
   bpGet: () => invoke<BpState>("bp_get"),
   bpSet: (state: BpState) => invoke<void>("bp_set", { state }),
   bpPaused: () => invoke<{ id: SessionId; phase: string; url: string; since: number }[]>("bp_paused"),

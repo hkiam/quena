@@ -12,7 +12,9 @@ import { components } from "./de/components";
 import { core } from "./de/core";
 import { diagnostics } from "./de/diagnostics";
 import { inspectors } from "./de/inspectors";
+import { mocks } from "./de/mocks";
 import { panels } from "./de/panels";
+import { sanitize } from "./de/sanitize";
 
 export const de: Record<string, string> = {
   ...core,
@@ -20,4 +22,6 @@ export const de: Record<string, string> = {
   ...inspectors,
   ...panels,
   ...diagnostics,
+  ...mocks,
+  ...sanitize,
 };

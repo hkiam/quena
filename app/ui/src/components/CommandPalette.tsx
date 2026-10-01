@@ -34,6 +34,7 @@ const COMMANDS: Cmd[] = [
   { id: "file.export-har", label: t("Export HAR"), group: t("File") },
   { id: "file.export-saz", label: t("Export SAZ archive"), group: t("File") },
   { id: "file.export-curl", label: t("Export as cURL script"), group: t("File") },
+  { id: "file.export-sanitized", label: t("Export sanitized for sharing (SAZ/HAR)"), group: t("File") },
   { id: "file.recover", label: t("Recover previous capture"), group: t("File") },
   { id: "edit.copy-url", label: t("Copy URL"), group: t("Sessions") },
   { id: "edit.copy-curl", label: t("Copy as cURL"), group: t("Sessions") },

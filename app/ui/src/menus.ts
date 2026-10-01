@@ -25,6 +25,8 @@ export function sessionMenu(): MenuItem[] {
       submenu: [
         { label: t("Add Rule"), action: () => import("./panels/autoresponderActions").then((m) => m.addRulesFromSelection()) },
         { label: t("Add Rule (Exact URL)"), action: () => import("./panels/autoresponderActions").then((m) => m.addRulesFromSelection(true)) },
+        { separator: true },
+        { label: t("Mocks from Sessions…"), action: () => import("./panels/autoresponderActions").then((m) => m.mocksFromSelection()) },
       ],
     },
     {
@@ -44,6 +46,7 @@ export function sessionMenu(): MenuItem[] {
       label: t("Save"),
       submenu: [
         { label: t("Selected Sessions…"), action: () => actions.menu("file.save-selected") },
+        { label: t("Sanitized for Sharing…"), action: () => actions.menu("file.export-sanitized") },
         { label: t("Request Body…"), disabled: !one, action: () => actions.menu("file.save-request-body") },
         { label: t("Response Body…"), disabled: !one, action: () => actions.menu("file.save-response-body") },
       ],
