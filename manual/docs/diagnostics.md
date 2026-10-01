@@ -66,6 +66,7 @@ loss). Every finding names the threshold it was measured against.
 | Network sensitivity | the sequential chain of an operation and its extra time per network profile; transfer times per bandwidth (packet loss included) |
 | Errors | HTTP errors per endpoint, connection failures by cause (DNS, TLS, refused, timeout, reset) |
 | Authentication | failing challenges and loops, repeated NTLM/Negotiate handshakes, uncached tokens |
+| OAuth 2.0 / OpenID Connect | errors of Microsoft Entra ID (AADSTS codes), Keycloak, Okta, Auth0, Amazon Cognito, Google, AD FS, Duende IdentityServer, PingFederate and any standard IdP — with the cause and where the admin fixes it (e.g. *App registrations → Authentication → Redirect URIs*, *Clients → Valid redirect URIs*); expired or not-yet-valid tokens (clock skew), wrong audience, missing scopes or roles (`insufficient_scope`), sign-in loops (lost correlation/nonce cookies, `SameSite`), failing silent renewal (third-party cookies), tokens in URLs, oversized tokens and cookies, frequent token refreshes, missing PKCE, implicit flow, password grant and `client_secret` in the browser, discovery documents fetched again and again or with a mismatching issuer |
 | HTTP | redirect chains and loops, cookie flags (`Secure`, `SameSite`, `HttpOnly`), caching headers, connection reuse, old TLS versions, CORS preflights |
 | Character encoding | declared charset that does not match the bytes (“Grüße” → “Gr��e” or “GrÃ¼ÃŸe”), header, BOM and document declaration that disagree, text without any charset, double-encoded UTF-8, characters already lost (`�`), JSON not in UTF-8, unknown charset names, compressed data without (or with a broken) `Content-Encoding` |
 | Clocks | servers whose clock differs from this computer (Kerberos tolerates 5 minutes, token libraries often 60 s), this computer's own clock being off (several unrelated sites agree), servers behind one name with different clocks |
@@ -98,6 +99,13 @@ reaches the plugin:
 * In URLs and in `Location` and `Referer`: user names and passwords, query parameters that
   carry tokens, codes, signatures, keys or passwords (`access_token`, `code`, `sig`,
   `X-Amz-Signature` …) and every other query value longer than 64 bytes.
+
+For authentication the host passes facts, not tokens: the non-secret claims of JWTs (issuer,
+audience, client, scopes and roles, times — no signature, no names or e-mail addresses), the
+OAuth parameters of authorization and token requests (`client_id`, `response_type`, `scope`,
+`prompt`, the `redirect_uri` without its query; `code`, `state`, `nonce`, PKCE values and
+secrets only as “present”), the `error` and `error_description` of OAuth error responses (e-mail addresses masked) and
+the endpoints of discovery documents.
 
 URL paths, host names and OData query options are kept, so reports, Markdown and AI exports
 still contain them — check exports before you share them.

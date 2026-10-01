@@ -7,7 +7,28 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Added
+- *Diagnostics*: OAuth 2.0 / OpenID Connect rules (`OAUTH-ERROR`, `OAUTH-FLOW`,
+  `TOKEN-EXPIRED`, `TOKEN-NOTYET`, `TOKEN-AUDIENCE`, `TOKEN-SCOPE`, `TOKEN-SIZE`,
+  `TOKEN-IN-URL`, `TOKEN-REFRESH`, `OIDC-LOOP`, `OIDC-SILENT`, `OIDC-DISCOVERY`). A built-in
+  knowledge base recognises Microsoft Entra ID (incl. B2C and External ID), Keycloak, Okta,
+  Auth0, Amazon Cognito, Google, AD FS, Duende IdentityServer and PingFederate, explains
+  their error codes (e.g. AADSTS50011, Keycloak's “Session not active”) and names the place
+  in the admin UI where the cause is fixed — in English and German.
+- Analyzer plugins receive authentication facts: the non-secret claims of JWTs sent as
+  bearer tokens, the parameters of OAuth authorization and token requests, OAuth error
+  responses and OpenID discovery documents (`auth` in the analyzer contract). Secrets,
+  signatures and personal claims never leave the host.
+
 ### Changed
+- *Diagnostics*: repeated token requests are reported as `TOKEN-REFRESH` (previously part of
+  `AUTH-REPEAT`); sign-in loops, OAuth errors and the requests of a sign-in loop are no longer
+  repeated as `REDIRECT`, `AUTH-FAIL`, `ERR-HTTP` or `DUP-EXACT`; `AUTH-FAIL` shows the
+  `WWW-Authenticate` error of an API.
+- Redaction for analyzer plugins keeps the non-secret OAuth parameters of URLs
+  (`client_id`, `response_type`, `scope`, `prompt` …; `redirect_uri` without query and user
+  info) and the `error`, `error_description`, `realm` and `scope` values of
+  `WWW-Authenticate`; `code_challenge`, `code_verifier` and `login_hint` are now redacted.
 - *Timeline*: long pauses without traffic (e.g. sessions of two captures a day apart) are
   collapsed to a narrow break labelled with their length, and every block of traffic starts
   with its clock time; *Collapse pauses* switches back to the real scale. Axis labels never
