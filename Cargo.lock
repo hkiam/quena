@@ -3528,6 +3528,7 @@ name = "quena-app-core"
 version = "0.1.2"
 dependencies = [
  "anyhow",
+ "brotli 8.0.4",
  "dirs 6.0.0",
  "flate2",
  "parking_lot",
@@ -3554,6 +3555,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zip",
 ]
 
 [[package]]
@@ -3593,7 +3595,9 @@ dependencies = [
  "ctrlc",
  "dirs 6.0.0",
  "quena-app-core",
+ "quena-formats",
  "quena-report",
+ "serde",
  "serde_json",
  "tempfile",
 ]

@@ -20,11 +20,15 @@ pub struct HarOptions {
     pub max_body: u64,
     /// Decode Content-Encoding (HAR expects decoded content).
     pub decode: bool,
+    /// `log.comment`.
+    pub comment: Option<String>,
+    /// Custom fields of `log` (`_name`, JSON value), e.g. a redaction log.
+    pub extra: Vec<(String, serde_json::Value)>,
 }
 
 impl Default for HarOptions {
     fn default() -> Self {
-        HarOptions { max_body: 64 << 20, decode: true }
+        HarOptions { max_body: 64 << 20, decode: true, comment: None, extra: Vec::new() }
     }
 }
 
@@ -262,7 +266,14 @@ pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, o: &HarOptions
         }
         w.write_all(b"}")?;
     }
-    w.write_all(b"]}}")?;
+    w.write_all(b"]")?;
+    if let Some(c) = &o.comment {
+        write!(w, ",\"comment\":{}", jstr(c))?;
+    }
+    for (k, v) in &o.extra {
+        write!(w, ",{}:{}", jstr(k), serde_json::to_string(v)?)?;
+    }
+    w.write_all(b"}}")?;
     w.flush()?;
     drop(w);
     std::fs::rename(tmp, path)?;

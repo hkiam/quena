@@ -271,11 +271,11 @@ fn starts_cookie(s: &str) -> bool {
 }
 
 /// One cookie: `name=<n bytes>`, known attributes verbatim, anything else by its size.
-fn redact_one_set_cookie(v: &str) -> String {
+fn redact_one_set_cookie(v: &str, secret: &mut dyn FnMut(&str) -> String) -> String {
     let mut parts = v.split(';');
     let pair = parts.next().unwrap_or("").trim();
     let (name, value) = pair.split_once('=').unwrap_or(("", pair));
-    let mut out = format!("{}={}", name.trim(), bytes(value.trim().len()));
+    let mut out = format!("{}={}", name.trim(), secret(value.trim()));
     for a in parts.map(str::trim).filter(|a| !a.is_empty()) {
         let (n, val) = match a.split_once('=') {
             Some((n, v)) => (n.trim(), Some(v.trim())),
@@ -286,8 +286,8 @@ fn redact_one_set_cookie(v: &str) -> String {
             out.push_str(a);
         } else {
             match val {
-                Some(v) if is_token(n) => out.push_str(&format!("{n}={}", bytes(v.len()))),
-                _ => out.push_str(&bytes(a.len())),
+                Some(v) if is_token(n) => out.push_str(&format!("{n}={}", secret(v))),
+                _ => out.push_str(&secret(a)),
             }
         }
     }
@@ -299,6 +299,12 @@ fn redact_one_set_cookie(v: &str) -> String {
 /// become `name=<n bytes>`. A value carrying several cookies (joined with a line break or
 /// folded with `, ` by HAR exporters and intermediaries) has each of them redacted.
 pub fn redact_set_cookie(v: &str) -> String {
+    rewrite_set_cookie(v, &mut |s| bytes(s.len()))
+}
+
+/// [`redact_set_cookie`] with the replacement of each secret (cookie value, value of an
+/// unknown attribute) chosen by `secret` (the sanitized export uses pseudonyms).
+pub(crate) fn rewrite_set_cookie(v: &str, secret: &mut dyn FnMut(&str) -> String) -> String {
     v.split('\n')
         .map(|line| {
             let mut cookies: Vec<&str> = Vec::new();
@@ -310,7 +316,7 @@ pub fn redact_set_cookie(v: &str) -> String {
                 }
             }
             cookies.push(&line[start..]);
-            cookies.into_iter().map(redact_one_set_cookie).collect::<Vec<_>>().join(", ")
+            cookies.into_iter().map(|c| redact_one_set_cookie(c, secret)).collect::<Vec<_>>().join(", ")
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -362,7 +368,7 @@ fn oauth_param_value(name: &str, value: &str) -> String {
 }
 
 /// Percent-decoding (and `+` → space) of a parameter name, for matching only.
-fn decode_param(s: &str) -> String {
+pub(crate) fn decode_param(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -383,7 +389,7 @@ fn decode_param(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn secret_param(name: &str) -> bool {
+pub(crate) fn secret_param(name: &str) -> bool {
     let n = decode_param(name).trim().to_ascii_lowercase();
     SECRET_PARAMS.contains(&n.as_str()) || SECRET_PARAM_PARTS.iter().any(|p| n.contains(p)) || SECRET_PARAM_PREFIXES.iter().any(|p| n.starts_with(p))
 }
@@ -393,28 +399,53 @@ fn url_bytes(n: usize) -> String {
     format!("%3C{n}%20bytes%3E")
 }
 
-/// `a=1&b=2` with sensitive or long values replaced by their size.
-fn redact_params(q: &str) -> String {
-    q.split('&')
-        .map(|p| match p.split_once('=') {
-            Some((name, value)) => {
-                if name.len() > URL_VALUE_LIMIT {
-                    url_bytes(p.len())
-                } else if !value.is_empty() && secret_param(name) {
-                    format!("{name}={}", url_bytes(value.len()))
-                } else if let Some(n) = Some(decode_param(name).trim().to_ascii_lowercase()).filter(|n| OAUTH_PARAMS.contains(&n.as_str())) {
-                    format!("{name}={}", oauth_param_value(&n, value))
-                } else if value.len() > URL_VALUE_LIMIT && !decode_param(name).starts_with('$') {
-                    format!("{name}={}", url_bytes(value.len()))
-                } else {
-                    p.to_string()
-                }
+/// One `name=value` (or bare) piece of a query or fragment with a sensitive or long value
+/// replaced by its size.
+fn redact_param(p: &str) -> String {
+    match p.split_once('=') {
+        Some((name, value)) => {
+            if name.len() > URL_VALUE_LIMIT {
+                url_bytes(p.len())
+            } else if !value.is_empty() && secret_param(name) {
+                format!("{name}={}", url_bytes(value.len()))
+            } else if let Some(n) = Some(decode_param(name).trim().to_ascii_lowercase()).filter(|n| OAUTH_PARAMS.contains(&n.as_str())) {
+                format!("{name}={}", oauth_param_value(&n, value))
+            } else if value.len() > URL_VALUE_LIMIT && !decode_param(name).starts_with('$') {
+                format!("{name}={}", url_bytes(value.len()))
+            } else {
+                p.to_string()
             }
-            None if p.len() > URL_VALUE_LIMIT => url_bytes(p.len()),
-            None => p.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join("&")
+        }
+        None if p.len() > URL_VALUE_LIMIT => url_bytes(p.len()),
+        None => p.to_string(),
+    }
+}
+
+/// How [`rewrite_url`] replaces the parts of a URL.
+pub(crate) trait UrlRewrite {
+    /// The user info of an absolute URL (`user:pass`).
+    fn userinfo(&mut self, userinfo: &str) -> String;
+    /// The path (absolute URL) or everything before `?` (relative URL), as written.
+    fn path(&mut self, path: &str) -> String {
+        path.to_string()
+    }
+    /// One `name=value` (or bare) piece of the query or of a fragment that has parameters.
+    fn param(&mut self, piece: &str) -> String;
+    /// A fragment without parameters.
+    fn fragment(&mut self, fragment: &str) -> String;
+}
+
+struct Diagnostics;
+impl UrlRewrite for Diagnostics {
+    fn userinfo(&mut self, userinfo: &str) -> String {
+        url_bytes(userinfo.len())
+    }
+    fn param(&mut self, piece: &str) -> String {
+        redact_param(piece)
+    }
+    fn fragment(&mut self, f: &str) -> String {
+        if f.len() > URL_VALUE_LIMIT { url_bytes(f.len()) } else { f.to_string() }
+    }
 }
 
 /// Whether `url` starts with a scheme and `://` (`^[A-Za-z][A-Za-z0-9+.-]*://`).
@@ -430,6 +461,12 @@ pub fn has_scheme(url: &str) -> bool {
 /// encoded length). OData system options (`$filter`, `$select` …) are only subject to the
 /// name rule. Scheme, host, port and path are kept.
 pub fn redact_url(url: &str) -> String {
+    rewrite_url(url, &mut Diagnostics)
+}
+
+/// Split `url` (absolute or relative) into user info, path, query parameters and fragment
+/// and put it back together with the parts `r` returns; scheme, host and port are kept.
+pub(crate) fn rewrite_url(url: &str, r: &mut dyn UrlRewrite) -> String {
     let (rest, fragment) = match url.split_once('#') {
         Some((r, f)) => (r, Some(f)),
         None => (url, None),
@@ -447,28 +484,27 @@ pub fn redact_url(url: &str) -> String {
             out.push_str(&base[..i + 3]);
             match authority.rsplit_once('@') {
                 Some((userinfo, host)) => {
-                    out.push_str(&url_bytes(userinfo.len()));
+                    out.push_str(&r.userinfo(userinfo));
                     out.push('@');
                     out.push_str(host);
                 }
                 None => out.push_str(authority),
             }
-            out.push_str(&after[auth_end..]);
+            out.push_str(&r.path(&after[auth_end..]));
         }
-        None => out.push_str(base),
+        None => out.push_str(&r.path(base)),
     }
+    let params = |q: &str, r: &mut dyn UrlRewrite| q.split('&').map(|p| r.param(p)).collect::<Vec<_>>().join("&");
     if let Some(q) = query {
         out.push('?');
-        out.push_str(&redact_params(q));
+        out.push_str(&params(q, r));
     }
     if let Some(f) = fragment {
         out.push('#');
         if f.contains('=') {
-            out.push_str(&redact_params(f));
-        } else if f.len() > URL_VALUE_LIMIT {
-            out.push_str(&url_bytes(f.len()));
+            out.push_str(&params(f, r));
         } else {
-            out.push_str(f);
+            out.push_str(&r.fragment(f));
         }
     }
     out

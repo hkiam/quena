@@ -127,6 +127,9 @@ pub struct Settings {
     /// Extra latency added before each response, in milliseconds (0 = none).
     #[serde(default)]
     pub throttle_latency_ms: u64,
+    /// Last options of the sanitized export.
+    #[serde(default)]
+    pub sanitize: crate::sanitize::SanitizeExportSettings,
     /// Opaque UI preferences (column layout, splitters …).
     pub ui: serde_json::Value,
 }
@@ -149,6 +152,7 @@ impl Default for Settings {
             scripting_enabled: false,
             throttle_kbps: 0,
             throttle_latency_ms: 0,
+            sanitize: Default::default(),
             ui: serde_json::Value::Null,
         }
     }

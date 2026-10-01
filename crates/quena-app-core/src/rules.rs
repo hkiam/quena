@@ -25,7 +25,13 @@ use tokio::sync::oneshot;
 pub struct Rule {
     pub id: u64,
     pub enabled: bool,
-    /// Match expression (`*`, `exact:`, `prefix:`, `regex:`, `NOT:`, `METHOD:`, `HEADER:`, `URLWithBody:` or substring).
+    /// Match expression (`*`, `exact:`, `prefix:`, `regex:`, `NOT:`, `METHOD:`, `HEADER:`, `URLWithBody:`,
+    /// `BODYJSON:`, `GRAPHQL:` or substring).
+    ///
+    /// `BODYJSON:<url match> <json>` matches when the URL matches and the (decoded) request body
+    /// is JSON equal to `<json>`: key order and whitespace do not matter, the string
+    /// `"${json-unit.ignore}"` matches any value. `GRAPHQL:<url match> {"operationName":…,
+    /// "variables":…}` matches a GraphQL request body by operation name and variables.
     #[serde(rename = "match")]
     pub match_: String,
     /// Action (`file path`, `dir:folder`, `*404`, `*delay:500`, `*drop`, `*redir:url`, `*header:N=V`, `*bpu`, `*bpafter`, `http://…`, `session:ID`).
@@ -79,6 +85,60 @@ enum Matcher {
     Method(String, Box<Matcher>),
     Header(String, String),
     UrlWithBody(Box<Matcher>, Regex),
+    /// URL matcher and a JSON value the request body must equal semantically.
+    BodyJson(Box<Matcher>, serde_json::Value),
+    /// URL matcher, GraphQL operation name and variables.
+    GraphQl(Box<Matcher>, Option<String>, serde_json::Value),
+}
+
+/// In a `BODYJSON:` / `GRAPHQL:` value: matches any value (the WireMock / JsonUnit placeholder).
+pub const JSON_IGNORE: &str = "${json-unit.ignore}";
+
+/// Semantic JSON comparison for mock rules: objects regardless of key order, arrays in order,
+/// numbers by value. Placeholders in `spec`: `${json-unit.ignore}` (anything),
+/// `${json-unit.any-string}`, `${json-unit.any-number}`, `${json-unit.any-boolean}`.
+pub fn json_matches(spec: &serde_json::Value, actual: &serde_json::Value) -> bool {
+    use serde_json::Value as V;
+    match (spec, actual) {
+        (V::String(s), _) if s == JSON_IGNORE => true,
+        (V::String(s), a) if s == "${json-unit.any-string}" => a.is_string(),
+        (V::String(s), a) if s == "${json-unit.any-number}" => a.is_number(),
+        (V::String(s), a) if s == "${json-unit.any-boolean}" => a.is_boolean(),
+        (V::Object(s), V::Object(a)) => s.len() == a.len() && s.iter().all(|(k, v)| a.get(k).is_some_and(|x| json_matches(v, x))),
+        (V::Array(s), V::Array(a)) => s.len() == a.len() && s.iter().zip(a).all(|(x, y)| json_matches(x, y)),
+        (V::Number(x), V::Number(y)) => x == y || x.as_f64().zip(y.as_f64()).is_some_and(|(x, y)| x == y),
+        _ => spec == actual,
+    }
+}
+
+/// Does a GraphQL request body carry this operation name and these variables? Absent, `null`
+/// and `{}` variables are the same.
+fn graphql_matches(op: &Option<String>, vars: &serde_json::Value, body: &serde_json::Value) -> bool {
+    let empty = |v: Option<&serde_json::Value>| v.is_none_or(|v| v.is_null() || v.as_object().is_some_and(|o| o.is_empty()));
+    let Some(obj) = body.as_object() else { return false };
+    if obj.get("operationName").and_then(|v| v.as_str()) != op.as_deref() {
+        return false;
+    }
+    if empty(Some(vars)) {
+        return empty(obj.get("variables"));
+    }
+    obj.get("variables").is_some_and(|a| json_matches(vars, a))
+}
+
+/// Check the syntax of a match expression (as rules are compiled).
+pub fn validate_match(s: &str) -> Result<()> {
+    Matcher::parse(s).map(|_| ())
+}
+
+/// The request body as the client meant it (Content-Encoding removed), at most 8 MiB.
+fn request_body_bytes(head: &RequestHead, body: &Body) -> Vec<u8> {
+    crate::sanitize::decoded_body(&head.headers, body, 8 << 20)
+}
+
+/// `<url match> <rest>`: split at the first whitespace (URL matchers contain none).
+fn split_url_and_rest(rest: &str, usage: &str) -> Result<(Matcher, String)> {
+    let (u, b) = rest.trim().split_once(char::is_whitespace).ok_or_else(|| anyhow!("{usage}"))?;
+    Ok((Matcher::parse(u)?, b.trim().to_string()))
 }
 
 impl Matcher {
@@ -107,6 +167,16 @@ impl Matcher {
             let rest = &s[7..];
             let (n, v) = rest.split_once('=').unwrap_or((rest, ""));
             Matcher::Header(n.trim().to_string(), v.trim().to_lowercase())
+        } else if lower.starts_with("bodyjson:") {
+            let (u, j) = split_url_and_rest(&s[9..], "BODYJSON:<url> <json>")?;
+            let v = serde_json::from_str(&j).map_err(|e| anyhow!("BODYJSON: {e}"))?;
+            Matcher::BodyJson(Box::new(u), v)
+        } else if lower.starts_with("graphql:") {
+            let (u, j) = split_url_and_rest(&s[8..], "GRAPHQL:<url> {\"operationName\":…,\"variables\":…}")?;
+            let v: serde_json::Value = serde_json::from_str(&j).map_err(|e| anyhow!("GRAPHQL: {e}"))?;
+            let op = v.get("operationName").and_then(|o| o.as_str()).map(str::to_string);
+            let vars = v.get("variables").cloned().unwrap_or(serde_json::Value::Null);
+            Matcher::GraphQl(Box::new(u), op, vars)
         } else if lower.starts_with("urlwithbody:") {
             let rest = s[12..].trim();
             let (u, b) = rest.split_once(char::is_whitespace).ok_or_else(|| anyhow!("URLWithBody:<url> <body regex>"))?;
@@ -118,7 +188,12 @@ impl Matcher {
     }
 
     fn needs_body(&self) -> bool {
-        matches!(self, Matcher::UrlWithBody(..))
+        match self {
+            Matcher::UrlWithBody(..) | Matcher::BodyJson(..) | Matcher::GraphQl(..) => true,
+            // `METHOD:POST URLWithBody:…` must buffer the body as well.
+            Matcher::Method(_, inner) => inner.needs_body(),
+            _ => false,
+        }
     }
 
     fn matches(&self, head: &RequestHead, body: Option<&Body>) -> bool {
@@ -138,6 +213,14 @@ impl Matcher {
                         re.is_match(&String::from_utf8_lossy(&data))
                     })
             }
+            Matcher::BodyJson(u, spec) => {
+                u.matches(head, body)
+                    && body.is_some_and(|b| serde_json::from_slice::<serde_json::Value>(&request_body_bytes(head, b)).is_ok_and(|v| json_matches(spec, &v)))
+            }
+            Matcher::GraphQl(u, op, vars) => {
+                u.matches(head, body)
+                    && body.is_some_and(|b| serde_json::from_slice::<serde_json::Value>(&request_body_bytes(head, b)).is_ok_and(|v| graphql_matches(op, vars, &v)))
+            }
         }
     }
 
@@ -145,7 +228,7 @@ impl Matcher {
     fn rest(&self, url: &str) -> Rest {
         match self {
             Matcher::Prefix(p) => Rest::Prefix(url.get(p.len()..).unwrap_or("").to_string()),
-            Matcher::Method(_, inner) | Matcher::UrlWithBody(inner, _) => inner.rest(url),
+            Matcher::Method(_, inner) | Matcher::UrlWithBody(inner, _) | Matcher::BodyJson(inner, _) | Matcher::GraphQl(inner, ..) => inner.rest(url),
             Matcher::Regex(re) => re.captures(url).and_then(|c| c.get(1)).map(|m| Rest::Group(m.as_str().to_string())).unwrap_or(Rest::None),
             _ => Rest::None,
         }
@@ -1525,6 +1608,38 @@ mod tests {
             assert_eq!(Matcher::parse(m).unwrap().matches(&h, None), want, "{m}");
         }
     }
+    #[test]
+    fn body_json_and_graphql_matchers() {
+        let d = tempfile::tempdir().unwrap();
+        let store = quena_body::BodyStore::open(d.path(), Default::default()).unwrap();
+        let h = head("POST", "https://api.x.de/graphql");
+        let body = |s: &str| store.store_bytes(s.as_bytes());
+        let m = Matcher::parse(r#"METHOD:POST BODYJSON:EXACT:https://api.x.de/graphql {"a":1,"b":[1,2],"p":"${json-unit.ignore}"}"#).unwrap();
+        assert!(m.needs_body());
+        assert!(m.matches(&h, Some(&body(r#"{ "p": "anything", "b": [1, 2], "a": 1.0 }"#))));
+        assert!(!m.matches(&h, Some(&body(r#"{"a":1,"b":[2,1],"p":1}"#))), "arrays keep their order");
+        assert!(!m.matches(&h, Some(&body(r#"{"a":1,"b":[1,2],"p":1,"extra":true}"#))));
+        assert!(!m.matches(&h, Some(&body("not json"))));
+        assert!(!m.matches(&h, None));
+        assert!(!m.matches(&head("GET", "https://api.x.de/graphql"), Some(&body(r#"{"a":1,"b":[1,2],"p":0}"#))));
+        let g = Matcher::parse(r#"GRAPHQL:EXACT:https://api.x.de/graphql {"operationName":"GetUser","variables":{"id":7}}"#).unwrap();
+        assert!(g.matches(&h, Some(&body(r#"{"query":"query GetUser { … }","operationName":"GetUser","variables":{"id":7}}"#))));
+        assert!(!g.matches(&h, Some(&body(r#"{"query":"…","operationName":"GetUser","variables":{"id":8}}"#))));
+        assert!(!g.matches(&h, Some(&body(r#"{"query":"…","operationName":"Other","variables":{"id":7}}"#))));
+        let g = Matcher::parse(r#"GRAPHQL:EXACT:https://api.x.de/graphql {"operationName":"Me","variables":null}"#).unwrap();
+        assert!(g.matches(&h, Some(&body(r#"{"query":"…","operationName":"Me","variables":{}}"#))));
+        assert!(g.matches(&h, Some(&body(r#"{"query":"…","operationName":"Me"}"#))));
+        assert!(Matcher::parse("BODYJSON:EXACT:https://x/ {broken").is_err());
+        // URLWithBody behind METHOD: buffers the body too.
+        assert!(Matcher::parse("METHOD:POST URLWithBody:/soap regex:GetOrder").unwrap().needs_body());
+        // Gzip-encoded request bodies are compared decoded.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut gz, br#"{"a":1,"b":[1,2],"p":"x"}"#).unwrap();
+        let mut hz = h.clone();
+        hz.headers.push("Content-Encoding", "gzip");
+        assert!(m.matches(&hz, Some(&store.store_bytes(&gz.finish().unwrap()))));
+    }
+
     #[test]
     fn farx_roundtrip() {
         let s = AutoResponderState {

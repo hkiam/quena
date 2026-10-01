@@ -148,6 +148,12 @@ fn metadata(sid: usize, d: &SessionDetail) -> String {
 
 /// Export sessions to a SAZ file. Returns the number of sessions written.
 pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, p: &dyn Progress) -> Result<usize> {
+    export_with(cap, ids, path, &[], p)
+}
+
+/// [`export`] with extra files at the root of the archive (`(name, content)`, e.g. a
+/// redaction log); Fiddler ignores them.
+pub fn export_with(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, extra: &[(&str, &[u8])], p: &dyn Progress) -> Result<usize> {
     let tmp = path.with_extension("saz.part");
     let file = BufWriter::with_capacity(1 << 20, File::create(&tmp)?);
     let mut zip = zip::ZipWriter::new(file);
@@ -201,6 +207,10 @@ pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, p: &dyn Progre
     index.push_str("</tbody></table></body></html>");
     zip.start_file("_index.htm", deflate)?;
     zip.write_all(index.as_bytes())?;
+    for (name, data) in extra {
+        zip.start_file(*name, deflate)?;
+        zip.write_all(data)?;
+    }
     zip.finish()?.flush()?;
     std::fs::rename(tmp, path)?;
     p.progress(ids.len() as u64, ids.len() as u64);

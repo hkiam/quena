@@ -5,7 +5,9 @@ use anyhow::{Result, anyhow};
 use quena_formats::har::HarOptions;
 use quena_jobs::{JobCtx, JobId, Priority};
 use quena_model::SessionId;
-use std::path::PathBuf;
+use crate::sanitize::{RedactionLog, SanitizeExportSettings, SanitizeOptions, Sanitizer};
+use quena_store::Capture;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 struct P<'a>(&'a JobCtx);
@@ -50,6 +52,39 @@ impl AppCore {
             }
             .map_err(|e| e.to_string())?;
             tracing::info!(target: "quena", "saved {n} session(s) to {}", path.display());
+            Ok(())
+        }))
+    }
+
+    /// Export a sanitized copy of sessions (empty = all in view order): each session is
+    /// scrubbed into a temporary capture (see [`crate::sanitize`]), which the normal SAZ / HAR
+    /// exporters then write, together with the redaction log (`QUENA-REDACTION.txt` in the
+    /// SAZ, `log.comment` and `log._quenaRedaction` in the HAR). The options are remembered
+    /// in the settings; when the job is done, the event `export-sanitized` carries
+    /// [`SanitizedExport`].
+    pub fn export_sanitized(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>, opts: SanitizeOptions) -> Result<JobId> {
+        let format = format.or_else(|| format_of(&path)).ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
+        if format == ArchiveFormat::Curl {
+            return Err(anyhow!("a sanitized export is a .saz or .har file"));
+        }
+        opts.validate().map_err(|e| anyhow!(e))?;
+        {
+            let mut s = self.settings.write();
+            s.sanitize = SanitizeExportSettings { options: opts.clone(), format: if format == ArchiveFormat::Har { "har".into() } else { "saz".into() } };
+            if let Err(e) = s.save(&self.paths.settings) {
+                tracing::warn!("settings not saved: {e}");
+            }
+        }
+        let cap = self.capture();
+        let ids = if ids.is_empty() { cap.index.find(|_| true) } else { ids };
+        let title = format!("Saving {} sanitized session(s) to {}", ids.len(), path.display());
+        let tmp_root = self.paths.data.join("sanitize-tmp");
+        let body_cfg = self.settings().bodies.to_config();
+        let core = self.clone();
+        Ok(self.jobs.submit(format!("export-sanitized:{}", path.display()), title, Priority::Background, true, move |ctx| {
+            let log = sanitized_export(&cap, &ids, &path, format, opts, &tmp_root, body_cfg, &P(ctx)).map_err(|e| e.to_string())?;
+            tracing::info!(target: "quena", "saved {} sanitized session(s) to {} ({} replacement(s))", log.sessions, path.display(), log.total);
+            core.emit("export-sanitized", SanitizedExport { path: path.display().to_string(), format: if format == ArchiveFormat::Har { "har".into() } else { "saz".into() }, log });
             Ok(())
         }))
     }
@@ -128,6 +163,93 @@ impl AppCore {
             return Ok(None);
         }
         self.import_file(path, name.to_string(), true).map(Some)
+    }
+}
+
+/// Result of a sanitized export (event `export-sanitized`).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SanitizedExport {
+    pub path: String,
+    /// `saz` or `har`.
+    pub format: String,
+    pub log: RedactionLog,
+}
+
+/// Closes and deletes a temporary capture when dropped (also on errors and cancellation).
+struct TempCapture(Arc<Capture>);
+impl Drop for TempCapture {
+    fn drop(&mut self) {
+        self.0.close(true);
+    }
+}
+
+/// Write a sanitized copy of `ids` from `cap` to `path`; the temporary capture lives under
+/// `tmp_root` and is removed afterwards. Returns the redaction log.
+#[allow(clippy::too_many_arguments)]
+pub fn sanitized_export(
+    cap: &Arc<Capture>,
+    ids: &[SessionId],
+    path: &Path,
+    format: ArchiveFormat,
+    opts: SanitizeOptions,
+    tmp_root: &Path,
+    body_cfg: quena_body::BodyConfig,
+    p: &dyn quena_formats::Progress,
+) -> Result<RedactionLog> {
+    // Copies left behind by a crash: nothing to recover there.
+    remove_older_dirs(tmp_root, std::time::Duration::from_secs(3600));
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let tmp = TempCapture(Capture::open(tmp_root.join(format!("{}-{nanos}", std::process::id())), body_cfg, true)?);
+    let mut z = Sanitizer::new(opts);
+    let mut copied = Vec::with_capacity(ids.len());
+    // Scrubbing is the first half of the work, writing the archive the second.
+    let total = ids.len() as u64 * 2;
+    for (i, id) in ids.iter().enumerate() {
+        if p.cancelled() {
+            return Err(anyhow!("cancelled"));
+        }
+        p.progress(i as u64, total);
+        let Some(d) = cap.detail(*id) else { continue };
+        let Some((req, resp)) = cap.bodies_of(*id) else { continue };
+        let s = z.session(&d, &req, &resp);
+        let (rb, sb) = (tmp.0.bodies.store_bytes(&s.request), tmp.0.bodies.store_bytes(&s.response));
+        copied.push(tmp.0.insert(s.detail, rb, sb));
+    }
+    let log = z.into_log();
+    struct Half<'a>(&'a dyn quena_formats::Progress, u64);
+    impl quena_formats::Progress for Half<'_> {
+        fn cancelled(&self) -> bool {
+            self.0.cancelled()
+        }
+        fn progress(&self, done: u64, total: u64) {
+            let t = total.max(1);
+            self.0.progress(self.1 + done * self.1 / t, self.1 * 2);
+        }
+    }
+    let half = Half(p, ids.len() as u64);
+    match format {
+        ArchiveFormat::Saz => {
+            let text = log.to_text();
+            quena_formats::saz::export_with(&tmp.0, &copied, path, &[("QUENA-REDACTION.txt", text.as_bytes())], &half)?;
+        }
+        ArchiveFormat::Har => {
+            let o = HarOptions { comment: Some(log.summary_line()), extra: vec![("_quenaRedaction".into(), serde_json::to_value(&log)?)], ..HarOptions::default() };
+            quena_formats::har::export(&tmp.0, &copied, path, &o, &half)?;
+        }
+        ArchiveFormat::Curl => return Err(anyhow!("a sanitized export is a .saz or .har file")),
+    }
+    p.progress(total, total);
+    Ok(log)
+}
+
+fn remove_older_dirs(dir: &std::path::Path, age: std::time::Duration) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a > age);
+        if old && e.file_type().is_ok_and(|t| t.is_dir()) {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
     }
 }
 
