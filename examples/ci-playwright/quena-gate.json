@@ -1,0 +1,6 @@
+{
+  "profile": "performance",
+  "failOn": "critical",
+  "budgets": ["requests=+10%", "bytes=+20%", "errors=0"],
+  "ignore": []
+}

@@ -77,6 +77,7 @@ nav:
       - Change and replay: change-replay.md
       - Analyze: analyze.md
       - Diagnostics: diagnostics.md
+      - Diagnostics in CI: ci.md
       - Archives and copying: archives.md
   - Advanced:
       - Rules scripts: scripting.md

@@ -1,0 +1,11 @@
+{
+  "name": "quena-ci-cypress-example",
+  "private": true,
+  "scripts": {
+    "test": "cypress run --browser chrome"
+  },
+  "devDependencies": {
+    "@neuralegion/cypress-har-generator": "^5.17.0",
+    "cypress": "^14.0.0"
+  }
+}

@@ -49,6 +49,10 @@ Quena is an independent, open-source take on this kind of tool, with its own des
   short, prioritised list of findings — N+1 queries, redundant calls, retry storms, auth loops,
   missing compression and caching, latency-sensitive request chains — each with its evidence,
   its likely causes and what to do next. See [Diagnostics](#diagnostics).
+- **A quality gate for your pipeline.** The same diagnostics run headless in CI:
+  `quena-cli` analyses the HAR files of your Playwright or Cypress tests and fails the build
+  when a change brings new N+1 queries, retry storms or sign-in loops, or 40 % more requests
+  than `main`. See [Diagnostics in CI](#diagnostics-in-ci).
 - **Easy to use.** Start Quena, and traffic appears. HTTPS decryption is one checkbox and one
   "Trust" click. No accounts, no cloud, no setup wizard marathon.
 - **Intuitive.** A keyboard-driven workspace with a command field and palette, Mock Rules, a
@@ -107,6 +111,8 @@ pass for you and answers three questions for every finding:
   which findings are new, resolved or changed, and how the key figures moved.
 - **Share it — or ask an AI.** Export as Markdown or JSON, or copy a prompt-ready version for
   an AI assistant to explain causes and priorities.
+- **In CI, too.** `quena-cli` runs the same analysis without a window and turns it into a
+  quality gate — see [Diagnostics in CI](#diagnostics-in-ci).
 - **Local, deterministic, private.** The analysis runs in a sandboxed plugin on your machine;
   the same capture always gives the same report. Tokens, cookie values and sensitive URL
   parameters are removed before the analyzer sees the traffic.
@@ -123,6 +129,44 @@ pass for you and answers three questions for every finding:
 </td>
 </tr>
 </table>
+
+### Diagnostics in CI
+
+Network regressions rarely fail a functional test: the page still works, it just makes 50
+requests instead of 5, signs in twice, or retries a failing call in a loop. `quena-cli` runs
+Quena's diagnostics on the HAR files your end-to-end tests already record and turns the
+report into a **quality gate**:
+
+```yaml
+- run: npx playwright test            # records captures/*.har
+- uses: hkiam/quena/diagnose@v0.2.0
+  with:
+    files: captures/*.har
+    baseline: baseline/report.json    # the report of the last run on main
+    fail-on: critical                 # new critical findings fail the build
+    budgets: requests=+10% bytes=+20% errors=0
+```
+
+```text
+quena-cli: 1 critical, 4 warning, 9 info · vs. baseline: 2 new, 1 resolved, 0 changed → gate FAILED
+  - 1 new or worsened finding at Critical or above.
+  - Budget requests: 212 > 140.8 (baseline 128 +10 %)
+  ✖ [critical] N+1 request pattern: GET api.example.com/odata/Documents (PAT-NPLUS1)
+```
+
+- **Compares with a baseline.** Only what is *new or worse* than on `main` breaks the build;
+  known findings don't block you, and `--ignore` exempts a rule on purpose.
+- **Budgets for the key figures:** requests, transferred bytes, errors, duration — relative to
+  the baseline or absolute.
+- **Fits every CI:** a GitHub Action with job summary and annotations, a Docker image
+  (`ghcr.io/hkiam/quena-cli`) for GitLab CI, Jenkins or Azure Pipelines, and a standalone
+  program for Windows, macOS and Linux. Output as Markdown, JSON (the next baseline) and
+  JUnit XML for the test report of your CI.
+- **Same engine, same privacy:** the analyzer and the redaction of the desktop app; nothing
+  leaves the build machine.
+
+Examples for [Playwright](examples/ci-playwright) and [Cypress](examples/ci-cypress); details
+in the [manual](https://hkiam.github.io/quena/ci/).
 
 What it checks — timing and server time, sizes and compression, exact and semantic
 duplicates, redundant refreshes and double submits, N+1, polling, retries and retry storms,

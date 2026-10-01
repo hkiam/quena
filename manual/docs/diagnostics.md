@@ -78,6 +78,10 @@ loss). Every finding names the threshold it was measured against.
     others count as dependent. Treat the estimate as a hypothesis and verify it with the
     bandwidth/latency simulation (*Settings → Connections*).
 
+!!! tip "In CI"
+    The same analysis runs in build pipelines and fails the build on regressions — see
+    [Diagnostics in CI](ci.md).
+
 ## Save, share and compare
 
 **Report ▾** saves the report as JSON (complete, for comparison later) or Markdown, and

@@ -8,6 +8,14 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Diagnostics in CI**: `quena-cli`, a command line program without a window, runs the
+  diagnostics on HAR/SAZ files (e.g. recorded by Playwright or Cypress tests) and turns the
+  report into a quality gate: `--fail-on`, comparison with a `--baseline` report (only new or
+  more severe findings count), metric budgets (`--budget requests=+10%`), `--ignore`, a
+  settings file, output as Markdown, JSON, JUnit XML and GitHub annotations, exit codes for
+  CI. Ships as archives for Windows, macOS and Linux (x64/arm64), as a GitHub Action
+  (`hkiam/quena/diagnose`) and as a Docker image (`ghcr.io/hkiam/quena-cli`); examples for
+  Playwright and Cypress, manual page *Diagnostics in CI*.
 - *Diagnostics*: OAuth 2.0 / OpenID Connect rules (`OAUTH-ERROR`, `OAUTH-FLOW`,
   `TOKEN-EXPIRED`, `TOKEN-NOTYET`, `TOKEN-AUDIENCE`, `TOKEN-SCOPE`, `TOKEN-SIZE`,
   `TOKEN-IN-URL`, `TOKEN-REFRESH`, `OIDC-LOOP`, `OIDC-SILENT`, `OIDC-DISCOVERY`). A built-in

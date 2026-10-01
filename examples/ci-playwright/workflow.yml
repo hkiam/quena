@@ -1,0 +1,45 @@
+# Copy to .github/workflows/network-gate.yml
+name: Network quality gate
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && npx playwright install --with-deps chromium
+      - run: npx playwright test
+
+      # Pull requests: the report of the latest successful run on main is the baseline.
+      - name: Baseline from main
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run=$(gh run list --repo "$GITHUB_REPOSITORY" --branch main --workflow network-gate.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          [ -n "$run" ] && gh run download "$run" --repo "$GITHUB_REPOSITORY" --name quena-baseline --dir baseline || echo "no baseline yet"
+
+      - id: quena
+        uses: hkiam/quena/diagnose@v0.2.0
+        with:
+          files: captures/*.har
+          config: quena-gate.json
+          baseline: ${{ hashFiles('baseline/report.json') != '' && 'baseline/report.json' || '' }}
+
+      - name: Keep the report (the baseline of later pull requests)
+        if: always() && steps.quena.outputs.report != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.ref == 'refs/heads/main' && 'quena-baseline' || 'quena-report' }}
+          path: |
+            ${{ steps.quena.outputs.report }}
+            ${{ steps.quena.outputs.junit }}
