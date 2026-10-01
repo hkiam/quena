@@ -118,7 +118,7 @@ export class Driver {
 
   /** Press a key chord, e.g. keys(["Control", "f"]). */
   keys(chord) {
-    const map = { Control: "", Shift: "", Alt: "", Escape: "", Enter: "" };
+    const map = { Control: "", Shift: "", Alt: "", Escape: "", Enter: "", Backspace: "", Delete: "" };
     const k = chord.map((c) => map[c] ?? c);
     return this.cmd("POST", this.s("/actions"), {
       actions: [{ type: "key", id: "kbd", actions: [...k.map((value) => ({ type: "keyDown", value })), ...k.reverse().map((value) => ({ type: "keyUp", value }))] }],

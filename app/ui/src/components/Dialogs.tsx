@@ -62,6 +62,43 @@ function PromptDialog({ title, label, initial, resolve }: { title: string; label
   );
 }
 
+/** Yes/no question; Enter confirms, Esc or closing cancels. */
+function ConfirmDialog({ title, message, confirm, resolve }: { title: string; message: string; confirm: string; resolve: (ok: boolean) => void }) {
+  const answered = useRef(false);
+  const done = (ok: boolean) => {
+    if (answered.current) return;
+    answered.current = true;
+    close();
+    resolve(ok);
+  };
+  // Closed another way (Esc is handled globally): that is a "no".
+  useEffect(
+    () => () => {
+      if (!answered.current) {
+        answered.current = true;
+        resolve(false);
+      }
+    },
+    [resolve],
+  );
+  return (
+    <Modal
+      title={title}
+      onClose={() => done(false)}
+      footer={
+        <>
+          <button onClick={() => done(false)}>{t("Cancel")}</button>
+          <button className="primary danger" autoFocus onClick={() => done(true)}>
+            {confirm}
+          </button>
+        </>
+      }
+    >
+      <p className="confirm-text">{message}</p>
+    </Modal>
+  );
+}
+
 function CommentDialog({ ids, initial }: { ids: number[]; initial: string }) {
   const [v, setV] = useState(initial);
   const ok = async () => {
@@ -729,6 +766,8 @@ export function Dialogs() {
 
 function DialogBody({ d }: { d: Dialog }) {
   switch (d.kind) {
+    case "confirm":
+      return <ConfirmDialog key="confirm" title={d.title} message={d.message} confirm={d.confirm} resolve={d.resolve} />;
     case "prompt":
       return <PromptDialog title={d.title} label={d.label} initial={d.initial} resolve={d.resolve} />;
     case "comment":

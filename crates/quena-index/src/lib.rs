@@ -78,6 +78,8 @@ struct Inner {
     filter: Arc<Filter>,
     sort: Sort,
     pending_new: Vec<u32>,
+    /// The view changed outside `tick` (removal): the next tick reports it, so the UI hears.
+    changed: bool,
     pending_upd: HashSet<u32>,
     rebuild: bool,
     version: u64,
@@ -225,6 +227,7 @@ impl SessionIndex {
         g.pos = pos;
         g.full_rebuild();
         g.version += 1;
+        g.changed |= !removed.is_empty();
         removed
     }
 
@@ -256,13 +259,15 @@ impl SessionIndex {
     /// Fold pending changes into the view. Returns true if the view changed.
     pub fn tick(&self) -> bool {
         let mut g = self.inner.write();
+        // Removals rebuild the view at once (positions shift); report them here.
+        let removed = std::mem::take(&mut g.changed);
         if g.rebuild {
             g.full_rebuild();
             g.version += 1;
             return true;
         }
         if g.pending_new.is_empty() && g.pending_upd.is_empty() {
-            return false;
+            return removed;
         }
         let filter = g.filter.clone();
         let natural = g.is_default_sort();
@@ -284,7 +289,7 @@ impl SessionIndex {
                 if throttle {
                     g.pending_new = new;
                     g.pending_upd = upd;
-                    return false;
+                    return removed;
                 }
                 g.full_rebuild();
                 g.version += 1;
@@ -420,6 +425,25 @@ impl SessionIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removal_is_reported_by_the_next_tick() {
+        // The ticker only tells the UI about index changes when tick() says so; a removal
+        // rebuilt the view directly and the list in the UI kept showing removed rows.
+        let idx = SessionIndex::new();
+        for id in 1..=4 {
+            idx.upsert(SessionSummary { id, host: "h".into(), url: "/".into(), ..Default::default() });
+        }
+        idx.tick();
+        assert!(!idx.tick(), "nothing pending");
+        idx.remove(&[2u64, 3].into_iter().collect());
+        assert_eq!((idx.len(), idx.view_len()), (2, 2));
+        assert!(idx.tick(), "the removal must be reported");
+        assert!(!idx.tick(), "only once");
+        // Removing nothing is no change.
+        idx.remove(&[99u64].into_iter().collect());
+        assert!(!idx.tick());
+    }
     use quena_query::FilterSettings;
 
     fn row(id: u64, status: u16, host: &str) -> SessionSummary {

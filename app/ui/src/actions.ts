@@ -31,6 +31,26 @@ async function details(ids: SessionId[], limit = 200): Promise<Detail[]> {
   return out;
 }
 
+/** Ask before sessions are removed (removal cannot be undone). Focus returns to where it was
+ *  (usually the session list), so the keyboard keeps working. */
+function confirmRemove(title: string): Promise<boolean> {
+  const back = document.activeElement as HTMLElement | null;
+  return new Promise((resolve) =>
+    set({
+      dialog: {
+        kind: "confirm",
+        title,
+        message: t("They are removed from the list and from the recorded data. This cannot be undone."),
+        confirm: t("Remove"),
+        resolve: (ok) => {
+          resolve(ok);
+          setTimeout(() => back?.focus?.(), 0);
+        },
+      },
+    }),
+  );
+}
+
 export const actions = {
   // ---------------------------------------------------------------- selection
   async selectIndex(i: number, mode: "single" | "toggle" | "range") {
@@ -129,6 +149,8 @@ export const actions = {
   async removeSelected() {
     const ids = [...get().selection];
     if (!ids.length) return;
+    const ok = await confirmRemove(plural(ids.length, "Remove {n} session?", "Remove {n} sessions?"));
+    if (!ok) return;
     const fi = get().focusIndex;
     set({ selection: new Set(), focusId: null });
     await api.remove(ids);
@@ -138,10 +160,18 @@ export const actions = {
 
   async removeUnselected() {
     const ids = [...get().selection];
+    const n = Math.max(0, get().listCount - ids.length);
+    if (!n) return;
+    const ok = await confirmRemove(plural(n, "Remove {n} unselected session?", "Remove {n} unselected sessions?"));
+    if (!ok) return;
     await api.removeExcept(ids);
   },
 
   async removeAll() {
+    const n = get().listCount;
+    if (!n) return;
+    const ok = await confirmRemove(plural(n, "Remove {n} session?", "Remove all {n} sessions?"));
+    if (!ok) return;
     set({ selection: new Set(), focusId: null, focusIndex: null });
     rowCache.clear();
     await api.removeAll();

@@ -239,6 +239,42 @@ test("an archive dropped onto the window is loaded", async () => {
   assert.ok(!(await d.exec(`return document.body.classList.contains("file-drop")`)), "drop overlay still shown");
 });
 
+test("Delete / Backspace remove the selected sessions after a confirmation", async () => {
+  const count = async () => {
+    const t = await d.text(await d.waitFor(".statusbar"));
+    return t.match(/(\d+) sessions/)?.[1];
+  };
+  const dialogGone = async () => {
+    const end = Date.now() + 3000;
+    while ((await d.findAll(".modal-title")).length && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+    assert.equal((await d.findAll(".modal-title")).length, 0, "confirmation still open");
+  };
+  const before = Number(await count());
+  // Cancel: nothing is removed.
+  await selectRow(1);
+  await d.keys(["Delete"]);
+  await d.waitFor(".modal-title", { text: "Remove 1 session?" });
+  await d.keys(["Escape"]);
+  await dialogGone();
+  assert.equal(Number(await count()), before);
+  // Confirm with Enter: the row disappears from the list, the status bar agrees ("n of m"
+  // would mean the list still shows removed rows).
+  await selectRow(1);
+  await d.keys(["Delete"]);
+  await d.waitFor(".modal-title", { text: "Remove 1 session?" });
+  await d.keys(["Enter"]);
+  await dialogGone();
+  await d.waitFor(".statusbar", { text: (t) => t.includes(`${before - 1} sessions`) && !/\d+ of \d+ sessions/.test(t) });
+  // The Mac delete key (Backspace) with several sessions selected (Ctrl+A), then cancel.
+  await selectRow(1);
+  await d.keys(["Control", "a"]);
+  await d.keys(["Backspace"]);
+  await d.waitFor(".modal-title", { text: `Remove ${before - 1} sessions?` });
+  await d.keys(["Escape"]);
+  await dialogGone();
+  assert.equal(Number(await count()), before - 1, "cancelled: nothing removed");
+});
+
 test("no view crashed", async () => {
   assert.equal((await d.findAll(".view-error")).length, 0, "an inspector shows 'This view failed'");
   assert.equal((await d.findAll(".app-crash")).length, 0, "the app shows its crash screen");

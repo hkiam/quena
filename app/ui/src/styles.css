@@ -260,6 +260,16 @@ button.primary {
   border-color: var(--accent);
   color: var(--accent-fg);
 }
+/* Confirms something that cannot be undone (removing sessions). */
+button.primary.danger {
+  background: var(--row-red);
+  border-color: var(--row-red);
+  color: #fff;
+}
+.confirm-text {
+  margin: 4px 0;
+  max-width: 46ch;
+}
 .mono {
   font-family: var(--mono);
 }

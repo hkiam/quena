@@ -7,6 +7,14 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Changed
+- Removing sessions (Del / Backspace, Shift+Del, Ctrl+X, toolbar, menus) asks for
+  confirmation first; Enter confirms, Esc cancels.
+
+### Fixed
+- Removed sessions stayed in the list (the status bar showed “4 of 3 sessions”) until
+  something else changed it, so Del seemed to do nothing.
+
 ## [0.1.2] — 2026-09-30
 
 Diagnostics, a German user interface and correct character encodings everywhere — plus the

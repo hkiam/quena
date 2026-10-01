@@ -188,7 +188,8 @@ export type Dialog =
   | { kind: "rules" }
   | { kind: "choose-layout" }
   | { kind: "compare"; a: string; b: string; titleA: string; titleB: string }
-  | { kind: "prompt"; title: string; label: string; initial: string; resolve: (v: string | null) => void };
+  | { kind: "prompt"; title: string; label: string; initial: string; resolve: (v: string | null) => void }
+  | { kind: "confirm"; title: string; message: string; confirm: string; resolve: (ok: boolean) => void };
 
 export interface AppState {
   status: Status | null;
