@@ -8,6 +8,12 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Changed
+- *Timeline*: a time axis with grid lines; zoom with Ctrl/⌘ + wheel (or pinch) around the
+  pointer, or with the zoom buttons and *Fit*; columns (#, method, status, URL, duration,
+  size, graph) can be moved, resized and shown or hidden (right-click the header), and the
+  columns left of the graph stay in place while it scrolls; scrollbars appear when needed.
+  A click focuses a session without changing the selection, a double-click opens it in
+  *Inspect*.
 - Removing sessions (Del / Backspace, Shift+Del, Ctrl+X, toolbar, menus) asks for
   confirmation first; Enter confirms, Esc cancels.
 

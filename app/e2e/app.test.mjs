@@ -204,6 +204,48 @@ test("timeline: a waterfall of the selected sessions", async () => {
   await d.waitFor(".tl-row", { text: "GetOrder" });
   const bars = await d.findAll(".tl-track .tl-seg, .tl-track .tl-bar");
   assert.ok(bars.length >= 4, `bars: ${bars.length}`);
+  const geo = () =>
+    d.exec(`const s = document.querySelector('.tl-scroll'), tb = document.querySelector('.tl-table'), g = document.querySelector('.tl-hrow .tl-c-graph'), u = document.querySelector('.tl-hrow .tl-c-url');
+      return { client: s.clientWidth, scroll: s.scrollWidth, table: tb.getBoundingClientRect().width, graph: g.getBoundingClientRect().width, url: u.getBoundingClientRect().width, ticks: document.querySelectorAll('.tl-tick').length };`);
+  // A time axis, and at zoom 1 everything fits the width.
+  const g1 = await geo();
+  assert.ok(g1.ticks >= 2, `axis ticks: ${JSON.stringify(g1)}`);
+  assert.ok(g1.scroll <= g1.client + 1, `no horizontal overflow at zoom 1: ${JSON.stringify(g1)}`);
+  // Zoom in: the graph gets wider and the view scrolls horizontally; Fit resets.
+  const button = async (label) => {
+    for (const b of await d.findAll(".tl-zoom button")) if ((await d.exec("return arguments[0].getAttribute('aria-label') || arguments[0].textContent", [{ "element-6066-11e4-a52e-4f735466cecf": b }])).includes(label)) return b;
+    throw new Error(`no zoom button ${label}`);
+  };
+  await d.click(await button("Zoom in"));
+  await d.click(await button("Zoom in"));
+  await new Promise((r) => setTimeout(r, 200));
+  const g2 = await geo();
+  assert.ok(g2.graph > g1.graph * 2, `zoomed graph wider: ${JSON.stringify([g1, g2])}`);
+  assert.ok(g2.scroll > g2.client, `horizontal scrollbar when zoomed: ${JSON.stringify(g2)}`);
+  await d.click(await button("Fit"));
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(Math.abs((await geo()).graph - g1.graph) < 2, "Fit restores the width");
+  // Resize the URL column by dragging its header edge.
+  const handle = (await d.findAll(".tl-hrow .tl-c-url .tl-resize"))[0];
+  await d.cmd("POST", d.s("/actions"), {
+    actions: [
+      {
+        type: "pointer",
+        id: "mouse",
+        parameters: { pointerType: "mouse" },
+        actions: [
+          { type: "pointerMove", origin: { "element-6066-11e4-a52e-4f735466cecf": handle }, x: 0, y: 0 },
+          { type: "pointerDown", button: 0 },
+          { type: "pointerMove", origin: "pointer", x: 80, y: 0, duration: 100 },
+          { type: "pointerUp", button: 0 },
+        ],
+      },
+    ],
+  });
+  await d.cmd("DELETE", d.s("/actions"));
+  await new Promise((r) => setTimeout(r, 200));
+  const g3 = await geo();
+  assert.ok(g3.url > g1.url + 50, `URL column wider after dragging its edge: ${JSON.stringify([g1.url, g3.url])}`);
   await d.exec(`window.__quena.menu("view.inspectors")`);
 });
 

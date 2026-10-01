@@ -114,6 +114,8 @@ export interface Layout {
   presetChosen: boolean;
   /** Diagnostics panel: last analyzer, profile, scope and option overrides. */
   diag?: DiagPrefs;
+  /** Timeline columns: order of the visible ones and their widths. */
+  timeline?: import("./lib/timelineScale").TlLayout;
 }
 
 export interface DiagPrefs {

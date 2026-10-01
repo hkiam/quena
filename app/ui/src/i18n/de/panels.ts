@@ -280,4 +280,15 @@ export const panels: Record<string, string> = {
   "Remove {n} unselected sessions?": "{n} nicht ausgewählte Sessions entfernen?",
   "Remove all {n} sessions?": "Alle {n} Sessions entfernen?",
   "They are removed from the list and from the recorded data. This cannot be undone.": "Sie werden aus der Liste und aus den aufgezeichneten Daten entfernt. Das lässt sich nicht rückgängig machen.",
+  // Timeline: zoom, columns
+  URL: "URL",
+  Zoom: "Zoom",
+  "Zoom in": "Vergrößern",
+  "Zoom out": "Verkleinern",
+  "Zoom in (Ctrl/⌘ + wheel)": "Vergrößern (Strg/⌘ + Mausrad)",
+  "Zoom out (Ctrl/⌘ + wheel)": "Verkleinern (Strg/⌘ + Mausrad)",
+  Fit: "Einpassen",
+  "Fit the whole time span into the view": "Den ganzen Zeitraum in die Ansicht einpassen",
+  "Drag to move; right-click for columns": "Ziehen zum Verschieben; Rechtsklick für Spalten",
+  "Drag to move, drag the edge to resize; right-click for columns": "Ziehen zum Verschieben, am Rand ziehen für die Breite; Rechtsklick für Spalten",
 };

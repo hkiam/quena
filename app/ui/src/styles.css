@@ -1225,24 +1225,152 @@ pre {
   color: var(--muted);
   text-align: right;
 }
-.tl-row {
+/* Timeline: a table with a time axis; columns left of the graph stay in place when the
+   graph scrolls horizontally (zoom). */
+.timeline {
   display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 6px;
-  height: 16px;
-  align-items: center;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  padding: 6px 0 0;
 }
-.tl-row:hover {
-  background: var(--active-line);
+.timeline > .tl-head {
+  padding: 0 8px;
 }
-.tl-label {
+.tl-scroll {
+  overflow: auto;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+.tl-table {
+  position: relative;
+  min-width: 100%;
+}
+.tl-hrow,
+.tl-row {
+  display: flex;
+  align-items: stretch;
+}
+.tl-hrow {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 24px;
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border);
+}
+.tl-cell {
+  position: relative;
+  flex: none;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  padding: 0 6px;
+  line-height: 20px;
+  box-sizing: border-box;
+}
+.tl-cell.sticky {
+  position: sticky;
+  z-index: 1;
+  background: var(--panel-bg);
+}
+.tl-hrow .tl-cell.sticky {
+  z-index: 4;
+}
+.tl-hcell {
+  line-height: 24px;
+  color: var(--muted);
+  font-weight: 600;
+  cursor: grab;
+  user-select: none;
+  border-right: 1px solid var(--border-soft);
+}
+.tl-hcell.drop-before {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tl-drop-end {
+  flex: none;
+  width: 2px;
+  background: var(--accent);
+}
+.tl-htext {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+}
+.tl-resize:hover {
+  background: var(--accent-soft);
+}
+.tl-c-graph {
+  padding: 0;
+  cursor: default;
+  /* Grid lines at every axis tick, drawn once per row by the browser. */
+  background-image: repeating-linear-gradient(to right, var(--border-soft) 0 1px, transparent 1px var(--tl-step));
+}
+.tl-hrow .tl-c-graph {
+  background-image: none;
+}
+.tl-c-id,
+.tl-c-duration,
+.tl-c-size,
+.tl-c-status {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.tl-c-status.err {
+  color: var(--row-red);
+}
+.tl-axis {
+  position: relative;
+  height: 100%;
+}
+.tl-tick {
+  position: absolute;
+  top: 0;
+  padding-left: 3px;
+  border-left: 1px solid var(--border);
+  font-weight: 400;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tl-row {
+  cursor: default;
+  border-bottom: 1px solid transparent;
+}
+.tl-row:hover .tl-cell {
+  background-color: var(--active-line);
+}
+.tl-row.focused .tl-cell {
+  background-color: var(--accent-soft);
 }
 .tl-track {
   position: relative;
   height: 10px;
+  top: 5px;
+}
+.tl-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tl-zoom button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.tl-zoom-v {
+  min-width: 3.5em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
 }
 .tl-bar {
   position: absolute;
