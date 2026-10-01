@@ -42,7 +42,10 @@ mod analyzer_world {
     });
 }
 
-use analyzer_world::exports::quena::plugin::analyzer::{Info as AnalyzerInfo, Session as WitSession, TextInfo as WitTextInfo, Timers as WitTimers};
+use analyzer_world::exports::quena::plugin::analyzer::{
+    AuthInfo as WitAuthInfo, Info as AnalyzerInfo, JwtClaims as WitJwtClaims, OauthRequest as WitOauthRequest, OauthResponse as WitOauthResponse, OidcDiscovery as WitOidcDiscovery,
+    Session as WitSession, TextInfo as WitTextInfo, Timers as WitTimers,
+};
 use analyzer_world::{AnalyzerPlugin, AnalyzerPluginPre};
 use decoder_world::exports::quena::plugin::decoder::{Info as DecoderInfo, Representation};
 use decoder_world::{Plugin, PluginPre};
@@ -155,6 +158,164 @@ impl From<AnalyzerTextInfo> for WitTextInfo {
     }
 }
 
+/// Non-secret claims of a JSON Web Token (mirrors `jwt-claims` of the `analyzer` interface).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyzerJwtClaims {
+    pub alg: String,
+    pub typ: Option<String>,
+    pub iss: Option<String>,
+    pub aud: Vec<String>,
+    pub exp: Option<u64>,
+    pub nbf: Option<u64>,
+    pub iat: Option<u64>,
+    pub client: Option<String>,
+    pub tenant: Option<String>,
+    pub ver: Option<String>,
+    pub scopes: Vec<String>,
+    pub roles: Vec<String>,
+    pub groups: Option<u32>,
+    pub groups_overage: bool,
+    pub size: u32,
+}
+
+impl From<AnalyzerJwtClaims> for WitJwtClaims {
+    fn from(c: AnalyzerJwtClaims) -> WitJwtClaims {
+        WitJwtClaims {
+            alg: c.alg,
+            typ: c.typ,
+            iss: c.iss,
+            aud: c.aud,
+            exp: c.exp,
+            nbf: c.nbf,
+            iat: c.iat,
+            client: c.client,
+            tenant: c.tenant,
+            ver: c.ver,
+            scopes: c.scopes,
+            roles: c.roles,
+            groups: c.groups,
+            groups_overage: c.groups_overage,
+            size: c.size,
+        }
+    }
+}
+
+/// An OAuth token-endpoint request, facts only (mirrors `oauth-request`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyzerOauthRequest {
+    pub grant_type: Option<String>,
+    pub client_id: Option<String>,
+    pub scope: Option<String>,
+    pub redirect_uri: Option<String>,
+    pub has_code: bool,
+    pub has_code_verifier: bool,
+    pub has_refresh_token: bool,
+    pub has_client_secret: bool,
+    pub has_client_assertion: bool,
+    pub basic_client_auth: bool,
+}
+
+impl From<AnalyzerOauthRequest> for WitOauthRequest {
+    fn from(r: AnalyzerOauthRequest) -> WitOauthRequest {
+        WitOauthRequest {
+            grant_type: r.grant_type,
+            client_id: r.client_id,
+            scope: r.scope,
+            redirect_uri: r.redirect_uri,
+            has_code: r.has_code,
+            has_code_verifier: r.has_code_verifier,
+            has_refresh_token: r.has_refresh_token,
+            has_client_secret: r.has_client_secret,
+            has_client_assertion: r.has_client_assertion,
+            basic_client_auth: r.basic_client_auth,
+        }
+    }
+}
+
+/// An OAuth/OIDC JSON response, facts only (mirrors `oauth-response`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyzerOauthResponse {
+    pub error: Option<String>,
+    pub error_description: Option<String>,
+    pub error_codes: Vec<u32>,
+    pub error_uri: Option<String>,
+    pub trace_id: Option<String>,
+    pub correlation_id: Option<String>,
+    pub token_type: Option<String>,
+    pub expires_in: Option<u32>,
+    pub has_access_token: bool,
+    pub has_refresh_token: bool,
+    pub has_id_token: bool,
+    pub scope: Option<String>,
+    pub access_token: Option<AnalyzerJwtClaims>,
+    pub id_token: Option<AnalyzerJwtClaims>,
+}
+
+impl From<AnalyzerOauthResponse> for WitOauthResponse {
+    fn from(r: AnalyzerOauthResponse) -> WitOauthResponse {
+        WitOauthResponse {
+            error: r.error,
+            error_description: r.error_description,
+            error_codes: r.error_codes,
+            error_uri: r.error_uri,
+            trace_id: r.trace_id,
+            correlation_id: r.correlation_id,
+            token_type: r.token_type,
+            expires_in: r.expires_in,
+            has_access_token: r.has_access_token,
+            has_refresh_token: r.has_refresh_token,
+            has_id_token: r.has_id_token,
+            scope: r.scope,
+            access_token: r.access_token.map(Into::into),
+            id_token: r.id_token.map(Into::into),
+        }
+    }
+}
+
+/// An OpenID Connect discovery document (mirrors `oidc-discovery`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyzerOidcDiscovery {
+    pub issuer: Option<String>,
+    pub authorization_endpoint: Option<String>,
+    pub token_endpoint: Option<String>,
+    pub jwks_uri: Option<String>,
+    pub end_session_endpoint: Option<String>,
+}
+
+impl From<AnalyzerOidcDiscovery> for WitOidcDiscovery {
+    fn from(d: AnalyzerOidcDiscovery) -> WitOidcDiscovery {
+        WitOidcDiscovery {
+            issuer: d.issuer,
+            authorization_endpoint: d.authorization_endpoint,
+            token_endpoint: d.token_endpoint,
+            jwks_uri: d.jwks_uri,
+            end_session_endpoint: d.end_session_endpoint,
+        }
+    }
+}
+
+/// Authentication facts of a session (mirrors `auth-info` of the `analyzer` interface).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AnalyzerAuthInfo {
+    pub bearer: Option<AnalyzerJwtClaims>,
+    pub opaque_bearer: Option<u32>,
+    pub oauth_request: Option<AnalyzerOauthRequest>,
+    pub oauth_response: Option<AnalyzerOauthResponse>,
+    pub discovery: Option<AnalyzerOidcDiscovery>,
+}
+
+impl From<AnalyzerAuthInfo> for WitAuthInfo {
+    fn from(a: AnalyzerAuthInfo) -> WitAuthInfo {
+        WitAuthInfo {
+            bearer: a.bearer.map(Into::into),
+            opaque_bearer: a.opaque_bearer,
+            oauth_request: a.oauth_request.map(Into::into),
+            oauth_response: a.oauth_response.map(Into::into),
+            discovery: a.discovery.map(Into::into),
+        }
+    }
+}
+
 /// One session record for an analyzer (mirrors `session` of the `analyzer` interface), so
 /// callers do not depend on wasmtime types. Headers must already be allow-listed and
 /// redacted (plugins/webdiag/REPORT.md).
@@ -188,6 +349,8 @@ pub struct AnalyzerSession {
     pub response_text: Option<AnalyzerTextInfo>,
     pub request_decoding_error: Option<String>,
     pub response_decoding_error: Option<String>,
+    /// OAuth / OpenID Connect facts (none when the session has nothing of that kind).
+    pub auth: Option<AnalyzerAuthInfo>,
 }
 
 impl From<AnalyzerSession> for WitSession {
@@ -234,6 +397,7 @@ impl From<AnalyzerSession> for WitSession {
             response_text: s.response_text.map(Into::into),
             request_decoding_error: s.request_decoding_error,
             response_decoding_error: s.response_decoding_error,
+            auth: s.auth.map(Into::into),
         }
     }
 }
@@ -672,7 +836,7 @@ impl PluginHost {
                 out.push((i as u16, info.tab.clone(), conf));
             }
         }
-        out.sort_by(|a, b| b.2.cmp(&a.2));
+        out.sort_by_key(|b| std::cmp::Reverse(b.2));
         out
     }
 
@@ -768,7 +932,7 @@ impl PluginHost {
                 }
             }
         }
-        out.sort_by(|a, b| b.confidence.cmp(&a.confidence));
+        out.sort_by_key(|b| std::cmp::Reverse(b.confidence));
         out
     }
 

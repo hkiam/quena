@@ -7,13 +7,22 @@
 //! the `*-Authenticate` challenges) never reach the plugin; in the session URL, `Location`
 //! and `Referer` the user info, the values of sensitive query/fragment parameters and every
 //! other parameter value longer than 64 bytes are replaced by their size (OData `$` system
-//! options are only subject to the name rule). URL paths are passed unchanged.
+//! options are only subject to the name rule). URL paths are passed unchanged. The values of
+//! well-known OAuth parameters (`response_type`, `scope`, `client_id`, `redirect_uri` without
+//! its query, `error` …) and of the non-secret `*-Authenticate` parameters (`realm`, `error`,
+//! `error_description` …) are kept; `error_description` is cut and has e-mails masked.
+//! Authentication facts (JWT claims, OAuth requests / responses, discovery) come from
+//! [`auth_facts`].
+
+#[path = "auth_facts.rs"]
+pub mod auth_facts;
 
 use crate::AppCore;
 use anyhow::{Result, anyhow};
 use quena_body::Body;
 use quena_jobs::{JobCtx, JobId, Priority};
 use quena_model::{Headers, Micros, SessionDetail, SessionId, SessionKind};
+use auth_facts::{AUTH_BODY_LIMIT, AuthInput, PARAM_LIMIT, encode_component, safe_description};
 use quena_plugin_host::{AnalyzerSession, AnalyzerTextInfo, AnalyzerTimers, PluginKind};
 use quena_store::Capture;
 use serde::Serialize;
@@ -149,23 +158,56 @@ fn split_commas(v: &str) -> Vec<&str> {
     out
 }
 
-/// `name=value` auth parameter → `name` (a token68 like `abc==` is no parameter).
-fn param_name(s: &str) -> Option<&str> {
+/// `name=value` auth parameter → (`name`, `value` as written; a token68 like `abc==` is no
+/// parameter).
+fn param_name(s: &str) -> Option<(&str, &str)> {
     let (name, value) = s.split_once('=')?;
-    let name = name.trim_end();
-    (is_token(name) && !value.trim().is_empty() && !value.trim().bytes().all(|b| b == b'=')).then_some(name)
+    let (name, value) = (name.trim_end(), value.trim());
+    (is_token(name) && !value.is_empty() && !value.bytes().all(|b| b == b'=')).then_some((name, value))
+}
+
+/// Challenge parameters whose values are no secrets and are kept (lower case).
+const AUTHENTICATE_KEEP: &[&str] = &["realm", "error", "error_description", "error_uri", "scope", "authorization_uri", "resource_metadata", "resource", "trusted_issuers"];
+
+/// A `*-Authenticate` parameter: `name="value"` for the kept names (`error_description` cut
+/// and e-mails masked, others at most [`PARAM_LIMIT`] bytes or `<n bytes>`), else the name.
+fn authenticate_param(name: &str, value: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    if !AUTHENTICATE_KEEP.contains(&lower.as_str()) {
+        return name.to_string();
+    }
+    let quoted = value.len() >= 2 && value.starts_with('"') && value.ends_with('"');
+    if lower == "error_description" {
+        let raw = if quoted { &value[1..value.len() - 1] } else { value };
+        let mut text = String::with_capacity(raw.len());
+        let mut esc = false;
+        for c in raw.chars() {
+            match c {
+                '\\' if !esc => esc = true,
+                _ => {
+                    esc = false;
+                    text.push(c);
+                }
+            }
+        }
+        let safe = safe_description(&text).replace('\\', "\\\\").replace('"', "\\\"");
+        return format!("{name}=\"{safe}\"");
+    }
+    if value.len() > PARAM_LIMIT { format!("{name}={}", bytes(value.len())) } else { format!("{name}={value}") }
 }
 
 /// `WWW-Authenticate` / `Proxy-Authenticate`: scheme and parameter names of every
-/// challenge; token68 values (e.g. a Negotiate token) become `<n bytes>`.
+/// challenge, plus the values of the non-secret parameters ([`AUTHENTICATE_KEEP`]); token68
+/// values (e.g. a Negotiate token) become `<n bytes>`.
 pub fn redact_authenticate(v: &str) -> String {
-    // (scheme, token size, parameter names)
+    // (scheme, token size, parameters)
     let mut challenges: Vec<(String, Option<usize>, Vec<String>)> = Vec::new();
     for item in split_commas(v).into_iter().map(str::trim).filter(|s| !s.is_empty()) {
-        if let Some(name) = param_name(item) {
+        if let Some((name, value)) = param_name(item) {
+            let p = authenticate_param(name, value);
             match challenges.last_mut() {
-                Some(c) => c.2.push(name.to_string()),
-                None => challenges.push((String::new(), None, vec![name.to_string()])),
+                Some(c) => c.2.push(p),
+                None => challenges.push((String::new(), None, vec![p])),
             }
             continue;
         }
@@ -180,7 +222,7 @@ pub fn redact_authenticate(v: &str) -> String {
         let mut c = (scheme.to_string(), None, vec![]);
         if !rest.is_empty() {
             match param_name(rest) {
-                Some(name) => c.2.push(name.to_string()),
+                Some((name, value)) => c.2.push(authenticate_param(name, value)),
                 None => c.1 = Some(rest.len()),
             }
         }
@@ -277,6 +319,7 @@ pub fn redact_set_cookie(v: &str) -> String {
 /// Query/fragment parameter names whose values are secrets (lower case, exact).
 const SECRET_PARAMS: &[&str] = &[
     "auth", "code", "state", "nonce", "sig", "key", "sid", "otp", // OAuth, signed URLs, sessions
+    "code_challenge", "code_verifier", "login_hint", // OAuth PKCE, personal hints
     "se", "sp", "sv", "sr", "st", "spr", "srt", "ss", "si", "sdd", "skoid", "sktid", "skt", "ske", "sks", "skv", // Azure SAS
 ];
 /// Parameter names that contain one of these (lower case) carry secrets, e.g. `access_token`,
@@ -285,6 +328,38 @@ const SECRET_PARAM_PARTS: &[&str] =
     &["token", "password", "passwd", "secret", "signature", "apikey", "api_key", "api-key", "session", "credential", "jwt", "assertion", "samlresponse", "samlrequest", "ticket"];
 /// Parameter name prefixes that carry secrets (AWS / GCS signed URLs).
 const SECRET_PARAM_PREFIXES: &[&str] = &["x-amz-", "x-goog-"];
+
+/// OAuth / OIDC parameters whose values are kept up to [`PARAM_LIMIT`] bytes (lower case;
+/// REPORT.md "Authentication facts"). `error_description` is cut and has e-mails masked,
+/// `redirect_uri` loses its own query.
+const OAUTH_PARAMS: &[&str] = &[
+    "response_type",
+    "response_mode",
+    "scope",
+    "prompt",
+    "client_id",
+    "redirect_uri",
+    "code_challenge_method",
+    "grant_type",
+    "max_age",
+    "acr_values",
+    "ui_locales",
+    "domain_hint",
+    "error",
+    "error_description",
+    "error_uri",
+    "error_subcode",
+];
+
+/// The value of a kept OAuth parameter (`name` lower case, see [`OAUTH_PARAMS`]).
+fn oauth_param_value(name: &str, value: &str) -> String {
+    let v = match name {
+        "error_description" => encode_component(&safe_description(&decode_param(value))),
+        "redirect_uri" => auth_facts::bare_redirect(value),
+        _ => value.to_string(),
+    };
+    if v.len() > PARAM_LIMIT { url_bytes(v.len()) } else { v }
+}
 
 /// Percent-decoding (and `+` → space) of a parameter name, for matching only.
 fn decode_param(s: &str) -> String {
@@ -325,7 +400,11 @@ fn redact_params(q: &str) -> String {
             Some((name, value)) => {
                 if name.len() > URL_VALUE_LIMIT {
                     url_bytes(p.len())
-                } else if !value.is_empty() && (secret_param(name) || (value.len() > URL_VALUE_LIMIT && !decode_param(name).starts_with('$'))) {
+                } else if !value.is_empty() && secret_param(name) {
+                    format!("{name}={}", url_bytes(value.len()))
+                } else if let Some(n) = Some(decode_param(name).trim().to_ascii_lowercase()).filter(|n| OAUTH_PARAMS.contains(&n.as_str())) {
+                    format!("{name}={}", oauth_param_value(&n, value))
+                } else if value.len() > URL_VALUE_LIMIT && !decode_param(name).starts_with('$') {
                     format!("{name}={}", url_bytes(value.len()))
                 } else {
                     p.to_string()
@@ -446,7 +525,8 @@ pub fn record_bytes(r: &AnalyzerSession) -> usize {
     let h: usize = r.request_headers.iter().chain(&r.response_headers).map(|(n, v)| n.len() + v.len() + 16).sum();
     let opt = |o: &Option<String>| o.as_ref().map_or(0, |e| e.len());
     let text: usize = [&r.request_text, &r.response_text].into_iter().flatten().map(|t| 160 + opt(&t.header_charset) + opt(&t.document_charset) + t.effective.len()).sum();
-    256 + r.url.len() + r.method.len() + r.host.len() + r.content_type.len() + r.process.len() + opt(&r.error) + h + text + opt(&r.request_decoding_error) + opt(&r.response_decoding_error)
+    let auth = r.auth.as_ref().map_or(0, auth_facts::auth_bytes);
+    256 + r.url.len() + r.method.len() + r.host.len() + r.content_type.len() + r.process.len() + opt(&r.error) + h + text + opt(&r.request_decoding_error) + opt(&r.response_decoding_error) + auth
 }
 
 // ------------------------------------------------------------------ bodies
@@ -637,19 +717,34 @@ pub fn build_record(d: &SessionDetail, req: &Body, resp: &Body, cancelled: &dyn 
     let empty = Headers::new();
     let resp_headers = d.response.as_ref().map(|r| &r.headers).unwrap_or(&empty);
     // Tunnels keep their authority form (`host:port`).
-    let url = if s.kind == SessionKind::Tunnel {
-        d.request.url.clone()
-    } else {
-        redact_url(&if has_scheme(&d.request.url) { d.request.url.clone() } else { s.full_url() })
-    };
+    let full_url = if s.kind == SessionKind::Tunnel || has_scheme(&d.request.url) { d.request.url.clone() } else { s.full_url() };
+    let url = if s.kind == SessionKind::Tunnel { full_url.clone() } else { redact_url(&full_url) };
     let url = cap_field(url, true);
     // One pass per body: size, fingerprint and (textual types) the prefix for the encoding
     // facts. Only facts leave the host.
     let req_ct = d.request.headers.get("content-type");
     let resp_ct = resp_headers.get("content-type").or(Some(s.content_type.as_str()).filter(|c| !c.is_empty()));
-    let sample = |ct: Option<&str>| if quena_body::charset::is_textual(ct) { TEXT_SAMPLE } else { 0 };
+    // An untyped response may still be an OAuth / discovery JSON: its prefix is kept too
+    // (the body is read for its size anyway).
+    let sample = |ct: Option<&str>| if quena_body::charset::is_textual(ct) { TEXT_SAMPLE } else if ct.is_none_or(|c| c.trim().is_empty()) { AUTH_BODY_LIMIT + 1 } else { 0 };
     let rq = body_scan(req, d.request.headers.get("content-encoding"), REQUEST_HASH_LIMIT, false, sample(req_ct), cancelled);
     let rs = body_scan(resp, resp_headers.get("content-encoding"), RESPONSE_HASH_LIMIT, true, sample(resp_ct), cancelled);
+    // Authentication facts from the same prefixes (only complete bodies ≤ 64 KiB are parsed).
+    fn whole<'a>(scan: &'a BodyScan, body: &Body) -> Option<&'a [u8]> {
+        (scan.error.is_none() && !body.is_truncated() && !scan.prefix.is_empty() && scan.prefix.len() <= AUTH_BODY_LIMIT && scan.decoded == scan.prefix.len() as u64).then_some(scan.prefix.as_slice())
+    }
+    let auth = if s.kind == SessionKind::Tunnel {
+        None
+    } else {
+        auth_facts::auth_info(&AuthInput {
+            method: &d.request.method,
+            url: &full_url,
+            authorization: d.request.headers.get("authorization"),
+            request_content_type: req_ct,
+            request_body: whole(&rq, req),
+            response_body: whole(&rs, resp),
+        })
+    };
     let text = |ct: Option<&str>, b: &BodyScan| if b.error.is_none() { text_info(ct, &b.prefix) } else { None };
     let (request_text, response_text) = (text(req_ct, &rq), text(resp_ct, &rs));
     let (req_hash, resp_decoded, resp_hash) = (rq.hash, rs.decoded, rs.hash);
@@ -694,6 +789,7 @@ pub fn build_record(d: &SessionDetail, req: &Body, resp: &Body, cancelled: &dyn 
         response_text,
         request_decoding_error: rq.error,
         response_decoding_error: rs.error,
+        auth,
     }
 }
 
@@ -964,11 +1060,25 @@ mod tests {
     #[test]
     fn authenticate_keeps_schemes_and_parameter_names() {
         assert_eq!(redact_authenticate(&format!("Negotiate {}", "A".repeat(1320))), "Negotiate <1320 bytes>");
-        assert_eq!(redact_authenticate(r#"Bearer realm="api", error="invalid_token", error_description="The token expired""#), "Bearer realm, error, error_description");
+        // Non-secret parameters keep their values (REPORT.md "Authentication facts").
+        assert_eq!(
+            redact_authenticate(r#"Bearer realm="api", error="invalid_token", error_description="The token expired at '10/01/2026 10:00:00'""#),
+            r#"Bearer realm="api", error="invalid_token", error_description="The token expired at '10/01/2026 10:00:00'""#
+        );
+        assert_eq!(
+            redact_authenticate(r#"Bearer resource_metadata="https://api.test/.well-known/oauth-protected-resource", scope="a b", authorization_uri="https://login.test/authorize", trusted_issuers="https://iss", resource=api, error_uri="https://e""#),
+            r#"Bearer resource_metadata="https://api.test/.well-known/oauth-protected-resource", scope="a b", authorization_uri="https://login.test/authorize", trusted_issuers="https://iss", resource=api, error_uri="https://e""#
+        );
+        // error_description: e-mails masked, escapes kept valid, at most 300 bytes.
+        let long = redact_authenticate(&format!(r#"Bearer error="invalid_token", error_description="user secret.person@example.com said \"no\" {}""#, "x".repeat(400)));
+        assert!(long.starts_with(r#"Bearer error="invalid_token", error_description="user <email> said \"no\" xxx"#) && long.ends_with("…\""), "{long}");
+        assert!(!long.contains("secret.person") && long.len() < 360, "{long}");
+        // Other parameters (Digest nonce, unknown ones) keep only their names; long values become sizes.
+        assert_eq!(redact_authenticate(&format!(r#"Bearer realm="{}""#, "r".repeat(600))), "Bearer realm=<602 bytes>");
         assert_eq!(redact_authenticate("Negotiate, NTLM"), "Negotiate, NTLM");
-        assert_eq!(redact_authenticate(r#"Basic realm="a, b", charset="UTF-8", Negotiate"#), "Basic realm, charset, Negotiate");
+        assert_eq!(redact_authenticate(r#"Basic realm="a, b", charset="UTF-8", Negotiate"#), r#"Basic realm="a, b", charset, Negotiate"#);
         assert_eq!(redact_authenticate("NTLM TlRMTVNTUAACAAAADAAMADgAAAA="), "NTLM <28 bytes>");
-        assert_eq!(redact_authenticate(r#"Digest realm="x", nonce="secret-nonce", qop="auth""#), "Digest realm, nonce, qop");
+        assert_eq!(redact_authenticate(r#"Digest realm="x", nonce="secret-nonce", opaque="o", qop="auth""#), r#"Digest realm="x", nonce, opaque, qop"#);
         assert_eq!(redact_authenticate(""), "");
     }
 
@@ -1033,6 +1143,100 @@ mod tests {
     }
 
     #[test]
+    fn urls_keep_oauth_parameters_but_not_codes_state_or_hints() {
+        let scope = "openid+profile+offline_access+api%3A%2F%2Forders%2FOrders.Read+api%3A%2F%2Forders%2FOrders.Write";
+        assert!(scope.len() > URL_VALUE_LIMIT);
+        let url = format!(
+            "https://login.test/tenant/oauth2/v2.0/authorize?response_type=code&response_mode=form_post&client_id=11111111-2222-3333-4444-555555555555&scope={scope}\
+             &redirect_uri=https%3A%2F%2Fapp.test%2Fcb%3Ftenant%3DSECRET-CB-QUERY&state=SECRET-STATE&nonce=SECRET-NONCE&code_challenge=SECRET-CHALLENGE-abcdefghijklmnopqrstuvwxyz\
+             &code_challenge_method=S256&login_hint=secret.person%40example.com&id_token_hint=eyJSECRET&prompt=select_account&max_age=0&ui_locales=de&domain_hint=example.com"
+        );
+        let r = redact_url(&url);
+        assert_eq!(
+            r,
+            format!(
+                "https://login.test/tenant/oauth2/v2.0/authorize?response_type=code&response_mode=form_post&client_id=11111111-2222-3333-4444-555555555555&scope={scope}\
+                 &redirect_uri=https%3A%2F%2Fapp.test%2Fcb&state=%3C12%20bytes%3E&nonce=%3C12%20bytes%3E&code_challenge=%3C43%20bytes%3E\
+                 &code_challenge_method=S256&login_hint=%3C27%20bytes%3E&id_token_hint=%3C9%20bytes%3E&prompt=select_account&max_age=0&ui_locales=de&domain_hint=example.com"
+            )
+        );
+        for secret in ["SECRET", "secret.person"] {
+            assert!(!r.contains(secret), "{r}");
+        }
+        // Callback with an error: description kept (e-mails masked, ≤ 300 bytes), code/state not.
+        let r = redact_url("https://app.test/cb?error=access_denied&error_description=AADSTS50105%3A+The+user+secret.person%40example.com+is+not+assigned&error_uri=https%3A%2F%2Fe.test&error_subcode=cancel&state=SECRET-STATE&code=SECRET-CODE-123");
+        assert_eq!(
+            r,
+            "https://app.test/cb?error=access_denied&error_description=AADSTS50105%3A%20The%20user%20%3Cemail%3E%20is%20not%20assigned&error_uri=https%3A%2F%2Fe.test&error_subcode=cancel&state=%3C12%20bytes%3E&code=%3C15%20bytes%3E"
+        );
+        let long = redact_url(&format!("/cb?error_description={}", "x".repeat(1000)));
+        assert!(long.len() < 340 && long.ends_with("%E2%80%A6"), "{long}");
+        // Kept values have a cap too; the fragment of an implicit flow stays redacted.
+        let r = redact_url(&format!("/a?scope={}#access_token=SECRET-ACCESS&state=SECRET-STATE&token_type=Bearer", "s".repeat(600)));
+        assert_eq!(r, "/a?scope=%3C600%20bytes%3E#access_token=%3C13%20bytes%3E&state=%3C12%20bytes%3E&token_type=%3C6%20bytes%3E");
+        // Location headers use the same rules.
+        let h = redact_headers(&headers(&[("Location", "https://app.test/cb?code=SECRET-CODE-123&state=SECRET-STATE&session_state=s&iss=https%3A%2F%2Flogin.test")]));
+        assert_eq!(h[0].1, "https://app.test/cb?code=%3C15%20bytes%3E&state=%3C12%20bytes%3E&session_state=%3C1%20bytes%3E&iss=https%3A%2F%2Flogin.test");
+    }
+
+    #[test]
+    fn records_carry_authentication_facts() {
+        use base64_url as b64;
+        let (_d, cap) = capture();
+        let token = format!(
+            "{}.{}.SECRET-SIGNATURE",
+            b64(br#"{"alg":"RS256","typ":"JWT"}"#),
+            b64(br#"{"iss":"https://kc.test/realms/r","aud":"account","exp":1790000000,"azp":"web","scope":"openid email","sub":"SECRET-SUB-1","email":"secret.person@example.com","nonce":"SECRET-NONCE","jti":"SECRET-JTI"}"#)
+        );
+        // Token request with a form body and a JSON response.
+        let mut d = detail(SessionKind::Http, "https://kc.test/realms/r/protocol/openid-connect/token", 1_000_000);
+        d.request.headers = headers(&[("Content-Type", "application/x-www-form-urlencoded"), ("Authorization", "Basic d2ViOlNFQ1JFVA==")]);
+        d.response.as_mut().unwrap().headers = headers(&[("Content-Type", "application/json")]);
+        let req = cap.bodies.store_bytes(b"grant_type=authorization_code&code=SECRET-CODE-123&redirect_uri=https%3A%2F%2Fapp.test%2Fcb&code_verifier=SECRET-VERIFIER");
+        let resp = cap.bodies.store_bytes(format!(r#"{{"access_token":"{token}","expires_in":300,"refresh_token":"SECRET-REFRESH","token_type":"Bearer","id_token":"{token}"}}"#).as_bytes());
+        let id = cap.insert(d, req, resp);
+        let r = record_of(&cap, id, &|| false).unwrap();
+        let a = r.auth.clone().expect("auth facts");
+        let q = a.oauth_request.as_ref().unwrap();
+        assert_eq!((q.grant_type.as_deref(), q.redirect_uri.as_deref(), q.has_code, q.has_code_verifier, q.basic_client_auth), (Some("authorization_code"), Some("https://app.test/cb"), true, true, true));
+        let p = a.oauth_response.as_ref().unwrap();
+        assert_eq!((p.expires_in, p.has_refresh_token, p.access_token.as_ref().unwrap().client.as_deref()), (Some(300), true, Some("web")));
+        assert!(a.bearer.is_none(), "Basic is no bearer");
+        let dbg = format!("{r:?}");
+        for s in ["SECRET", "secret.person", &token] {
+            assert!(!dbg.contains(s), "{s} in {dbg}");
+        }
+        assert!(record_bytes(&r) > 300);
+
+        // API call with the JWT; an untyped discovery response; tunnels get nothing.
+        let mut d = detail(SessionKind::Http, "https://kc.test/realms/r/.well-known/openid-configuration", 2_000_000);
+        d.request.headers = headers(&[("Authorization", &format!("Bearer {token}"))]);
+        d.response.as_mut().unwrap().headers = Headers::new();
+        let id = cap.insert(d, Body::empty(), cap.bodies.store_bytes(br#"{"issuer":"https://kc.test/realms/r","token_endpoint":"https://kc.test/t"}"#));
+        let a = record_of(&cap, id, &|| false).unwrap().auth.unwrap();
+        assert_eq!((a.bearer.as_ref().unwrap().exp, a.discovery.as_ref().unwrap().issuer.as_deref()), (Some(1_790_000_000), Some("https://kc.test/realms/r")));
+        let t = cap.insert(detail(SessionKind::Tunnel, "kc.test:443", 3_000_000), Body::empty(), Body::empty());
+        assert!(record_of(&cap, t, &|| false).unwrap().auth.is_none());
+        // A plain API call: no facts (the default detail carries an opaque bearer).
+        let mut d = detail(SessionKind::Http, "https://api.test/x", 4_000_000);
+        d.request.headers = headers(&[("Accept", "*/*")]);
+        let id = cap.insert(d, Body::empty(), cap.bodies.store_bytes(br#"{"error":{"code":"NotFound"}}"#));
+        assert!(record_of(&cap, id, &|| false).unwrap().auth.is_none());
+    }
+
+    fn base64_url(data: &[u8]) -> String {
+        const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut out = String::new();
+        for c in data.chunks(3) {
+            let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+            for k in 0..=c.len() {
+                out.push(A[(n >> (18 - 6 * k) & 63) as usize] as char);
+            }
+        }
+        out
+    }
+
+    #[test]
     fn absolute_urls_need_a_scheme_prefix() {
         assert!(has_scheme("https://a.test/") && has_scheme("wss://a.test/s") && has_scheme("git+ssh://h/x"));
         assert!(!has_scheme("/login?next=https://app.test/home") && !has_scheme("a.test:443") && !has_scheme("://x") && !has_scheme("1http://x"));
@@ -1093,7 +1297,7 @@ mod tests {
             redact_headers(&h),
             vec![
                 ("Set-Cookie".to_string(), "a=<1 bytes>; Path=/".to_string()),
-                ("WWW-Authenticate".into(), "Bearer realm".into()),
+                ("WWW-Authenticate".into(), "Bearer realm=\"x\"".into()),
                 ("Proxy-Authenticate".into(), "NTLM".into()),
                 ("set-cookie".into(), "b=<2 bytes>; Secure".into()),
                 ("ETag".into(), "\"v1\"".into()),

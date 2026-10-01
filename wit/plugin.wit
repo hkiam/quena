@@ -113,9 +113,6 @@ interface analyzer {
         tls-handshake-ms: option<u32>,
     }
 
-    /// Character encoding facts of a textual body (JSON, XML, HTML, text/*, forms …),
-    /// determined by the host from the first 256 KiB of the decoded body (REPORT.md). Only
-    /// facts leave the host, never body content.
     /// Non-secret claims of a JSON Web Token (signature, jti, nonce and personal claims such
     /// as sub, oid, email, upn, name are never included). Times are seconds since the epoch.
     record jwt-claims {
@@ -200,6 +197,9 @@ interface analyzer {
         discovery: option<oidc-discovery>,
     }
 
+    /// Character encoding facts of a textual body (JSON, XML, HTML, text/*, forms …),
+    /// determined by the host from the first 256 KiB of the decoded body (REPORT.md). Only
+    /// facts leave the host, never body content.
     record text-info {
         /// `charset` of the Content-Type as sent (at most 64 bytes, else `<n bytes>`).
         header-charset: option<string>,

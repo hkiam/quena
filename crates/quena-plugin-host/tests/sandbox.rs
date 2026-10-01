@@ -194,7 +194,46 @@ fn analyzer_session(id: u64, started: u64, status: u16, duration_ms: u32) -> que
             ..Default::default()
         }),
         request_decoding_error: (id % 100 == 0).then(|| "invalid: gzip: corrupt deflate stream".into()),
+        // Authentication facts cross the WIT boundary (every record kind, nested claims).
+        auth: id.is_multiple_of(50).then(|| auth_info(id)),
         ..Default::default()
+    }
+}
+
+/// Every authentication record, filled.
+fn auth_info(id: u64) -> quena_plugin_host::AnalyzerAuthInfo {
+    use quena_plugin_host::{AnalyzerAuthInfo, AnalyzerJwtClaims, AnalyzerOauthRequest, AnalyzerOauthResponse, AnalyzerOidcDiscovery};
+    let claims = AnalyzerJwtClaims {
+        alg: "RS256".into(),
+        typ: Some("JWT".into()),
+        iss: Some("https://login.example.test/tenant/v2.0".into()),
+        aud: vec!["api://orders".into()],
+        exp: Some(1_727_690_000),
+        nbf: Some(1_727_686_400),
+        iat: Some(1_727_686_400),
+        client: Some("client-1".into()),
+        tenant: Some("tenant".into()),
+        ver: Some("2.0".into()),
+        scopes: vec!["Orders.Read".into()],
+        roles: vec!["Admin".into()],
+        groups: Some(3),
+        groups_overage: id.is_multiple_of(100),
+        size: 1200,
+    };
+    AnalyzerAuthInfo {
+        bearer: Some(claims.clone()),
+        opaque_bearer: None,
+        oauth_request: Some(AnalyzerOauthRequest { grant_type: Some("authorization_code".into()), client_id: Some("client-1".into()), has_code: true, basic_client_auth: true, ..Default::default() }),
+        oauth_response: Some(AnalyzerOauthResponse {
+            error: Some("invalid_grant".into()),
+            error_description: Some("AADSTS70008: The provided authorization code or refresh token has expired.".into()),
+            error_codes: vec![70008],
+            expires_in: Some(3600),
+            access_token: Some(claims.clone()),
+            id_token: Some(claims),
+            ..Default::default()
+        }),
+        discovery: Some(AnalyzerOidcDiscovery { issuer: Some("https://login.example.test/tenant/v2.0".into()), token_endpoint: Some("https://login.example.test/token".into()), ..Default::default() }),
     }
 }
 

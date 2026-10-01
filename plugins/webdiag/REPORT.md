@@ -41,7 +41,10 @@ keep per-session work in `push` small and do at most O(n log n) work in `finish`
   * `authorization`, `proxy-authorization`: scheme only, e.g. `Bearer`, `Negotiate`,
     `NTLM`, `Basic` (plus ` <n bytes>`), e.g. `Bearer <812 bytes>`.
   * `www-authenticate`, `proxy-authenticate`: scheme and parameter names; token
-    values replaced by `<n bytes>` (e.g. `Negotiate <1320 bytes>`, `Bearer realm, error`).
+    values replaced by `<n bytes>` (e.g. `Negotiate <1320 bytes>`). The values of the
+    descriptive parameters `realm`, `error`, `error_description`, `error_uri`, `scope`,
+    `authorization_uri`, `resource_metadata`, `resource` and `trusted_issuers` are kept
+    (e.g. `Bearer realm="api", error="invalid_token"`), capped like OAuth parameters.
   * `cookie`: names only, `a; b; sid` (values dropped); a pair without `=` is a value
     (RFC 6265bis) and becomes `<n bytes>`.
   * `set-cookie`: `name=<n bytes>` plus the attributes `Path`, `Domain`, `Expires`,
@@ -54,7 +57,7 @@ keep per-session work in `push` small and do at most O(n log n) work in `finish`
   * user info (`user:password@`) → `%3Cn%20bytes%3E@`;
   * query and fragment parameters (`name=value`, `&`-separated) whose name (percent-decoded,
     case-insensitive) is sensitive → `name=%3Cn%20bytes%3E`. Sensitive: exactly `auth`,
-    `code`, `state`, `nonce`, `sig`, `key`, `sid`, `otp`, the Azure SAS fields `se`, `sp`,
+    `code`, `state`, `nonce`, `code_challenge`, `code_verifier`, `login_hint`, `sig`, `key`, `sid`, `otp`, the Azure SAS fields `se`, `sp`,
     `sv`, `sr`, `st`, `spr`, `srt`, `ss`, `si`, `sdd`, `skoid`, `sktid`, `skt`, `ske`,
     `sks`, `skv`; any name containing `token`, `password`, `passwd`, `secret`, `signature`,
     `apikey`, `api_key`, `api-key`, `session`, `credential`, `jwt`, `assertion`,
@@ -63,7 +66,9 @@ keep per-session work in `push` small and do at most O(n log n) work in `finish`
     `x-goog-` (signed URLs);
   * any other parameter value longer than 64 bytes → `name=%3Cn%20bytes%3E`, except for
     OData system options (names starting with `$`, e.g. `$filter`, `$select`, `$expand`),
-    which keep their values; a parameter without `=` longer than 64 bytes, or a name
+    which keep their values, and for the OAuth parameters listed under Authentication
+    facts (`redirect_uri` keeps scheme, host, port and path only — its query, fragment and
+    user info are dropped); a parameter without `=` longer than 64 bytes, or a name
     longer than 64 bytes, is replaced as a whole; a fragment without `=` longer than 64
     bytes is replaced as a whole;
   * `n` is the length of the value as it appears in the URL (percent-encoded). The
@@ -283,3 +288,111 @@ codes, secrets, signatures, `state`, `nonce`, `jti` and personal claims (`sub`, 
   `error_description` (≤ 300 bytes, e-mails masked), `error_uri`, `scope`,
   `authorization_uri`, `resource_metadata`, `resource` and `trusted_issuers` are kept
   (`Bearer realm="api", error="invalid_token"`); token68 values stay redacted.
+
+## OAuth / OIDC rules
+
+These describe the bundled analyzer (`analyzers/oauth.rs`, knowledge base `idp.rs`). They use
+the authentication facts above, the OAuth parameters of URLs and `Location` headers, and the
+`WWW-Authenticate` parameters; without facts (HAR imports without bodies) flows, URL errors,
+tokens in URLs and token sizes still come from URLs and headers alone. Profiles `auth`,
+`troubleshooting` and `full`; `OAUTH-FLOW` and `TOKEN-IN-URL` also `modernization`,
+`TOKEN-REFRESH` also `performance`. All findings carry the tag `oauth`.
+
+* **Identity providers** are recognised by host, path and issuer: Microsoft Entra ID
+  (`login.microsoftonline.com`, `login.windows.net`, `login.microsoft.com`, `sts.windows.net`
+  = v1 issuer, `.us` / `.cn` clouds), Azure AD B2C (`*.b2clogin.com`), Entra External ID
+  (`*.ciamlogin.com`), AD FS (`/adfs/`), Keycloak (`/realms/<realm>/protocol/openid-connect/…`,
+  issuer `…/realms/<realm>`), Okta (`*.okta.com`, `*.oktapreview.com`, `*.okta-emea.com`),
+  Auth0 (`*.auth0.com`), Amazon Cognito (`*.amazoncognito.com`, `cognito-idp.*.amazonaws.com`),
+  Google (`accounts.google.com`, `oauth2.googleapis.com`), Duende IdentityServer
+  (`/connect/token|authorize|…`), PingFederate (`/as/token.oauth2`), otherwise generic OpenID
+  Connect. Findings name the IdP, the tenant or realm, and say where the remedy is configured
+  in that IdP (e.g. Entra "App registrations → <app> → Authentication → Redirect URIs",
+  Keycloak "Clients → <client> → Settings → Valid redirect URIs").
+* **Error knowledge**: 83 Entra ID `AADSTS` codes, 25 standard OAuth 2 / OIDC / device
+  flow / DPoP / resource server error codes, and 19 Keycloak `error_description` texts —
+  each with cause, remedy and the admin topic; ASP.NET Core `IDX…` and similar API messages
+  are classified as expired / not yet valid / audience / issuer / signature.
+* `OAUTH-ERROR` — errors of token, device, authorization and introspection endpoints (JSON
+  `error`, `error=` in the redirect `Location` or the callback URL — counted once — and API
+  `WWW-Authenticate: Bearer error=…`), per IdP host, error and first AADSTS code. Key
+  `OAUTH-ERROR|<host>|<error>|<aadsts>`. Facts: endpoints, AADSTS codes with names,
+  `error_description`, `error_subcode`, `error_uri`, clients, grant types, tenant/realm, trace
+  and correlation ids (for the IdP's support). Severity: info for normal steps (device flow
+  `authorization_pending` / `slow_down`, `use_dpop_nonce`, KMSI); critical for ≥ 3 client
+  credential or grant errors (`invalid_client`, `invalid_grant`, `unauthorized_client`, AADSTS
+  credential/grant classes) on the token endpoint; otherwise warning. A JSON `error` counts
+  only on an OAuth endpoint, with token request facts, on a recognised IdP host, with a known
+  OAuth code, AADSTS codes or a trace id; a URL `error=` only with a known code, a
+  description, `state` or a `snake_case` code. Silent sign-in errors are `OIDC-SILENT`'s; API
+  errors explained by a `TOKEN-*` rule are not repeated.
+* `OAUTH-FLOW` — per IdP host and client: an info summary of the flows (authorization code
+  ± PKCE, hybrid, implicit, ROPC, client credentials, refresh, device code, JWT bearer /
+  on-behalf-of, token exchange, SAML bearer, CIBA). Keys `OAUTH-FLOW|<kind>|<host>|<client>`
+  with kind `summary`, `implicit` (response_type with `token`; warning), `ropc`
+  (`grant_type=password`; warning), `pkce` (code flow without `code_challenge` /
+  `code_verifier`: warning for public clients — token request without client
+  authentication —, info for confidential or unknown ones), `browser-secret` (client secret
+  on a token request with `Origin`; warning), `secret-post` (client_secret in the body; info),
+  `http-redirect` (redirect URI `http://` except localhost; warning), `query-tokens`
+  (`response_mode=query` with token response types; warning).
+* `TOKEN-IN-URL` — `access_token`, `id_token`, `refresh_token` as query or fragment
+  parameter of a request URL, a `Location` or a `Referer` (values are redacted, the names
+  suffice). Key `TOKEN-IN-URL|<host>|<name>|<place>`. Warning; critical when a `Referer`
+  carries it to another site; info for `id_token` in a fragment (OIDC implicit sign-in) and
+  for SignalR/WebSocket `access_token` queries. `id_token_hint` is not reported.
+* `TOKEN-EXPIRED` — requests whose bearer JWT `exp` lies more than 60 s before the request
+  start, or that the API rejects as expired (`error_description`), per API host and client;
+  warning with the 401 count. When the server's `Date` says the token was still valid, the
+  cause is this computer's clock (medium confidence, see `CLOCK-LOCAL`). Expired tokens that
+  get 2xx more than 5 minutes after `exp`: `TOKEN-EXPIRED|accepted|<host>` (warning, the
+  API does not validate the lifetime).
+* `TOKEN-NOTYET` — `nbf`/`iat` more than 60 s after the request start (bearer tokens) or
+  after the token response was received (ID and access tokens of token responses), per
+  issuer; warning, critical from 5 minutes; names the clock offsets of IdP and API hosts
+  measured from `Date` (`CLOCK-*`).
+* `TOKEN-AUDIENCE` — 401 with a bearer JWT whose audience does not fit the API: the API says
+  so (`IDX10214`, "audience", "issuer" — high confidence), the audience is another API (a
+  Microsoft first-party resource such as Graph `00000003-…`, or a URL of another site), the
+  accepted tokens of that host have other audiences, or Entra ID v1 tokens fail where v2
+  tokens work (or vice versa). Per API host, warning, with a claims table (iss, aud, ver, scp,
+  roles, exp at the request, client) of rejected and accepted tokens. Wording as hypothesis:
+  the API's expected audience is not visible in the capture.
+* `TOKEN-SCOPE` — 403 with a bearer JWT or `WWW-Authenticate error="insufficient_scope"`,
+  per endpoint: the required scope (`scope=`) against the token's `scp` and `roles`, missing
+  ones, app-only vs. delegated tokens. Confidence high with required scope and claims, medium
+  with `insufficient_scope` alone, low for a bare 403 (may be the app's own authorisation).
+  `AUTH-FAIL` leaves these 403s to `TOKEN-SCOPE`.
+* `TOKEN-SIZE` — `TOKEN-SIZE|bearer|<host>`: Authorization tokens ≥ 8 KiB (warning; critical
+  from 16 KiB or when answered 400/431), with groups/roles counts and the groups overage;
+  `TOKEN-SIZE|cookie|<host>`: ≥ 3 chunks of one authentication cookie in a request
+  (`.AspNetCore.CookiesC1…`, `FedAuth1…`, `MSISAuth1…`, `appSession.0…`,
+  `*.session-token.0…`), ≥ 5 OIDC nonce/correlation cookies in a request, or ≥ 8 KiB of
+  authentication cookies set by the host (warning; critical when such a request got 400/431).
+  `COOKIE` does not report the size of these hosts again.
+* `TOKEN-REFRESH` — successful token requests (not device flow polling, not errors) per IdP
+  host and client: ≥ 3 new tokens for the same grant and scope before 50 % of the previous
+  `expires_in` passed, or token requests ≥ 50 % of the client's API calls (≥ 5), warning;
+  without `expires_in`, ≥ 3 within 5 minutes (warning when the bodies are identical or
+  unknown, else info; medium confidence). Replaces the former token part of `AUTH-REPEAT`,
+  which now covers NTLM/Negotiate only.
+* `OIDC-LOOP` — ≥ 3 non-silent authorization requests of one client within 60 s
+  (critical; Entra ID's `sso_reload=true` repeat within one sign-in does not count), with
+  the cycle as a table (authorize, callback). Evidence-based hypotheses:
+  cookies the callback sets that the next request does not send back, correlation/nonce
+  cookies `SameSite=None` without `Secure` or not `SameSite=None` with `form_post`, `http`
+  redirect URIs, large authentication cookies (`TOKEN-SIZE`), clock offsets; plus the usual
+  middleware causes.
+* `OIDC-SILENT` — silent authorization requests (`prompt=none`, `response_mode=web_message`)
+  answered with `login_required` / `interaction_required` / `consent_required` /
+  `account_selection_required`, or followed by an interactive one of the same client within
+  60 s (medium confidence): warning; third-party cookie blocking when IdP and app are on
+  different sites; remedies refresh tokens with rotation or a BFF. ≥ 3 silent requests across
+  sites without visible failures: info (low confidence).
+* `OIDC-DISCOVERY` — `repeat|discovery|…` / `repeat|jwks|…`: one document fetched ≥ 5 times
+  within 5 minutes by one process (info; warning from 20); `fail|<host>`: discovery or JWKS
+  requests with status ≥ 400 or no response (warning); `issuer|<host>`: ID tokens (and access
+  tokens that are not for Microsoft first-party APIs) of a host's token responses whose `iss`
+  does not match the discovery `issuer` (Entra's `{tenantid}` placeholder matches any
+  tenant), or — except Entra ID — a discovery `issuer` that differs from the URL it was
+  fetched from (warning).
