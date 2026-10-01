@@ -325,7 +325,9 @@ impl Analyzer for DupExact {
         // Full reloads of static resources are reported by CACHE (reload).
         let reloads = crate::analyzers::request::cache_reloads(ctx);
         let reported_elsewhere = |s: &Session| s.failed() || matches!(s.status, 401 | 407 | 408 | 429) || s.status >= 500;
-        let cand = p.http.iter().copied().filter(|&i| is_get(&ctx.sessions[i]) && !in_poll[i] && !reloads[i] && !reported_elsewhere(&ctx.sessions[i]));
+        // Repeated sign-ins (authorization requests, redirects to them, callbacks) are OIDC-LOOP's.
+        let sign_in = if ctx.runs(crate::analyzers::oauth::PROFILES) { crate::analyzers::oauth::model(ctx).sign_in_sessions(ctx) } else { Default::default() };
+        let cand = p.http.iter().copied().filter(|&i| is_get(&ctx.sessions[i]) && !in_poll[i] && !reloads[i] && !reported_elsewhere(&ctx.sessions[i]) && !sign_in.contains(&i));
         let exact = util::group_by(cand, |&i| {
             let s = &ctx.sessions[i];
             (p.method[i], s.url.as_str(), s.request_body_hash)

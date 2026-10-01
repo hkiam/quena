@@ -99,6 +99,7 @@ pub struct Prep {
     pub(crate) timer_driven: OnceCell<Vec<bool>>,
     pub(crate) nplus1: OnceCell<Vec<NPlus1>>,
     pub(crate) encoding: OnceCell<crate::analyzers::encoding::Classified>,
+    pub(crate) oauth: OnceCell<crate::analyzers::oauth::Model>,
 }
 
 impl Prep {
@@ -145,6 +146,7 @@ impl Prep {
             timer_driven: OnceCell::new(),
             nplus1: OnceCell::new(),
             encoding: OnceCell::new(),
+            oauth: OnceCell::new(),
         };
         for (i, s) in sessions.iter().enumerate() {
             let mime = s.content_type.split(';').next().unwrap_or("").trim();

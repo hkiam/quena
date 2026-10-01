@@ -274,7 +274,11 @@ fn r12_timing_500k() {
     let _ = ctx.prep();
     let prep = t.elapsed().as_secs_f64();
     eprintln!("prep             {prep:6.2}s");
-    let mut total = seg + prep;
+    let t = std::time::Instant::now();
+    let _ = webdiag::analyzers::oauth::model(&ctx);
+    let oauth = t.elapsed().as_secs_f64();
+    eprintln!("oauth model      {oauth:6.2}s");
+    let mut total = seg + prep + oauth;
     for a in webdiag::analyzers::all() {
         let t = std::time::Instant::now();
         let mut out = vec![];

@@ -60,6 +60,8 @@ impl Hasher for FxHasher {
 
 /// `HashMap` with [`FxHasher`].
 pub type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+/// `HashSet` with [`FxHasher`].
+pub type FxHashSet<K> = std::collections::HashSet<K, BuildHasherDefault<FxHasher>>;
 
 /// Group items by key, keeping the order in which keys first appear.
 pub fn group_by<T, K: Hash + Eq + Clone>(items: impl IntoIterator<Item = T>, key: impl Fn(&T) -> K) -> Vec<(K, Vec<T>)> {

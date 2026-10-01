@@ -6,6 +6,7 @@
 pub mod analyzers;
 pub mod canon;
 pub mod fmt;
+pub mod idp;
 pub mod json;
 pub mod model;
 pub mod net;
@@ -366,10 +367,12 @@ pub fn describe(lang: &str) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod plugin {
-    use crate::model::{Kind, Session, TextInfo, Timers};
+    use crate::model::{AuthInfo, JwtClaims, Kind, OAuthRequest, OAuthResponse, OidcDiscovery, Session, TextInfo, Timers};
 
     wit_bindgen::generate!({ path: "../../wit/plugin.wit", world: "analyzer-plugin" });
-    use exports::quena::plugin::analyzer::{Guest, GuestRun, Info, Session as WSession, TextInfo as WTextInfo};
+    use exports::quena::plugin::analyzer::{
+        AuthInfo as WAuthInfo, Guest, GuestRun, Info, JwtClaims as WJwtClaims, Session as WSession, TextInfo as WTextInfo,
+    };
 
     struct WebDiag;
 
@@ -393,6 +396,68 @@ mod plugin {
             double_encoded: t.double_encoded,
             nul_bytes: t.nul_bytes,
             looks_compressed: t.looks_compressed,
+        })
+    }
+
+    fn claims(c: WJwtClaims) -> JwtClaims {
+        JwtClaims {
+            alg: c.alg,
+            typ: c.typ,
+            iss: c.iss,
+            aud: c.aud,
+            exp: c.exp,
+            nbf: c.nbf,
+            iat: c.iat,
+            client: c.client,
+            tenant: c.tenant,
+            ver: c.ver,
+            scopes: c.scopes,
+            roles: c.roles,
+            groups: c.groups,
+            groups_overage: c.groups_overage,
+            size: c.size,
+        }
+    }
+
+    fn auth(a: WAuthInfo) -> Box<AuthInfo> {
+        Box::new(AuthInfo {
+            bearer: a.bearer.map(claims),
+            opaque_bearer: a.opaque_bearer,
+            oauth_request: a.oauth_request.map(|r| OAuthRequest {
+                grant_type: r.grant_type,
+                client_id: r.client_id,
+                scope: r.scope,
+                redirect_uri: r.redirect_uri,
+                has_code: r.has_code,
+                has_code_verifier: r.has_code_verifier,
+                has_refresh_token: r.has_refresh_token,
+                has_client_secret: r.has_client_secret,
+                has_client_assertion: r.has_client_assertion,
+                basic_client_auth: r.basic_client_auth,
+            }),
+            oauth_response: a.oauth_response.map(|r| OAuthResponse {
+                error: r.error,
+                error_description: r.error_description,
+                error_codes: r.error_codes,
+                error_uri: r.error_uri,
+                trace_id: r.trace_id,
+                correlation_id: r.correlation_id,
+                token_type: r.token_type,
+                expires_in: r.expires_in,
+                has_access_token: r.has_access_token,
+                has_refresh_token: r.has_refresh_token,
+                has_id_token: r.has_id_token,
+                scope: r.scope,
+                access_token: r.access_token.map(claims),
+                id_token: r.id_token.map(claims),
+            }),
+            discovery: a.discovery.map(|d| OidcDiscovery {
+                issuer: d.issuer,
+                authorization_endpoint: d.authorization_endpoint,
+                token_endpoint: d.token_endpoint,
+                jwks_uri: d.jwks_uri,
+                end_session_endpoint: d.end_session_endpoint,
+            }),
         })
     }
 
@@ -443,6 +508,7 @@ mod plugin {
             response_text: s.response_text.map(text),
             request_decoding_error: s.request_decoding_error,
             response_decoding_error: s.response_decoding_error,
+            auth: s.auth.map(auth),
         }
     }
 

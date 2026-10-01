@@ -254,15 +254,17 @@ fn repeated_windows_handshakes() {
 }
 
 #[test]
-fn token_not_cached() {
+fn token_not_cached_is_token_refresh_not_auth_repeat() {
+    // Without token facts (HAR without bodies): ≥ 3 identical token requests within 5 minutes.
     let s: Vec<Session> = (0..3).map(|i| post(i, "https://login.test/tenant/oauth2/v2.0/token").at(i * 40_000).req_body(300, 42)).collect();
     let f = run(s);
-    let a = of(&f, "AUTH-REPEAT");
-    assert_eq!(keys(&a), vec!["AUTH-REPEAT|token|POST login.test/tenant/oauth2/v2.0/token"]);
+    assert!(of(&f, "AUTH-REPEAT").is_empty(), "token requests are TOKEN-REFRESH's now");
+    let a = of(&f, "TOKEN-REFRESH");
+    assert_eq!(keys(&a), vec!["TOKEN-REFRESH|login.test|?"]);
     assert_eq!(a[0].severity, Severity::Warning);
     // Every 10 minutes: cached as expected.
     let s: Vec<Session> = (0..3).map(|i| post(i, "https://login.test/connect/token").at(i * 600_000).req_body(300, 42)).collect();
-    assert!(of(&run(s), "AUTH-REPEAT").is_empty());
+    assert!(of(&run(s), "TOKEN-REFRESH").is_empty());
 }
 
 // ------------------------------------------------------------------ REDIRECT

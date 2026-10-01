@@ -1,5 +1,5 @@
 //! Builders for synthetic captures in tests: `get(1, "https://h/a").at(0).took(120)`.
-use crate::model::{Session, TextInfo, Timers};
+use crate::model::{AuthInfo, JwtClaims, OAuthRequest, OAuthResponse, OidcDiscovery, Session, TextInfo, Timers};
 
 /// Base time of synthetic captures (µs since the epoch).
 pub const T0: u64 = 1_727_690_000_000_000;
@@ -189,5 +189,137 @@ impl Session {
     pub fn server_clock(self, offset_s: i64) -> Self {
         let local = self.timers.server_got_first_byte.unwrap_or(self.started) / 1_000_000;
         self.resp_h("Date", &http_date((local as i64 + offset_s) as u64))
+    }
+}
+
+// ------------------------------------------------------------------ authentication facts
+
+/// [`T0`] in seconds (JWT times).
+pub const T0_S: u64 = T0 / 1_000_000;
+
+/// Claims of a JWT valid from 1 minute before to 1 hour after [`T0`] (RS256, 1200 bytes).
+/// Adjust with the builder methods or struct update syntax.
+pub fn jwt(iss: &str, aud: &str) -> JwtClaims {
+    JwtClaims {
+        alg: "RS256".into(),
+        typ: Some("JWT".into()),
+        iss: Some(iss.into()),
+        aud: if aud.is_empty() { vec![] } else { vec![aud.into()] },
+        iat: Some(T0_S - 60),
+        nbf: Some(T0_S - 60),
+        exp: Some(T0_S + 3600),
+        size: 1200,
+        ..Default::default()
+    }
+}
+
+impl JwtClaims {
+    /// Valid from `from_s` to `to_s` seconds relative to [`T0`] (iat = nbf = from).
+    pub fn valid(mut self, from_s: i64, to_s: i64) -> Self {
+        let at = |d: i64| (T0_S as i64 + d) as u64;
+        self.iat = Some(at(from_s));
+        self.nbf = Some(at(from_s));
+        self.exp = Some(at(to_s));
+        self
+    }
+    pub fn scopes(mut self, s: &[&str]) -> Self {
+        self.scopes = s.iter().map(|x| x.to_string()).collect();
+        self
+    }
+    pub fn roles(mut self, r: &[&str]) -> Self {
+        self.roles = r.iter().map(|x| x.to_string()).collect();
+        self
+    }
+    pub fn client(mut self, c: &str) -> Self {
+        self.client = Some(c.into());
+        self
+    }
+    pub fn ver(mut self, v: &str) -> Self {
+        self.ver = Some(v.into());
+        self
+    }
+    pub fn size(mut self, n: u32) -> Self {
+        self.size = n;
+        self
+    }
+}
+
+/// A token request with a grant type and client id (no secret, no PKCE verifier).
+pub fn token_req(grant: &str, client: &str) -> OAuthRequest {
+    OAuthRequest {
+        grant_type: (!grant.is_empty()).then(|| grant.to_string()),
+        client_id: (!client.is_empty()).then(|| client.to_string()),
+        has_code: grant == "authorization_code",
+        has_refresh_token: grant == "refresh_token",
+        ..Default::default()
+    }
+}
+
+/// A successful token response (Bearer, access + refresh token).
+pub fn token_ok(expires_in: u32) -> OAuthResponse {
+    OAuthResponse { token_type: Some("Bearer".into()), expires_in: Some(expires_in), has_access_token: true, has_refresh_token: true, ..Default::default() }
+}
+
+/// An OAuth error response; AADSTS numbers in the description become `error_codes`.
+pub fn oauth_err(error: &str, description: &str) -> OAuthResponse {
+    OAuthResponse {
+        error: Some(error.into()),
+        error_description: (!description.is_empty()).then(|| description.to_string()),
+        error_codes: crate::idp::aadsts_in(description),
+        ..Default::default()
+    }
+}
+
+/// A discovery document with an issuer (endpoints below it).
+pub fn discovery_doc(issuer: &str) -> OidcDiscovery {
+    let i = issuer.trim_end_matches('/');
+    OidcDiscovery {
+        issuer: Some(issuer.into()),
+        authorization_endpoint: Some(format!("{i}/authorize")),
+        token_endpoint: Some(format!("{i}/token")),
+        jwks_uri: Some(format!("{i}/keys")),
+        end_session_endpoint: None,
+    }
+}
+
+impl Session {
+    fn auth_mut(&mut self) -> &mut AuthInfo {
+        self.auth.get_or_insert_with(Default::default)
+    }
+    /// `Authorization: Bearer <size bytes>` with the JWT's claims.
+    pub fn bearer(mut self, c: JwtClaims) -> Self {
+        self.request_headers.push(("Authorization".into(), format!("Bearer <{} bytes>", c.size)));
+        self.auth_mut().bearer = Some(c);
+        self
+    }
+    /// `Authorization: Bearer <n bytes>` with an opaque (non-JWT) token.
+    pub fn opaque_bearer(mut self, n: u32) -> Self {
+        self.request_headers.push(("Authorization".into(), format!("Bearer <{n} bytes>")));
+        self.auth_mut().opaque_bearer = Some(n);
+        self
+    }
+    /// Token request facts (form body).
+    pub fn oauth_req(mut self, r: OAuthRequest) -> Self {
+        self.request_headers.push(("Content-Type".into(), "application/x-www-form-urlencoded".into()));
+        if r.basic_client_auth {
+            self.request_headers.push(("Authorization".into(), "Basic <60 bytes>".into()));
+        }
+        self.auth_mut().oauth_request = Some(r);
+        self
+    }
+    /// OAuth JSON response facts (status unchanged: set it with `status`).
+    pub fn oauth_resp(mut self, r: OAuthResponse) -> Self {
+        self.content_type = "application/json".into();
+        self.auth_mut().oauth_response = Some(r);
+        self
+    }
+    pub fn discovery(mut self, d: OidcDiscovery) -> Self {
+        self.content_type = "application/json".into();
+        self.auth_mut().discovery = Some(d);
+        self
+    }
+    /// A `WWW-Authenticate` response header.
+    pub fn www_auth(self, v: &str) -> Self {
+        self.resp_h("WWW-Authenticate", v)
     }
 }

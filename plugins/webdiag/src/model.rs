@@ -47,6 +47,96 @@ pub struct TextInfo {
     pub looks_compressed: Option<String>,
 }
 
+/// Non-secret claims of a JSON Web Token (WIT `jwt-claims`; REPORT.md "Authentication
+/// facts"). Times are seconds since the epoch. Signature, `jti`, `nonce` and personal claims
+/// never reach the plugin.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct JwtClaims {
+    pub alg: String,
+    pub typ: Option<String>,
+    pub iss: Option<String>,
+    pub aud: Vec<String>,
+    pub exp: Option<u64>,
+    pub nbf: Option<u64>,
+    pub iat: Option<u64>,
+    /// `azp`, `appid` or `client_id`: the client the token was issued to.
+    pub client: Option<String>,
+    /// Entra ID tenant id (`tid`).
+    pub tenant: Option<String>,
+    /// Token version (`ver`), e.g. `1.0` / `2.0`.
+    pub ver: Option<String>,
+    /// `scp` / `scope`, split at spaces.
+    pub scopes: Vec<String>,
+    pub roles: Vec<String>,
+    /// Number of entries in a `groups` claim.
+    pub groups: Option<u32>,
+    /// Entra ID groups overage (`_claim_names` / `hasgroups`).
+    pub groups_overage: bool,
+    /// Length of the encoded token in bytes.
+    pub size: u32,
+}
+
+/// An OAuth request to a token/device/introspection endpoint (form body), facts only.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OAuthRequest {
+    pub grant_type: Option<String>,
+    pub client_id: Option<String>,
+    pub scope: Option<String>,
+    /// `redirect_uri` without its query.
+    pub redirect_uri: Option<String>,
+    pub has_code: bool,
+    pub has_code_verifier: bool,
+    pub has_refresh_token: bool,
+    pub has_client_secret: bool,
+    pub has_client_assertion: bool,
+    /// `client_secret_basic`: `Authorization: Basic` on the token request.
+    pub basic_client_auth: bool,
+}
+
+/// An OAuth/OIDC JSON response (token, error, device code), facts only.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OAuthResponse {
+    pub error: Option<String>,
+    /// At most 300 bytes; e-mail addresses masked.
+    pub error_description: Option<String>,
+    /// Entra ID `error_codes`, and AADSTS numbers found in the description.
+    pub error_codes: Vec<u32>,
+    pub error_uri: Option<String>,
+    /// Entra ID support identifiers (not secrets).
+    pub trace_id: Option<String>,
+    pub correlation_id: Option<String>,
+    pub token_type: Option<String>,
+    pub expires_in: Option<u32>,
+    pub has_access_token: bool,
+    pub has_refresh_token: bool,
+    pub has_id_token: bool,
+    pub scope: Option<String>,
+    pub access_token: Option<JwtClaims>,
+    pub id_token: Option<JwtClaims>,
+}
+
+/// An OpenID Connect discovery document (`/.well-known/openid-configuration`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OidcDiscovery {
+    pub issuer: Option<String>,
+    pub authorization_endpoint: Option<String>,
+    pub token_endpoint: Option<String>,
+    pub jwks_uri: Option<String>,
+    pub end_session_endpoint: Option<String>,
+}
+
+/// Authentication facts of a session (WIT `auth-info`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AuthInfo {
+    /// Claims of a JWT sent as `Authorization: Bearer` / `DPoP` (none for opaque tokens).
+    pub bearer: Option<JwtClaims>,
+    /// Size of an opaque bearer token (bytes), when it is not a JWT.
+    pub opaque_bearer: Option<u32>,
+    pub oauth_request: Option<OAuthRequest>,
+    pub oauth_response: Option<OAuthResponse>,
+    pub discovery: Option<OidcDiscovery>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Kind {
     #[default]
@@ -90,6 +180,8 @@ pub struct Session {
     /// The Content-Encoding could not be decoded: `unsupported: …` / `invalid: …`.
     pub request_decoding_error: Option<String>,
     pub response_decoding_error: Option<String>,
+    /// OAuth / OpenID Connect facts (boxed: most sessions carry none).
+    pub auth: Option<Box<AuthInfo>>,
 }
 
 fn header<'a>(h: &'a [(String, String)], name: &str) -> Option<&'a str> {
@@ -469,6 +561,10 @@ impl Ctx<'_> {
     }
     pub fn de(&self) -> bool {
         self.opts.lang == Lang::De
+    }
+    /// Whether rules of these profiles run in this run (the `full` profile runs all).
+    pub fn runs(&self, profiles: &[&str]) -> bool {
+        self.opts.profile == "full" || profiles.contains(&self.opts.profile.as_str())
     }
     /// HTTP sessions only (no tunnels / WebSocket frames), in start order.
     pub fn http(&self) -> impl Iterator<Item = &Session> {

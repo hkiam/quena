@@ -769,9 +769,11 @@ impl Analyzer for HttpErrors {
         for s in ctx.http().filter(|s| s.status > 0) {
             *statuses.entry(endpoint(ctx, s)).or_default().entry(s.status).or_default() += 1;
         }
-        let errors = ctx.http().filter(|s| {
-            s.status >= 400 && !matches!(s.status, 401 | 403 | 407) && !(s.status == 404 && canon::parse(&s.url).path.to_ascii_lowercase().ends_with("/favicon.ico"))
-        });
+        // OAuth errors (token endpoint error responses, callbacks with error=) are OAUTH-ERROR's
+        // and OIDC-SILENT's, which explain them; they run in this profile too.
+        let oauth_errors = super::oauth::model(ctx).error_sessions();
+        let favicon = |s: &Session| s.status == 404 && canon::parse(&s.url).path.to_ascii_lowercase().ends_with("/favicon.ico");
+        let errors = ctx.http().filter(|s| s.status >= 400 && !matches!(s.status, 401 | 403 | 407) && !favicon(s) && !oauth_errors.contains(&ctx.index_of(s)));
         let mut list = vec![];
         for ((ep, code), v) in util::group_by(errors, |s| (endpoint(ctx, s), s.status)) {
             let n = v.len();
@@ -1083,6 +1085,9 @@ impl Analyzer for AuthFailures {
             }
         }
         challenges.sort_unstable();
+        // A rejected token request (401 invalid_client) is OAUTH-ERROR's, with the IdP's reason.
+        let oauth_errors = super::oauth::model(ctx).error_sessions();
+        challenges.retain(|i| !oauth_errors.contains(i));
         let (answered, unanswered): (Vec<&Session>, Vec<&Session>) = {
             let (a, u): (Vec<usize>, Vec<usize>) = challenges.iter().partition(|&&i| answered_at[i]);
             (a.iter().map(|&i| &ss[i]).collect(), u.iter().map(|&i| &ss[i]).collect())
@@ -1159,10 +1164,23 @@ impl Analyzer for AuthFailures {
             if sent.is_empty() {
                 f = f.hypothesis(ctx.l("The client sent no credentials at all (not configured, or stripped by a proxy).", "Der Client sendete überhaupt keine Anmeldedaten (nicht konfiguriert oder von einem Proxy entfernt)."));
             }
-            if has("Bearer") {
-                f = f.hypothesis(ctx.l("The token is rejected: expired, wrong audience or scope, or clock skew.", "Das Token wird abgelehnt: abgelaufen, falsche Audience oder Scope, oder Uhrzeitabweichung."));
-                if v.iter().any(|s| s.resp_headers("www-authenticate").any(|w| w.to_ascii_lowercase().contains("error"))) {
-                    f = f.hypothesis(ctx.l("The server names an error in WWW-Authenticate (value redacted in the capture).", "Der Server nennt in WWW-Authenticate einen Fehler (Wert in der Aufzeichnung geschwärzt)."));
+            if has("Bearer") || has("DPoP") {
+                let challenges: Vec<super::oauth::Challenge> = v.iter().filter_map(|s| super::oauth::bearer_challenge(s)).collect();
+                let errors: Vec<&str> = challenges.iter().filter_map(|c| c.error.as_deref()).collect();
+                let descs: Vec<&str> = challenges.iter().filter_map(|c| c.description.as_deref()).collect();
+                if !errors.is_empty() {
+                    f = f.fact(ctx.l("WWW-Authenticate error", "WWW-Authenticate-Fehler"), list_names(errors.iter().copied(), 3));
+                }
+                if !descs.is_empty() {
+                    f = f.fact("error_description", list_names(descs.iter().copied(), 2));
+                }
+                match errors.iter().find_map(|e| crate::idp::oauth_error(e)) {
+                    Some(e) => f = f.hypothesis(crate::idp::Entry::pick(e.cause, ctx)),
+                    None => f = f.hypothesis(ctx.l("The token is rejected: expired, wrong audience or scope, or clock skew.", "Das Token wird abgelehnt: abgelaufen, falsche Audience oder Scope, oder Uhrzeitabweichung.")),
+                }
+                let m = super::oauth::model(ctx);
+                if v.iter().any(|s| m.explained.contains_key(&ctx.index_of(s))) {
+                    f = f.next_step(ctx.l("TOKEN-EXPIRED / TOKEN-NOTYET / TOKEN-AUDIENCE in this report compare the token's claims with the request.", "TOKEN-EXPIRED / TOKEN-NOTYET / TOKEN-AUDIENCE in diesem Bericht vergleichen die Claims des Tokens mit dem Request."));
                 }
             }
             if has("NTLM") || has("Negotiate") {
@@ -1183,8 +1201,11 @@ impl Analyzer for AuthFailures {
                     .next_step(ctx.l("Look up the rejected requests in the server's security log.", "Die abgewiesenen Requests im Sicherheitsprotokoll des Servers nachschlagen.")),
             );
         }
-        // 403: authenticated but not allowed.
-        for (ep, v) in util::group_by(ctx.http().filter(|s| s.status == 403), |s| endpoint(ctx, s)) {
+        // 403: authenticated but not allowed. Those with token facts (claims or
+        // insufficient_scope) are TOKEN-SCOPE's, which runs in the same profiles.
+        let m = super::oauth::model(ctx);
+        let forbidden = ctx.http().filter(|s| s.status == 403 && !m.explained(ctx.index_of(s), super::oauth::EXPLAINED_SCOPE));
+        for (ep, v) in util::group_by(forbidden, |s| endpoint(ctx, s)) {
             let n = v.len();
             let f = Finding::new(
                 "AUTH-FAIL",
@@ -1218,24 +1239,13 @@ const HANDSHAKE_WARN_MIN: usize = 10;
 const HANDSHAKE_SHARE_WARN: f64 = 0.5;
 /// Negotiate tokens at most this large are unlikely to be Kerberos tickets.
 const NEGOTIATE_NTLM_MAX_BYTES: u64 = 1000;
-/// Token requests of one endpoint within this window …
-const TOKEN_WINDOW_US: u64 = 300_000_000;
-/// … from this count: the token is not cached.
-const TOKEN_MIN: usize = 3;
 
 fn windows_scheme(s: &Session) -> Option<String> {
     sent_scheme(s).filter(|x| x.eq_ignore_ascii_case("NTLM") || x.eq_ignore_ascii_case("Negotiate"))
 }
 
-fn is_token_request(s: &Session) -> bool {
-    if !s.method.eq_ignore_ascii_case("POST") {
-        return false;
-    }
-    let p = canon::parse(&s.url).path.to_ascii_lowercase();
-    p.contains("/token") || p.contains("/oauth2") || p.contains("/connect/token")
-}
-
-/// AUTH-REPEAT: repeated authentication (Windows handshakes, token acquisition).
+/// AUTH-REPEAT: repeated Windows authentication (NTLM/Negotiate handshakes). Repeated
+/// token requests are TOKEN-REFRESH (analyzers/oauth.rs), which knows the token lifetime.
 struct AuthRepeat;
 
 impl Analyzer for AuthRepeat {
@@ -1329,53 +1339,6 @@ impl Analyzer for AuthRepeat {
                     .recommend(ctx.l("For APIs, consider token-based authentication that does not need a handshake per connection.", "Für APIs eine tokenbasierte Anmeldung erwägen, die keinen Handshake pro Verbindung braucht."))
                     .next_step(ctx.l("Filter the sessions by the Authorization header and compare the connection ids.", "Die Sessions nach dem Authorization-Header filtern und die Verbindungs-IDs vergleichen.")),
             );
-        }
-        // Token acquisition that is not cached.
-        for (ep, v) in util::group_by(ctx.http().filter(|s| is_token_request(s)), |s| endpoint(ctx, s)) {
-            let times: Vec<u64> = v.iter().map(|s| s.started).collect();
-            let peak = util::max_in_window(&times, TOKEN_WINDOW_US);
-            if peak < TOKEN_MIN {
-                continue;
-            }
-            let hashes = top(v.iter().filter_map(|s| s.request_body_hash).map(|h| format!("{h:016x}")));
-            let identical = hashes.first().map(|x| x.1).unwrap_or(0);
-            let span_ms = (times.last().unwrap_or(&0) - times.first().unwrap_or(&0)) as f64 / 1000.0;
-            let severity = if identical >= TOKEN_MIN || hashes.is_empty() { Severity::Warning } else { Severity::Info };
-            let mut f = Finding::new(
-                "AUTH-REPEAT",
-                &format!("token|{ep}"),
-                severity,
-                format!("{} {}", ctx.l("Token requested repeatedly:", "Token wiederholt angefordert:"), util::short(ep, 80)),
-                if ctx.de() {
-                    format!("{} Token-Anforderung(en) an {}, davon bis zu {} innerhalb von 5 Minuten.", ctx.fmt_count(v.len()), ep, ctx.fmt_count(peak))
-                } else {
-                    format!("{} token request(s) to {}, up to {} within 5 minutes.", ctx.fmt_count(v.len()), ep, ctx.fmt_count(peak))
-                },
-            )
-            .categories(&["auth", "performance"])
-            .score(util::scale(peak as f64, TOKEN_MIN as f64, 100.0))
-            .threshold(format!("≥ {} in 5 min", TOKEN_MIN))
-            .fact(ctx.l("Token requests", "Token-Anforderungen"), ctx.fmt_count(v.len()))
-            .fact(ctx.l("Most within 5 minutes", "Höchstens innerhalb von 5 Minuten"), ctx.fmt_count(peak))
-            .fact(ctx.l("Time span", "Zeitraum"), ctx.fmt_ms(span_ms))
-            .impact(ctx.l("Every token request adds latency (often several round trips to the identity provider) and load there.", "Jede Token-Anforderung kostet Latenz (oft mehrere Roundtrips zum Identity Provider) und erzeugt dort Last."))
-            .recommend(ctx.l("Cache the token until shortly before it expires (expires_in) and share the cache between components.", "Das Token bis kurz vor Ablauf (expires_in) cachen und den Cache zwischen Komponenten teilen."))
-            .next_step(ctx.l("Compare the token lifetime with the interval between the requests.", "Die Laufzeit des Tokens mit dem Abstand zwischen den Anforderungen vergleichen."))
-            .sessions(v.iter().map(|s| s.id));
-            if identical >= 2 {
-                f = f.fact(ctx.l("Identical requests (same body)", "Identische Anforderungen (gleicher Body)"), ctx.fmt_count(identical)).hypothesis(ctx.l(
-                    "The same token request is repeated: the token is not cached (a new client instance per call, or the cache is bypassed).",
-                    "Dieselbe Token-Anforderung wird wiederholt: Das Token wird nicht gecacht (neue Client-Instanz pro Aufruf oder der Cache wird umgangen).",
-                ));
-            } else if !hashes.is_empty() {
-                f = f.hypothesis(ctx.l(
-                    "The token requests differ (different scopes or refresh tokens); one token per resource may be expected, repeated refreshes are not.",
-                    "Die Token-Anforderungen unterscheiden sich (verschiedene Scopes oder Refresh-Tokens); ein Token pro Ressource ist erwartbar, wiederholte Erneuerungen nicht.",
-                ));
-            } else {
-                f = f.confidence(Confidence::Medium);
-            }
-            list.push(f);
         }
         emit(ctx, out, list);
     }
@@ -1478,7 +1441,11 @@ impl Analyzer for Redirects {
             chains.push(Chain { hops, redirects, looped });
         }
         let mut list = vec![];
-        let long = chains.into_iter().filter(|c| c.looped || c.redirects >= REDIRECT_CHAIN_MIN);
+        // A loop through an OAuth authorize endpoint is a sign-in loop: OIDC-LOOP reports it with
+        // the reasons, where it runs.
+        let oidc_rule_runs = ctx.runs(super::oauth::PROFILES);
+        let through_authorize = |c: &Chain| c.hops.iter().any(|&h| crate::idp::endpoint(&crate::canon::parse(&ss[h].url).path) == crate::idp::Endpoint::Authorize);
+        let long = chains.into_iter().filter(|c| c.looped || c.redirects >= REDIRECT_CHAIN_MIN).filter(|c| !(c.looped && oidc_rule_runs && through_authorize(c)));
         for ((looped, first), v) in util::group_by(long, |c| (c.looped, endpoint(ctx, &ss[c.hops[0]]))) {
             let example = &v[0];
             let hops = v.iter().map(|c| c.redirects).max().unwrap_or(0);
@@ -1620,6 +1587,8 @@ impl Analyzer for Cookies {
                 }
             }
         }
+        // Hosts whose authentication cookies TOKEN-SIZE reports (same profiles as COOKIE).
+        let auth_cookie_hosts: HashSet<&str> = super::oauth::model(ctx).cookies.iter().map(|c| c.host.as_str()).collect();
         for (h, v) in util::group_by(ctx.http(), |s| host(ctx, s)) {
             let sets: Vec<(&Session, util::SetCookie)> = sets_of.remove(h).unwrap_or_default();
             let finding = |kind: &str, severity: Severity, title: &str, obs: String, items: &[&(&Session, util::SetCookie)]| {
@@ -1704,7 +1673,8 @@ impl Analyzer for Cookies {
             }
             let set_bytes: u64 = latest.values().sum();
             let (max_names, max_sess) = v.iter().map(|s| (cookie_names(s).count(), s.id)).max_by_key(|x| x.0).unwrap_or((0, 0));
-            if set_bytes >= COOKIE_BYTES_MAX || max_names >= COOKIE_NAMES_MAX {
+            let token_size = auth_cookie_hosts.contains(h);
+            if (set_bytes >= COOKIE_BYTES_MAX || max_names >= COOKIE_NAMES_MAX) && !token_size {
                 let mut big: Vec<u64> = v.iter().filter(|s| cookie_names(s).count() >= COOKIE_NAMES_MAX).map(|s| s.id).collect();
                 if max_names >= COOKIE_NAMES_MAX {
                     big.push(max_sess);
