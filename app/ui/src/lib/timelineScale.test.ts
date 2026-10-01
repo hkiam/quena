@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampZoom, columnOrder, columnWidth, fmtSpan, moveColumn, tickLabel, tickStep, ticks, toggleColumn, zoomScroll } from "./timelineScale";
+import { buildAxis, clampZoom, columnOrder, columnWidth, fmtSpan, moveColumn, tickLabel, tickStep, ticks, toggleColumn, zoomScroll } from "./timelineScale";
 
 describe("timeline scale", () => {
   it("chooses steps in clock units at least minPx apart", () => {
@@ -43,5 +43,24 @@ describe("timeline scale", () => {
     expect(toggleColumn(["id", "url", "graph"], "url")).toEqual(["id", "url", "graph"]);
     expect(columnWidth({ widths: { url: 5 } }, "url")).toBe(36);
     expect(columnWidth(undefined, "url")).toBe(260);
+  });
+  it("cuts long idle gaps and keeps short pauses to scale", () => {
+    const S = 1e6;
+    // Two sessions of 20 ms / 120 ms, a day apart.
+    const a = buildAxis([[0, 0.12 * S], [86_400 * S, 86_400 * S + 0.02 * S]], true, 0.05 * S);
+    expect(a.clusters.length).toBe(2);
+    expect(a.breaks).toEqual([{ at: 0.12 * S, gap: 86_400 * S - 0.12 * S }]);
+    expect(a.length).toBeCloseTo(0.12 * S + 0.05 * S + 0.02 * S);
+    expect(a.toAxis(86_400 * S)).toBeCloseTo(0.17 * S);
+    // Without compression the day stays.
+    expect(buildAxis([[0, 0.12 * S], [86_400 * S, 86_400 * S + 0.02 * S]], false, 0.05 * S).breaks).toEqual([]);
+    // Polling every 2 s over 30 s: no cuts (short pauses are part of the picture).
+    const poll = Array.from({ length: 15 }, (_, i) => [i * 2 * S, i * 2 * S + 0.05 * S] as [number, number]);
+    expect(buildAxis(poll, true, 0.05 * S).breaks).toEqual([]);
+    // A 30 s pause after 20 s of busy traffic is not cut (not 4× the activity).
+    expect(buildAxis([[0, 20 * S], [50 * S, 70 * S]], true, S).breaks).toEqual([]);
+    // Overlapping sessions merge; empty input is safe.
+    expect(buildAxis([[0, 10], [5, 20]], true, 1).clusters).toEqual([{ from: 0, to: 20, at: 0 }]);
+    expect(buildAxis([], true, 1).length).toBe(1);
   });
 });

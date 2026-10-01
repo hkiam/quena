@@ -8,6 +8,10 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Changed
+- *Timeline*: long pauses without traffic (e.g. sessions of two captures a day apart) are
+  collapsed to a narrow break labelled with their length, and every block of traffic starts
+  with its clock time; *Collapse pauses* switches back to the real scale. Axis labels never
+  overlap.
 - *Timeline*: a time axis with grid lines; zoom with Ctrl/⌘ + wheel (or pinch) around the
   pointer, or with the zoom buttons and *Fit*; columns (#, method, status, URL, duration,
   size, graph) can be moved, resized and shown or hidden (right-click the header), and the

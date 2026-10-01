@@ -291,4 +291,7 @@ export const panels: Record<string, string> = {
   "Fit the whole time span into the view": "Den ganzen Zeitraum in die Ansicht einpassen",
   "Drag to move; right-click for columns": "Ziehen zum Verschieben; Rechtsklick für Spalten",
   "Drag to move, drag the edge to resize; right-click for columns": "Ziehen zum Verschieben, am Rand ziehen für die Breite; Rechtsklick für Spalten",
+  "Collapse pauses": "Pausen zusammenfassen",
+  "Long pauses without traffic are shown as a narrow break, so every block of traffic stays readable": "Lange Pausen ohne Verkehr werden als schmale Unterbrechung gezeigt, damit jeder Verkehrsblock lesbar bleibt",
+  "Pause without traffic: {time}": "Pause ohne Verkehr: {time}",
 };

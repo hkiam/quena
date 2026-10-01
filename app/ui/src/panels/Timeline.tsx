@@ -8,6 +8,7 @@ import { api, type SessionSummary, type Timers } from "../api";
 import { fmtBytes, fmtDateTime, fmtMs, fmtTime } from "../lib/format";
 import { PHASES, phasesOf, type Segment } from "../lib/waterfall";
 import {
+  buildAxis,
   clampZoom,
   columnOrder,
   columnWidth,
@@ -37,6 +38,13 @@ const num = (n: number, decimals: number) => n.toLocaleString(currentLang() === 
 
 const MAX = 500;
 const ROW_H = 20;
+const HEADER_H = 24;
+/** Width of a cut idle gap at zoom 1. */
+const GAP_PX = 96;
+/** Rough label width for collision checks (11 px tabular text). */
+const labelW = (text: string) => text.length * 6.6 + 10;
+/** Unit for the label of a cut gap. */
+const gapUnit = (gap: number) => (gap >= 86_400e6 ? 3600e6 : gap >= 3600e6 ? 60e6 : 1e6);
 const DRAG_TYPE = "quena/tl-col";
 
 const TITLES: Record<TlColumn, () => string> = {
@@ -171,23 +179,62 @@ export function TimelinePanel() {
     const start = rows.length ? Math.min(...rows.map(startOf)) : 0;
     const end = rows.length ? Math.max(...rows.map(endOf)) : 0;
     const used = new Set([...segs.values()].flat().map((s) => s.phase));
-    return { segs, endOf, start, span: Math.max(1, end - start), used };
+    const intervals = rows.map((r) => [startOf(r), endOf(r)] as [number, number]);
+    return { segs, endOf, start, span: Math.max(1, end - start), used, intervals };
   }, [rows, timers]);
 
   if (!rows.length) return <div className="placeholder">{t("Select sessions to see their timeline.")}</div>;
 
-  const { segs, endOf, start, span, used } = data;
+  const { segs, endOf, span, used, intervals } = data;
+  // Long idle gaps (e.g. sessions of two captures a day apart) are cut to a break of
+  // GAP_PX at zoom 1, so every block of traffic stays readable.
+  const compress = prefs.compress ?? true;
+  const probe = buildAxis(intervals, true, 0);
+  const canCompress = probe.breaks.length > 0;
+  const drawW = Math.max(1, graphFit - TL_GRAPH_PAD);
+  const busyAxis = probe.clusters.reduce((n, c) => n + Math.max(1, c.to - c.from), 0);
+  const gapAxis = drawW > GAP_PX * probe.breaks.length + 40 ? (GAP_PX * busyAxis) / (drawW - GAP_PX * probe.breaks.length) : busyAxis * 0.05;
+  const axis = buildAxis(intervals, compress && canCompress, gapAxis);
   // The scale leaves room at the right end, so bars that end last stay visible.
-  const pxPerUs = Math.max(1, graphW - TL_GRAPH_PAD) / span;
-  const x = (us: number) => (us - start) * pxPerUs;
+  const pxPerUs = Math.max(1, graphW - TL_GRAPH_PAD) / Math.max(1, axis.length);
+  const x = (us: number) => axis.toAxis(us) * pxPerUs;
   const step = tickStep(pxPerUs);
-  const stepPx = step * pxPerUs;
   // Labels only where the graph is visible: the columns left of it stay in place and cover
   // the graph from 0 to scrollLeft (in graph coordinates).
   const stuck = order.indexOf("graph") > 0;
   const visFrom = Math.max(0, stuck ? viewport.left : viewport.left - graphLeft);
   const visTo = (stuck ? viewport.left : viewport.left - graphLeft) + viewport.width - (stuck ? graphLeft : 0);
-  const shownTicks = ticks(span, step).filter((o) => o * pxPerUs >= visFrom - 1 && o * pxPerUs <= visTo);
+  // Ticks per block of traffic: its start carries the clock time, the rest offsets from it.
+  const multiDay = new Date(axis.clusters[0].from / 1000).toDateString() !== new Date(axis.clusters[axis.clusters.length - 1].to / 1000).toDateString();
+  const shownTicks = axis.clusters.flatMap((c, ci) =>
+    ticks(c.to - c.from, step)
+      .map((o) => ({ key: `${ci}:${o}`, px: (c.at + o) * pxPerUs, label: o === 0 ? (multiDay || span >= 86_400e6 ? fmtDateTime(c.from) : fmtTime(c.from)) : tickLabel(o, step, num), first: o === 0 }))
+      .filter((tk) => tk.px >= visFrom - 1 && tk.px <= visTo),
+  );
+  const breaks = axis.breaks.map((b) => ({ px: b.at * pxPerUs, w: gapAxis * pxPerUs, gap: b.gap }));
+  // Labels must not overlap: block starts (clock time) win, then the offsets in order; a label
+  // that would collide is left out (its grid line stays). Labels near the right end are
+  // aligned to their right edge so they are not cut off.
+  const graphEnd = graphW;
+  const kept: [number, number][] = [];
+  const place = (tk: (typeof shownTicks)[number]) => {
+    const w = labelW(tk.label);
+    const right = tk.px + w > graphEnd - 2;
+    const span: [number, number] = right ? [tk.px - w, tk.px] : [tk.px, tk.px + w];
+    if (kept.some(([a, b]) => span[0] < b && span[1] > a)) return null;
+    kept.push(span);
+    return { ...tk, right };
+  };
+  const firstLabels = shownTicks.filter((tk) => tk.first).map(place);
+  // A break shows its length only where no block start needs the room.
+  const breakLabel = breaks.map((b) => {
+    const text = `⫽ ${fmtSpan(b.gap, gapUnit(b.gap), num)}`;
+    const span: [number, number] = [b.px, b.px + Math.min(b.w, labelW(text))];
+    if (kept.some(([a, c]) => span[0] < c && span[1] > a)) return "";
+    kept.push([b.px, b.px + b.w]);
+    return text;
+  });
+  const labels = [...firstLabels, ...shownTicks.filter((tk) => !tk.first).map(place)].filter((x): x is NonNullable<typeof x> => x != null);
 
   // Sticky offsets for the columns left of the graph.
   const stickyLeft = new Map<TlColumn, number>();
@@ -274,6 +321,11 @@ export function TimelinePanel() {
             </span>
           ))}
         </span>
+        {canCompress && (
+          <label className="f-check tl-compress" title={t("Long pauses without traffic are shown as a narrow break, so every block of traffic stays readable")}>
+            <input type="checkbox" checked={compress} onChange={(e) => updatePrefs({ compress: e.target.checked })} /> {t("Collapse pauses")}
+          </label>
+        )}
         <span className="tl-zoom">
           <button onClick={() => zoomTo(zoom / 1.5)} disabled={zoom <= 1} title={t("Zoom out (Ctrl/⌘ + wheel)")} aria-label={t("Zoom out")}>
             <ZoomOut size={13} />
@@ -290,7 +342,7 @@ export function TimelinePanel() {
         </span>
       </div>
       <div className="tl-scroll" ref={scroller}>
-        <div className="tl-table" style={{ width: tableW, ["--tl-step" as string]: `${Math.max(4, stepPx)}px` }}>
+        <div className="tl-table" style={{ width: tableW }}>
           <div className="tl-hrow" onContextMenu={headerMenu}>
             {order.map((c) => (
               <div
@@ -322,9 +374,14 @@ export function TimelinePanel() {
               >
                 {c === "graph" ? (
                   <div className="tl-axis">
-                    {shownTicks.map((o) => (
-                      <span key={o} className="tl-tick" style={{ left: o * pxPerUs }}>
-                        {o === 0 ? (span >= 86_400e6 ? fmtDateTime(start) : fmtTime(start)) : tickLabel(o, step, num)}
+                    {labels.map((tk) => (
+                      <span key={tk.key} className={`tl-tick ${tk.first ? "first" : ""} ${tk.right ? "right" : ""}`} style={tk.right ? { right: graphW - tk.px } : { left: tk.px }} title={tk.label}>
+                        {tk.label}
+                      </span>
+                    ))}
+                    {breaks.map((b, i) => (
+                      <span key={`b${i}`} className="tl-break" style={{ left: b.px, width: b.w }} title={t("Pause without traffic: {time}", { time: fmtSpan(b.gap, gapUnit(b.gap), num) })}>
+                        {breakLabel[i]}
                       </span>
                     ))}
                   </div>
@@ -337,6 +394,15 @@ export function TimelinePanel() {
               </div>
             ))}
             {dropBefore === null && <div className="tl-drop-end" />}
+          </div>
+          {/* Grid lines and breaks behind all rows (aligned with every block's ticks). */}
+          <div className="tl-grid" style={{ left: graphLeft, width: graphW, top: HEADER_H, height: rows.length * ROW_H }}>
+            {shownTicks.map((tk) => (
+              <i key={tk.key} className={tk.first ? "first" : ""} style={{ left: tk.px }} />
+            ))}
+            {breaks.map((b, i) => (
+              <b key={`b${i}`} style={{ left: b.px, width: b.w }} />
+            ))}
           </div>
           {rows.map((r) => {
             const s = segs.get(r.id) ?? [];

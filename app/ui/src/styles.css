@@ -1311,11 +1311,64 @@ pre {
 .tl-c-graph {
   padding: 0;
   cursor: default;
-  /* Grid lines at every axis tick, drawn once per row by the browser. */
-  background-image: repeating-linear-gradient(to right, var(--border-soft) 0 1px, transparent 1px var(--tl-step));
 }
-.tl-hrow .tl-c-graph {
-  background-image: none;
+/* Grid lines and cut pauses, one layer behind all rows. */
+.tl-grid {
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+}
+.tl-grid i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-soft);
+}
+.tl-grid i.first {
+  background: var(--border);
+}
+.tl-grid b {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(135deg, transparent 0 5px, var(--border-soft) 5px 7px);
+  border-left: 1px dashed var(--border);
+  border-right: 1px dashed var(--border);
+}
+.tl-row {
+  position: relative;
+  z-index: 1;
+}
+.tl-break {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  overflow: hidden;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+  background: repeating-linear-gradient(135deg, var(--panel-bg) 0 5px, var(--border-soft) 5px 7px);
+  border-left: 1px dashed var(--border);
+  border-right: 1px dashed var(--border);
+}
+.tl-tick {
+  z-index: 2;
+}
+.tl-tick.first {
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--panel-bg);
+}
+.tl-tick.right {
+  padding: 0 3px 0 0;
+  border-left: none;
+  border-right: 1px solid var(--border);
+}
+.tl-compress {
+  white-space: nowrap;
 }
 .tl-c-id,
 .tl-c-duration,
@@ -1343,7 +1396,6 @@ pre {
 }
 .tl-row {
   cursor: default;
-  border-bottom: 1px solid transparent;
 }
 .tl-row:hover .tl-cell {
   background-color: var(--active-line);

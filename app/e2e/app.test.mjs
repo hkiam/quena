@@ -342,18 +342,35 @@ test("timeline: sessions a day apart, the last bar visible, readable axis", asyn
   await d.cmd("DELETE", d.s("/actions"));
   await d.exec(`window.__quena.menu("view.timeline")`);
   await d.waitFor(".tl-row", { timeout: 5000 });
-  const res = await d.exec(`
+  const state = () =>
+    d.exec(`
     const rows = [...document.querySelectorAll('.tl-row')];
     const cut = rows.flatMap((row) => {
       const cell = row.querySelector('.tl-c-graph').getBoundingClientRect();
       const bars = [...row.querySelectorAll('.tl-seg, .tl-bar')].map((b) => b.getBoundingClientRect());
-      return bars.length && bars.every((b) => b.right > cell.right + 0.5 || b.width < 0.5) ? [row.textContent.slice(0, 40)] : [];
+      return bars.some((b) => b.right > cell.right + 0.5 || b.left < cell.left - 0.5 || b.width < 0.5) ? [row.textContent.slice(0, 40)] : [];
     });
-    return { rows: rows.length, cut, ticks: [...document.querySelectorAll('.tl-tick')].map((t) => t.textContent) };`);
-  assert.ok(res.rows >= 2, JSON.stringify(res));
+    return { rows: rows.length, cut, breaks: document.querySelectorAll('.tl-hrow .tl-break').length, starts: document.querySelectorAll('.tl-tick.first').length,
+      ticks: [...document.querySelectorAll('.tl-tick')].map((t) => t.textContent), toggle: !!document.querySelector('.tl-compress input') };`);
+  // The idle day is cut to a break; both blocks start with their clock time; no bar is cut off.
+  let res = await state();
+  assert.ok(res.rows >= 2 && res.toggle, JSON.stringify(res));
+  // (The selection also holds the live session of an earlier test, recorded now: then there
+  // are three blocks.)
+  assert.ok(res.breaks >= 1, `the idle day is cut: ${JSON.stringify(res)}`);
+  // Blocks start with their clock time (labels of very narrow blocks that would overlap are
+  // left out until zoomed in).
+  assert.ok(res.starts >= 2 && res.starts <= res.breaks + 1, `blocks labelled with their time: ${JSON.stringify(res)}`);
+  assert.deepEqual(res.cut, [], `bars outside the graph: ${JSON.stringify(res)}`);
+  // Without collapsing: the real scale, in hours, and still every bar inside the graph.
+  await d.click((await d.findAll(".tl-compress input"))[0]);
+  await new Promise((r) => setTimeout(r, 200));
+  res = await state();
+  assert.equal(res.breaks, 0);
   assert.deepEqual(res.cut, [], `bars outside the graph: ${JSON.stringify(res)}`);
   assert.ok(!res.ticks.some((t) => /\d{4,}[.,]\d s/.test(t)), `axis labels must use h/d, not thousands of seconds: ${res.ticks}`);
   assert.ok(res.ticks.some((t) => / h|1 d/.test(t)), `hours on the axis: ${res.ticks}`);
+  await d.click((await d.findAll(".tl-compress input"))[0]);
   await d.exec(`window.__quena.menu("view.inspectors")`);
 });
 

@@ -87,6 +87,8 @@ export interface TlLayout {
   /** Visible columns in display order (always contains `url` and `graph`). */
   order?: TlColumn[];
   widths?: Partial<Record<TlColumn, number>>;
+  /** Collapse long idle gaps (default on). */
+  compress?: boolean;
 }
 
 /** Visible columns in order: unknown entries dropped, duplicates removed, `url` and `graph`
@@ -120,4 +122,78 @@ export function toggleColumn(order: TlColumn[], c: TlColumn): TlColumn[] {
   const at = TL_COLUMNS.indexOf(c);
   const i = order.findIndex((x) => TL_COLUMNS.indexOf(x) > at);
   return i < 0 ? [...order, c] : [...order.slice(0, i), c, ...order.slice(i)];
+}
+
+// ------------------------------------------------------------------ idle gaps
+
+/** A stretch of activity on the compressed axis. Times in µs. */
+export interface Cluster {
+  from: number;
+  to: number;
+  /** Where the cluster starts on the compressed axis (µs of "axis time"). */
+  at: number;
+}
+
+/** The axis: real time → axis time, with long idle gaps cut down to `gapAxis` each. */
+export interface Axis {
+  clusters: Cluster[];
+  /** Cut gaps: axis position of the break and the real length that was left out. */
+  breaks: { at: number; gap: number }[];
+  /** Total axis length (µs of axis time). */
+  length: number;
+  /** Real time → axis time (clamped into the clusters). */
+  toAxis: (us: number) => number;
+}
+
+/** Gaps of at least this long are candidates for cutting (µs). */
+export const MIN_CUT_GAP = 10_000_000;
+
+/**
+ * Build the axis for activity `intervals` ([start, end] µs). With `compress`, idle gaps that
+ * are at least `MIN_CUT_GAP` long and longer than four times all the activity together are
+ * cut to `gapAxis` axis time each (shown as a break); short pauses stay to scale.
+ */
+export function buildAxis(intervals: [number, number][], compress: boolean, gapAxis: number): Axis {
+  const iv = intervals.filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b)).map(([a, b]) => [a, Math.max(a, b)] as [number, number]).sort((x, y) => x[0] - y[0]);
+  if (!iv.length) return { clusters: [{ from: 0, to: 1, at: 0 }], breaks: [], length: 1, toAxis: () => 0 };
+  // Merge overlapping activity.
+  const merged: [number, number][] = [];
+  for (const [a, b] of iv) {
+    const last = merged[merged.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else merged.push([a, b]);
+  }
+  const busy = merged.reduce((n, [a, b]) => n + (b - a), 0);
+  const cutFrom = Math.max(MIN_CUT_GAP, 4 * busy);
+  // Clusters: runs of activity separated by gaps that get cut.
+  const runs: [number, number][] = [];
+  for (const m of merged) {
+    const last = runs[runs.length - 1];
+    if (last && !(compress && m[0] - last[1] >= cutFrom)) last[1] = Math.max(last[1], m[1]);
+    else runs.push([m[0], m[1]]);
+  }
+  const clusters: Cluster[] = [];
+  const breaks: { at: number; gap: number }[] = [];
+  let at = 0;
+  runs.forEach(([a, b], i) => {
+    if (i) {
+      breaks.push({ at, gap: a - runs[i - 1][1] });
+      at += gapAxis;
+    }
+    clusters.push({ from: a, to: b, at });
+    at += Math.max(1, b - a);
+  });
+  const toAxis = (us: number) => {
+    // Binary search for the cluster that contains (or precedes) us.
+    let lo = 0;
+    let hi = clusters.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (clusters[mid].from <= us) lo = mid;
+      else hi = mid - 1;
+    }
+    const c = clusters[lo];
+    return c.at + Math.min(Math.max(0, us - c.from), c.to - c.from);
+  };
+  return { clusters, breaks, length: at, toAxis };
 }
