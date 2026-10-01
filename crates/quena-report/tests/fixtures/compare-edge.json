@@ -1,0 +1,696 @@
+{
+  "a": {
+    "schema": 1,
+    "metrics": [
+      {
+        "key": "requests",
+        "label": "Requests",
+        "value": 10,
+        "unit": "count"
+      },
+      {
+        "key": "requests",
+        "label": "Requests (dup)",
+        "value": 12,
+        "unit": "count"
+      },
+      {
+        "key": "server",
+        "label": "Server",
+        "value": "nginx",
+        "unit": "text"
+      },
+      {
+        "key": "proto",
+        "label": "Protocol",
+        "value": "h2"
+      },
+      {
+        "key": "mixed",
+        "label": "Mixed",
+        "value": 3,
+        "unit": "count"
+      },
+      {
+        "label": "Label only",
+        "value": 5
+      },
+      {
+        "key": "cacheHitRatio",
+        "label": "Cache hits",
+        "value": 0.5,
+        "unit": "ratio"
+      },
+      {
+        "key": "uncompressedBytes",
+        "label": "Uncompressed",
+        "value": 1000,
+        "unit": "bytes"
+      },
+      {
+        "key": "p95",
+        "label": "p95",
+        "value": 800,
+        "unit": "ms"
+      },
+      {
+        "key": "hosts",
+        "label": "Hosts",
+        "value": 4,
+        "unit": "count"
+      },
+      {
+        "key": "errorRate",
+        "label": "Error rate",
+        "value": 0.1,
+        "unit": "ratio"
+      },
+      {
+        "key": "onlyInA",
+        "label": "Only in A",
+        "value": 7,
+        "unit": "count"
+      },
+      {
+        "key": "nullInA",
+        "label": "Null",
+        "value": null,
+        "unit": "count"
+      },
+      {
+        "key": "tiny",
+        "label": "Tiny",
+        "value": 1000000000,
+        "unit": "count"
+      }
+    ],
+    "findings": [
+      {
+        "id": "DUP",
+        "key": "DUP|1",
+        "title": "First",
+        "severity": "warning",
+        "score": 5
+      },
+      {
+        "id": "DUP",
+        "key": "DUP|1",
+        "title": "Second",
+        "severity": "critical",
+        "score": 1
+      },
+      {
+        "id": "NOKEY",
+        "key": "",
+        "title": "No key",
+        "severity": "info"
+      },
+      {
+        "id": "UP",
+        "title": "Gets worse",
+        "severity": "info",
+        "score": 3
+      },
+      {
+        "id": "SAME",
+        "key": "SAME",
+        "severity": "warning"
+      },
+      {
+        "id": "GONE",
+        "key": "GONE|x",
+        "severity": "critical",
+        "score": 99
+      },
+      null,
+      {
+        "severity": "bogus",
+        "title": 5
+      }
+    ]
+  },
+  "b": {
+    "schema": 1,
+    "summary": {
+      "critical": 2.7,
+      "warning": -1,
+      "info": "x"
+    },
+    "metrics": [
+      {
+        "key": "proto",
+        "label": "Protocol",
+        "value": "h3"
+      },
+      {
+        "key": "requests",
+        "label": "Requests",
+        "value": 15,
+        "unit": "count"
+      },
+      {
+        "key": "server",
+        "label": "Server",
+        "value": "nginx",
+        "unit": "text"
+      },
+      {
+        "key": "mixed",
+        "label": "Mixed",
+        "value": "three",
+        "unit": "count"
+      },
+      {
+        "label": "Label only",
+        "value": 5.0000000001
+      },
+      {
+        "key": "cacheHitRatio",
+        "label": "Cache hits",
+        "value": 0.4,
+        "unit": "ratio"
+      },
+      {
+        "key": "uncompressedBytes",
+        "label": "Uncompressed",
+        "value": 500,
+        "unit": "bytes"
+      },
+      {
+        "key": "p95",
+        "label": "p95",
+        "value": 900,
+        "unit": "ms"
+      },
+      {
+        "key": "hosts",
+        "label": "Hosts",
+        "value": 5,
+        "unit": "count"
+      },
+      {
+        "key": "errorRate",
+        "label": "Error rate",
+        "value": 0.05,
+        "unit": "ratio"
+      },
+      {
+        "key": "nullInA",
+        "label": "Null",
+        "value": null,
+        "unit": "count"
+      },
+      {
+        "key": "tiny",
+        "label": "Tiny",
+        "value": 1000000000.5,
+        "unit": "count"
+      },
+      {
+        "key": "onlyInB",
+        "label": "Only in B",
+        "value": "x",
+        "unit": "text"
+      }
+    ],
+    "findings": [
+      {
+        "id": "UP",
+        "title": "Gets worse",
+        "severity": "critical",
+        "score": 3
+      },
+      {
+        "id": "NOKEY",
+        "key": "",
+        "title": "No key",
+        "severity": "info"
+      },
+      {
+        "id": "DUP",
+        "key": "DUP|1",
+        "title": "First again",
+        "severity": "warning",
+        "score": 5
+      },
+      {
+        "id": "SAME",
+        "key": "SAME",
+        "severity": "info"
+      },
+      {
+        "id": "F9",
+        "key": "NEW|1",
+        "severity": "warning",
+        "score": 1.25,
+        "sessions": [
+          3,
+          1.5,
+          "x",
+          2
+        ]
+      },
+      {
+        "id": "NEW2",
+        "severity": "critical",
+        "facts": [
+          {
+            "label": "a",
+            "value": 1
+          },
+          {}
+        ],
+        "table": {
+          "rows": [
+            [
+              1,
+              true,
+              null
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "expected": {
+    "severity": [
+      {
+        "key": "critical",
+        "label": "critical",
+        "unit": "count",
+        "before": 2,
+        "after": 2,
+        "delta": 0,
+        "trend": "same"
+      },
+      {
+        "key": "warning",
+        "label": "warning",
+        "unit": "count",
+        "before": 2,
+        "after": 2,
+        "delta": 0,
+        "trend": "same"
+      },
+      {
+        "key": "info",
+        "label": "info",
+        "unit": "count",
+        "before": 4,
+        "after": 2,
+        "delta": -2,
+        "trend": "neutral"
+      }
+    ],
+    "metrics": [
+      {
+        "key": "proto",
+        "label": "Protocol",
+        "unit": "text",
+        "before": "h2",
+        "after": "h3",
+        "delta": null,
+        "trend": "neutral"
+      },
+      {
+        "key": "requests",
+        "label": "Requests",
+        "unit": "count",
+        "before": 12,
+        "after": 15,
+        "delta": 3,
+        "trend": "worse"
+      },
+      {
+        "key": "server",
+        "label": "Server",
+        "unit": "text",
+        "before": "nginx",
+        "after": "nginx",
+        "delta": null,
+        "trend": "same"
+      },
+      {
+        "key": "mixed",
+        "label": "Mixed",
+        "unit": "count",
+        "before": 3,
+        "after": "three",
+        "delta": null,
+        "trend": "neutral"
+      },
+      {
+        "key": "Label only",
+        "label": "Label only",
+        "unit": "count",
+        "before": 5,
+        "after": 5.0000000001,
+        "delta": 1.000000082740371e-10,
+        "trend": "same"
+      },
+      {
+        "key": "cacheHitRatio",
+        "label": "Cache hits",
+        "unit": "ratio",
+        "before": 0.5,
+        "after": 0.4,
+        "delta": -0.09999999999999998,
+        "trend": "worse"
+      },
+      {
+        "key": "uncompressedBytes",
+        "label": "Uncompressed",
+        "unit": "bytes",
+        "before": 1000,
+        "after": 500,
+        "delta": -500,
+        "trend": "better"
+      },
+      {
+        "key": "p95",
+        "label": "p95",
+        "unit": "ms",
+        "before": 800,
+        "after": 900,
+        "delta": 100,
+        "trend": "worse"
+      },
+      {
+        "key": "hosts",
+        "label": "Hosts",
+        "unit": "count",
+        "before": 4,
+        "after": 5,
+        "delta": 1,
+        "trend": "neutral"
+      },
+      {
+        "key": "errorRate",
+        "label": "Error rate",
+        "unit": "ratio",
+        "before": 0.1,
+        "after": 0.05,
+        "delta": -0.05,
+        "trend": "better"
+      },
+      {
+        "key": "nullInA",
+        "label": "Null",
+        "unit": "count",
+        "before": null,
+        "after": null,
+        "delta": null,
+        "trend": "same"
+      },
+      {
+        "key": "tiny",
+        "label": "Tiny",
+        "unit": "count",
+        "before": 1000000000,
+        "after": 1000000000.5,
+        "delta": 0.5,
+        "trend": "same"
+      },
+      {
+        "key": "onlyInB",
+        "label": "Only in B",
+        "unit": "text",
+        "before": null,
+        "after": "x",
+        "delta": null,
+        "trend": "neutral"
+      },
+      {
+        "key": "onlyInA",
+        "label": "Only in A",
+        "unit": "count",
+        "before": 7,
+        "after": null,
+        "delta": null,
+        "trend": "neutral"
+      }
+    ],
+    "added": [
+      {
+        "id": "NEW2",
+        "key": "NEW2",
+        "title": "NEW2",
+        "severity": "critical",
+        "confidence": "medium",
+        "categories": [],
+        "score": 0,
+        "observation": "",
+        "impact": "",
+        "hypotheses": [],
+        "recommendations": [],
+        "nextSteps": [],
+        "estimate": false,
+        "threshold": "",
+        "facts": [
+          {
+            "label": "a",
+            "value": "1"
+          }
+        ],
+        "table": {
+          "columns": [],
+          "rows": [
+            [
+              "1",
+              "true",
+              ""
+            ]
+          ]
+        },
+        "sessions": [],
+        "operation": null,
+        "tags": []
+      },
+      {
+        "id": "F9",
+        "key": "NEW|1",
+        "title": "F9",
+        "severity": "warning",
+        "confidence": "medium",
+        "categories": [],
+        "score": 1.25,
+        "observation": "",
+        "impact": "",
+        "hypotheses": [],
+        "recommendations": [],
+        "nextSteps": [],
+        "estimate": false,
+        "threshold": "",
+        "facts": [],
+        "table": null,
+        "sessions": [
+          3,
+          1.5,
+          2
+        ],
+        "operation": null,
+        "tags": []
+      }
+    ],
+    "resolved": [
+      {
+        "id": "GONE",
+        "key": "GONE|x",
+        "title": "GONE",
+        "severity": "critical",
+        "confidence": "medium",
+        "categories": [],
+        "score": 99,
+        "observation": "",
+        "impact": "",
+        "hypotheses": [],
+        "recommendations": [],
+        "nextSteps": [],
+        "estimate": false,
+        "threshold": "",
+        "facts": [],
+        "table": null,
+        "sessions": [],
+        "operation": null,
+        "tags": []
+      },
+      {
+        "id": "F7",
+        "key": "F7",
+        "title": "F7",
+        "severity": "info",
+        "confidence": "medium",
+        "categories": [],
+        "score": 0,
+        "observation": "",
+        "impact": "",
+        "hypotheses": [],
+        "recommendations": [],
+        "nextSteps": [],
+        "estimate": false,
+        "threshold": "",
+        "facts": [],
+        "table": null,
+        "sessions": [],
+        "operation": null,
+        "tags": []
+      },
+      {
+        "id": "F8",
+        "key": "F8",
+        "title": "5",
+        "severity": "info",
+        "confidence": "medium",
+        "categories": [],
+        "score": 0,
+        "observation": "",
+        "impact": "",
+        "hypotheses": [],
+        "recommendations": [],
+        "nextSteps": [],
+        "estimate": false,
+        "threshold": "",
+        "facts": [],
+        "table": null,
+        "sessions": [],
+        "operation": null,
+        "tags": []
+      }
+    ],
+    "changed": [
+      {
+        "before": {
+          "id": "UP",
+          "key": "UP",
+          "title": "Gets worse",
+          "severity": "info",
+          "confidence": "medium",
+          "categories": [],
+          "score": 3,
+          "observation": "",
+          "impact": "",
+          "hypotheses": [],
+          "recommendations": [],
+          "nextSteps": [],
+          "estimate": false,
+          "threshold": "",
+          "facts": [],
+          "table": null,
+          "sessions": [],
+          "operation": null,
+          "tags": []
+        },
+        "after": {
+          "id": "UP",
+          "key": "UP",
+          "title": "Gets worse",
+          "severity": "critical",
+          "confidence": "medium",
+          "categories": [],
+          "score": 3,
+          "observation": "",
+          "impact": "",
+          "hypotheses": [],
+          "recommendations": [],
+          "nextSteps": [],
+          "estimate": false,
+          "threshold": "",
+          "facts": [],
+          "table": null,
+          "sessions": [],
+          "operation": null,
+          "tags": []
+        }
+      },
+      {
+        "before": {
+          "id": "DUP",
+          "key": "DUP|1",
+          "title": "Second",
+          "severity": "critical",
+          "confidence": "medium",
+          "categories": [],
+          "score": 1,
+          "observation": "",
+          "impact": "",
+          "hypotheses": [],
+          "recommendations": [],
+          "nextSteps": [],
+          "estimate": false,
+          "threshold": "",
+          "facts": [],
+          "table": null,
+          "sessions": [],
+          "operation": null,
+          "tags": []
+        },
+        "after": {
+          "id": "DUP",
+          "key": "DUP|1",
+          "title": "First again",
+          "severity": "warning",
+          "confidence": "medium",
+          "categories": [],
+          "score": 5,
+          "observation": "",
+          "impact": "",
+          "hypotheses": [],
+          "recommendations": [],
+          "nextSteps": [],
+          "estimate": false,
+          "threshold": "",
+          "facts": [],
+          "table": null,
+          "sessions": [],
+          "operation": null,
+          "tags": []
+        }
+      },
+      {
+        "before": {
+          "id": "SAME",
+          "key": "SAME",
+          "title": "SAME",
+          "severity": "warning",
+          "confidence": "medium",
+          "categories": [],
+          "score": 0,
+          "observation": "",
+          "impact": "",
+          "hypotheses": [],
+          "recommendations": [],
+          "nextSteps": [],
+          "estimate": false,
+          "threshold": "",
+          "facts": [],
+          "table": null,
+          "sessions": [],
+          "operation": null,
+          "tags": []
+        },
+        "after": {
+          "id": "SAME",
+          "key": "SAME",
+          "title": "SAME",
+          "severity": "info",
+          "confidence": "medium",
+          "categories": [],
+          "score": 0,
+          "observation": "",
+          "impact": "",
+          "hypotheses": [],
+          "recommendations": [],
+          "nextSteps": [],
+          "estimate": false,
+          "threshold": "",
+          "facts": [],
+          "table": null,
+          "sessions": [],
+          "operation": null,
+          "tags": []
+        }
+      }
+    ],
+    "unchanged": 1
+  }
+}

@@ -1,0 +1,396 @@
+{
+  "a": {
+    "schema": 1,
+    "tool": {
+      "id": "io.github.hkiam.webdiag",
+      "version": "0.1.0"
+    },
+    "profile": {
+      "id": "performance",
+      "name": "Performance"
+    },
+    "lang": "en",
+    "range": {
+      "from": 1727690000000000,
+      "to": 1727690060000000,
+      "sessions": 10
+    },
+    "summary": {
+      "critical": 1,
+      "warning": 1,
+      "info": 0,
+      "headline": [
+        "Sequential API communication adds latency."
+      ]
+    },
+    "metrics": [
+      {
+        "key": "requests",
+        "label": "HTTP requests",
+        "value": 100,
+        "unit": "count"
+      },
+      {
+        "key": "bytes",
+        "label": "Transferred",
+        "value": 2048,
+        "unit": "bytes"
+      },
+      {
+        "key": "duplicateShare",
+        "label": "Duplicate requests",
+        "value": 0.31,
+        "unit": "ratio"
+      }
+    ],
+    "operations": [
+      {
+        "id": "op-3",
+        "label": "GET /odata/Cases(42)",
+        "start": 1727690001000000,
+        "end": 1727690007800000,
+        "sessions": [
+          1,
+          2
+        ],
+        "metrics": [
+          {
+            "key": "requests",
+            "label": "Requests",
+            "value": 2,
+            "unit": "count"
+          }
+        ]
+      }
+    ],
+    "findings": [
+      {
+        "id": "INFO-X",
+        "key": "INFO-X|a",
+        "title": "Info thing",
+        "severity": "warning",
+        "score": 10
+      },
+      {
+        "id": "PERF-SEQ",
+        "key": "PERF-SEQ|op-3",
+        "title": "Latency | chain",
+        "severity": "critical",
+        "confidence": "high",
+        "categories": [
+          "performance"
+        ],
+        "score": 72,
+        "observation": "42 requests ran one after another.",
+        "hypotheses": [
+          "Could run concurrently."
+        ],
+        "recommendations": [
+          "Parallelise."
+        ],
+        "estimate": true,
+        "facts": [
+          {
+            "label": "Levels",
+            "value": "42"
+          }
+        ],
+        "table": {
+          "columns": [
+            "Network",
+            "RTT"
+          ],
+          "rows": [
+            [
+              "Good WAN",
+              "20 ms"
+            ]
+          ]
+        },
+        "sessions": [
+          1,
+          2,
+          3
+        ],
+        "operation": "op-3",
+        "futureField": {
+          "anything": true
+        }
+      }
+    ],
+    "scope": {
+      "kind": "selection",
+      "sessions": 10
+    },
+    "generatedAt": 1727690070000000
+  },
+  "b": {
+    "schema": 1,
+    "tool": {
+      "id": "io.github.hkiam.webdiag",
+      "version": "0.1.0"
+    },
+    "profile": {
+      "id": "performance",
+      "name": "Performance"
+    },
+    "lang": "en",
+    "range": {
+      "from": 1727690000000000,
+      "to": 1727690060000000,
+      "sessions": 10
+    },
+    "summary": {
+      "critical": 0,
+      "warning": 2,
+      "info": 0,
+      "headline": []
+    },
+    "metrics": [
+      {
+        "key": "requests",
+        "label": "HTTP requests",
+        "value": 80,
+        "unit": "count"
+      },
+      {
+        "key": "bytes",
+        "label": "Transferred",
+        "value": 4096,
+        "unit": "bytes"
+      },
+      {
+        "key": "newThing",
+        "label": "New",
+        "value": 1,
+        "unit": "count"
+      }
+    ],
+    "findings": [
+      {
+        "id": "PERF-SEQ",
+        "key": "PERF-SEQ|op-3",
+        "title": "Latency | chain",
+        "severity": "warning",
+        "confidence": "high",
+        "categories": [
+          "performance"
+        ],
+        "score": 72,
+        "observation": "42 requests ran one after another.",
+        "sessions": [
+          1,
+          2,
+          3
+        ],
+        "operation": "op-3"
+      },
+      {
+        "id": "OTHER",
+        "key": "OTHER|x",
+        "title": "Other",
+        "severity": "warning",
+        "score": 55.5,
+        "tags": [
+          "t"
+        ]
+      }
+    ]
+  },
+  "expected": {
+    "severity": [
+      {
+        "key": "critical",
+        "label": "critical",
+        "unit": "count",
+        "before": 1,
+        "after": 0,
+        "delta": -1,
+        "trend": "better"
+      },
+      {
+        "key": "warning",
+        "label": "warning",
+        "unit": "count",
+        "before": 1,
+        "after": 2,
+        "delta": 1,
+        "trend": "worse"
+      },
+      {
+        "key": "info",
+        "label": "info",
+        "unit": "count",
+        "before": 0,
+        "after": 0,
+        "delta": 0,
+        "trend": "same"
+      }
+    ],
+    "metrics": [
+      {
+        "key": "requests",
+        "label": "HTTP requests",
+        "unit": "count",
+        "before": 100,
+        "after": 80,
+        "delta": -20,
+        "trend": "better"
+      },
+      {
+        "key": "bytes",
+        "label": "Transferred",
+        "unit": "bytes",
+        "before": 2048,
+        "after": 4096,
+        "delta": 2048,
+        "trend": "worse"
+      },
+      {
+        "key": "newThing",
+        "label": "New",
+        "unit": "count",
+        "before": null,
+        "after": 1,
+        "delta": null,
+        "trend": "neutral"
+      },
+      {
+        "key": "duplicateShare",
+        "label": "Duplicate requests",
+        "unit": "ratio",
+        "before": 0.31,
+        "after": null,
+        "delta": null,
+        "trend": "neutral"
+      }
+    ],
+    "added": [
+      {
+        "id": "OTHER",
+        "key": "OTHER|x",
+        "title": "Other",
+        "severity": "warning",
+        "confidence": "medium",
+        "categories": [],
+        "score": 55.5,
+        "observation": "",
+        "impact": "",
+        "hypotheses": [],
+        "recommendations": [],
+        "nextSteps": [],
+        "estimate": false,
+        "threshold": "",
+        "facts": [],
+        "table": null,
+        "sessions": [],
+        "operation": null,
+        "tags": [
+          "t"
+        ]
+      }
+    ],
+    "resolved": [
+      {
+        "id": "INFO-X",
+        "key": "INFO-X|a",
+        "title": "Info thing",
+        "severity": "warning",
+        "confidence": "medium",
+        "categories": [],
+        "score": 10,
+        "observation": "",
+        "impact": "",
+        "hypotheses": [],
+        "recommendations": [],
+        "nextSteps": [],
+        "estimate": false,
+        "threshold": "",
+        "facts": [],
+        "table": null,
+        "sessions": [],
+        "operation": null,
+        "tags": []
+      }
+    ],
+    "changed": [
+      {
+        "before": {
+          "id": "PERF-SEQ",
+          "key": "PERF-SEQ|op-3",
+          "title": "Latency | chain",
+          "severity": "critical",
+          "confidence": "high",
+          "categories": [
+            "performance"
+          ],
+          "score": 72,
+          "observation": "42 requests ran one after another.",
+          "impact": "",
+          "hypotheses": [
+            "Could run concurrently."
+          ],
+          "recommendations": [
+            "Parallelise."
+          ],
+          "nextSteps": [],
+          "estimate": true,
+          "threshold": "",
+          "facts": [
+            {
+              "label": "Levels",
+              "value": "42"
+            }
+          ],
+          "table": {
+            "columns": [
+              "Network",
+              "RTT"
+            ],
+            "rows": [
+              [
+                "Good WAN",
+                "20 ms"
+              ]
+            ]
+          },
+          "sessions": [
+            1,
+            2,
+            3
+          ],
+          "operation": "op-3",
+          "tags": []
+        },
+        "after": {
+          "id": "PERF-SEQ",
+          "key": "PERF-SEQ|op-3",
+          "title": "Latency | chain",
+          "severity": "warning",
+          "confidence": "high",
+          "categories": [
+            "performance"
+          ],
+          "score": 72,
+          "observation": "42 requests ran one after another.",
+          "impact": "",
+          "hypotheses": [],
+          "recommendations": [],
+          "nextSteps": [],
+          "estimate": false,
+          "threshold": "",
+          "facts": [],
+          "table": null,
+          "sessions": [
+            1,
+            2,
+            3
+          ],
+          "operation": "op-3",
+          "tags": []
+        }
+      }
+    ],
+    "unchanged": 0
+  }
+}

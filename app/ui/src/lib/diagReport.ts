@@ -369,7 +369,8 @@ export function toMarkdown(r: DiagReport, t: Translate, opts: MarkdownOptions = 
   const out: string[] = [];
   out.push(`# ${t("Diagnostics report")}${r.profile.name ? `: ${mdText(r.profile.name)}` : ""}`);
   const meta: string[] = [];
-  if (r.tool.id) meta.push(`${t("Analyzer")}: ${mdText(r.tool.id)}${r.tool.version ? ` ${mdText(r.tool.version)}` : ""}`);
+  // One text: escaped on its own, a version would look like an ordered list ("0\.1.0").
+  if (r.tool.id) meta.push(`${t("Analyzer")}: ${mdText(r.tool.version ? `${r.tool.id} ${r.tool.version}` : r.tool.id)}`);
   if (r.scope) meta.push(`${t("Scope")}: ${mdText(scopeLabel(r, t))}`);
   meta.push(`${t("Sessions")}: ${fmtInt(r.range.sessions || r.scope?.sessions || 0)}`);
   if (r.range.from != null) meta.push(`${t("Time range")}: ${fmtDateTime(r.range.from)} – ${fmtDateTime(r.range.to)}`);

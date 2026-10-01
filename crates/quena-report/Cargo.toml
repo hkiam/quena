@@ -1,0 +1,13 @@
+[package]
+name = "quena-report"
+description = "Diagnostics reports (analyzer API 1): parsing, comparison, quality gates and Markdown / JUnit / GitHub output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+# Exact float parsing: reports must compare exactly like the UI (JSON.parse).
+serde_json = { workspace = true, features = ["float_roundtrip"] }
