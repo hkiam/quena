@@ -87,8 +87,11 @@ enum Matcher {
     UrlWithBody(Box<Matcher>, Regex),
     /// URL matcher and a JSON value the request body must equal semantically.
     BodyJson(Box<Matcher>, serde_json::Value),
-    /// URL matcher, GraphQL operation name and variables.
-    GraphQl(Box<Matcher>, Option<String>, serde_json::Value),
+    /// URL matcher, GraphQL operation name, variables and (optional) the SHA-256 of the
+    /// normalized query text ([`graphql_query_hash`]).
+    GraphQl(Box<Matcher>, Option<String>, serde_json::Value, Option<String>),
+    /// URL matcher and the SHA-256 (hex) of the decoded request body.
+    BodyHash(Box<Matcher>, String),
 }
 
 /// In a `BODYJSON:` / `GRAPHQL:` value: matches any value (the WireMock / JsonUnit placeholder).
@@ -106,17 +109,90 @@ pub fn json_matches(spec: &serde_json::Value, actual: &serde_json::Value) -> boo
         (V::String(s), a) if s == "${json-unit.any-boolean}" => a.is_boolean(),
         (V::Object(s), V::Object(a)) => s.len() == a.len() && s.iter().all(|(k, v)| a.get(k).is_some_and(|x| json_matches(v, x))),
         (V::Array(s), V::Array(a)) => s.len() == a.len() && s.iter().zip(a).all(|(x, y)| json_matches(x, y)),
-        (V::Number(x), V::Number(y)) => x == y || x.as_f64().zip(y.as_f64()).is_some_and(|(x, y)| x == y),
+        (V::Number(x), V::Number(y)) => numbers_equal(x, y),
         _ => spec == actual,
     }
 }
 
-/// Does a GraphQL request body carry this operation name and these variables? Absent, `null`
-/// and `{}` variables are the same.
-fn graphql_matches(op: &Option<String>, vars: &serde_json::Value, body: &serde_json::Value) -> bool {
+/// Integers compare exactly (large IDs must not collide through `f64`); only when one side
+/// is not an integer are both compared as floating point (`1` equals `1.0`).
+pub fn numbers_equal(x: &serde_json::Number, y: &serde_json::Number) -> bool {
+    let int = |n: &serde_json::Number| n.as_i64().map(i128::from).or_else(|| n.as_u64().map(i128::from));
+    match (int(x), int(y)) {
+        (Some(a), Some(b)) => a == b,
+        _ => x.as_f64().zip(y.as_f64()).is_some_and(|(a, b)| a == b),
+    }
+}
+
+/// Lower-case hex SHA-256.
+pub fn sha256_hex(data: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The GraphQL query text without comments and insignificant whitespace (so formatting does
+/// not matter), as SHA-256 hex.
+pub fn graphql_query_hash(query: &str) -> String {
+    sha256_hex(normalize_graphql(query).as_bytes())
+}
+
+fn normalize_graphql(q: &str) -> String {
+    const PUNCT: &str = "{}()[]:,!=@$|&.";
+    let mut out = String::with_capacity(q.len());
+    let mut chars = q.chars().peekable();
+    let mut pending_space = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                if pending_space && !out.is_empty() && !out.ends_with(|p| PUNCT.contains(p)) {
+                    out.push(' ');
+                }
+                pending_space = false;
+                // Strings stay as they are (escapes included).
+                out.push('"');
+                while let Some(x) = chars.next() {
+                    out.push(x);
+                    if x == '\\' {
+                        if let Some(n) = chars.next() {
+                            out.push(n);
+                        }
+                    } else if x == '"' {
+                        break;
+                    }
+                }
+            }
+            '#' => {
+                for x in chars.by_ref() {
+                    if x == '\n' || x == '\r' {
+                        break;
+                    }
+                }
+                pending_space = true;
+            }
+            c if c.is_whitespace() || c == ',' => pending_space = true,
+            c => {
+                if pending_space && !out.is_empty() && !PUNCT.contains(c) && !out.ends_with(|p| PUNCT.contains(p)) {
+                    out.push(' ');
+                }
+                pending_space = false;
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
+/// Does a GraphQL request body carry this operation name and these variables (and, with
+/// `query_hash`, this query)? Absent, `null` and `{}` variables are the same.
+fn graphql_matches(op: &Option<String>, vars: &serde_json::Value, query_hash: &Option<String>, body: &serde_json::Value) -> bool {
     let empty = |v: Option<&serde_json::Value>| v.is_none_or(|v| v.is_null() || v.as_object().is_some_and(|o| o.is_empty()));
     let Some(obj) = body.as_object() else { return false };
-    if obj.get("operationName").and_then(|v| v.as_str()) != op.as_deref() {
+    if obj.get("operationName").and_then(|v| v.as_str()).filter(|o| !o.is_empty()) != op.as_deref().filter(|o| !o.is_empty()) {
+        return false;
+    }
+    if let Some(h) = query_hash
+        && !obj.get("query").and_then(|q| q.as_str()).is_some_and(|q| graphql_query_hash(q).eq_ignore_ascii_case(h))
+    {
         return false;
     }
     if empty(Some(vars)) {
@@ -130,9 +206,37 @@ pub fn validate_match(s: &str) -> Result<()> {
     Matcher::parse(s).map(|_| ())
 }
 
-/// The request body as the client meant it (Content-Encoding removed), at most 8 MiB.
-fn request_body_bytes(head: &RequestHead, body: &Body) -> Vec<u8> {
-    crate::sanitize::decoded_body(&head.headers, body, 8 << 20)
+/// Largest decoded request body the body matchers look at.
+const MAX_MATCHED_BODY: usize = 8 << 20;
+
+/// One request being matched: the body is decoded (Content-Encoding removed) and parsed at
+/// most once, however many rules look at it.
+struct MatchCtx<'a> {
+    head: &'a RequestHead,
+    body: Option<&'a Body>,
+    decoded: std::cell::OnceCell<Option<Vec<u8>>>,
+    text: std::cell::OnceCell<Option<String>>,
+    json: std::cell::OnceCell<Option<serde_json::Value>>,
+    sha: std::cell::OnceCell<Option<String>>,
+}
+
+impl<'a> MatchCtx<'a> {
+    fn new(head: &'a RequestHead, body: Option<&'a Body>) -> Self {
+        MatchCtx { head, body, decoded: Default::default(), text: Default::default(), json: Default::default(), sha: Default::default() }
+    }
+    /// The request body as the client meant it (Content-Encoding removed), at most 8 MiB.
+    fn decoded(&self) -> Option<&[u8]> {
+        self.decoded.get_or_init(|| self.body.map(|b| crate::sanitize::decoded_body(&self.head.headers, b, MAX_MATCHED_BODY))).as_deref()
+    }
+    fn text(&self) -> Option<&str> {
+        self.text.get_or_init(|| self.decoded().map(|d| String::from_utf8_lossy(d).into_owned())).as_deref()
+    }
+    fn json(&self) -> Option<&serde_json::Value> {
+        self.json.get_or_init(|| self.decoded().and_then(|d| serde_json::from_slice(d).ok())).as_ref()
+    }
+    fn sha(&self) -> Option<&str> {
+        self.sha.get_or_init(|| self.decoded().map(sha256_hex)).as_deref()
+    }
 }
 
 /// `<url match> <rest>`: split at the first whitespace (URL matchers contain none).
@@ -176,7 +280,19 @@ impl Matcher {
             let v: serde_json::Value = serde_json::from_str(&j).map_err(|e| anyhow!("GRAPHQL: {e}"))?;
             let op = v.get("operationName").and_then(|o| o.as_str()).map(str::to_string);
             let vars = v.get("variables").cloned().unwrap_or(serde_json::Value::Null);
-            Matcher::GraphQl(Box::new(u), op, vars)
+            let qh = match v.get("queryHash") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(h)) if h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()) => Some(h.to_ascii_lowercase()),
+                Some(_) => return Err(anyhow!("GRAPHQL: queryHash must be a SHA-256 in hex")),
+            };
+            Matcher::GraphQl(Box::new(u), op, vars, qh)
+        } else if lower.starts_with("bodyhash:") {
+            let (u, h) = split_url_and_rest(&s[9..], "BODYHASH:<url> <sha256 hex>")?;
+            let h = h.strip_prefix("sha256:").unwrap_or(&h).to_ascii_lowercase();
+            if h.len() != 64 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(anyhow!("BODYHASH: expects the SHA-256 of the request body in hex"));
+            }
+            Matcher::BodyHash(Box::new(u), h)
         } else if lower.starts_with("urlwithbody:") {
             let rest = s[12..].trim();
             let (u, b) = rest.split_once(char::is_whitespace).ok_or_else(|| anyhow!("URLWithBody:<url> <body regex>"))?;
@@ -189,14 +305,20 @@ impl Matcher {
 
     fn needs_body(&self) -> bool {
         match self {
-            Matcher::UrlWithBody(..) | Matcher::BodyJson(..) | Matcher::GraphQl(..) => true,
+            Matcher::UrlWithBody(..) | Matcher::BodyJson(..) | Matcher::GraphQl(..) | Matcher::BodyHash(..) => true,
             // `METHOD:POST URLWithBody:…` must buffer the body as well.
             Matcher::Method(_, inner) => inner.needs_body(),
             _ => false,
         }
     }
 
+    #[cfg(test)]
     fn matches(&self, head: &RequestHead, body: Option<&Body>) -> bool {
+        self.matches_in(&MatchCtx::new(head, body))
+    }
+
+    fn matches_in(&self, ctx: &MatchCtx) -> bool {
+        let head = ctx.head;
         match self {
             Matcher::All => true,
             Matcher::Exact(u) => head.url == *u,
@@ -204,23 +326,12 @@ impl Matcher {
             Matcher::Regex(r) => r.is_match(&head.url),
             Matcher::Not(t) => !head.url.to_lowercase().contains(t.as_str()),
             Matcher::Contains(t) => head.url.to_lowercase().contains(t.as_str()),
-            Matcher::Method(m, inner) => head.method.eq_ignore_ascii_case(m) && inner.matches(head, body),
+            Matcher::Method(m, inner) => head.method.eq_ignore_ascii_case(m) && inner.matches_in(ctx),
             Matcher::Header(n, v) => head.headers.get_all(n).any(|x| x.to_lowercase().contains(v.as_str())),
-            Matcher::UrlWithBody(u, re) => {
-                u.matches(head, body)
-                    && body.is_some_and(|b| {
-                        let data = b.read_range(0, 8 << 20).unwrap_or_default();
-                        re.is_match(&String::from_utf8_lossy(&data))
-                    })
-            }
-            Matcher::BodyJson(u, spec) => {
-                u.matches(head, body)
-                    && body.is_some_and(|b| serde_json::from_slice::<serde_json::Value>(&request_body_bytes(head, b)).is_ok_and(|v| json_matches(spec, &v)))
-            }
-            Matcher::GraphQl(u, op, vars) => {
-                u.matches(head, body)
-                    && body.is_some_and(|b| serde_json::from_slice::<serde_json::Value>(&request_body_bytes(head, b)).is_ok_and(|v| graphql_matches(op, vars, &v)))
-            }
+            Matcher::UrlWithBody(u, re) => u.matches_in(ctx) && ctx.text().is_some_and(|t| re.is_match(t)),
+            Matcher::BodyJson(u, spec) => u.matches_in(ctx) && ctx.json().is_some_and(|v| json_matches(spec, v)),
+            Matcher::GraphQl(u, op, vars, qh) => u.matches_in(ctx) && ctx.json().is_some_and(|v| graphql_matches(op, vars, qh, v)),
+            Matcher::BodyHash(u, h) => u.matches_in(ctx) && ctx.sha() == Some(h.as_str()),
         }
     }
 
@@ -228,7 +339,7 @@ impl Matcher {
     fn rest(&self, url: &str) -> Rest {
         match self {
             Matcher::Prefix(p) => Rest::Prefix(url.get(p.len()..).unwrap_or("").to_string()),
-            Matcher::Method(_, inner) | Matcher::UrlWithBody(inner, _) | Matcher::BodyJson(inner, _) | Matcher::GraphQl(inner, ..) => inner.rest(url),
+            Matcher::Method(_, inner) | Matcher::UrlWithBody(inner, _) | Matcher::BodyJson(inner, _) | Matcher::GraphQl(inner, ..) | Matcher::BodyHash(inner, _) => inner.rest(url),
             Matcher::Regex(re) => re.captures(url).and_then(|c| c.get(1)).map(|m| Rest::Group(m.as_str().to_string())).unwrap_or(Rest::None),
             _ => Rest::None,
         }
@@ -452,6 +563,8 @@ fn reads_file(action: &str) -> bool {
 struct Compiled {
     rule: Rule,
     matcher: Matcher,
+    /// Kept outside `rule` so matching only needs a read lock.
+    hits: AtomicU64,
 }
 
 pub(crate) fn guess_type(path: &std::path::Path) -> &'static str {
@@ -572,6 +685,11 @@ pub struct Rules {
     core: RwLock<Weak<AppCore>>,
     ar: RwLock<AutoResponderState>,
     compiled: RwLock<Vec<Compiled>>,
+    /// Serializes rule set changes (read-modify-write in [`Rules::update_autoresponder`]).
+    edit: Mutex<()>,
+    /// Serializes mock package operations (install, import, remove, reset): folder changes
+    /// and the matching rule changes happen as one step.
+    packages: Mutex<()>,
     next_rule: AtomicU64,
     bp: RwLock<BreakpointState>,
     paused: Mutex<HashMap<SessionId, (Waiter, PausedInfo)>>,
@@ -657,6 +775,8 @@ impl Rules {
             core: RwLock::new(Weak::new()),
             ar: RwLock::new(AutoResponderState::default()),
             compiled: RwLock::new(vec![]),
+            edit: Mutex::new(()),
+            packages: Mutex::new(()),
             next_rule: AtomicU64::new(max + 1),
             bp: RwLock::new(BreakpointState { timeout_s: 0, ..Default::default() }),
             paused: Mutex::new(HashMap::new()),
@@ -752,10 +872,10 @@ impl Rules {
                 if let Some(c) = &a.comment {
                     s.comment = c.clone();
                 }
-                if let Some(c) = &a.color {
-                    if let Some(mc) = MarkColor::parse(c) {
-                        s.color = Some(mc);
-                    }
+                if let Some(c) = &a.color
+                    && let Some(mc) = MarkColor::parse(c)
+                {
+                    s.color = Some(mc);
                 }
                 if let Some(c) = &a.custom {
                     s.custom = c.clone();
@@ -809,14 +929,46 @@ impl Rules {
         let c = self.compiled.read();
         for r in &mut s.rules {
             if let Some(x) = c.iter().find(|x| x.rule.id == r.id) {
-                r.hits = x.rule.hits;
+                r.hits = x.hits.load(Ordering::Relaxed);
             }
         }
         s
     }
 
     /// Replace the rule set. Rules with invalid syntax are rejected.
-    pub fn set_autoresponder(&self, mut s: AutoResponderState, save: bool) -> Result<()> {
+    pub fn set_autoresponder(&self, s: AutoResponderState, save: bool) -> Result<()> {
+        let _g = self.edit.lock();
+        self.set_locked(s, save)
+    }
+
+    /// Change the rule set atomically: `f` gets the current state (with hits), and what it
+    /// leaves is installed; no other change can slip in between (no lost updates).
+    pub fn update_autoresponder<R>(&self, save: bool, f: impl FnOnce(&mut AutoResponderState) -> R) -> Result<R> {
+        let _g = self.edit.lock();
+        let mut s = self.autoresponder();
+        let r = f(&mut s);
+        self.set_locked(s, save)?;
+        Ok(r)
+    }
+
+    /// Hold this while changing mock packages (folders plus their rules).
+    pub fn package_lock(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.packages.lock()
+    }
+
+    /// Set the hit counters of the rules `pred` selects back to 0 (sequences, `match_once`
+    /// rules answer again from the start). Returns how many rules were reset.
+    pub fn reset_hits(&self, pred: impl Fn(&Rule) -> bool) -> usize {
+        let c = self.compiled.read();
+        let mut n = 0;
+        for x in c.iter().filter(|x| pred(&x.rule)) {
+            x.hits.store(0, Ordering::Relaxed);
+            n += 1;
+        }
+        n
+    }
+
+    fn set_locked(&self, mut s: AutoResponderState, save: bool) -> Result<()> {
         let mut compiled = Vec::new();
         let old = self.compiled.read();
         for r in &mut s.rules {
@@ -824,9 +976,9 @@ impl Rules {
                 r.id = self.next_rule.fetch_add(1, Ordering::Relaxed);
             }
             let matcher = Matcher::parse(&r.match_).map_err(|e| anyhow!("rule '{}': {e}", r.match_))?;
-            let mut rule = r.clone();
-            rule.hits = old.iter().find(|x| x.rule.id == r.id).map(|x| x.rule.hits).unwrap_or(0);
-            compiled.push(Compiled { rule, matcher });
+            let rule = r.clone();
+            let hits = old.iter().find(|x| x.rule.id == r.id).map(|x| x.hits.load(Ordering::Relaxed)).unwrap_or(0);
+            compiled.push(Compiled { rule, matcher, hits: AtomicU64::new(hits) });
         }
         drop(old);
         *self.compiled.write() = compiled;
@@ -846,19 +998,22 @@ impl Rules {
     pub fn add_rules_from_sessions(&self, ids: &[SessionId], exact: bool) -> Result<usize> {
         let core = self.core().ok_or_else(|| anyhow!("no core"))?;
         let cap = core.capture();
-        let mut s = self.ar.read().clone();
-        let mut n = 0;
+        let mut new = Vec::new();
         for id in ids {
             let Some(d) = cap.detail(*id) else { continue };
             if d.response.is_none() || d.summary.kind == SessionKind::Tunnel {
                 continue;
             }
             let m = if exact { format!("EXACT:{}", d.request.url) } else { d.request.url.clone() };
-            s.rules.insert(0, Rule { id: 0, match_: m, action: format!("session:{id}"), comment: format!("from #{id}"), ..Default::default() });
-            n += 1;
+            new.push(Rule { id: 0, match_: m, action: format!("session:{id}"), comment: format!("from #{id}"), ..Default::default() });
         }
-        s.enabled = true;
-        self.set_autoresponder(s, true)?;
+        let n = new.len();
+        self.update_autoresponder(true, |s| {
+            for r in new {
+                s.rules.insert(0, r);
+            }
+            s.enabled = true;
+        })?;
         Ok(n)
     }
 
@@ -924,24 +1079,35 @@ impl Rules {
             return None;
         }
         drop(s);
-        let mut c = self.compiled.write();
-        for x in c.iter_mut() {
-            if !x.rule.enabled || (x.rule.match_once && x.rule.hits > 0) {
+        // Read lock only: bodies are decoded and parsed (once, in the context) while other
+        // requests match concurrently; hits are atomic.
+        let ctx = MatchCtx::new(head, body);
+        let c = self.compiled.read();
+        for x in c.iter() {
+            if !x.rule.enabled || (x.rule.match_once && x.hits.load(Ordering::Relaxed) > 0) {
                 continue;
             }
-            if x.matcher.matches(head, body) {
-                x.rule.hits += 1;
+            if x.matcher.matches_in(&ctx) {
+                if x.rule.match_once {
+                    // Two requests at once: only one gets a match-once rule.
+                    if x.hits.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Relaxed).is_err() {
+                        continue;
+                    }
+                } else {
+                    x.hits.fetch_add(1, Ordering::Relaxed);
+                }
                 let mut rule = x.rule.clone();
+                rule.hits = x.hits.load(Ordering::Relaxed);
                 // Regex capture substitution ($1 …) in the action. Not for a Map Local
                 // folder: it is taken literally, the URL rest is resolved inside it.
-                if let Matcher::Regex(re) = &x.matcher {
-                    if rule.action.contains('$') && !rule.action.trim_start().to_ascii_lowercase().starts_with("dir:") {
-                        if let Some(caps) = re.captures(&head.url) {
-                            let mut out = String::new();
-                            caps.expand(&rule.action, &mut out);
-                            rule.action = out;
-                        }
-                    }
+                if let Matcher::Regex(re) = &x.matcher
+                    && rule.action.contains('$')
+                    && !rule.action.trim_start().to_ascii_lowercase().starts_with("dir:")
+                    && let Some(caps) = re.captures(&head.url)
+                {
+                    let mut out = String::new();
+                    caps.expand(&rule.action, &mut out);
+                    rule.action = out;
                 }
                 let rest = x.matcher.rest(&head.url);
                 return Some((rule, rest));
@@ -970,8 +1136,9 @@ impl Rules {
         Some((ResponseHead { status, reason, version: HttpVersion::Http11, headers: h }, core.capture().bodies.store_bytes(body)))
     }
 
-    /// Build a response from a file (raw `.dat` HTTP response or plain body).
-    fn file_response(&self, path: &str) -> Option<(ResponseHead, Body)> {
+    /// Build a response from a file (raw `.dat` HTTP response or plain body). `method`: of
+    /// the request (a HEAD response keeps the Content-Length of its file).
+    fn file_response(&self, path: &str, method: &str) -> Option<(ResponseHead, Body)> {
         let core = self.core()?;
         let p = std::path::Path::new(path);
         let file = std::fs::File::open(p).ok();
@@ -982,19 +1149,24 @@ impl Rules {
         use std::io::{BufRead, Read};
         let starts_http = br.fill_buf().map(|b| b.starts_with(b"HTTP/")).unwrap_or(false);
         let cap = core.capture();
-        if starts_http {
-            if let Ok(Some((first, headers))) = quena_formats::raw::read_head(&mut br) {
-                let (v, status, reason) = quena_formats::raw::parse_status_line(&first);
-                let src: Box<dyn Read> = if quena_formats::raw::is_chunked(&headers) { Box::new(quena_formats::raw::ChunkedReader::new(br)) } else { Box::new(br) };
-                let body = match copy_to_body(&cap.bodies, src) {
-                    Ok(b) => b,
-                    Err(e) => return self.synthetic(500, "text/plain; charset=utf-8", format!("[Quena] Mock Rules: cannot read {path}: {e}").as_bytes(), &[]),
-                };
-                let mut headers = headers;
-                headers.remove("transfer-encoding");
+        if starts_http
+            && let Ok(Some((first, headers))) = quena_formats::raw::read_head(&mut br)
+        {
+            let (v, status, reason) = quena_formats::raw::parse_status_line(&first);
+            let src: Box<dyn Read> = if quena_formats::raw::is_chunked(&headers) { Box::new(quena_formats::raw::ChunkedReader::new(br)) } else { Box::new(br) };
+            let body = match copy_to_body(&cap.bodies, src) {
+                Ok(b) => b,
+                Err(e) => return self.synthetic(500, "text/plain; charset=utf-8", format!("[Quena] Mock Rules: cannot read {path}: {e}").as_bytes(), &[]),
+            };
+            let mut headers = headers;
+            headers.remove("transfer-encoding");
+            if status == 204 || status == 304 || (100..200).contains(&status) {
+                // No body, no length (RFC 9110 8.6).
+                headers.remove("content-length");
+            } else if !(method.eq_ignore_ascii_case("HEAD") && body.is_empty() && headers.contains("content-length")) {
                 headers.set("Content-Length", body.len().to_string());
-                return Some((ResponseHead { status, reason, version: v, headers }, body));
             }
+            return Some((ResponseHead { status, reason, version: v, headers }, body));
         }
         self.plain_file_response(p, br)
     }
@@ -1097,10 +1269,10 @@ impl Rules {
             }
             return respond(self.synthetic(500, "text/plain", format!("[Quena] unknown AutoResponder action {a}").as_bytes(), &[]));
         }
-        if let Some(id) = lower.strip_prefix("session:") {
-            if let Ok(id) = id.trim().parse() {
-                return respond(self.session_response(id).or_else(|| self.synthetic(404, "text/plain", b"[Quena] session not found", &[])));
-            }
+        if let Some(id) = lower.strip_prefix("session:")
+            && let Ok(id) = id.trim().parse()
+        {
+            return respond(self.session_response(id).or_else(|| self.synthetic(404, "text/plain", b"[Quena] session not found", &[])));
         }
         if lower.starts_with("http://") || lower.starts_with("https://") {
             // Retarget the request (Map Remote with a prefix: match keeps the rest of the URL).
@@ -1123,7 +1295,7 @@ impl Rules {
             h.headers.set("Host", host);
             return Some(RequestAction::Forward { head: Some(h), body: None, delay_ms: latency });
         }
-        respond(self.file_response(a))
+        respond(self.file_response(a, &head.method))
     }
 
     async fn pause(self: Arc<Self>, s: SessionView, phase: &str, url: String) -> Resume {
@@ -1296,10 +1468,11 @@ impl Interceptor for Rules {
                         return action;
                     }
                 }
-            } else if this.ar.read().enabled && !this.ar.read().unmatched_passthrough {
-                if let Some((h, b)) = this.synthetic(404, "text/plain; charset=utf-8", b"[Quena] Mock Rules: no rule matched and unmatched requests are not passed through", &[]) {
-                    return RequestAction::Respond { head: h, body: b, delay_ms: 0 };
-                }
+            } else if this.ar.read().enabled
+                && !this.ar.read().unmatched_passthrough
+                && let Some((h, b)) = this.synthetic(404, "text/plain; charset=utf-8", b"[Quena] Mock Rules: no rule matched and unmatched requests are not passed through", &[])
+            {
+                return RequestAction::Respond { head: h, body: b, delay_ms: 0 };
             }
             // 1b. Script onBeforeRequest (heads/metadata only; bodies keep streaming).
             if this.script_active() && this.script.has_request_hook() {
@@ -1326,10 +1499,11 @@ impl Interceptor for Rules {
                             let old_auth = authority_of(&head.url);
                             let new_auth = authority_of(&u);
                             head.url = u;
-                            if headers.is_none() && new_auth.is_some() && new_auth != old_auth {
-                                if let Some(a) = new_auth {
-                                    head.headers.set("Host", a);
-                                }
+                            if headers.is_none()
+                                && new_auth != old_auth
+                                && let Some(a) = new_auth
+                            {
+                                head.headers.set("Host", a);
                             }
                             script_edited = true;
                         }
@@ -1532,9 +1706,18 @@ pub fn export_farx(s: &AutoResponderState) -> String {
     out.push_str(&httpdate_now());
     out.push_str("\" FiddlerVersion=\"Quena\">\r\n");
     out.push_str(&format!("  <State Enabled=\"{}\" Fallthrough=\"{}\" UseLatency=\"{}\">\r\n", s.enabled, s.unmatched_passthrough, s.enable_latency));
+    let one_shot = s.rules.iter().filter(|r| r.match_once && !r.action.starts_with("session:")).count();
+    if one_shot > 0 {
+        // .farx has no "match once": of a sequence (a chain of match-once rules), only the
+        // last (fallback) rule is exported.
+        out.push_str(&format!("    <!-- {one_shot} match-once rule(s) left out (.farx cannot express them); sequences keep their last response -->\r\n"));
+    }
     for r in &s.rules {
         if r.action.starts_with("session:") {
             continue; // session-backed rules are local to this capture
+        }
+        if r.match_once {
+            continue;
         }
         out.push_str(&format!(
             "    <ResponseRule Match=\"{}\" Action=\"{}\" Enabled=\"{}\" Latency=\"{}\" />\r\n",
@@ -1638,6 +1821,54 @@ mod tests {
         let mut hz = h.clone();
         hz.headers.push("Content-Encoding", "gzip");
         assert!(m.matches(&hz, Some(&store.store_bytes(&gz.finish().unwrap()))));
+    }
+
+    #[test]
+    fn exact_integers_hashes_and_graphql_queries() {
+        let d = tempfile::tempdir().unwrap();
+        let store = quena_body::BodyStore::open(d.path(), Default::default()).unwrap();
+        let h = head("POST", "https://api.x.de/x");
+        let body = |s: &str| store.store_bytes(s.as_bytes());
+        // Integers beyond 2^53 compare exactly; 1 and 1.0 stay equal.
+        let m = Matcher::parse(r#"BODYJSON:EXACT:https://api.x.de/x {"id":9007199254740993,"n":1}"#).unwrap();
+        assert!(m.matches(&h, Some(&body(r#"{"id":9007199254740993,"n":1.0}"#))));
+        assert!(!m.matches(&h, Some(&body(r#"{"id":9007199254740992,"n":1}"#))));
+        assert!(!json_matches(&serde_json::json!(u64::MAX), &serde_json::json!(u64::MAX - 1)));
+        // BODYHASH: SHA-256 of the decoded body.
+        let text = "a=1&b=".to_string() + &"x".repeat(100_000);
+        let m = Matcher::parse(&format!("METHOD:POST BODYHASH:EXACT:https://api.x.de/x {}", sha256_hex(text.as_bytes()))).unwrap();
+        assert!(m.needs_body());
+        assert!(m.matches(&h, Some(&body(&text))));
+        assert!(!m.matches(&h, Some(&body(&(text.clone() + "y")))));
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut gz, text.as_bytes()).unwrap();
+        let mut hz = h.clone();
+        hz.headers.push("Content-Encoding", "gzip");
+        assert!(m.matches(&hz, Some(&store.store_bytes(&gz.finish().unwrap()))));
+        assert!(Matcher::parse("BODYHASH:EXACT:https://x/ abc").is_err());
+        // URLWithBody compares the decoded body.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut gz, b"user=al").unwrap();
+        let m = Matcher::parse("URLWithBody:EXACT:https://api.x.de/x regex:^user=al$").unwrap();
+        assert!(m.matches(&hz, Some(&store.store_bytes(&gz.finish().unwrap()))));
+        // GraphQL query hash: formatting does not matter, the query does.
+        assert_eq!(graphql_query_hash("query { a b }"), graphql_query_hash("query {\n  a,\n  b # c\n}"));
+        assert_ne!(graphql_query_hash("{ a }"), graphql_query_hash("{ b }"));
+        assert_ne!(graphql_query_hash(r#"{ a(s:"x  y") }"#), graphql_query_hash(r#"{ a(s:"x y") }"#));
+        let g = Matcher::parse(&format!(r#"GRAPHQL:EXACT:https://api.x.de/x {{"variables":{{"id":1}},"queryHash":"{}"}}"#, graphql_query_hash("{ user(id:$id) { name } }"))).unwrap();
+        assert!(g.matches(&h, Some(&body(r#"{"query":"{ user(id: $id) {\n name } }","variables":{"id":1}}"#))));
+        assert!(!g.matches(&h, Some(&body(r#"{"query":"{ user(id: $id) { email } }","variables":{"id":1}}"#))));
+        assert!(!g.matches(&h, Some(&body(r#"{"query":"{ user(id: $id) { name } }","operationName":"X","variables":{"id":1}}"#))));
+    }
+
+    #[test]
+    fn farx_leaves_out_match_once() {
+        let r = |m: &str, once: bool| Rule { match_: m.into(), action: "*200".into(), match_once: once, ..Default::default() };
+        let s = AutoResponderState { rules: vec![r("EXACT:http://a/1", true), r("EXACT:http://a/1", false), r("EXACT:http://a/2", false)], ..Default::default() };
+        let x = export_farx(&s);
+        assert!(x.contains("1 match-once rule(s) left out"), "{x}");
+        let back = import_farx(&x).unwrap();
+        assert_eq!(back.rules.iter().map(|r| r.match_.as_str()).collect::<Vec<_>>(), ["EXACT:http://a/1", "EXACT:http://a/2"]);
     }
 
     #[test]

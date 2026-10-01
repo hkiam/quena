@@ -30,6 +30,7 @@ dirs.workspace = true
 time.workspace = true
 flate2.workspace = true
 regex.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 quick-xml = "0.38"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }

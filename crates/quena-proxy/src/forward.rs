@@ -713,7 +713,11 @@ fn respond_locally(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &Session
     });
     live.finish();
     shared.hooks().on_complete(view);
-    build_client_response(&head, StoredStream::new(body).boxed(), Some(len))
+    // A HEAD response announces the length of the body a GET would get (a recorded
+    // Content-Length); it never has a body of its own, so 0 would be wrong.
+    let head_request = live.detail().request.method.eq_ignore_ascii_case("HEAD");
+    let len = if head_request && len == 0 && head.headers.get("content-length").is_some() { None } else { Some(len) };
+    build_client_response(&head, StoredStream::new(body).boxed(), len)
 }
 
 fn record_synthetic_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, resp: &Response<ProxyBody>, error: String) {

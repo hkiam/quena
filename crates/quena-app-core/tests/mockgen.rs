@@ -38,6 +38,10 @@ fn post_json(url: &'static str, req: &'static str, body: &'static str) -> S<'sta
 }
 
 fn add(cap: &Arc<Capture>, s: &S) -> SessionId {
+    add_with_reason(cap, s, "")
+}
+
+fn add_with_reason(cap: &Arc<Capture>, s: &S, reason: &str) -> SessionId {
     let mut d = SessionDetail::default();
     d.summary.kind = SessionKind::Http;
     d.summary.state = SessionState::Done;
@@ -50,7 +54,7 @@ fn add(cap: &Arc<Capture>, s: &S) -> SessionId {
     for (n, v) in s.headers {
         rh.push(*n, *v);
     }
-    d.response = Some(ResponseHead { status: s.status, reason: String::new(), version: HttpVersion::Http11, headers: rh });
+    d.response = Some(ResponseHead { status: s.status, reason: reason.into(), version: HttpVersion::Http11, headers: rh });
     d.timers.server_begin_request = Some(10_000_000);
     d.timers.server_got_first_byte = Some(10_250_000);
     let (req, resp) = (cap.bodies.store_bytes(s.req), cap.bodies.store_bytes(s.body));
@@ -135,8 +139,8 @@ fn json_bodies_and_graphql_tell_requests_apart() {
     assert!(matches!(&search[0].body_match, BodyMatch::Json { .. }));
     let gql: Vec<_> = set.entries.iter().filter(|e| e.path == "/graphql").collect();
     assert_eq!(gql.len(), 3);
-    assert!(gql.iter().any(|e| e.body_match == BodyMatch::GraphQl { operation_name: "GetUser".into(), variables: json!({"id": 2}) }));
-    assert!(gql.iter().any(|e| e.body_match == BodyMatch::GraphQl { operation_name: "Me".into(), variables: serde_json::Value::Null }));
+    assert!(gql.iter().any(|e| e.body_match == BodyMatch::GraphQl { operation_name: "GetUser".into(), variables: json!({"id": 2}), query: None }));
+    assert!(gql.iter().any(|e| e.body_match == BodyMatch::GraphQl { operation_name: "Me".into(), variables: serde_json::Value::Null, query: None }));
     // Every expression compiles.
     for e in &set.entries {
         quena_app_core::rules::validate_match(&mockgen::match_expression(e)).unwrap();
@@ -278,7 +282,7 @@ fn wiremock_structure() {
     );
     let items = json_of("GET-items");
     assert_eq!(items["request"], json!({ "method": "GET", "urlPath": "/items", "queryParameters": { "page": { "equalTo": "2" } } }));
-    assert_eq!(items["priority"], 2);
+    assert_eq!(items["priority"], 120, "urlPath with one parameter, no body");
     let f = items["response"]["bodyFileName"].as_str().unwrap();
     assert_eq!(files.iter().find(|(n, _)| *n == format!("__files/{f}")).unwrap().1, br#"{"items":[1]}"#);
 
@@ -344,10 +348,10 @@ fn package_import_is_zip_slip_safe() {
     found.sort();
     assert_eq!(found, ["data/mocks/evil/responses/ok.dat", "data/mocks/evil/rules.json", "evil.quena-mocks"]);
     let (ok, rejected) = mockgen::resolve_package_rules(&state, &dest, "evil");
-    assert_eq!(rejected, 5);
-    assert_eq!(ok.len(), 2);
+    // `*` matches every host: even the harmless `*503` is not taken over.
+    assert_eq!(rejected, 6);
+    assert_eq!(ok.len(), 1);
     assert_eq!(ok[0].action, dest.join("responses/ok.dat").to_string_lossy());
-    assert_eq!(ok[1].action, "*503");
     assert!(ok.iter().all(|r| r.comment == "pkg:evil"));
 }
 
@@ -415,7 +419,8 @@ fn package_roundtrip_through_the_proxy() {
     assert_eq!(info.status, JobStatus::Done, "{:?}", info.error);
 
     let p = core.mock_import_package(pkg.clone(), false).unwrap();
-    assert_eq!((p.name.as_str(), p.rules, p.rejected), ("Shop-API", 5, 0));
+    assert_eq!((p.name.as_str(), p.rules, p.rejected), ("shop-api", 5, 0));
+    assert_eq!(p.hosts, ["mock.invalid"]);
     let rules = core.rules.clone().unwrap();
     let mut st = rules.autoresponder();
     st.unmatched_passthrough = false;
@@ -440,11 +445,11 @@ fn package_roundtrip_through_the_proxy() {
     assert_eq!(polls, ["poll 1", "poll 2", "poll 2"]);
 
     // Packages: listed, imported again replaces, removed with rules and folder.
-    assert_eq!(core.mock_packages().iter().map(|p| (p.name.as_str(), p.rules)).collect::<Vec<_>>(), [("Shop-API", 5)]);
+    assert_eq!(core.mock_packages().iter().map(|p| (p.name.as_str(), p.rules, p.hosts.clone())).collect::<Vec<_>>(), [("shop-api", 5, vec!["mock.invalid".to_string()])]);
     core.mock_import_package(pkg.clone(), false).unwrap();
     assert_eq!(rules.autoresponder().rules.len(), 5, "re-import replaces the package's rules");
     assert_eq!(core.mock_remove_package("Shop-API").unwrap(), 5);
-    assert!(rules.autoresponder().rules.is_empty() && !dir.path().join("mocks/Shop-API").exists());
+    assert!(rules.autoresponder().rules.is_empty() && !dir.path().join("mocks/shop-api").exists());
     assert!(core.mock_remove_package("../x").is_err());
 
     // "Create from sessions" installs directly; other rules stay below the package.
@@ -456,13 +461,405 @@ fn package_roundtrip_through_the_proxy() {
     let st = rules.autoresponder();
     assert_eq!(st.rules.len(), 2);
     assert_eq!((st.rules[0].comment.as_str(), st.rules[1].action.as_str()), ("pkg:direct", "*418"));
-    assert!(st.rules[0].action.starts_with(&dir.path().join("mocks/direct/responses").to_string_lossy().into_owned()));
+    assert!(st.rules[0].action.starts_with(&dir.path().join("mocks/direct").to_string_lossy().into_owned()) && st.rules[0].action.contains("responses"), "{}", st.rules[0].action);
     let (code, _, body) = curl(&proxy, &["http://mock.invalid/api/items?page=2"]);
     assert_eq!((code, body.as_str()), (201, r#"{"items":[1,2]}"#));
     let (code, _, _) = curl(&proxy, &["http://mock.invalid/other"]);
     assert_eq!(code, 418);
     // Replace: the package rules only.
     core.mock_import_package(pkg, true).unwrap();
-    assert!(rules.autoresponder().rules.iter().all(|r| r.comment == "pkg:Shop-API"));
+    assert!(rules.autoresponder().rules.iter().all(|r| r.comment == "pkg:shop-api"));
     core.stop_capture().unwrap();
+}
+
+// ------------------------------------------------------------------ review fixes
+
+struct Live {
+    dir: tempfile::TempDir,
+    core: Arc<AppCore>,
+    proxy: String,
+    _engine: Arc<quena_app_core::engine::ProxyEngine>,
+}
+
+fn live() -> Live {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"port":0,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap();
+    core.set_proxy_engine(engine.clone());
+    core.start_capture().unwrap();
+    let addr = engine.proxy.listen_addrs().into_iter().find(|a| a.is_ipv4()).unwrap();
+    Live { dir, proxy: format!("http://{addr}"), core, _engine: engine }
+}
+
+impl Live {
+    /// Create mock rules from `ids` (as package `name`) and let unmatched requests fail.
+    fn apply(&self, ids: &[SessionId], opts: MockOptions, name: &str) {
+        let job = self.core.mock_apply(ids.to_vec(), opts, name.into()).unwrap();
+        let info = self.core.jobs.wait(job, Duration::from_secs(30)).unwrap();
+        assert_eq!(info.status, JobStatus::Done, "{:?}", info.error);
+        let rules = self.core.rules.clone().unwrap();
+        let mut st = rules.autoresponder();
+        st.unmatched_passthrough = false;
+        rules.set_autoresponder(st, true).unwrap();
+    }
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        let _ = self.core.stop_capture();
+    }
+}
+
+const JWT: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+
+#[test]
+fn sanitized_path_segments_match_any_value() {
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let reset = add(&cap, &get(&format!("http://api.test/reset/{JWT}"), 200, "text/plain", "reset ok"));
+    let orders = add(&cap, &get("http://api.test/users/max%40example.com/orders", 200, "application/json", "[]"));
+    let set = mocks(&cap, &[reset, orders], &MockOptions { sanitize: SanitizeOptions::preset("support"), ..Default::default() });
+    for e in &set.entries {
+        let m = mockgen::match_expression(e);
+        assert!(!m.contains("%3C") && !m.contains("EXACT:"), "placeholder in the matcher: {m}");
+        assert!(e.path_regex.is_some() && !e.exact_url, "{e:?}");
+        let re = regex::Regex::new(m.strip_prefix("METHOD:GET regex:").unwrap()).unwrap();
+        let orig = cap.detail(e.session).unwrap().request.url;
+        assert!(re.is_match(&orig), "{m} vs {orig}");
+    }
+    let files = mockgen::wiremock_files(&set);
+    let maps: Vec<serde_json::Value> = files.iter().filter(|(n, _)| n.starts_with("mappings/")).map(|(_, d)| serde_json::from_slice(d).unwrap()).collect();
+    let patterns: Vec<&str> = maps.iter().filter_map(|m| m["request"]["urlPathPattern"].as_str()).collect();
+    assert!(patterns.contains(&"/reset/[^/]*") && patterns.contains(&"/users/[^/]*/orders"), "{maps:#?}");
+    assert!(maps.iter().all(|m| m["request"].get("urlPath").is_none() && m["request"].get("url").is_none()));
+}
+
+#[test]
+fn wiremock_priorities_follow_specificity() {
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let bare = add(&cap, &get("http://api.test/p?_=1", 200, "text/plain", "bare"));
+    let one = add(&cap, &get("http://api.test/p?x=1&_=2", 200, "text/plain", "one"));
+    let exact = add(&cap, &get("http://api.test/p?x=1&y=2", 200, "text/plain", "exact"));
+    let two = add(&cap, &get("http://api.test/p?x=1&y=3&_=9", 200, "text/plain", "two"));
+    let body = add(&cap, &post_json("http://api.test/p", r#"{"a":1}"#, "body"));
+    let set = mocks(&cap, &[bare, one, exact, two, body], &no_sanitize());
+    let files = mockgen::wiremock_files(&set);
+    let prio = |id: SessionId| -> u64 {
+        let i = set.entries.iter().position(|e| e.session == id).unwrap();
+        let (_, data) = files.iter().filter(|(n, _)| n.starts_with("mappings/")).nth(i).unwrap();
+        serde_json::from_slice::<serde_json::Value>(data).unwrap()["priority"].as_u64().unwrap()
+    };
+    let (b, o, e, t, j) = (prio(bare), prio(one), prio(exact), prio(two), prio(body));
+    assert!(j < e && e < t && t < o && o < b, "body {j} < exact {e} < two params {t} < one param {o} < bare {b}");
+    // The Quena rules are in the same order.
+    let order: Vec<SessionId> = set.entries.iter().map(|e| e.session).collect();
+    assert_eq!(order, [body, exact, two, one, bare]);
+}
+
+#[test]
+fn mixed_sequences_use_one_matcher() {
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let ids: Vec<_> = [("http://api.test/seq?_=1", "1"), ("http://api.test/seq", "2"), ("http://api.test/seq?_=3", "3")].iter().map(|(u, b)| add(&cap, &get(u, 200, "text/plain", b))).collect();
+    let set = mocks(&cap, &ids, &MockOptions { repeats: Repeats::Sequence, ..no_sanitize() });
+    assert_eq!(set.entries.len(), 3);
+    let exprs: Vec<String> = set.entries.iter().map(mockgen::match_expression).collect();
+    assert!(exprs.iter().all(|m| *m == exprs[0] && m.contains("regex:")), "{exprs:?}");
+    let files = mockgen::wiremock_files(&set);
+    let reqs: Vec<serde_json::Value> = files.iter().filter(|(n, _)| n.starts_with("mappings/")).map(|(_, d)| serde_json::from_slice::<serde_json::Value>(d).unwrap()["request"].clone()).collect();
+    assert!(reqs.iter().all(|r| *r == json!({ "method": "GET", "urlPath": "/seq" })), "{reqs:?}");
+}
+
+#[test]
+fn crlf_in_recorded_headers_is_dropped() {
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let id = add_with_reason(
+        &cap,
+        &S {
+            method: "GET",
+            url: "http://api.test/x",
+            req_headers: &[],
+            req: b"",
+            status: 200,
+            headers: &[("Content-Type", "text/plain"), ("X-Evil", "a\r\nSet-Cookie: sid=1"), ("Bad Name", "v"), ("X-Nul", "a\0b"), ("X-Ok", "fine")],
+            body: b"ok",
+        },
+        "OK\r\nX-Injected: 1",
+    );
+    let set = mocks(&cap, &[id], &no_sanitize());
+    let e = &set.entries[0];
+    assert_eq!(set.dropped_headers, 3);
+    assert_eq!(e.headers.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["Content-Type", "X-Ok", "Content-Length"]);
+    let raw = String::from_utf8(mockgen::raw_response(e)).unwrap();
+    assert!(!raw.contains("Set-Cookie") && !raw.contains("\r\nX-Injected") && raw.starts_with("HTTP/1.1 200 OKX-Injected: 1\r\n"), "{raw}");
+    let wm = String::from_utf8(mockgen::wiremock_files(&set).into_iter().find(|(n, _)| n.starts_with("mappings/")).unwrap().1).unwrap();
+    assert!(!wm.contains("Set-Cookie") && !wm.contains("Bad Name"), "{wm}");
+}
+
+#[test]
+fn large_integers_do_not_collide() {
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let a = add(&cap, &post_json("http://api.test/o", r#"{"id":9007199254740993}"#, "A"));
+    let b = add(&cap, &post_json("http://api.test/o", r#"{"id":9007199254740992}"#, "B"));
+    let set = mocks(&cap, &[a, b], &no_sanitize());
+    assert_eq!(set.entries.len(), 2, "different IDs, different mocks");
+}
+
+#[test]
+fn graphql_queries_are_told_apart() {
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let ids = vec![
+        add(&cap, &post_json("http://api.test/graphql", r#"{"query":"query Q { a }","operationName":"Q","variables":{}}"#, "a")),
+        add(&cap, &post_json("http://api.test/graphql", r#"{"query":"query Q { b }","operationName":"Q","variables":{}}"#, "b")),
+        add(&cap, &post_json("http://api.test/graphql", r#"{"query":"{ me { name } }"}"#, "me")),
+        add(&cap, &post_json("http://api.test/search", r#"{"query":"shoes","page":2}"#, "shoes")),
+    ];
+    let set = mocks(&cap, &ids, &no_sanitize());
+    assert_eq!(set.entries.len(), 4);
+    let gql: Vec<_> = set.entries.iter().filter(|e| e.path == "/graphql").collect();
+    assert!(gql.iter().all(|e| matches!(&e.body_match, BodyMatch::GraphQl { query: Some(_), .. })), "{gql:#?}");
+    assert!(matches!(&set.entries.iter().find(|e| e.path == "/search").unwrap().body_match, BodyMatch::Json { .. }), "a search body is not GraphQL");
+    for e in &set.entries {
+        quena_app_core::rules::validate_match(&mockgen::match_expression(e)).unwrap();
+    }
+}
+
+#[test]
+fn mocks_keep_bodies_whole_when_sanitizing() {
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let big = format!(r#"{{"items":[{}]}}"#, (0..20_000).map(|i| format!(r#"{{"n":{i},"label":"item number {i}"}}"#)).collect::<Vec<_>>().join(","));
+    let id = add(&cap, &get("http://api.test/items", 200, "application/json", Box::leak(big.clone().into_boxed_str())));
+    for preset in ["gdpr", "support"] {
+        let set = mocks(&cap, &[id], &MockOptions { sanitize: SanitizeOptions::preset(preset), ..Default::default() });
+        let e = &set.entries[0];
+        assert!(e.body.len() > 64 << 10, "{preset}: truncated to {}", e.body.len());
+        serde_json::from_slice::<serde_json::Value>(&e.body).unwrap_or_else(|err| panic!("{preset}: not valid JSON any more: {err}"));
+    }
+}
+
+#[test]
+fn wiremock_export_replaces_its_own_files_only() {
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let ids: Vec<_> = ["a", "b", "c"].iter().map(|p| add(&cap, &get(&format!("http://api.test/{p}"), 200, "text/plain", "x"))).collect();
+    let out = d.path().join("wm");
+    mockgen::write_wiremock(&mocks(&cap, &ids, &no_sanitize()), &out).unwrap();
+    std::fs::write(out.join("keep.txt"), "mine").unwrap();
+    assert_eq!(out.join("mappings").read_dir().unwrap().count(), 3);
+    mockgen::write_wiremock(&mocks(&cap, &ids[..1], &no_sanitize()), &out).unwrap();
+    assert_eq!(out.join("mappings").read_dir().unwrap().count(), 1, "stale mappings removed");
+    assert_eq!(out.join("__files").read_dir().unwrap().count(), 1);
+    assert_eq!(std::fs::read_to_string(out.join("keep.txt")).unwrap(), "mine");
+    assert_eq!(out.read_dir().unwrap().count(), 4, "no temporary folder left: {:?}", out.read_dir().unwrap().map(|e| e.unwrap().file_name()).collect::<Vec<_>>());
+    // ZIP: replaced as a whole, no temporary file left.
+    let z = d.path().join("wm.zip");
+    std::fs::write(&z, "old").unwrap();
+    mockgen::write_wiremock(&mocks(&cap, &ids, &no_sanitize()), &z).unwrap();
+    assert_eq!(zip::ZipArchive::new(std::fs::File::open(&z).unwrap()).unwrap().file_names().filter(|n| n.starts_with("mappings/")).count(), 3);
+    assert_eq!(d.path().read_dir().unwrap().count(), 3, "cap, wm, wm.zip");
+}
+
+#[test]
+fn preview_counts_match_the_result() {
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let ids = vec![
+        add(&cap, &get(&format!("http://api.test/reset/{JWT}"), 200, "text/plain", "r")),
+        add(&cap, &get("http://api.test/items?page=1&_=1", 200, "application/json", "[1]")),
+        add(&cap, &get("http://api.test/items?page=1&_=2", 200, "application/json", "[1]")),
+        add(&cap, &get("http://api.test/items?page=1&_=3", 200, "application/json", "[2]")),
+        add(&cap, &get(&format!("http://api.test/token?access_token={JWT}"), 200, "text/plain", "t1")),
+        add(&cap, &get("http://api.test/token?access_token=other-token-value", 200, "text/plain", "t2")),
+        add(&cap, &post_json("http://api.test/login", r#"{"user":"a","password":"one"}"#, "ok")),
+        add(&cap, &post_json("http://api.test/login", r#"{"user":"a","password":"two"}"#, "ok2")),
+        add(&cap, &get("http://api.test/app.js", 200, "application/javascript", "x")),
+        add(&cap, &get("http://api.test/cached", 304, "text/plain", "")),
+    ];
+    for repeats in [Repeats::Last, Repeats::Sequence] {
+        for sanitize in [None, SanitizeOptions::preset("credentials"), SanitizeOptions::preset("gdpr")] {
+            let opts = MockOptions { repeats, sanitize: sanitize.clone(), ..Default::default() };
+            let real = mockgen::MockPreview::of(&mocks(&cap, &ids, &opts));
+            let preview = mockgen::MockPreview::of(&mockgen::generate(&cap, &ids, &opts, false, &quena_formats::NoProgress).unwrap());
+            let what = format!("{repeats:?} {:?}", sanitize.map(|s| s.preset));
+            assert_eq!((preview.mappings, preview.sequences, &preview.skipped_by_reason), (real.mappings, real.sequences, &real.skipped_by_reason), "{what}");
+            assert_eq!(preview.entries.iter().map(|e| (e.session, e.body_match)).collect::<Vec<_>>(), real.entries.iter().map(|e| (e.session, e.body_match)).collect::<Vec<_>>(), "{what}");
+        }
+    }
+}
+
+/// A package file with these rules and one response file `ok.dat`.
+fn package_file(path: &std::path::Path, rules: Vec<Rule>) {
+    let mut z = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+    let o = zip::write::SimpleFileOptions::default();
+    z.start_file("rules.json", o).unwrap();
+    z.write_all(&serde_json::to_vec(&AutoResponderState { rules, ..Default::default() }).unwrap()).unwrap();
+    z.start_file("responses/ok.dat", o).unwrap();
+    z.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").unwrap();
+    z.finish().unwrap();
+}
+
+#[test]
+fn package_import_rules_are_limited() {
+    let l = live();
+    let pkg = l.dir.path().join("Limits.quena-mocks");
+    package_file(
+        &pkg,
+        vec![
+            Rule { match_: "METHOD:GET EXACT:http://a.invalid/ok".into(), action: "responses/ok.dat".into(), latency_ms: 999_999, ..Default::default() },
+            Rule { match_: r"regex:^http://b\.invalid/x/(.*)$".into(), action: "responses/ok.dat".into(), ..Default::default() },
+            Rule { match_: "ok".into(), action: "responses/ok.dat".into(), ..Default::default() },
+            Rule { match_: r"regex:^http://a\.invalid/|.*".into(), action: "*404".into(), ..Default::default() },
+            Rule { match_: "EXACT:http://a.invalid/slow".into(), action: "*delay:99999999".into(), ..Default::default() },
+        ],
+    );
+    let p = l.core.mock_import_package(pkg, false).unwrap();
+    assert_eq!((p.name.as_str(), p.rules, p.rejected), ("limits", 2, 3));
+    assert_eq!(p.hosts, ["a.invalid", "b.invalid"]);
+    let st = l.core.rules.clone().unwrap().autoresponder();
+    assert_eq!(st.rules[0].latency_ms, 60_000, "latency capped");
+    assert!(std::path::Path::new(&st.rules[1].action.replace("$$", "$")).is_file());
+}
+
+#[test]
+fn package_names_are_case_insensitive() {
+    let l = live();
+    let rules = l.core.rules.clone().unwrap();
+    // A package installed before names were lower case.
+    let mut st = rules.autoresponder();
+    st.rules.push(Rule { match_: "EXACT:http://a.invalid/old".into(), action: "*200".into(), comment: "pkg:Shop".into(), ..Default::default() });
+    rules.set_autoresponder(st, true).unwrap();
+    std::fs::create_dir_all(l.dir.path().join("mocks/Shop/responses")).unwrap();
+    let rule = || vec![Rule { match_: "METHOD:GET EXACT:http://a.invalid/ok".into(), action: "responses/ok.dat".into(), ..Default::default() }];
+    for file in ["Shop.quena-mocks", "shop.quena-mocks", "SHOP.quena-mocks"] {
+        let pkg = l.dir.path().join(file);
+        package_file(&pkg, rule());
+        assert_eq!(l.core.mock_import_package(pkg, false).unwrap().name, "shop");
+    }
+    let st = rules.autoresponder();
+    assert_eq!(st.rules.len(), 1, "{:#?}", st.rules);
+    assert_eq!(st.rules[0].comment, "pkg:shop");
+    let pkgs = l.core.mock_packages();
+    assert_eq!(pkgs.iter().map(|p| (p.name.as_str(), p.rules)).collect::<Vec<_>>(), [("shop", 1)]);
+    // One generation folder, the old flat layout gone.
+    let pkg_dir = std::path::PathBuf::from(&pkgs[0].dir);
+    assert_eq!(pkg_dir.read_dir().unwrap().count(), 1);
+    assert!(!pkg_dir.join("responses").exists());
+    assert_eq!(l.core.mock_remove_package("SHOP").unwrap(), 1);
+    assert!(l.core.mock_packages().is_empty());
+}
+
+#[test]
+fn concurrent_installs_do_not_lose_rules() {
+    let l = live();
+    let n = 8;
+    let files: Vec<_> = (0..n)
+        .map(|i| {
+            let p = l.dir.path().join(format!("p{i}.quena-mocks"));
+            package_file(&p, (0..5).map(|k| Rule { match_: format!("METHOD:GET EXACT:http://p{i}.invalid/{k}"), action: "responses/ok.dat".into(), ..Default::default() }).collect());
+            p
+        })
+        .collect();
+    std::thread::scope(|s| {
+        for f in &files {
+            let core = l.core.clone();
+            s.spawn(move || {
+                for _ in 0..3 {
+                    core.mock_import_package(f.clone(), false).unwrap();
+                }
+            });
+        }
+        // Rule changes from elsewhere at the same time.
+        let rules = l.core.rules.clone().unwrap();
+        s.spawn(move || {
+            for k in 0..20 {
+                rules.update_autoresponder(false, |st| st.rules.push(Rule { match_: format!("EXACT:http://other.invalid/{k}"), action: "*200".into(), ..Default::default() })).unwrap();
+            }
+        });
+    });
+    let st = l.core.rules.clone().unwrap().autoresponder();
+    assert_eq!(st.rules.len(), n * 5 + 20);
+    let pkgs = l.core.mock_packages();
+    assert_eq!(pkgs.len(), n);
+    assert!(pkgs.iter().all(|p| p.rules == 5 && std::path::Path::new(&p.dir).read_dir().unwrap().count() == 1), "{pkgs:#?}");
+    // Every rule's response file exists.
+    assert!(st.rules.iter().filter(|r| r.comment.starts_with("pkg:")).all(|r| std::path::Path::new(&r.action).is_file()));
+}
+
+#[test]
+fn live_wildcards_hashes_head_204_and_sequence_reset() {
+    let l = live();
+    let cap = l.core.capture();
+    let form = "data=".to_string() + &"x".repeat(200_000) + "&end=1";
+    let text = "line\n".repeat(50_000);
+    let ids = vec![
+        add(&cap, &get(&format!("http://mock.invalid/reset/{JWT}"), 200, "text/plain", "reset ok")),
+        add(&cap, &S { method: "POST", url: "http://mock.invalid/form", req_headers: &[("Content-Type", "application/x-www-form-urlencoded")], req: form.as_bytes(), status: 200, headers: &[("Content-Type", "text/plain")], body: b"big form" }),
+        add(&cap, &S { method: "POST", url: "http://mock.invalid/text", req_headers: &[("Content-Type", "text/plain")], req: text.as_bytes(), status: 200, headers: &[("Content-Type", "text/plain")], body: b"big text" }),
+        add(&cap, &S { method: "HEAD", url: "http://mock.invalid/file", req_headers: &[], req: b"", status: 200, headers: &[("Content-Type", "application/pdf"), ("Content-Length", "1234")], body: b"" }),
+        add(&cap, &S { method: "DELETE", url: "http://mock.invalid/item/1", req_headers: &[], req: b"", status: 204, headers: &[("Content-Length", "0")], body: b"" }),
+        add(&cap, &get("http://mock.invalid/poll", 200, "text/plain", "poll 1")),
+        add(&cap, &get("http://mock.invalid/poll", 200, "text/plain", "poll 2")),
+    ];
+    let opts = MockOptions { repeats: Repeats::Sequence, ..MockOptions::default() };
+    let set = mocks(&cap, &ids, &opts);
+    let expr = |path: &str| mockgen::match_expression(set.entries.iter().find(|e| e.path == path).unwrap());
+    assert!(expr("/form").starts_with("METHOD:POST BODYHASH:") && expr("/text").starts_with("METHOD:POST BODYHASH:"), "{}", expr("/form"));
+    l.apply(&ids, opts, "live");
+
+    let (code, _, body) = curl(&l.proxy, &[&format!("http://mock.invalid/reset/{JWT}")]);
+    assert_eq!((code, body.as_str()), (200, "reset ok"), "the real token matches the sanitized path");
+    let (code, _, body) = curl(&l.proxy, &["http://mock.invalid/reset/another"]);
+    assert_eq!((code, body.as_str()), (200, "reset ok"));
+    let f = l.dir.path().join("form.txt");
+    std::fs::write(&f, &form).unwrap();
+    let (code, _, body) = curl(&l.proxy, &["-H", "Content-Type: application/x-www-form-urlencoded", "--data-binary", &format!("@{}", f.display()), "http://mock.invalid/form"]);
+    assert_eq!((code, body.as_str()), (200, "big form"));
+    let (code, _, _) = curl(&l.proxy, &["-H", "Content-Type: application/x-www-form-urlencoded", "--data-binary", "data=y&end=1", "http://mock.invalid/form"]);
+    assert_eq!(code, 404);
+    std::fs::write(&f, &text).unwrap();
+    let (code, _, body) = curl(&l.proxy, &["-H", "Content-Type: text/plain", "--data-binary", &format!("@{}", f.display()), "http://mock.invalid/text"]);
+    assert_eq!((code, body.as_str()), (200, "big text"));
+    // HEAD announces the length of the recorded GET body.
+    let (code, head, _) = curl(&l.proxy, &["-I", "http://mock.invalid/file"]);
+    assert!(code == 200 && head.contains("content-length: 1234"), "{head}");
+    let head_rule = l.core.rules.clone().unwrap().autoresponder().rules.into_iter().find(|r| r.match_.starts_with("METHOD:HEAD")).unwrap();
+    let dat = String::from_utf8(std::fs::read(&head_rule.action).unwrap()).unwrap();
+    assert!(dat.contains("Content-Length: 1234\r\n") && dat.ends_with("\r\n\r\n"), "{dat}");
+    let (code, head, body) = curl(&l.proxy, &["-X", "DELETE", "http://mock.invalid/item/1"]);
+    assert!(code == 204 && body.is_empty() && !head.contains("content-length"), "{head}");
+
+    let polls = |n: usize| (0..n).map(|_| curl(&l.proxy, &["http://mock.invalid/poll"]).2).collect::<Vec<_>>();
+    assert_eq!(polls(3), ["poll 1", "poll 2", "poll 2"]);
+    assert!(l.core.mock_reset_sequences("LIVE").unwrap() >= 2);
+    assert_eq!(polls(2), ["poll 1", "poll 2"], "the sequence starts over");
+    assert!(l.core.mock_reset_sequences("../x").is_err());
+}
+
+/// Writes a WireMock export with priorities, a mixed sequence and sanitized path segments to
+/// `$QUENA_WIREMOCK_OUT` (for checking against a real WireMock; see the review notes).
+#[test]
+#[ignore]
+fn wiremock_export_for_a_real_wiremock() {
+    let out = std::path::PathBuf::from(std::env::var("QUENA_WIREMOCK_OUT").expect("QUENA_WIREMOCK_OUT"));
+    let d = tempfile::tempdir().unwrap();
+    let cap = capture(d.path());
+    let ids = vec![
+        add(&cap, &get("http://api.test/p?_=1", 200, "text/plain", "bare")),
+        add(&cap, &get("http://api.test/p?x=1&_=2", 200, "text/plain", "one")),
+        add(&cap, &get("http://api.test/p?x=1&y=2", 200, "text/plain", "exact")),
+        add(&cap, &post_json("http://api.test/p", r#"{"a":1}"#, "body")),
+        add(&cap, &get("http://api.test/seq?_=1", 200, "text/plain", "s1")),
+        add(&cap, &get("http://api.test/seq", 200, "text/plain", "s2")),
+        add(&cap, &get("http://api.test/seq?_=3", 200, "text/plain", "s3")),
+        add(&cap, &get(&format!("http://api.test/reset/{JWT}"), 200, "text/plain", "reset")),
+        add(&cap, &get("http://api.test/users/max%40example.com/orders", 200, "text/plain", "orders")),
+    ];
+    let set = mocks(&cap, &ids, &MockOptions { repeats: Repeats::Sequence, sanitize: SanitizeOptions::preset("support"), ..Default::default() });
+    mockgen::write_wiremock(&set, &out).unwrap();
 }
