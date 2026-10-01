@@ -51,7 +51,7 @@ impl AppCore {
         if let Ok(extra) = std::env::var("QUENA_PLUGIN_DIR") {
             dirs.insert(0, PathBuf::from(extra));
         }
-        let host = PluginHost::new(dirs, &self.paths.data)?;
+        let host = PluginHost::with_cache(dirs, &self.paths.data, self.paths.plugin_cache.clone())?;
         *self.plugin_host.write() = Some(host);
         self.install_plugin_decoders(&self.capture());
         Ok(())

@@ -550,8 +550,15 @@ fn arm(store: &mut Store<State>, budget: Duration, sliced: bool) {
 }
 
 impl PluginHost {
-    /// `dirs`: plugin search paths; `state_dir`: where enable/disable state is kept.
+    /// `dirs`: plugin search paths; `state_dir`: where enable/disable state and the compiled
+    /// plugins are kept.
     pub fn new(dirs: Vec<PathBuf>, state_dir: &Path) -> Result<Arc<PluginHost>> {
+        Self::with_cache(dirs, state_dir, state_dir.join("plugin-cache"))
+    }
+
+    /// Like [`PluginHost::new`], with the compiled plugins in `cache_dir` (which several
+    /// processes may share).
+    pub fn with_cache(dirs: Vec<PathBuf>, state_dir: &Path, cache_dir: PathBuf) -> Result<Arc<PluginHost>> {
         let mut cfg = Config::new();
         cfg.wasm_component_model(true);
         cfg.epoch_interruption(true);
@@ -584,7 +591,7 @@ impl PluginHost {
             dirs,
             limits: Limits::default(),
             disabled_file: state_dir.join("plugins-disabled.json"),
-            cache_dir: state_dir.join("plugin-cache"),
+            cache_dir,
         });
         host.discover();
         Ok(host)
@@ -649,7 +656,8 @@ impl PluginHost {
         let component = Component::new(&self.engine, &bytes).map_err(|e| anyhow!("{e:#}"))?;
         if let Ok(ser) = component.serialize() {
             let _ = std::fs::create_dir_all(&self.cache_dir);
-            let tmp = cached.with_extension("tmp");
+            // A name of its own: processes sharing the cache may compile the same plugin at once.
+            let tmp = cached.with_extension(format!("{}-{:x}.tmp", std::process::id(), rand_suffix()));
             if std::fs::write(&tmp, &ser).is_ok() {
                 let _ = std::fs::rename(&tmp, &cached);
             }
@@ -1048,4 +1056,12 @@ impl PluginHost {
         let _ = run.resource_drop(&mut store);
         result
     }
+}
+
+/// A value that differs between threads and calls (temporary file names).
+fn rand_suffix() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+    h.finish()
 }

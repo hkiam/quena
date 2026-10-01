@@ -3,7 +3,7 @@
 use quena_app_core::{AppCore, EventSink, Paths};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[derive(Default)]
 struct Events(Mutex<Vec<(String, serde_json::Value)>>);
@@ -14,13 +14,8 @@ impl EventSink for Events {
 }
 
 fn wait(core: &AppCore, job: u64) {
-    let job = core.jobs.get(job).unwrap();
-    let t0 = Instant::now();
-    while !matches!(format!("{:?}", job.status()).as_str(), "Done" | "Failed" | "Cancelled") {
-        assert!(t0.elapsed() < Duration::from_secs(60), "job did not finish");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(format!("{:?}", job.status()), "Done", "{:?}", job.snapshot().error);
+    let info = core.jobs.wait(job, Duration::from_secs(60)).expect("job did not finish");
+    assert_eq!(format!("{:?}", info.status), "Done", "{:?}", info.error);
 }
 
 #[test]

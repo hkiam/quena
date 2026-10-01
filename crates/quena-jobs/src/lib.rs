@@ -11,7 +11,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub type JobId = u64;
 
@@ -231,6 +231,22 @@ impl JobManager {
         }
     }
 
+    /// Block until job `id` has finished (done, failed or cancelled) or `timeout` passed;
+    /// its final state, or `None` for an unknown job or on timeout.
+    pub fn wait(&self, id: JobId, timeout: Duration) -> Option<JobInfo> {
+        let job = self.get(id)?;
+        let until = Instant::now() + timeout;
+        loop {
+            if matches!(job.status(), JobStatus::Done | JobStatus::Failed | JobStatus::Cancelled) {
+                return Some(job.snapshot());
+            }
+            if Instant::now() >= until {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     pub fn get(&self, id: JobId) -> Option<Arc<JobState>> {
         self.reg.lock().jobs.get(&id).cloned()
     }
@@ -340,17 +356,9 @@ fn run(task: Task, generation: &AtomicU64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     fn wait(m: &JobManager, id: JobId) -> JobStatus {
-        for _ in 0..500 {
-            let s = m.get(id).unwrap().status();
-            if !matches!(s, JobStatus::Queued | JobStatus::Running) {
-                return s;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        panic!("timeout");
+        m.wait(id, Duration::from_millis(2500)).expect("timeout").status
     }
 
     #[test]

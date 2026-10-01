@@ -39,7 +39,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub use quena_jobs::JobInfo;
+pub use quena_jobs::{JobInfo, JobStatus};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionTimers {
@@ -57,6 +57,8 @@ pub struct Paths {
     pub data: PathBuf,
     pub captures: PathBuf,
     pub settings: PathBuf,
+    /// Machine code of compiled plugins (may be shared by several instances).
+    pub plugin_cache: PathBuf,
 }
 
 impl Paths {
@@ -86,7 +88,7 @@ impl Paths {
         Self::portable_dir().is_some_and(|d| d == self.data)
     }
     pub fn at(data: PathBuf) -> Paths {
-        Paths { captures: data.join("captures"), settings: data.join("settings.json"), data }
+        Paths { captures: data.join("captures"), settings: data.join("settings.json"), plugin_cache: data.join("plugin-cache"), data }
     }
 }
 
