@@ -9,20 +9,43 @@ contain breaking changes (settings, file formats, plugin API).
 
 ### Added
 - **Sanitized export for sharing** (*File → Export Sessions → Sanitized for Sharing*): a
-  SAZ/HAR copy for vendors or support with credentials, tokens, secret URL parameters and
-  secret body fields replaced, and — with the *GDPR strict* preset — e-mail addresses, phone
-  numbers, IBANs and card numbers (check digits), IP addresses, personal fields, tax and
-  social security numbers and process names. Deterministic and local (no AI), structure-
-  preserving for JSON, forms, multipart, XML, HTML, SSE and WebSocket messages, stable
-  pseudonyms (`<email-3>`), bodies keep/cut/placeholder, own names and patterns; a redaction
-  log is shown and stored in the archive (`QUENA-REDACTION.txt`, HAR `log.comment`).
-- **Mocks from a capture** (*Mocks from Sessions…*): recorded sessions become Mock Rules at
-  once, a shareable `.quena-mocks` package (import in Mock Rules, also by drag and drop), or
-  a WireMock export (mappings, `__files`, scenarios for sequences). Options for hosts, static
-  resources, ignored query parameters, responses in recorded order, body matching, latency,
-  preflights, error responses and sanitizing.
-- Mock Rules match request bodies as JSON (`BODYJSON:`) and GraphQL operations (`GRAPHQL:`).
-- `quena-cli sanitize` and `quena-cli mock`.
+  SAZ/HAR copy for vendors or support. The *Support* preset replaces credentials, tokens,
+  secret URL parameters, secret body fields, e-mail addresses, IBANs and card numbers (check
+  digits); *GDPR strict* also replaces phone numbers, IP addresses, personal fields, tax and
+  social security numbers and process names, and cuts bodies. Deterministic and local (no
+  AI), structure-preserving for JSON, forms, multipart, XML, HTML, SSE and WebSocket
+  messages, stable pseudonyms (`<email-3>`), bodies keep/cut/placeholder, own names and
+  patterns; a redaction log is shown and stored in the archive (`QUENA-REDACTION.txt`, HAR
+  `log.comment`). Names are read as words (`apiKey`, `X-Api-Key`, `otpCode` are secrets,
+  `passenger` or `token_type` are not; weak names like `key`/`code` only with a
+  credential-like value); YAML, JavaScript, CSS, GraphQL and other text is scanned for
+  `name: value` pairs, credentials and URLs; compressed and fragmented WebSocket messages,
+  path tokens, signed-URL parameters and user headers are covered; hosts stay, IP literals
+  go with the IP option. From the session list's context menu it exports the right-clicked
+  sessions, even a single one; the dialog shows the scope and switches between the
+  selection and all sessions, checks own patterns before the file is chosen (an error
+  keeps the entries), and never replaces another open dialog with the redaction log (the
+  status bar offers *Show redaction log* instead).
+- **Mocks from a capture** (*Mocks from Sessions…*, *Create from sessions…* in Mock Rules,
+  the command palette; *File → Export Sessions → Mocks…* starts with the package): recorded
+  sessions become Mock Rules at once, a shareable `.quena-mocks` package (import in Mock
+  Rules, also by drag and drop), or a WireMock export (mappings, `__files`, scenarios for
+  sequences). Options for hosts, static resources, ignored query parameters, responses in
+  recorded order, body matching, latency, preflights, error responses and sanitizing.
+  Package chips show the hosts and offer *Reset sequences*; package names are lower case.
+  An imported package may only answer from its own files or with `*<status>`, `*delay:` (at
+  most 60 s), `*drop`, `*reset` and `*CORSPreflightAllow`, and each rule must be limited to
+  a host; other rules are left out and counted. A WireMock folder export replaces its
+  `mappings/`, `__files/` and `README.md` (no stale mappings); ZIPs and packages are written
+  atomically. `204`/`304` mocks carry no body.
+- Mock Rules match request bodies as JSON (`BODYJSON:`), GraphQL operations (`GRAPHQL:`,
+  optionally by `queryHash`) and by SHA-256 (`BODYHASH:`); `URLWithBody:` compares the
+  decoded body. `.farx` export leaves out *match once* chains (with a note in the file).
+- `quena-cli sanitize` and `quena-cli mock`: config files are read strictly (unknown keys
+  are named, exit 2; `sanitize --config` also takes the app's saved options), no output may
+  overwrite a capture or another output, `--package` must end in `.quena-mocks`, a
+  `--wiremock` folder may not be an existing file, and `--timeout` also covers sanitizing
+  and building the mocks (exit 3).
 - **Diagnostics in CI**: `quena-cli`, a command line program without a window, runs the
   diagnostics on HAR/SAZ files (e.g. recorded by Playwright or Cypress tests) and turns the
   report into a quality gate: `--fail-on`, comparison with a `--baseline` report (only new or

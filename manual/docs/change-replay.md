@@ -115,9 +115,10 @@ the **Mock Rules** tab (*Capture → Mock Rules*).
 | `NOT:tracking` | the URL does **not** contain the text |
 | `METHOD:POST /login` | the method matches and the rest of the pattern matches |
 | `HEADER:Accept=json` | a request header contains the value |
-| `URLWithBody:/soap regex:GetOrder` | the URL pattern matches and the request body matches the regex |
+| `URLWithBody:/soap regex:GetOrder` | the URL pattern matches and the request body (decoded, without `Content-Encoding`) matches the regex |
 | `BODYJSON:EXACT:https://example.com/api/search {"q":"shoes"}` | the URL pattern matches and the request body is this JSON (key order and spacing do not matter; `"${json-unit.ignore}"` matches any value) |
-| `GRAPHQL:/graphql {"operationName":"Cart","variables":{"id":1}}` | the URL pattern matches and the GraphQL request has this operation name and variables |
+| `GRAPHQL:/graphql {"operationName":"Cart","variables":{"id":1}}` | the URL pattern matches and the GraphQL request has this operation name and variables; an optional `"queryHash"` (SHA-256 in hex of the query text without comments and extra whitespace) also tells apart requests without an operation name or with the same name and variables |
+| `BODYHASH:EXACT:https://example.com/api/upload 9f86d0…` | the URL pattern matches and the SHA-256 (hex) of the request body — decoded, without `Content-Encoding` — is this one (used by mocks for text and form bodies over 64 KiB) |
 
 ### Actions
 
@@ -126,7 +127,7 @@ the **Mock Rules** tab (*Capture → Mock Rules*).
 | a file path | the file: either a raw HTTP response (starting with `HTTP/`, e.g. a `.dat` file) or a plain body served as `200` with a Content-Type from the extension (*Find a file…* picks one) |
 | `session:12` | the recorded response of session 12 |
 | `*404`, `*500`, … | a generated response with that status |
-| `*drop` | close the connection without a response |
+| `*drop`, `*reset` | close the connection without a response |
 | `*delay:2000` | forward to the server after waiting 2,000 ms |
 | `*redir:https://example.com/` | a `307` redirect to that URL |
 | `*header:X-Quena=1` | forward, with the request header set |
@@ -191,15 +192,18 @@ the session flags `x-quena-mapped-from` and `x-quena-mapped-to` keep both ends.
 
 ### Mocks from sessions
 
-*Mocks from Sessions…* (in the Mock Rules tab, the session list's context menu and *File →
-Export Sessions → Mocks…*) turns recorded sessions into a complete set of rules with their
-responses, or into a WireMock export — see [Mocks from a capture](mocks.md).
+**Create from sessions…** in the Mock Rules tab (also *Mock Rules → Mocks from Sessions…* in
+the session list's context menu and *File → Export Sessions → Mocks…*) turns recorded
+sessions into a complete set of rules with their responses, into a shareable `.quena-mocks`
+package, or into a WireMock export — see [Mocks from a capture](mocks.md).
 
 ### Import and export (`.farx`)
 
 **Import…** reads a `.farx` rule file (as written by Fiddler Classic's AutoResponder),
 **Export…** writes the current rules as `.farx`. Enabled state, passthrough and latency
-settings travel with the file.
+settings travel with the file. *Match once* chains (the sequences of
+[mocks from sessions](mocks.md)) cannot be expressed in `.farx` and are left out; an XML
+comment in the file says so.
 
 ## Latency
 

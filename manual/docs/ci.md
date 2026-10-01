@@ -231,23 +231,32 @@ quena-cli mock captures/*.har --package shop.quena-mocks --host api.example.com
 | `sanitize` option | Effect |
 |---|---|
 | `-o PATH` | the sanitized archive, `.saz` or `.har` |
-| `--preset` | `support` (default), `gdpr`, or `credentials` (only credentials and tokens) |
-| `--config FILE` | sanitize options as JSON (as the app saves them), instead of a preset |
+| `--preset` | `support` (default: credentials, tokens, e-mail addresses, IBANs and card numbers), `gdpr` (also phone numbers, IP addresses, personal fields, national ids, process names; bodies cut), or `credentials` (only credentials and tokens) |
+| `--config FILE` | sanitize options as JSON — the options object, or the app's saved `{"options": …, "format": …}` — instead of a preset |
 | `--log PATH` | also write the redaction log (`.json`, or text) |
+| `-q`, `--quiet` | no progress messages on stderr (errors only) |
+| `--timeout SECONDS` | give up when the whole run (imports, sanitizing, writing) takes longer (default 600); exit code 3, and a half-written archive is removed |
 
 | `mock` option | Effect |
 |---|---|
-| `--wiremock PATH` | WireMock mappings and `__files` (a folder, or `.zip`) |
-| `--package PATH` | a Quena mock package (`.quena-mocks`) |
-| `--host HOST` | only these hosts (repeatable) |
+| `--wiremock PATH` | WireMock mappings and `__files`: a folder (its old `mappings` and `__files` are replaced), or a `.zip`. An existing file that is not a `.zip` is rejected |
+| `--package PATH` | a Quena mock package; the name must end in `.quena-mocks` |
+| `--host HOST` | only these hosts (repeatable; subdomains included) |
 | `--sequence` | several recordings of a request answer in recorded order |
 | `--exact-query` | match the query string exactly |
 | `--include-static`, `--latency` | include static resources; answer after the recorded latency |
-| `--sanitize PRESET` | `credentials` (default), `support`, `gdpr` or `none` |
-| `--config FILE` | all mock options as JSON; flags win |
+| `--sanitize PRESET` | `credentials` (default: credentials and tokens), `support`, `gdpr` or `none` (as recorded) |
+| `--config FILE` | mock options as JSON (`hosts`, `includeStatic`, `query`, `ignoreParams`, `repeats`, `matchBody`, `latency`, `includePreflight`, `includeErrors`, `sanitize`, `keepSetCookie`; `sanitize` is a preset name, `null` or full sanitize options); flags win |
+| `-q`, `--quiet` | no progress messages on stderr (errors only) |
+| `--timeout SECONDS` | give up when the whole run (imports, building and writing the mocks) takes longer (default 600); exit code 3 |
 
-Both need no plugins and use the exit codes below (2 for unreadable captures or a wrong
-output type, 3 for other failures).
+Both need no plugins. Config files are read strictly: an unknown key (a typo such as
+`"repeat"` or `"emials"`) is an error that names it, instead of being ignored. No output may
+overwrite a capture or another output — `-o`, `--log`, `--package` and `--wiremock` are
+compared by their real path (also for files that do not exist yet), and a WireMock folder
+may not hold a capture in its `mappings` or `__files`. Exit code 2 for these, for
+unreadable captures, a wrong output type or an invalid pattern; 3 for a timeout and other
+failures.
 
 ## Exit codes
 

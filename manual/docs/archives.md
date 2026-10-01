@@ -42,10 +42,12 @@ after a clean exit as well.
 ## Sanitized export for sharing
 
 Captures sent to a vendor or a support team usually carry session cookies, tokens and
-personal data. *File → Export Sessions → Sanitized for Sharing (SAZ/HAR)…* (also in the
-session list's context menu) writes a copy without them — the selection if more than one
-session is selected, else all sessions. The analysis is deterministic and runs locally; no
-AI model and no network are involved.
+personal data. *File → Export Sessions → Sanitized for Sharing (SAZ/HAR)…* writes a copy
+without them — the selection if more than one session is selected, else all sessions in the
+list. From the session list's context menu (*Save → Sanitized for Sharing…*) it starts with
+the sessions you right-clicked, even a single one. The dialog shows which sessions go into
+the file and lets you switch between the selection and all sessions. The analysis is
+deterministic and runs locally; no AI model and no network are involved.
 
 | Preset | Replaces |
 |---|---|
@@ -53,21 +55,43 @@ AI model and no network are involved.
 | **GDPR strict** | in addition phone numbers, IP addresses (headers, bodies, client and server address), fields named like personal data (`name`, `street`, `birthDate`, `telefon` …), tax ids and social security numbers, process names; bodies are cut to 64 KiB |
 | **Custom** | any combination, plus your own header, parameter and field names and regular expressions |
 
-* **Structure stays intact.** All headers are kept, only sensitive values change
-  (`Authorization: Bearer <812 bytes>`, `Cookie: sid=<cookie-1>`). JSON, forms, multipart,
-  XML/SOAP, HTML forms, server-sent events and WebSocket text messages are scrubbed field by
-  field and stay valid. Bodies are written decoded (no `Content-Encoding`).
+* **Structure stays intact.** Headers are kept, only sensitive values change
+  (`Authorization: Bearer <token-3>`, `Cookie: sid=<cookie-1>`); the same credential gets the
+  same pseudonym in headers, URLs and bodies. Headers that describe the exact bytes of a
+  changed body (`Digest`, `Content-MD5`, `ETag` …) are dropped. JSON, forms, multipart,
+  XML/SOAP, HTML (form fields, `<meta>`, URLs in `href`/`src`/`action`), server-sent events,
+  WebSocket messages (also `permessage-deflate` compressed and fragmented ones, written as
+  one uncompressed frame) are scrubbed field by field and stay valid. Other text — YAML,
+  JavaScript, CSS, GraphQL, TOML, logs — is scanned for `name: value` / `name = "value"`
+  pairs, `Bearer …`/`Basic …` credentials, `Cookie:` lines and URLs. Text in other charsets
+  is written as UTF-8. Bodies are written decoded (no `Content-Encoding`).
+* **Names are read as words.** A field, parameter or header name is split into words
+  (`apiKey`, `X-Api-Key`, `client_secret`, `otpCode`), so `pass`, `pwd` or `X-Api-Key` count
+  as secrets while `passenger`, `compass` or `keyboard` do not, and metadata such as
+  `token_type`, `password_length` or `expires_in` stays. Weak names (`key`, `code`,
+  `state`, `hash`) are only replaced when the value looks like a credential. A field that
+  names another (`{"name": "password", "value": "…"}`, `<Parameter name="password">`)
+  makes that value secret. Tokens in URL paths (`/reset/…`, `/invite/…`), signed-URL
+  parameters (Azure SAS, AWS, GCS), tokens sent as WebSocket subprotocols and headers that
+  name a user (`X-Forwarded-User`, client certificates) are replaced as well.
+* **Hosts stay.** Host names in `Host`, `:authority` and CONNECT targets are kept; IP
+  literals there are replaced with the IP option, and your own patterns apply.
 * **Pseudonyms keep relations visible.** The same value becomes the same placeholder within
   one export (`<email-3>` in the request and in the response), but cannot be traced back.
-* **Few false alarms.** IBANs and card numbers are checked with their check digits; phone
-  numbers need a country or area prefix; timestamps, ids, versions and UUIDs are left alone.
+* **Few false alarms.** IBANs and card numbers are checked with their check digits (and
+  cards with their written layout); phone numbers need a country or area prefix, 8–15
+  digits and consistent separators, and are no dates; e-mail addresses stop before file
+  extensions and escapes; timestamps, ids, versions and UUIDs are left alone.
 * **Bodies** can be kept (sanitized), cut to a size, replaced by a placeholder
   (`<body removed: 12 KB application/json>`) or dropped; binary bodies (images, fonts, PDF,
   archives) and uploaded files become placeholders.
 * **Redaction log.** After the export Quena lists what was replaced, by category and place
-  (header, URL, body, WebSocket) — never the values. The SAZ contains it as
+  (header, URL, body, WebSocket) — never the values. If you opened another dialog meanwhile,
+  the status bar offers **Show redaction log** instead. The SAZ contains it as
   `QUENA-REDACTION.txt`, the HAR in `log.comment` and `log._quenaRedaction`.
   **Open Sanitized File** adds the copy to the session list for a final check.
+* **Own patterns are checked first.** An invalid regular expression is reported in the
+  dialog before the file is chosen; your entries stay as they are.
 
 !!! warning "Check before you share"
     Automatic detection cannot know every field of every application — a customer number
