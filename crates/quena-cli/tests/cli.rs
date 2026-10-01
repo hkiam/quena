@@ -555,3 +555,44 @@ fn broken_plugin_and_empty_scope() {
         text(&o)
     );
 }
+
+#[test]
+fn sanitize_removes_secrets_and_writes_a_log() {
+    let d = tempfile::tempdir().unwrap();
+    let mut e = entry(0, "https://shop.example.com/api/login?access_token=SECRET-TOKEN-1&page=2", 200, 30.0);
+    e["request"]["headers"] = json!([{"name": "Cookie", "value": "sid=SECRET-COOKIE-1"}, {"name": "Authorization", "value": "Bearer SECRET-BEARER-1"}]);
+    e["response"]["content"]["text"] = json!(r#"{"email":"secret.person@example.com","name":"Erika Mustermann"}"#);
+    let input = d.path().join("in.har");
+    std::fs::write(&input, json!({"log": {"version": "1.2", "creator": {"name": "t", "version": "1"}, "entries": [e]}}).to_string()).unwrap();
+    let out = d.path().join("out.har");
+    let log = d.path().join("log.json");
+    let o = run(&["sanitize", input.to_str().unwrap(), "-o", out.to_str().unwrap(), "--preset", "gdpr", "--log", log.to_str().unwrap()]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let har = std::fs::read_to_string(&out).unwrap();
+    for marker in ["SECRET-TOKEN-1", "SECRET-COOKIE-1", "SECRET-BEARER-1", "secret.person@example.com", "Erika Mustermann"] {
+        assert!(!har.contains(marker), "{marker} left in {har}");
+    }
+    assert!(har.contains("page=2"), "{har}");
+    let log: Value = serde_json::from_str(&std::fs::read_to_string(&log).unwrap()).unwrap();
+    assert!(log["total"].as_u64().unwrap() >= 5, "{log:#}");
+    // Wrong output type and unknown preset are input errors.
+    assert_eq!(code(&run(&["sanitize", input.to_str().unwrap(), "-o", d.path().join("x.txt").to_str().unwrap()])), 2);
+    assert_eq!(code(&run(&["sanitize", input.to_str().unwrap(), "-o", out.to_str().unwrap(), "--preset", "lax"])), 2);
+}
+
+#[test]
+fn mock_writes_wiremock_and_a_package() {
+    let d = tempfile::tempdir().unwrap();
+    let input = har(d.path(), "a.har", 3, 1);
+    let wm = d.path().join("wiremock");
+    let pkg = d.path().join("shop.quena-mocks");
+    let o = run(&["mock", input.to_str().unwrap(), "--wiremock", wm.to_str().unwrap(), "--package", pkg.to_str().unwrap()]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let mappings: Vec<_> = std::fs::read_dir(wm.join("mappings")).unwrap().flatten().collect();
+    assert!(mappings.len() >= 4, "{mappings:?}");
+    let m: Value = serde_json::from_str(&std::fs::read_to_string(mappings[0].path()).unwrap()).unwrap();
+    assert!(m["request"]["method"].is_string() && m["response"]["status"].is_number(), "{m:#}");
+    assert!(pkg.is_file());
+    // Neither target given: clap rejects it (exit 2).
+    assert_eq!(code(&run(&["mock", input.to_str().unwrap()])), 2);
+}

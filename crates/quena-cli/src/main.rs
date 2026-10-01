@@ -52,6 +52,11 @@ enum Command {
     Diagnose(Diagnose),
     /// Compare two saved JSON reports (no new analysis) and apply the quality gate.
     Compare(CompareArgs),
+    /// Write a sanitized copy of captures for sharing (support, vendors): credentials,
+    /// tokens and, with `--preset gdpr`, personal data are replaced.
+    Sanitize(SanitizeArgs),
+    /// Turn captures into mocks: a WireMock folder/ZIP or a Quena mock package.
+    Mock(MockArgs),
     /// List the analysis profiles and options of the analyzer.
     Profiles {
         #[arg(long, default_value = "en")]
@@ -91,6 +96,72 @@ struct Diagnose {
     /// Give up when the whole run (loading the plugins, all imports and the analysis) takes
     /// longer than this many seconds; exit code 3.
     #[arg(long, value_name = "SECONDS", default_value_t = 600)]
+    timeout: u64,
+}
+
+#[derive(Args)]
+struct SanitizeArgs {
+    /// Captures to sanitize together (.har, .saz).
+    #[arg(required = true, value_name = "CAPTURE")]
+    files: Vec<PathBuf>,
+    /// The sanitized archive (.saz or .har).
+    #[arg(short = 'o', long = "output", value_name = "PATH")]
+    output: PathBuf,
+    /// support (credentials, tokens, e-mail, payment data), gdpr (also phone numbers, IP
+    /// addresses, personal fields, national ids, process names; bodies truncated) or
+    /// credentials (only credentials and tokens).
+    #[arg(long, default_value = "support")]
+    preset: String,
+    /// Sanitize options (JSON, as saved by the app); replaces --preset.
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
+    /// Also write the redaction log (`.json` or text).
+    #[arg(long, value_name = "PATH")]
+    log: Option<PathBuf>,
+    #[arg(short, long)]
+    quiet: bool,
+    /// Give up when the whole run takes longer than this many seconds; exit code 3.
+    #[arg(long, default_value_t = 600)]
+    timeout: u64,
+}
+
+#[derive(Args)]
+struct MockArgs {
+    /// Captures to turn into mocks (.har, .saz).
+    #[arg(required = true, value_name = "CAPTURE")]
+    files: Vec<PathBuf>,
+    /// WireMock mappings and __files: a folder, or a `.zip`.
+    #[arg(long, value_name = "PATH", required_unless_present = "package")]
+    wiremock: Option<PathBuf>,
+    /// Quena mock package (`.quena-mocks`), for Mock Rules → Import package.
+    #[arg(long, value_name = "PATH")]
+    package: Option<PathBuf>,
+    /// Mock options (JSON: hosts, includeStatic, query, ignoreParams, repeats, matchBody,
+    /// latency, includePreflight, includeErrors, sanitize, keepSetCookie); flags win.
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
+    /// Only these hosts (repeatable; subdomains included).
+    #[arg(long = "host", value_name = "HOST")]
+    hosts: Vec<String>,
+    /// Several recordings of a request answer in recorded order (default: the last one wins).
+    #[arg(long)]
+    sequence: bool,
+    /// Match the query string exactly (default: cache busters and utm_* are ignored).
+    #[arg(long)]
+    exact_query: bool,
+    /// Include scripts, styles, images and fonts.
+    #[arg(long)]
+    include_static: bool,
+    /// Answer after the recorded time to first byte.
+    #[arg(long)]
+    latency: bool,
+    /// Sanitize preset for the mocks (credentials, support, gdpr) or `none`.
+    #[arg(long, value_name = "PRESET")]
+    sanitize: Option<String>,
+    #[arg(short, long)]
+    quiet: bool,
+    /// Give up when the whole run takes longer than this many seconds; exit code 3.
+    #[arg(long, default_value_t = 600)]
     timeout: u64,
 }
 
@@ -216,6 +287,8 @@ fn main() -> ExitCode {
     let r = match cli.command {
         Command::Diagnose(a) => diagnose(a),
         Command::Compare(a) => compare(a),
+        Command::Sanitize(a) => sanitize(a).map(|_| true),
+        Command::Mock(a) => mock(a).map(|_| true),
         Command::Profiles { lang, plugins } => profiles(&lang, &plugins).map(|_| true),
     };
     match r {
@@ -443,6 +516,133 @@ fn diagnose(a: Diagnose) -> Result<bool> {
         &outputs,
         a.out.quiet,
     )
+}
+
+/// Existing, distinct capture files (input errors otherwise).
+fn check_captures(files: &[PathBuf]) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for f in files {
+        if !f.is_file() {
+            return Err(usage(format!("{}: no such file", f.display())));
+        }
+        let canonical = f.canonicalize().map_err(|e| usage(format!("{}: {e}", f.display())))?;
+        if !seen.insert(canonical) {
+            return Err(usage(format!("capture given twice: {}", f.display())));
+        }
+    }
+    Ok(())
+}
+
+/// Import the captures into a store of their own; all sessions in recorded order.
+fn load_captures(files: &[PathBuf], quiet: bool, deadline: &Deadline) -> Result<(Engine, Vec<u64>)> {
+    let engine = Engine::bare()?;
+    for f in files {
+        progress(quiet, &format!("importing {}", f.display()));
+        engine.import(f, deadline)?;
+    }
+    let ids = engine.core.capture().index.find(|_| true);
+    if ids.is_empty() {
+        return Err(usage("the captures hold no sessions"));
+    }
+    Ok((engine, ids))
+}
+
+fn json_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    let text = std::fs::read_to_string(path).map_err(|e| usage(format!("{}: {e}", path.display())))?;
+    serde_json::from_str(&text).map_err(|e| usage(format!("{}: {e}", path.display())))
+}
+
+fn sanitize(a: SanitizeArgs) -> Result<()> {
+    use quena_app_core::archive::{ArchiveFormat, sanitized_export};
+    use quena_app_core::sanitize::SanitizeOptions;
+    let deadline = Deadline::after(a.timeout);
+    let opts: SanitizeOptions = match &a.config {
+        Some(p) => json_file(p)?,
+        None => SanitizeOptions::preset(&a.preset).ok_or_else(|| usage(format!("--preset {}: use support, gdpr or credentials", a.preset)))?,
+    };
+    opts.validate().map_err(usage)?;
+    let format = match a.output.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("saz") => ArchiveFormat::Saz,
+        Some("har") => ArchiveFormat::Har,
+        _ => return Err(usage(format!("-o {}: the output is a .saz or .har file", a.output.display()))),
+    };
+    check_captures(&a.files)?;
+    for p in std::iter::once(&a.output).chain(a.log.as_ref()) {
+        check_writable(p).map_err(usage)?;
+    }
+    let (engine, ids) = load_captures(&a.files, a.quiet, &deadline)?;
+    progress(a.quiet, "sanitizing");
+    let tmp = engine._data.path().join("sanitize-tmp");
+    let body_cfg = engine.core.settings().bodies.to_config();
+    let log = sanitized_export(&engine.core.capture(), &ids, &a.output, format, opts, &tmp, body_cfg, &quena_formats::NoProgress)?;
+    if let Some(p) = &a.log {
+        let text = if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) { serde_json::to_string_pretty(&log)? } else { log.to_text() };
+        std::fs::write(p, text).with_context(|| p.display().to_string())?;
+    }
+    if !a.quiet {
+        eprintln!("quena-cli: {} → {}: {}", ids.len(), a.output.display(), log.summary_line());
+    }
+    Ok(())
+}
+
+fn mock(a: MockArgs) -> Result<()> {
+    use quena_app_core::mockgen::{self, MockOptions, QueryMatch, Repeats};
+    use quena_app_core::sanitize::SanitizeOptions;
+    let deadline = Deadline::after(a.timeout);
+    let mut opts: MockOptions = match &a.config {
+        Some(p) => json_file(p)?,
+        None => MockOptions::default(),
+    };
+    if !a.hosts.is_empty() {
+        opts.hosts = a.hosts.clone();
+    }
+    if a.sequence {
+        opts.repeats = Repeats::Sequence;
+    }
+    if a.exact_query {
+        opts.query = QueryMatch::Exact;
+    }
+    opts.include_static |= a.include_static;
+    opts.latency |= a.latency;
+    match a.sanitize.as_deref() {
+        None => {}
+        Some("none") => opts.sanitize = None,
+        Some(p) => opts.sanitize = Some(SanitizeOptions::preset(p).ok_or_else(|| usage(format!("--sanitize {p}: use credentials, support, gdpr or none")))?),
+    }
+    check_captures(&a.files)?;
+    let targets: Vec<&PathBuf> = a.wiremock.iter().chain(a.package.iter()).collect();
+    for p in &targets {
+        // A WireMock folder may exist already; its parent must.
+        let is_dir_target = a.wiremock.as_ref() == Some(*p) && !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+        if is_dir_target {
+            let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            if !parent.is_dir() {
+                return Err(usage(format!("{}: no such folder: {}", p.display(), parent.display())));
+            }
+        } else {
+            check_writable(p).map_err(usage)?;
+        }
+    }
+    let (engine, ids) = load_captures(&a.files, a.quiet, &deadline)?;
+    progress(a.quiet, "building mocks");
+    let set = mockgen::generate(&engine.core.capture(), &ids, &opts, true, &quena_formats::NoProgress)?;
+    if let Some(p) = &a.wiremock {
+        mockgen::write_wiremock(&set, p)?;
+    }
+    if let Some(p) = &a.package {
+        mockgen::write_package(&set, p, &opts)?;
+    }
+    if !a.quiet {
+        let preview = mockgen::MockPreview::of(&set);
+        eprintln!(
+            "quena-cli: {} session(s) → {} mock(s), {} sequence(s), {} skipped",
+            ids.len(),
+            preview.mappings,
+            set.sequences(),
+            set.skipped.len()
+        );
+    }
+    Ok(())
 }
 
 fn compare(a: CompareArgs) -> Result<bool> {
@@ -686,7 +886,8 @@ struct Engine {
 }
 
 impl Engine {
-    fn start(plugins: Option<&Path>) -> Result<Engine> {
+    /// The core without plugins (sanitizing and mocks need none).
+    fn bare() -> Result<Engine> {
         let data = tempfile::Builder::new()
             .prefix("quena-cli-")
             .tempdir()
@@ -701,6 +902,18 @@ impl Engine {
             paths.plugin_cache = cache;
         }
         let core = AppCore::new(paths, quena_app_core::logbuf::LogBuffer::new(100))?;
+        Ok(Engine {
+            core,
+            analyzer: 0,
+            _data: data,
+        })
+    }
+
+    /// The core with the plugins and the diagnostics analyzer.
+    fn start(plugins: Option<&Path>) -> Result<Engine> {
+        let mut engine = Engine::bare()?;
+        let core = engine.core.clone();
+        let data = engine._data.path().to_path_buf();
         match plugins {
             // An explicit folder is the only one searched (not even QUENA_PLUGIN_DIR).
             Some(d) if d.is_dir() => core.init_plugins_from(vec![d.to_path_buf()])?,
@@ -720,7 +933,7 @@ impl Engine {
         let searched: Vec<PathBuf> = core
             .plugin_search_dirs()
             .into_iter()
-            .filter(|d| !d.starts_with(data.path()))
+            .filter(|d| !d.starts_with(&data))
             .collect();
         let info = core
             .plugins()
@@ -744,11 +957,8 @@ impl Engine {
             .find(|a| a.id == ANALYZER)
             .ok_or_else(|| anyhow!("the diagnostics plugin ({ANALYZER}) is not available"))?
             .index;
-        Ok(Engine {
-            core,
-            analyzer,
-            _data: data,
-        })
+        engine.analyzer = analyzer;
+        Ok(engine)
     }
 
     fn wait(&self, job: u64, deadline: &Deadline, what: &str) -> Result<(), JobError> {
