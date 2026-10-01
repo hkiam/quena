@@ -177,10 +177,27 @@ pub struct SanitizedExport {
 }
 
 /// Closes and deletes a temporary capture when dropped (also on errors and cancellation).
-struct TempCapture(Arc<Capture>);
+/// The capture is released before its folder is removed: Windows refuses to delete files
+/// that are still open (the body store's files live as long as the capture).
+struct TempCapture(Option<Arc<Capture>>, PathBuf);
+impl TempCapture {
+    fn cap(&self) -> &Arc<Capture> {
+        self.0.as_ref().expect("open until dropped")
+    }
+}
 impl Drop for TempCapture {
     fn drop(&mut self) {
-        self.0.close(true);
+        if let Some(cap) = self.0.take() {
+            cap.close(true);
+        }
+        // Handles of the last references may close a moment later (scanner, antivirus).
+        for _ in 0..50 {
+            if !self.1.exists() || std::fs::remove_dir_all(&self.1).is_ok() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        tracing::warn!(target: "quena", "temporary copy not removed: {}", self.1.display());
     }
 }
 
@@ -200,7 +217,8 @@ pub fn sanitized_export(
     // Copies left behind by a crash: nothing to recover there.
     remove_older_dirs(tmp_root, std::time::Duration::from_secs(3600));
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let tmp = TempCapture(Capture::open(tmp_root.join(format!("{}-{nanos}", std::process::id())), body_cfg, true)?);
+    let tmp_dir = tmp_root.join(format!("{}-{nanos}", std::process::id()));
+    let tmp = TempCapture(Some(Capture::open(&tmp_dir, body_cfg, true)?), tmp_dir);
     let mut z = Sanitizer::new(opts);
     // Scrubbing is the first half of the work, writing the archive the second.
     let total = ids.len() as u64 * 2;
@@ -209,7 +227,7 @@ pub fn sanitized_export(
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
     z.set_cancel(cancel.clone());
     let done = std::sync::atomic::AtomicU64::new(0);
-    let tmp_cap = &tmp.0;
+    let tmp_cap = tmp.cap();
     let result = std::thread::scope(|sc| {
         let worker = sc.spawn(|| {
             let mut copied = Vec::with_capacity(ids.len());
@@ -259,11 +277,11 @@ pub fn sanitized_export(
     match format {
         ArchiveFormat::Saz => {
             let text = log.to_text();
-            quena_formats::saz::export_with(&tmp.0, &copied, path, &[("QUENA-REDACTION.txt", text.as_bytes())], &half)?;
+            quena_formats::saz::export_with(tmp.cap(), &copied, path, &[("QUENA-REDACTION.txt", text.as_bytes())], &half)?;
         }
         ArchiveFormat::Har => {
             let o = HarOptions { comment: Some(log.summary_line()), extra: vec![("_quenaRedaction".into(), serde_json::to_value(&log)?)], ..HarOptions::default() };
-            quena_formats::har::export(&tmp.0, &copied, path, &o, &half)?;
+            quena_formats::har::export(tmp.cap(), &copied, path, &o, &half)?;
         }
         ArchiveFormat::Curl => return Err(anyhow!("a sanitized export is a .saz or .har file")),
     }

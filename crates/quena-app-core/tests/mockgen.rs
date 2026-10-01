@@ -351,7 +351,7 @@ fn package_import_is_zip_slip_safe() {
     // `*` matches every host: even the harmless `*503` is not taken over.
     assert_eq!(rejected, 6);
     assert_eq!(ok.len(), 1);
-    assert_eq!(ok[0].action, dest.join("responses/ok.dat").to_string_lossy());
+    assert_eq!(std::path::Path::new(&ok[0].action), dest.join("responses").join("ok.dat"));
     assert!(ok.iter().all(|r| r.comment == "pkg:evil"));
 }
 
@@ -461,7 +461,7 @@ fn package_roundtrip_through_the_proxy() {
     let st = rules.autoresponder();
     assert_eq!(st.rules.len(), 2);
     assert_eq!((st.rules[0].comment.as_str(), st.rules[1].action.as_str()), ("pkg:direct", "*418"));
-    assert!(st.rules[0].action.starts_with(&dir.path().join("mocks/direct").to_string_lossy().into_owned()) && st.rules[0].action.contains("responses"), "{}", st.rules[0].action);
+    assert!(std::path::Path::new(&st.rules[0].action).starts_with(dir.path().join("mocks").join("direct")) && st.rules[0].action.contains("responses"), "{}", st.rules[0].action);
     let (code, _, body) = curl(&proxy, &["http://mock.invalid/api/items?page=2"]);
     assert_eq!((code, body.as_str()), (201, r#"{"items":[1,2]}"#));
     let (code, _, _) = curl(&proxy, &["http://mock.invalid/other"]);
