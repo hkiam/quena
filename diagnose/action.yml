@@ -33,7 +33,7 @@ inputs:
     description: Further arguments for quena-cli diagnose (split at spaces, not glob-expanded).
     default: ""
   version:
-    description: quena-cli release to use (e.g. 0.2.0) or "latest" (the newest published release, prereleases included). Default is the release the action is used from (hkiam/quena/diagnose@v0.2.0); for other refs (@main) the latest.
+    description: quena-cli release to use (e.g. 0.1.3) or "latest" (the newest published release, prereleases included). Default is the release the action is used from (hkiam/quena/diagnose@v0.1.3); for other refs (@main) the latest.
     default: ""
   bin:
     description: Path to an existing quena-cli instead of downloading one.
@@ -88,7 +88,7 @@ runs:
           --jq "[.assets[].name | select(startswith(\"quena-cli-\") and endswith(\"-$platform.$ext\"))][0] // \"\"" 2>/dev/null) \
           || { echo "::error::release $tag of hkiam/quena not found (is it published? drafts are not visible)"; exit 1; }
         if [ -z "$asset" ]; then
-          echo "::error::release $tag has no quena-cli archive for $platform: quena-cli is published from release v0.2.0 on; publish such a release first (or pass bin: / version:)"
+          echo "::error::release $tag has no quena-cli archive for $platform: quena-cli is published from release v0.1.3 on; publish such a release first (or pass bin: / version:)"
           exit 1
         fi
         echo "quena-cli: $asset"

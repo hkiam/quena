@@ -7,6 +7,8 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-10-01
+
 ### Added
 - **Sanitized export for sharing** (*File → Export Sessions → Sanitized for Sharing*): a
   SAZ/HAR copy for vendors or support. The *Support* preset replaces credentials, tokens,
@@ -392,7 +394,8 @@ Internal test build (not tagged) — an early preview for trying Quena on macOS 
 - Client certificates (mTLS) per host; bandwidth and latency simulation.
 - SAZ (compatible with Fiddler Classic) and HAR 1.2 import/export; copy as cURL.
 
-[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/hkiam/quena/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/hkiam/quena/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/hkiam/quena/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/hkiam/quena/releases/tag/v0.1.0

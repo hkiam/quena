@@ -152,7 +152,7 @@ report into a **quality gate**:
 
 ```yaml
 - run: npx playwright test            # records captures/*.har
-- uses: hkiam/quena/diagnose@v0.2.0
+- uses: hkiam/quena/diagnose@v0.1.3
   with:
     files: captures/*.har
     # the report of the last green run on main; empty on the first run (no baseline yet)
