@@ -5,18 +5,20 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Maximize2, ZoomIn, ZoomOut } from "lucide-react";
 import { api, type SessionSummary, type Timers } from "../api";
-import { fmtBytes, fmtMs, fmtTime } from "../lib/format";
+import { fmtBytes, fmtDateTime, fmtMs, fmtTime } from "../lib/format";
 import { PHASES, phasesOf, type Segment } from "../lib/waterfall";
 import {
   clampZoom,
   columnOrder,
   columnWidth,
   moveColumn,
+  fmtSpan,
   tickLabel,
   tickStep,
   ticks,
   TL_COLUMNS,
   TL_DEFAULT,
+  TL_GRAPH_PAD,
   TL_MIN_GRAPH,
   TL_MIN_WIDTH,
   toggleColumn,
@@ -28,7 +30,10 @@ import { set, useStore } from "../store";
 import { actions } from "../actions";
 import { grid } from "../grid/SessionGrid";
 import { showContextMenu } from "../components/ContextMenu";
-import { fmtNum, plural, t } from "../i18n";
+import { currentLang, fmtNum, plural, t } from "../i18n";
+
+/** Numbers with fixed decimals in the UI language (axis labels). */
+const num = (n: number, decimals: number) => n.toLocaleString(currentLang() === "de" ? "de-DE" : "en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 
 const MAX = 500;
 const ROW_H = 20;
@@ -172,7 +177,8 @@ export function TimelinePanel() {
   if (!rows.length) return <div className="placeholder">{t("Select sessions to see their timeline.")}</div>;
 
   const { segs, endOf, start, span, used } = data;
-  const pxPerUs = graphW / span;
+  // The scale leaves room at the right end, so bars that end last stay visible.
+  const pxPerUs = Math.max(1, graphW - TL_GRAPH_PAD) / span;
   const x = (us: number) => (us - start) * pxPerUs;
   const step = tickStep(pxPerUs);
   const stepPx = step * pxPerUs;
@@ -258,7 +264,7 @@ export function TimelinePanel() {
     <div className="timeline">
       <div className="tl-head">
         <span className="muted">
-          {plural(rows.length, "{n} session over {time}", "{n} sessions over {time}", { time: fmtMs(Math.round(span / 1000)) })}
+          {plural(rows.length, "{n} session over {time}", "{n} sessions over {time}", { time: span >= 60e6 ? fmtSpan(span, 1e6, num) : fmtMs(Math.round(span / 1000)) })}
           {selection.size > MAX ? t(" (first {max} of {total})", { max: fmtNum(MAX), total: fmtNum(selection.size) }) : ""}
         </span>
         <span className="tl-legend">
@@ -318,7 +324,7 @@ export function TimelinePanel() {
                   <div className="tl-axis">
                     {shownTicks.map((o) => (
                       <span key={o} className="tl-tick" style={{ left: o * pxPerUs }}>
-                        {o === 0 ? fmtTime(start) : tickLabel(o, step, fmtMs)}
+                        {o === 0 ? (span >= 86_400e6 ? fmtDateTime(start) : fmtTime(start)) : tickLabel(o, step, num)}
                       </span>
                     ))}
                   </div>

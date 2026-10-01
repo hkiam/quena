@@ -246,6 +246,12 @@ test("timeline: a waterfall of the selected sessions", async () => {
   await new Promise((r) => setTimeout(r, 200));
   const g3 = await geo();
   assert.ok(g3.url > g1.url + 50, `URL column wider after dragging its edge: ${JSON.stringify([g1.url, g3.url])}`);
+  // Every bar lies completely inside the graph — also the one that ends last.
+  const outside = await d.exec(`return [...document.querySelectorAll('.tl-row')].flatMap((row) => {
+      const cell = row.querySelector('.tl-c-graph').getBoundingClientRect();
+      return [...row.querySelectorAll('.tl-seg, .tl-bar')].map((b) => b.getBoundingClientRect()).filter((b) => b.right > cell.right + 0.5 || b.left < cell.left - 0.5).map((b) => [Math.round(b.left), Math.round(b.right), Math.round(cell.right)]);
+    });`);
+  assert.deepEqual(outside, [], "bars cut off at the edge of the graph");
   await d.exec(`window.__quena.menu("view.inspectors")`);
 });
 
@@ -315,6 +321,40 @@ test("Delete / Backspace remove the selected sessions after a confirmation", asy
   await d.keys(["Escape"]);
   await dialogGone();
   assert.equal(Number(await count()), before - 1, "cancelled: nothing removed");
+});
+
+test("timeline: sessions a day apart, the last bar visible, readable axis", async () => {
+  // Two archives recorded a day apart: one session from each.
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const day = JSON.parse(fs.readFileSync(har, "utf8"));
+  for (const e of day.log.entries) e.startedDateTime = new Date(Date.parse(e.startedDateTime) + 86_400_000).toISOString();
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "quena-tl-")), "next-day.har");
+  fs.writeFileSync(file, JSON.stringify(day));
+  const before = Number((await d.text(await d.waitFor(".statusbar"))).match(/(\d+) sessions/)[1]);
+  await d.exec("return window.__quena.load(arguments[0]).then(() => true)", [file]);
+  await d.waitFor(".statusbar", { text: `${before + day.log.entries.length} sessions` });
+  // From the first session (old day) to the last one (next day): click, then Shift+End.
+  await selectRow(1);
+  await d.cmd("POST", d.s("/actions"), {
+    actions: [{ type: "key", id: "kbd", actions: [{ type: "keyDown", value: "\uE008" }, { type: "keyDown", value: "\uE010" }, { type: "keyUp", value: "\uE010" }, { type: "keyUp", value: "\uE008" }] }],
+  });
+  await d.cmd("DELETE", d.s("/actions"));
+  await d.exec(`window.__quena.menu("view.timeline")`);
+  await d.waitFor(".tl-row", { timeout: 5000 });
+  const res = await d.exec(`
+    const rows = [...document.querySelectorAll('.tl-row')];
+    const cut = rows.flatMap((row) => {
+      const cell = row.querySelector('.tl-c-graph').getBoundingClientRect();
+      const bars = [...row.querySelectorAll('.tl-seg, .tl-bar')].map((b) => b.getBoundingClientRect());
+      return bars.length && bars.every((b) => b.right > cell.right + 0.5 || b.width < 0.5) ? [row.textContent.slice(0, 40)] : [];
+    });
+    return { rows: rows.length, cut, ticks: [...document.querySelectorAll('.tl-tick')].map((t) => t.textContent) };`);
+  assert.ok(res.rows >= 2, JSON.stringify(res));
+  assert.deepEqual(res.cut, [], `bars outside the graph: ${JSON.stringify(res)}`);
+  assert.ok(!res.ticks.some((t) => /\d{4,}[.,]\d s/.test(t)), `axis labels must use h/d, not thousands of seconds: ${res.ticks}`);
+  assert.ok(res.ticks.some((t) => / h|1 d/.test(t)), `hours on the axis: ${res.ticks}`);
+  await d.exec(`window.__quena.menu("view.inspectors")`);
 });
 
 test("no view crashed", async () => {

@@ -18,6 +18,9 @@ contain breaking changes (settings, file formats, plugin API).
   confirmation first; Enter confirms, Esc cancels.
 
 ### Fixed
+- *Timeline*: the session that ends last was cut off at the right edge, and long time spans
+  were labelled in thousands of seconds; the axis now uses clock units (ms, s, min, h, d) and
+  shows the date when the sessions span more than a day.
 - Removed sessions stayed in the list (the status bar showed “4 of 3 sessions”) until
   something else changed it, so Del seemed to do nothing.
 
