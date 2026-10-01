@@ -243,3 +243,43 @@ These describe the bundled analyzer, not the API; other analyzers may differ.
   (warning 60 s, critical 5 min), `CLOCK-LOCAL` when ≥ 3 unrelated sites agree on the same
   offset (this computer's clock; then no per-host findings), `CLOCK-DRIFT` when uncached
   responses of one host disagree by ≥ 30 s (10th–90th percentile, ≥ 5 responses).
+
+## Authentication facts (`auth`)
+
+The host fills `session.auth` (WIT `auth-info`) only with facts that are not secrets. Tokens,
+codes, secrets, signatures, `state`, `nonce`, `jti` and personal claims (`sub`, `oid`,
+`email`, `upn`, `unique_name`, `name`, `preferred_username`, `given_name`, `family_name`,
+`login_hint` …) never leave the host.
+
+* `bearer`: when the request carries `Authorization: Bearer <JWT>` or `DPoP <JWT>`, the
+  claims of the JWT payload (base64url-decoded, ≤ 16 KiB): `alg`/`typ` from the header;
+  `iss`, `aud` (string or list), `exp`, `nbf`, `iat`, client (`azp`, `appid`, `client_id`),
+  `tid`, `ver`, `scp`/`scope` (split at spaces), `roles`, the number of `groups` and the
+  Entra ID groups overage (`_claim_names.groups` or `hasgroups`); `size` = token length.
+  Opaque tokens give `opaque-bearer` = their size. String values are capped at 256 bytes,
+  lists at 64 entries.
+* `oauth-request`: for `POST` requests with an `application/x-www-form-urlencoded` body
+  (≤ 64 KiB) that contains `grant_type`, or that go to a token endpoint (path ends in
+  `/token`, `/oauth2/token`, `/oauth2/v2.0/token`, `/protocol/openid-connect/token`,
+  `/connect/token`, `/as/token.oauth2`, `/oauth/token`, `/devicecode`, `/device/code`):
+  `grant_type`, `client_id`, `scope`, `redirect_uri` (without its query), and whether
+  `code`, `code_verifier`, `refresh_token`, `client_secret`, `client_assertion` are present;
+  `basic-client-auth` if the request has `Authorization: Basic`.
+* `oauth-response`: for JSON responses (≤ 64 KiB decoded) that contain `error`,
+  `access_token` or `device_code`: `error`, `error_description` (≤ 300 bytes, e-mail
+  addresses replaced by `<email>`), `error_codes` (Entra ID) plus every `AADSTS<n>` in the
+  description, `error_uri`, `trace_id`, `correlation_id`, `token_type`, `expires_in`, `scope`,
+  whether `access_token` / `refresh_token` / `id_token` are present, and the claims (as for
+  `bearer`) of a JWT access token and of the ID token.
+* `discovery`: for `/.well-known/openid-configuration` responses: `issuer`,
+  `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `end_session_endpoint`.
+* URLs and `Location`: the values of the OAuth parameters `response_type`, `response_mode`,
+  `scope`, `prompt`, `client_id`, `redirect_uri` (its own query removed),
+  `code_challenge_method`, `grant_type`, `max_age`, `acr_values`, `ui_locales`,
+  `domain_hint`, `error`, `error_description` (≤ 300 bytes, e-mails masked), `error_uri`,
+  `error_subcode` are kept even when longer than 64 bytes (cap 512); `code`, `state`,
+  `nonce`, `code_challenge`, `login_hint`, `id_token_hint`, tokens stay redacted.
+* `WWW-Authenticate` / `Proxy-Authenticate`: the values of `realm`, `error`,
+  `error_description` (≤ 300 bytes, e-mails masked), `error_uri`, `scope`,
+  `authorization_uri`, `resource_metadata`, `resource` and `trusted_issuers` are kept
+  (`Bearer realm="api", error="invalid_token"`); token68 values stay redacted.

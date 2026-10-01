@@ -116,6 +116,90 @@ interface analyzer {
     /// Character encoding facts of a textual body (JSON, XML, HTML, text/*, forms …),
     /// determined by the host from the first 256 KiB of the decoded body (REPORT.md). Only
     /// facts leave the host, never body content.
+    /// Non-secret claims of a JSON Web Token (signature, jti, nonce and personal claims such
+    /// as sub, oid, email, upn, name are never included). Times are seconds since the epoch.
+    record jwt-claims {
+        alg: string,
+        typ: option<string>,
+        iss: option<string>,
+        aud: list<string>,
+        exp: option<u64>,
+        nbf: option<u64>,
+        iat: option<u64>,
+        /// azp, appid or client_id (the client the token was issued to).
+        client: option<string>,
+        /// Entra ID tenant id (tid).
+        tenant: option<string>,
+        /// Token version (ver), e.g. "1.0" / "2.0".
+        ver: option<string>,
+        /// scp / scope, split at spaces.
+        scopes: list<string>,
+        roles: list<string>,
+        /// Number of entries in a groups claim (not the groups themselves).
+        groups: option<u32>,
+        /// Entra ID groups overage (_claim_names / hasgroups).
+        groups-overage: bool,
+        /// Length of the encoded token in bytes.
+        size: u32,
+    }
+
+    /// An OAuth request to a token/device/introspection endpoint (form body), facts only.
+    record oauth-request {
+        grant-type: option<string>,
+        client-id: option<string>,
+        scope: option<string>,
+        /// redirect_uri without its query.
+        redirect-uri: option<string>,
+        has-code: bool,
+        has-code-verifier: bool,
+        has-refresh-token: bool,
+        has-client-secret: bool,
+        has-client-assertion: bool,
+        /// client_secret_basic: an Authorization: Basic header on the token request.
+        basic-client-auth: bool,
+    }
+
+    /// An OAuth/OIDC JSON response (token, error, device code), facts only.
+    record oauth-response {
+        error: option<string>,
+        /// At most 300 bytes; e-mail addresses masked.
+        error-description: option<string>,
+        /// Entra ID error_codes, and AADSTS numbers found in the description.
+        error-codes: list<u32>,
+        error-uri: option<string>,
+        /// Entra ID trace_id / correlation_id (support identifiers, not secrets).
+        trace-id: option<string>,
+        correlation-id: option<string>,
+        token-type: option<string>,
+        expires-in: option<u32>,
+        has-access-token: bool,
+        has-refresh-token: bool,
+        has-id-token: bool,
+        scope: option<string>,
+        access-token: option<jwt-claims>,
+        id-token: option<jwt-claims>,
+    }
+
+    /// An OpenID Connect discovery document (/.well-known/openid-configuration).
+    record oidc-discovery {
+        issuer: option<string>,
+        authorization-endpoint: option<string>,
+        token-endpoint: option<string>,
+        jwks-uri: option<string>,
+        end-session-endpoint: option<string>,
+    }
+
+    /// Authentication facts of a session (REPORT.md "Authentication facts").
+    record auth-info {
+        /// Claims of a JWT sent as Authorization: Bearer / DPoP (none for opaque tokens).
+        bearer: option<jwt-claims>,
+        /// Size of an opaque bearer token (bytes), when it is not a JWT.
+        opaque-bearer: option<u32>,
+        oauth-request: option<oauth-request>,
+        oauth-response: option<oauth-response>,
+        discovery: option<oidc-discovery>,
+    }
+
     record text-info {
         /// `charset` of the Content-Type as sent (at most 64 bytes, else `<n bytes>`).
         header-charset: option<string>,
@@ -201,6 +285,8 @@ interface analyzer {
         /// the body was stored truncated.
         request-decoding-error: option<string>,
         response-decoding-error: option<string>,
+        /// OAuth / OpenID Connect facts (none when the session has nothing of that kind).
+        auth: option<auth-info>,
     }
 
     get-info: func() -> info;
