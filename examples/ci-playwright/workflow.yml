@@ -20,22 +20,32 @@ jobs:
       - run: npx playwright test
 
       # Pull requests: the report of the latest successful run on main is the baseline.
+      # Before the first one there is none: then the gate runs without a baseline (all findings
+      # count, relative budgets such as requests=+10% are skipped), and the first green run on
+      # main provides it.
       - name: Baseline from main
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          run=$(gh run list --repo "$GITHUB_REPOSITORY" --branch main --workflow network-gate.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          [ -n "$run" ] && gh run download "$run" --repo "$GITHUB_REPOSITORY" --name quena-baseline --dir baseline || echo "no baseline yet"
+          run=$(gh run list --repo "$GITHUB_REPOSITORY" --branch main --workflow network-gate.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$run" ] && gh run download "$run" --repo "$GITHUB_REPOSITORY" --name quena-baseline --dir baseline; then
+            echo "baseline: run $run"
+          else
+            echo "no baseline yet"
+          fi
 
       - id: quena
         uses: hkiam/quena/diagnose@v0.2.0
         with:
           files: captures/*.har
           config: quena-gate.json
+          # Only when the download found one (empty = no baseline).
           baseline: ${{ hashFiles('baseline/report.json') != '' && 'baseline/report.json' || '' }}
 
-      - name: Keep the report (the baseline of later pull requests)
+      # On main the report becomes the baseline of later pull requests (only green runs are
+      # used, see above); on pull requests it is kept for a look.
+      - name: Keep the report
         if: always() && steps.quena.outputs.report != ''
         uses: actions/upload-artifact@v4
         with:

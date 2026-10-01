@@ -1,5 +1,9 @@
 name: Docker image (quena-cli)
 # Publishes ghcr.io/hkiam/quena-cli when a release is published (not for drafts), or by hand.
+# `latest` moves only with releases that are not prereleases.
+# Maintainers: a new GHCR package is private. Make it public once in the package settings
+# (github.com/users/hkiam/packages/container/quena-cli/settings → Change visibility), or
+# `docker pull` fails for everyone else.
 on:
   release:
     types: [published]
@@ -22,13 +26,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          # true/false for a release event; empty for workflow_dispatch (then asked below).
+          PRERELEASE: ${{ github.event_name == 'release' && (github.event.release.prerelease && 'true' || 'false') || '' }}
         run: |
+          TAG="v${TAG#v}"   # "0.2.0" or "v0.2.0"
+          if [ -z "$PRERELEASE" ]; then
+            PRERELEASE=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)
+          fi
           mkdir ctx
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'quena-cli-*-linux-*.tar.gz' --dir ctx
           for a in ctx/*.tar.gz; do tar -xzf "$a" -C ctx; done
           # Docker's TARGETARCH names: amd64, arm64.
           for d in ctx/quena-cli-*-linux-x64; do mv "$d" "${d%-x64}-amd64"; done
-          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/quena-cli"
+          {
+            echo "VERSION=${TAG#v}"
+            echo "TAGS<<EOF"
+            echo "$image:${TAG#v}"
+            [ "$PRERELEASE" = false ] && echo "$image:latest"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+          echo "prerelease: $PRERELEASE"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -43,6 +61,4 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: VERSION=${{ env.VERSION }}
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/quena-cli:${{ env.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/quena-cli:latest
+          tags: ${{ env.TAGS }}

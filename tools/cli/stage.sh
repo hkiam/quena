@@ -2,17 +2,25 @@
 # Stage the quena-cli archive folder: the program, the bundled plugins, license files.
 #   tools/cli/stage.sh <quena-cli binary> <platform> [out dir]
 # e.g. tools/cli/stage.sh target/release/quena-cli linux-x64 → target/cli/quena-cli-0.1.2-linux-x64/
+# Prints the absolute path of the staged folder.
 set -eu
-cd "$(dirname "$0")/../.."
 bin="${1:?quena-cli binary}"
 platform="${2:?platform, e.g. linux-x64}"
-out="${3:-target/cli}"
+# Relative paths are relative to the caller's directory, not to the checkout.
+abs() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$(pwd)" "$1" ;; esac; }
+bin=$(abs "$bin")
+[ -f "$bin" ] || { echo "$bin: no such file" >&2; exit 1; }
+if [ -n "${3:-}" ]; then out=$(abs "$3"); fi
+cd "$(dirname "$0")/../.."
+out="${out:-$(pwd)/target/cli}"
 version=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
 dir="$out/quena-cli-$version-$platform"
 rm -rf "$dir"
 mkdir -p "$dir/plugins"
+dir=$(cd "$dir" && pwd)
 cp "$bin" "$dir/"
 # The plugins the app bundles (tauri.conf.json resources), not the test plugins.
+# shellcheck disable=SC2013 # plugin names are single words
 for p in $(sed -n 's#.*"\.\./\.\./plugins/dist/\([a-z0-9-]*\)".*#\1#p' app/src-tauri/tauri.conf.json); do
   cp -R "plugins/dist/$p" "$dir/plugins/$p"
 done

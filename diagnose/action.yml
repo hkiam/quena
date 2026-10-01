@@ -6,34 +6,34 @@ branding:
   color: blue
 inputs:
   files:
-    description: Captures to analyse (.har, .saz), separated by spaces or new lines; glob patterns are expanded.
+    description: Captures to analyse (.har, .saz), separated by spaces or new lines; glob patterns (also **) are expanded. A pattern that matches nothing is a warning, nothing matching at all an error.
     required: true
   profile:
-    description: Analysis profile (full, performance, troubleshooting, auth, resilience, modernization).
-    default: full
+    description: Analysis profile (full, performance, troubleshooting, auth, resilience, modernization). Overrides the settings file; empty = the file's profile, else full.
+    default: ""
   lang:
-    description: Language of the report (en, de).
-    default: en
+    description: Language of the report (en, de). Overrides the settings file; empty = the file's language, else en.
+    default: ""
   baseline:
-    description: Baseline report (JSON of an earlier run); only new or worse findings break the gate.
+    description: Baseline report (JSON of an earlier run); only new or worse findings break the gate. Leave it empty when there is none yet (first run).
     default: ""
   fail-on:
-    description: Fail on findings of this severity or worse (critical, warning, info, none).
-    default: critical
+    description: Fail on findings of this severity or worse (critical, warning, info, none). Overrides the settings file; empty = the file's failOn, else critical.
+    default: ""
   budgets:
-    description: Metric budgets, e.g. "requests=+10% bytes=+20% errors=0".
+    description: Metric budgets, e.g. "requests=+10% bytes=+20% errors=0" (added to those of the settings file).
     default: ""
   ignore:
-    description: Rules or finding keys that never break the gate, separated by new lines.
+    description: Rules or finding keys that never break the gate, separated by new lines (added to those of the settings file).
     default: ""
   config:
-    description: Settings file (JSON) with failOn, budgets, ignore, profile, options …
+    description: Settings file (JSON) with failOn, budgets, ignore, profile, options …; the inputs above override its single values.
     default: ""
   args:
-    description: Further arguments for quena-cli diagnose.
+    description: Further arguments for quena-cli diagnose (split at spaces, not glob-expanded).
     default: ""
   version:
-    description: quena-cli release to use (e.g. 0.2.0) or "latest"; default is the release the action is used from (hkiam/quena/diagnose@v0.2.0), otherwise the latest.
+    description: quena-cli release to use (e.g. 0.2.0) or "latest" (the newest published release, prereleases included). Default is the release the action is used from (hkiam/quena/diagnose@v0.2.0); for other refs (@main) the latest.
     default: ""
   bin:
     description: Path to an existing quena-cli instead of downloading one.
@@ -77,12 +77,27 @@ runs:
         if [ -z "$VERSION" ]; then
           if [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then VERSION="$ACTION_REF"; else VERSION=latest; fi
         fi
-        tag=""; [ "$VERSION" != latest ] && tag="v${VERSION#v}"
-        dir="$RUNNER_TEMP/quena-cli"; mkdir -p "$dir"
-        gh release download $tag --repo hkiam/quena --pattern "quena-cli-*-$platform.$ext" --dir "$dir" --clobber
+        if [ "$VERSION" = latest ]; then
+          # The newest published release, prereleases included (drafts are not visible).
+          tag=$(gh release list --repo hkiam/quena --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
+          [ -n "$tag" ] || { echo "::error::no published release of hkiam/quena found"; exit 1; }
+        else
+          tag="v${VERSION#v}"
+        fi
+        asset=$(gh release view "$tag" --repo hkiam/quena --json assets \
+          --jq "[.assets[].name | select(startswith(\"quena-cli-\") and endswith(\"-$platform.$ext\"))][0] // \"\"" 2>/dev/null) \
+          || { echo "::error::release $tag of hkiam/quena not found (is it published? drafts are not visible)"; exit 1; }
+        if [ -z "$asset" ]; then
+          echo "::error::release $tag has no quena-cli archive for $platform: quena-cli is published from release v0.2.0 on; publish such a release first (or pass bin: / version:)"
+          exit 1
+        fi
+        echo "quena-cli: $asset"
+        dir="$RUNNER_TEMP/quena-cli"; rm -rf "$dir"; mkdir -p "$dir"
+        gh release download "$tag" --repo hkiam/quena --pattern "$asset" --dir "$dir" --clobber
         cd "$dir"
-        if [ "$ext" = zip ]; then unzip -q -o quena-cli-*.zip; else tar -xzf quena-cli-*.tar.gz; fi
+        if [ "$ext" = zip ]; then unzip -q -o "$asset"; else tar -xzf "$asset"; fi
         exe=$(find "$dir" -type f \( -name quena-cli -o -name quena-cli.exe \) | head -n1)
+        [ -n "$exe" ] || { echo "::error::$asset contains no quena-cli"; exit 1; }
         echo "exe=$exe" >> "$GITHUB_OUTPUT"
     - id: run
       shell: bash
@@ -99,24 +114,44 @@ runs:
         ARGS: ${{ inputs.args }}
         SUMMARY: ${{ inputs.summary }}
       run: |
-        set -uo pipefail
-        out="$RUNNER_TEMP/quena-report"; mkdir -p "$out"
+        # No -e: outputs and summary are written also when the gate fails.
+        set +e -uo pipefail
+        # A folder of its own per use of the action: a second step keeps the first one's files.
+        out=$(mktemp -d "$RUNNER_TEMP/quena-report-XXXXXX")
         args=(diagnose)
-        shopt -s nullglob globstar
-        for f in $FILES; do args+=("$f"); done
+        # Only the captures are glob patterns: split first, then expand each pattern.
+        set -f
+        # shellcheck disable=SC2206
+        patterns=($FILES)
+        set +f
+        shopt -s nullglob; shopt -s globstar 2>/dev/null
+        for pattern in ${patterns[@]+"${patterns[@]}"}; do
+          matches=()
+          # shellcheck disable=SC2086
+          for f in $pattern; do [ -e "$f" ] && matches+=("$f"); done
+          if [ ${#matches[@]} = 0 ]; then echo "::warning::no capture matches $pattern"; else args+=("${matches[@]}"); fi
+        done
+        shopt -u nullglob; shopt -u globstar 2>/dev/null
         [ ${#args[@]} -gt 1 ] || { echo "::error::no capture matches: $FILES"; exit 2; }
-        args+=(--profile "$PROFILE" --lang "$LANG_" --fail-on "$FAIL_ON")
+        # Empty inputs leave the value to the settings file (or quena-cli's default).
+        [ -n "$PROFILE" ] && args+=(--profile "$PROFILE")
+        [ -n "$LANG_" ] && args+=(--lang "$LANG_")
+        [ -n "$FAIL_ON" ] && args+=(--fail-on "$FAIL_ON")
         [ -n "$BASELINE" ] && args+=(--baseline "$BASELINE")
         [ -n "$CONFIG" ] && args+=(--config "$CONFIG")
+        set -f
         for b in $BUDGETS; do args+=(--budget "$b"); done
+        # shellcheck disable=SC2206,SC2153
+        extra=($ARGS)
+        set +f
         while IFS= read -r i; do [ -n "$i" ] && args+=(--ignore "$i"); done <<< "$IGNORE"
         args+=(--format github -o "json=$out/report.json" -o "junit=$out/junit.xml" -o "md=$out/report.md")
-        # shellcheck disable=SC2086
-        "$EXE" "${args[@]}" $ARGS
-        rc=$?
-        echo "report=$out/report.json" >> "$GITHUB_OUTPUT"
-        echo "junit=$out/junit.xml" >> "$GITHUB_OUTPUT"
-        echo "markdown=$out/report.md" >> "$GITHUB_OUTPUT"
-        echo "passed=$([ $rc = 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-        if [ "$SUMMARY" = true ] && [ -f "$out/report.md" ]; then cat "$out/report.md" >> "$GITHUB_STEP_SUMMARY"; fi
-        exit $rc
+        rc=0
+        "$EXE" "${args[@]}" ${extra[@]+"${extra[@]}"} || rc=$?
+        # Outputs and summary in any case, also when the gate failed.
+        [ -s "$out/report.json" ] && echo "report=$out/report.json" >> "$GITHUB_OUTPUT"
+        [ -s "$out/junit.xml" ] && echo "junit=$out/junit.xml" >> "$GITHUB_OUTPUT"
+        [ -s "$out/report.md" ] && echo "markdown=$out/report.md" >> "$GITHUB_OUTPUT"
+        echo "passed=$([ "$rc" = 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+        if [ "$SUMMARY" = true ] && [ -s "$out/report.md" ]; then cat "$out/report.md" >> "$GITHUB_STEP_SUMMARY"; fi
+        exit "$rc"

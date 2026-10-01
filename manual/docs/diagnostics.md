@@ -79,8 +79,9 @@ loss). Every finding names the threshold it was measured against.
     bandwidth/latency simulation (*Settings → Connections*).
 
 !!! tip "In CI"
-    The same analysis runs in build pipelines and fails the build on regressions — see
-    [Diagnostics in CI](ci.md).
+    The same analysis runs without a window in build pipelines (`quena-cli`, a GitHub Action
+    and a Docker image): it compares each run with a baseline and fails the build on
+    regressions — see [Diagnostics in CI](ci.md).
 
 ## Save, share and compare
 

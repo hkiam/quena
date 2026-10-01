@@ -20,16 +20,36 @@ certificate, no settings of the desktop app are used or changed.
         fail-on: critical
     ```
 
-    The action downloads `quena-cli` of the same release, writes the report to the job
-    summary, marks the findings as annotations and leaves `report.json`, `junit.xml` and
-    `report.md` for later steps (outputs `report`, `junit`, `markdown`, `passed`).
+    The action downloads `quena-cli` of the release it is used from (`@v0.2.0` → quena-cli
+    0.2.0), writes the report to the job summary, marks the findings as annotations and
+    leaves `report.json`, `junit.xml` and `report.md` for later steps (outputs `report`,
+    `junit`, `markdown`, `passed`). The outputs are set when the gate fails, too.
+
+    | Input | Effect |
+    |---|---|
+    | `files` | captures, separated by spaces or new lines; glob patterns (`captures/**/*.har`) are expanded. A pattern that matches nothing is a warning, nothing at all an error |
+    | `config` | settings file (see below) |
+    | `profile`, `lang`, `fail-on` | override the settings file; empty (the default) leaves the file's value, else `full`, `en`, `critical` |
+    | `baseline` | baseline report; leave it empty when there is none yet |
+    | `budgets`, `ignore` | added to those of the settings file (budgets separated by spaces, ignore entries by new lines) |
+    | `args` | further `quena-cli diagnose` arguments (split at spaces, not glob-expanded) |
+    | `version` | `0.2.0`, or `latest`: the newest published release, prereleases included. Default: the release of the action ref; for other refs (`@main`) `latest` |
+    | `bin` | an existing `quena-cli` instead of a download |
+    | `summary` | `"false"`: no job summary |
+
+    The action can only download from a **published** release: drafts are invisible to it.
+    quena-cli is part of the releases from v0.2.0 on.
 
 === "Docker (GitLab CI, Jenkins …)"
 
     ```bash
-    docker run --rm -v "$PWD:/work" ghcr.io/hkiam/quena-cli \
+    docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/hkiam/quena-cli \
       diagnose captures/*.har --fail-on critical -o junit=quena-junit.xml
     ```
+
+    `--user` makes the reports belong to you; any user id works. Compiled plugins are cached
+    inside the container, so a new container compiles them again (a few seconds). To keep
+    them, mount a volume: `-v quena-cache:/tmp/quena-cache`.
 
     GitLab CI:
 
@@ -44,6 +64,9 @@ certificate, no settings of the desktop app are used or changed.
         reports: { junit: quena-junit.xml }
     ```
 
+    `latest` is the newest release that is not a prerelease; pin a version for reproducible
+    builds.
+
 === "Program"
 
     Download `quena-cli-<version>-<platform>` from the
@@ -56,17 +79,18 @@ certificate, no settings of the desktop app are used or changed.
 
 ## Recording the captures
 
-Any HAR file works: Playwright, Cypress, browser developer tools, Quena itself (*File → Save
-as HAR*), and SAZ archives.
+Any HAR file works: Playwright, Cypress, browser developer tools, Quena itself (*File →
+Export Sessions → HTTP Archive (HAR)…*), and SAZ archives.
 
-* **Playwright:** `recordHar` in the browser context, one file per test — see the
+* **Playwright:** `recordHar` in the context options, one file per test — see the
   [example](https://github.com/hkiam/quena/tree/main/examples/ci-playwright).
   `content: "omit"` is enough: the diagnostics need timings, sizes and headers. With
   `"embed"` the character encoding of textual bodies is checked as well.
-* **Cypress:** `@neuralegion/cypress-har-generator` (Chromium-based browsers) — see the
-  [example](https://github.com/hkiam/quena/tree/main/examples/ci-cypress).
+* **Cypress:** `@neuralegion/cypress-har-generator` (Chromium-based browsers), one file per
+  test — see the [example](https://github.com/hkiam/quena/tree/main/examples/ci-cypress).
 
-All files of one call are analysed together, as one capture.
+All files of one call are analysed together, as one capture. Passing the same file twice is
+an error.
 
 ## The quality gate
 
@@ -75,16 +99,40 @@ All files of one call are analysed together, as one capture.
 | `--fail-on critical` | fail on critical findings (the default); `warning`, `info`, or `none` to never fail on findings |
 | `--baseline main.json` | compare with an earlier report: only **new** findings and findings that got **more severe** count |
 | `--fail-on-existing` | with a baseline, known findings count too |
+| `--no-fail-on-existing` | only new and worse findings, even if the settings file says `"failOnExisting": true` |
 | `--budget requests=+10%` | a key figure may grow by at most 10 % against the baseline |
 | `--budget errors=0` | an absolute limit, with or without a baseline |
 | `--ignore OAUTH-FLOW` | never fail on a rule — or on one finding, by its key |
 | `--config quena-gate.json` | the settings above in a file under version control |
 
-The key figures for budgets are those of the report: `requests`, `bytes`, `errors`, `span`
-(duration of the capture), `hosts`, `operations`, `rate`. Limits are plain numbers in the
-unit of the figure (bytes, milliseconds), e.g. `bytes=5000000`.
+### Budgets
 
-A settings file holds the same and the analysis settings:
+The key figures for budgets are those of the report:
+
+| Key | Figure |
+|---|---|
+| `requests` | HTTP requests |
+| `bytes` | transferred bytes |
+| `errors` | errors and failures |
+| `span` | duration of the capture (milliseconds) |
+| `hosts` | hosts |
+| `operations` | user operations |
+| `rate` | requests per second — missing when the capture has no duration (span 0) |
+| `open` | requests still open at the end of the capture — only when there are any |
+| `notAnalysed` | sessions beyond the analyzer's limit — only when there are any |
+
+Limits are plain numbers in the unit of the figure (bytes, milliseconds), e.g.
+`bytes=5000000`. A budget for a key the report does not contain (a typo, or one of the
+figures above that is missing in this report) is an error (exit code 2); the message lists
+the keys of the report.
+
+**Relative budgets** (`requests=+10%`) need a baseline. Without one they are skipped with a
+note in the report — so the very first run, before there is a baseline, passes on them and
+provides the baseline for the next. Absolute budgets always apply.
+
+### The settings file
+
+A settings file holds the gate and the analysis settings:
 
 ```json
 {
@@ -93,12 +141,19 @@ A settings file holds the same and the analysis settings:
   "options": { "slowMs": 1500 },
   "hosts": ["*.example.com"],
   "failOn": "critical",
+  "failOnExisting": false,
   "budgets": ["requests=+10%", "bytes=+20%", "errors=0"],
   "ignore": ["OAUTH-FLOW"]
 }
 ```
 
-Command line arguments override the file.
+Both `diagnose` and `compare` accept it; `compare` uses only the gate part (`failOn`,
+`failOnExisting`, `budgets`, `ignore`) and ignores `profile`, `lang`, `options`, `hosts` and
+`processes`.
+
+For single values — profile, language, `failOn`, `failOnExisting`, hosts, processes — the
+command line wins over the file. Budgets and ignore entries of the file and of the command
+line are combined.
 
 ### Baselines
 
@@ -106,6 +161,10 @@ The JSON report of a run is the baseline of the next one. A typical setup keeps 
 of the last successful run on `main` as a build artifact and compares every pull request
 with it (the Playwright example contains the workflow). To accept a change on purpose, merge
 it: its report becomes the new baseline.
+
+On the first run there is no baseline yet: leave `--baseline` out (in the GitHub Action:
+leave the `baseline` input empty, e.g. with `hashFiles`, as in the example). Then all
+findings count and relative budgets are skipped.
 
 Findings are matched by their **key** (rule and subject, e.g. the endpoint), so they stay
 the same across captures as long as the endpoint does. `quena-cli compare before.json
@@ -117,11 +176,14 @@ after.json` compares two saved reports without a new analysis.
 |---|---|
 | `md` | readable report with the verdict and the comparison — stdout by default, or the job summary |
 | `json` | the complete report plus `gate` and `comparison`; the next baseline |
-| `junit` | JUnit XML: one test case per finding, failures for what breaks the gate; for the test report of GitLab, Jenkins, Azure DevOps |
+| `junit` | JUnit XML: one test case per finding, failures for what breaks the gate, and a suite `budgets` with one test case per budget; for the test report of GitLab, Jenkins, Azure DevOps |
 | `github` | GitHub Actions annotations |
 
 `--format` chooses what goes to stdout, `-o FORMAT=PATH` writes further files (repeatable).
-A one-line verdict goes to stderr (`--quiet` suppresses it).
+
+stderr shows the progress (importing, analysing), then the verdict: the counts, the
+comparison with the baseline, the reasons of the gate and the findings that break it (the
+first ten). `--quiet` suppresses all of it; errors are still printed.
 
 ## Other options
 
@@ -129,13 +191,29 @@ A one-line verdict goes to stderr (`--quiet` suppresses it).
 |---|---|
 | `--profile` | `full`, `performance`, `troubleshooting`, `auth`, `resilience`, `modernization` (`quena-cli profiles` lists them) |
 | `--lang de` | report texts in German |
-| `--set slowMs=1500` | an analyzer option (thresholds, network profiles) |
+| `--set slowMs=1500` | an analyzer option (thresholds, network profiles); not `lang` or `profile` — use `--lang` and `--profile` |
 | `--host api.example.com`, `--process chrome` | analyse only part of the traffic |
-| `--plugins DIR` | the plugins folder, if not next to the program |
-| `--timeout 600` | give up after this many seconds |
+| `--plugins DIR` | use the plugins of this folder only (instead of the `plugins` folder next to the program and `QUENA_PLUGIN_DIR`) |
+| `--timeout 600` | give up when the whole run (import and analysis) takes longer than this many seconds |
 
-Compiled plugins are cached (`~/.cache/quena`, `QUENA_CACHE_DIR`); the first run of a version
-takes a few seconds longer.
+### Plugin cache
+
+Compiled plugins are cached, so only the first run of a version takes a few seconds longer:
+
+| System | Cache |
+|---|---|
+| Linux | `~/.cache/quena/plugin-cache` (`$XDG_CACHE_HOME/quena/plugin-cache`) |
+| macOS | `~/Library/Caches/quena/plugin-cache` |
+| Windows | `%LOCALAPPDATA%\quena\plugin-cache` |
+| `QUENA_CACHE_DIR=/x` | `/x/plugin-cache` |
+| Docker image | `/tmp/quena-cache/plugin-cache` inside the container; mount a volume at `/tmp/quena-cache` to keep it |
+
+To keep it between CI jobs, cache that folder with your CI's cache feature. Several
+processes can share it.
+
+!!! warning "Only trusted users may write to the cache"
+    The cache holds compiled machine code that `quena-cli` loads as it is. Share a cache
+    folder or volume only between jobs you trust, and never make it writable for everyone.
 
 ## Exit codes
 
@@ -143,8 +221,8 @@ takes a few seconds longer.
 |---|---|
 | 0 | gate passed |
 | 1 | gate failed |
-| 2 | usage or input error (unknown option, unreadable capture or baseline) |
-| 3 | analysis error |
+| 2 | usage or input error: unknown option, unreadable capture, baseline or settings file, the same capture twice, a budget for a key the report does not contain, `--set lang`/`--set profile`, the plugins folder or the diagnostics plugin not found |
+| 3 | analysis error: a plugin failed to load, the analysis failed or timed out |
 
 ## Privacy
 

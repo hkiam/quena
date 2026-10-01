@@ -130,6 +130,14 @@ pass for you and answers three questions for every finding:
 </tr>
 </table>
 
+What it checks — timing and server time, sizes and compression, exact and semantic
+duplicates, redundant refreshes and double submits, N+1, polling, retries and retry storms,
+chatty operations, OData queries and paging, HTTP errors and connection failures,
+authentication, redirect chains and loops, cookies, caching, connection reuse, TLS versions,
+CORS preflights, latency and bandwidth sensitivity — is described in the
+[manual](https://hkiam.github.io/quena/diagnostics/). The analyzer is a plugin with a
+documented [contract](plugins/webdiag/REPORT.md), so you can add your own.
+
 ### Diagnostics in CI
 
 Network regressions rarely fail a functional test: the page still works, it just makes 50
@@ -142,7 +150,8 @@ report into a **quality gate**:
 - uses: hkiam/quena/diagnose@v0.2.0
   with:
     files: captures/*.har
-    baseline: baseline/report.json    # the report of the last run on main
+    # the report of the last green run on main; empty on the first run (no baseline yet)
+    baseline: ${{ hashFiles('baseline/report.json') != '' && 'baseline/report.json' || '' }}
     fail-on: critical                 # new critical findings fail the build
     budgets: requests=+10% bytes=+20% errors=0
 ```
@@ -167,14 +176,6 @@ quena-cli: 1 critical, 4 warning, 9 info · vs. baseline: 2 new, 1 resolved, 0 c
 
 Examples for [Playwright](examples/ci-playwright) and [Cypress](examples/ci-cypress); details
 in the [manual](https://hkiam.github.io/quena/ci/).
-
-What it checks — timing and server time, sizes and compression, exact and semantic
-duplicates, redundant refreshes and double submits, N+1, polling, retries and retry storms,
-chatty operations, OData queries and paging, HTTP errors and connection failures,
-authentication, redirect chains and loops, cookies, caching, connection reuse, TLS versions,
-CORS preflights, latency and bandwidth sensitivity — is described in the
-[manual](https://hkiam.github.io/quena/diagnostics/). The analyzer is a plugin with a
-documented [contract](plugins/webdiag/REPORT.md), so you can add your own.
 
 ---
 

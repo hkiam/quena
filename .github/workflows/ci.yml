@@ -124,12 +124,29 @@ jobs:
             bin=target/$BUILD_PROFILE/quena-cli; [ "${{ runner.os }}" = Windows ] && bin=$bin.exe
           fi
           dir=$(tools/cli/stage.sh "$bin" "$platform")
-          # Smoke test of the packaged program: its own plugins folder, exit codes of the gate.
-          exe="$dir/$(basename "$bin")"
-          env -u QUENA_PLUGIN_DIR "$exe" diagnose app/e2e/fixtures/two-sessions.har --fail-on none -o "json=$RUNNER_TEMP/r.json" --format md
-          env -u QUENA_PLUGIN_DIR "$exe" compare "$RUNNER_TEMP/r.json" "$RUNNER_TEMP/r.json" --fail-on warning --quiet
-          set +e; env -u QUENA_PLUGIN_DIR "$exe" diagnose no-such-file.har --quiet; rc=$?; set -e
-          [ "$rc" = 2 ] || { echo "expected exit code 2, got $rc"; exit 1; }
+          # Smoke test of the packaged program, copied out of the checkout so that it can only
+          # use its own plugins folder: --help/--version, a report, the exit codes of the gate.
+          smoke="$(cd "$RUNNER_TEMP" && pwd)/cli-smoke"; rm -rf "$smoke"; mkdir -p "$smoke"
+          cp -R "$dir" "$smoke/"
+          exe="$smoke/$(basename "$dir")/$(basename "$bin")"
+          har="$PWD/app/e2e/fixtures/two-sessions.har"
+          (
+            cd "$smoke"
+            unset QUENA_PLUGIN_DIR
+            "$exe" --version
+            "$exe" --help > /dev/null
+            if [ "${{ runner.os }}" = macOS ]; then
+              lipo -archs "$exe"
+              if arch -x86_64 /usr/bin/true 2>/dev/null; then arch -x86_64 "$exe" --version
+              else echo "::notice::Rosetta not available: x86_64 slice of quena-cli not run"; fi
+            fi
+            "$exe" diagnose "$har" --fail-on none -o json=r.json --format md
+            "$exe" compare r.json r.json --fail-on warning --quiet
+            set +e; "$exe" diagnose "$har" --fail-on warning --format none --quiet; rc=$?; set -e
+            [ "$rc" = 1 ] || { echo "expected exit code 1 (gate failed), got $rc"; exit 1; }
+            set +e; "$exe" diagnose no-such-file.har --quiet; rc=$?; set -e
+            [ "$rc" = 2 ] || { echo "expected exit code 2, got $rc"; exit 1; }
+          )
           cd "$(dirname "$dir")"
           if [ "${{ runner.os }}" = Windows ]; then
             pwsh -NoProfile -Command "Compress-Archive -Path '$(basename "$dir")' -DestinationPath '$(basename "$dir").zip' -Force"
@@ -279,6 +296,25 @@ jobs:
           test "${{ steps.gate.outputs.passed }}" = true
           test -s "${{ steps.gate.outputs.report }}"
           test -s "${{ steps.gate.outputs.junit }}"
+          test -s "${{ steps.gate.outputs.markdown }}"
+      # two-sessions.har has a warning (AUTH-FAIL, 403): the gate fails, and the action still
+      # sets its outputs and writes the reports.
+      - id: failing
+        uses: ./diagnose
+        continue-on-error: true
+        with:
+          files: app/e2e/fixtures/two-sessions.har
+          fail-on: warning
+          bin: ${{ env.QUENA_CLI }}
+          summary: "false"
+      - name: Outputs of the failing gate
+        run: |
+          test "${{ steps.failing.outcome }}" = failure
+          test "${{ steps.failing.outputs.passed }}" = false
+          test -s "${{ steps.failing.outputs.report }}"
+          test -s "${{ steps.failing.outputs.junit }}"
+          test -s "${{ steps.failing.outputs.markdown }}"
+          grep -q '<failure' "${{ steps.failing.outputs.junit }}"
 
   release:
     name: draft release
@@ -294,6 +330,8 @@ jobs:
         with:
           pattern: quena-*
           path: dist
+      # The GitHub Action (diagnose@vX.Y.Z, version: latest) and the Docker image only see the
+      # release once it is published: drafts are invisible to them.
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
