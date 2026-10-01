@@ -649,7 +649,12 @@ impl PluginHost {
             // data directory, which is as trusted as the plugin directories themselves;
             // wasmtime still rejects data that is not a compatible serialized component.
             match unsafe { Component::deserialize(&self.engine, &ser) } {
-                Ok(c) => return Ok(c),
+                Ok(c) => {
+                    // In use: a fresh mtime keeps it from being pruned as abandoned by other
+                    // processes sharing the cache (atime is unreliable, often `noatime`).
+                    let _ = std::fs::File::options().write(true).open(&cached).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+                    return Ok(c);
+                }
                 Err(e) => tracing::debug!(target: "quena::plugins", "stale compile cache {}: {e}", cached.display()),
             }
         }
@@ -658,14 +663,17 @@ impl PluginHost {
             let _ = std::fs::create_dir_all(&self.cache_dir);
             // A name of its own: processes sharing the cache may compile the same plugin at once.
             let tmp = cached.with_extension(format!("{}-{:x}.tmp", std::process::id(), rand_suffix()));
-            if std::fs::write(&tmp, &ser).is_ok() {
-                let _ = std::fs::rename(&tmp, &cached);
+            if std::fs::write(&tmp, &ser).and_then(|_| std::fs::rename(&tmp, &cached)).is_err() {
+                let _ = std::fs::remove_file(&tmp);
             }
         }
         Ok(component)
     }
 
-    /// Drop compiled components no loaded plugin uses any more (updated or removed plugins).
+    /// Tidy the compile cache. It may be shared by several processes and Quena versions
+    /// (app, CLI runs), so compiled components this process does not use are dropped only
+    /// once nobody has loaded them for [`CACHE_UNUSED_MAX_AGE`]; temporary files that a
+    /// crashed writer left behind go after [`CACHE_TMP_MAX_AGE`].
     fn prune_cache(&self, keep: &[PathBuf]) {
         let Ok(rd) = std::fs::read_dir(&self.cache_dir) else { return };
         let used: Vec<String> = keep
@@ -676,9 +684,20 @@ impl PluginHost {
                 hex::encode(&sha2::Sha256::digest(&b)[..16])
             })
             .collect();
+        let now = std::time::SystemTime::now();
+        let older_than = |e: &std::fs::DirEntry, age: std::time::Duration| {
+            e.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok()).is_some_and(|d| d > age)
+        };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if !used.iter().any(|u| name.starts_with(u.as_str())) {
+            let stale = if name.ends_with(".tmp") {
+                older_than(&e, CACHE_TMP_MAX_AGE)
+            } else if name.ends_with(".cwasm") {
+                !used.iter().any(|u| name.starts_with(u.as_str())) && older_than(&e, CACHE_UNUSED_MAX_AGE)
+            } else {
+                false
+            };
+            if stale {
                 let _ = std::fs::remove_file(e.path());
             }
         }
@@ -769,6 +788,11 @@ impl PluginHost {
 
     fn deadline_ticks(&self) -> u64 {
         ticks(self.limits.call_timeout)
+    }
+
+    /// The plugin directories, searched in this order (the first plugin of an id wins).
+    pub fn dirs(&self) -> &[PathBuf] {
+        &self.dirs
     }
 
     pub fn list(&self) -> Vec<PluginInfo> {
@@ -1058,10 +1082,53 @@ impl PluginHost {
     }
 }
 
+/// Compiled components no running process uses are kept this long after their last load.
+const CACHE_UNUSED_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+/// Temporary cache files older than this belong to a writer that died.
+const CACHE_TMP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 /// A value that differs between threads and calls (temporary file names).
 fn rand_suffix() -> u64 {
     use std::hash::{BuildHasher, Hasher};
     let mut h = std::collections::hash_map::RandomState::new().build_hasher();
     h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
     h.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn age(p: &Path, by: Duration) {
+        std::fs::File::options().write(true).open(p).unwrap().set_modified(SystemTime::now() - by).unwrap();
+    }
+
+    /// A shared cache: other processes' recent components and fresh temp files stay; abandoned
+    /// components, stale temp files (any prefix) go; unknown files are left alone.
+    #[test]
+    fn prune_keeps_what_others_may_use() {
+        let state = tempfile::tempdir().unwrap();
+        let cache = state.path().join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        let file = |name: &str, old: Option<Duration>| {
+            let p = cache.join(name);
+            std::fs::write(&p, b"x").unwrap();
+            if let Some(d) = old {
+                age(&p, d);
+            }
+            p
+        };
+        let recent = file("aaaa-1.cwasm", Some(Duration::from_secs(5 * 24 * 3600)));
+        let abandoned = file("bbbb-2.cwasm", Some(Duration::from_secs(40 * 24 * 3600)));
+        let fresh_tmp = file("cccc-3.cwasm.77-ab.tmp", None);
+        let stale_tmp = file("whatever.tmp", Some(Duration::from_secs(3600)));
+        let other = file("README", Some(Duration::from_secs(400 * 24 * 3600)));
+        let _host = PluginHost::with_cache(vec![], state.path(), cache.clone()).unwrap();
+        assert!(recent.exists());
+        assert!(!abandoned.exists());
+        assert!(fresh_tmp.exists());
+        assert!(!stale_tmp.exists());
+        assert!(other.exists());
+    }
 }

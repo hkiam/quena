@@ -19,8 +19,8 @@ fn property(s: &str) -> String {
 /// critical and warning findings.
 pub fn to_github(r: &Report, gate: &GateResult) -> String {
     let mut out = String::new();
-    for f in &r.findings {
-        let level = if gate.is_failing(f) {
+    for (i, f) in r.findings.iter().enumerate() {
+        let level = if gate.is_failing_at(i) {
             "error"
         } else if f.severity >= Severity::Warning {
             "warning"

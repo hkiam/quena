@@ -128,6 +128,9 @@ pub struct BudgetResult {
     #[serde(serialize_with = "ser_opt_num")]
     pub value: Option<f64>,
     pub passed: bool,
+    /// Not checked (a relative budget without a baseline, e.g. the run that creates the
+    /// first baseline); `passed` is true and `reason` says why.
+    pub skipped: bool,
     pub reason: String,
 }
 
@@ -135,17 +138,78 @@ pub struct BudgetResult {
 #[serde(rename_all = "camelCase")]
 pub struct GateResult {
     pub passed: bool,
-    /// Keys (`Finding::key_of`) of the findings that fail the gate, in report order.
+    /// Keys (`Finding::key_of`) of the findings that fail the gate, in report order, each once.
     pub failing: Vec<String>,
     pub budgets: Vec<BudgetResult>,
     /// Why the gate passed or failed, one line each, in the report language.
     pub reasons: Vec<String>,
+    /// Indexes into `report.findings` of the failing findings (findings may share a key).
+    #[serde(skip)]
+    failing_idx: HashSet<usize>,
+    #[serde(skip)]
+    failing_keys: HashSet<String>,
 }
 
 impl GateResult {
-    pub fn is_failing(&self, f: &Finding) -> bool {
-        self.failing.iter().any(|k| k == f.key_of())
+    /// Whether `report.findings[i]` (of the evaluated report) fails the gate.
+    pub fn is_failing_at(&self, i: usize) -> bool {
+        self.failing_idx.contains(&i)
     }
+
+    /// Whether a finding with this key fails the gate; for findings outside the evaluated
+    /// report's list, such as the entries of a [`Comparison`] (which matches by key). For the
+    /// report's own findings [`GateResult::is_failing_at`] is exact when keys repeat.
+    pub fn is_failing(&self, f: &Finding) -> bool {
+        self.failing_keys.contains(f.key_of())
+    }
+
+    /// Number of findings that fail the gate.
+    pub fn failing_count(&self) -> usize {
+        self.failing_idx.len()
+    }
+}
+
+/// Budgets must name metrics of the report: a typo would otherwise pass or fail silently
+/// forever. `Err` lists the unknown keys and the numeric metric keys the report has.
+pub fn check_budgets(report: &Report, cfg: &GateConfig) -> Result<(), String> {
+    let mut unknown: Vec<&str> = Vec::new();
+    for b in &cfg.budgets {
+        if !report.metrics.iter().any(|m| m.key == b.key)
+            && optional_metric(&b.key).is_none()
+            && !unknown.contains(&b.key.as_str())
+        {
+            unknown.push(&b.key);
+        }
+    }
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    let numeric: Vec<&str> = report
+        .metrics
+        .iter()
+        .filter(|m| !m.key.is_empty() && m.value.as_f64().is_some())
+        .map(|m| m.key.as_str())
+        .collect();
+    let optional: Vec<&str> = OPTIONAL_METRICS
+        .iter()
+        .map(|(k, _)| *k)
+        .filter(|k| !numeric.contains(k))
+        .collect();
+    Err(format!(
+        "budget metric{} {} not in the report; numeric metrics: {} (also allowed, reported only when they apply: {})",
+        if unknown.len() == 1 { "" } else { "s" },
+        unknown
+            .iter()
+            .map(|k| format!("{k:?}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        if numeric.is_empty() {
+            "(none)".to_string()
+        } else {
+            numeric.join(", ")
+        },
+        optional.join(", ")
+    ))
 }
 
 /// Evaluate the gate for `report`, optionally against a baseline and `compare(baseline, report)`.
@@ -157,6 +221,8 @@ pub fn evaluate(
 ) -> GateResult {
     let new_only = baseline.is_some() && !cfg.fail_on_existing;
     let mut failing: Vec<String> = Vec::new();
+    let mut failing_idx: HashSet<usize> = HashSet::new();
+    let mut failing_keys: HashSet<String> = HashSet::new();
     let mut ignored = 0;
     let mut reasons = Vec::new();
     match cfg.fail_on {
@@ -176,18 +242,22 @@ pub fn evaluate(
                         .collect()
                 })
                 .unwrap_or_default();
-            for f in &report.findings {
+            let ignore: HashSet<&str> = cfg.ignore.iter().map(String::as_str).collect();
+            for (i, f) in report.findings.iter().enumerate() {
                 if f.severity < min || (new_only && !worse.contains(f.key_of())) {
                     continue;
                 }
-                if cfg.ignore.iter().any(|i| *i == f.id || *i == f.key) {
+                if ignore.contains(f.id.as_str()) || ignore.contains(f.key.as_str()) {
                     ignored += 1;
-                } else if !failing.iter().any(|k| k == f.key_of()) {
+                    continue;
+                }
+                failing_idx.insert(i);
+                if failing_keys.insert(f.key_of().to_string()) {
                     failing.push(f.key_of().to_string());
                 }
             }
             let sev = min.label(lang);
-            let n = failing.len();
+            let n = failing_idx.len();
             let line = match (new_only, n) {
                 (false, 0) => tv(
                     lang,
@@ -228,7 +298,8 @@ pub fn evaluate(
         .iter()
         .map(|b| budget(report, baseline.map(|(r, _)| r), b, lang))
         .collect();
-    for b in budgets.iter().filter(|b| !b.passed) {
+    // Failed budgets, and the skipped ones as information (the gate still passes).
+    for b in budgets.iter().filter(|b| !b.passed || b.skipped) {
         reasons.push(tv(
             lang,
             "Budget {key}: {reason}",
@@ -236,25 +307,67 @@ pub fn evaluate(
         ));
     }
     GateResult {
-        passed: failing.is_empty() && budgets.iter().all(|b| b.passed),
+        passed: failing_idx.is_empty() && budgets.iter().all(|b| b.passed),
         failing,
         budgets,
         reasons,
+        failing_idx,
+        failing_keys,
+    }
+}
+
+/// Metrics an analyzer reports only when they apply (webdiag: `open` and `notAnalysed` only
+/// when above 0, `rate` only when the capture spans time), with the value their absence
+/// means; `None`: absent means "not measured", a budget on it is skipped. A budget on one of
+/// these is no configuration error when this report lacks it.
+pub const OPTIONAL_METRICS: &[(&str, Option<f64>)] = &[
+    ("open", Some(0.0)),
+    ("notAnalysed", Some(0.0)),
+    ("rate", None),
+];
+
+fn optional_metric(key: &str) -> Option<Option<f64>> {
+    OPTIONAL_METRICS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|(_, d)| *d)
+}
+
+enum Lookup {
+    Missing,
+    NotNumeric,
+    Value(f64),
+}
+
+/// A metric's number, an absent optional metric with a default counting as that.
+fn lookup(r: &Report, key: &str) -> Lookup {
+    match r.metrics.iter().find(|m| m.key == key) {
+        Some(m) => m.value.as_f64().map_or(Lookup::NotNumeric, Lookup::Value),
+        None => match optional_metric(key) {
+            Some(Some(d)) => Lookup::Value(d),
+            _ => Lookup::Missing,
+        },
     }
 }
 
 fn budget(report: &Report, baseline: Option<&Report>, b: &Budget, lang: Lang) -> BudgetResult {
-    let find = |r: &Report| r.metrics.iter().find(|m| m.key == b.key).cloned();
-    let metric = find(report);
-    let unit = metric.as_ref().map_or(String::new(), |m| m.unit.clone());
-    let label = metric.as_ref().map_or(b.key.clone(), |m| {
+    let metric = report.metrics.iter().find(|m| m.key == b.key);
+    let optional = optional_metric(&b.key).is_some();
+    let unit = metric.map_or(if optional { "count" } else { "" }.to_string(), |m| {
+        m.unit.clone()
+    });
+    let label = metric.map_or(b.key.clone(), |m| {
         if m.label.is_empty() {
             b.key.clone()
         } else {
             m.label.clone()
         }
     });
-    let value = metric.as_ref().and_then(|m| m.value.as_f64());
+    let current = lookup(report, &b.key);
+    let value = match current {
+        Lookup::Value(v) => Some(v),
+        _ => None,
+    };
     let pct_text = |p: f64| {
         format!(
             "{}{} %",
@@ -267,22 +380,27 @@ fn budget(report: &Report, baseline: Option<&Report>, b: &Budget, lang: Lang) ->
         Limit::RelativePct(p) => format!("≤ {} {}", t(lang, "baseline"), pct_text(p)),
     };
     let mut base = None;
-    let outcome: Result<(f64, String), &'static str> = match (&metric, value) {
-        (None, _) => Err("metric not in report"),
-        (Some(_), None) => Err("metric is not numeric"),
-        (Some(_), Some(v)) => match b.limit {
+    let mut skipped = false;
+    let mut skip = |why: &'static str| {
+        skipped = true;
+        Err(why)
+    };
+    let outcome: Result<(f64, String), &'static str> = match current {
+        Lookup::Missing if optional => skip("skipped: metric not in report"),
+        Lookup::Missing => Err("metric not in report"),
+        Lookup::NotNumeric => Err("metric is not numeric"),
+        Lookup::Value(_) => match b.limit {
             Limit::Absolute(limit) => Ok((limit, String::new())),
             Limit::RelativePct(p) => match baseline {
-                None => Err("needs --baseline"),
-                Some(r) => match find(r).and_then(|m| m.value.as_f64()) {
-                    None => Err("metric not in baseline"),
-                    Some(bv) => {
+                None => skip("skipped: no baseline"),
+                Some(r) => match lookup(r, &b.key) {
+                    Lookup::Missing if optional => skip("skipped: metric not in baseline"),
+                    Lookup::Missing => Err("metric not in baseline"),
+                    Lookup::NotNumeric => Err("metric not numeric in baseline"),
+                    Lookup::Value(bv) => {
                         base = Some(bv);
-                        let allowed = if bv == 0.0 {
-                            0.0
-                        } else {
-                            bv * (1.0 + p / 100.0)
-                        };
+                        // `bv * (1 + p/100)` rounds 100 +15 % to 115.00000000000001.
+                        let allowed = bv * (100.0 + p) / 100.0;
                         Ok((
                             allowed,
                             format!(
@@ -295,22 +413,23 @@ fn budget(report: &Report, baseline: Option<&Report>, b: &Budget, lang: Lang) ->
                     }
                 },
             },
-        }
-        .map(|(allowed, note)| {
-            let op = if v > allowed { ">" } else { "≤" };
+        },
+    };
+    let (passed, reason) = match (outcome, value) {
+        (Ok((allowed, note)), Some(v)) => {
+            let ok = within(v, allowed);
+            let op = if ok { "≤" } else { ">" };
             (
-                allowed,
+                ok,
                 format!(
                     "{} {op} {}{note}",
                     fmt_number(v, &unit, lang),
                     fmt_number(allowed, &unit, lang)
                 ),
             )
-        }),
-    };
-    let (passed, reason) = match outcome {
-        Ok((allowed, reason)) => (value.is_some_and(|v| v <= allowed), reason),
-        Err(e) => (false, t(lang, e).to_string()),
+        }
+        (Ok(_), None) => (false, t(lang, "metric is not numeric").to_string()),
+        (Err(e), _) => (skipped, t(lang, e).to_string()),
     };
     BudgetResult {
         key: b.key.clone(),
@@ -320,6 +439,12 @@ fn budget(report: &Report, baseline: Option<&Report>, b: &Budget, lang: Lang) ->
         baseline: base,
         value,
         passed,
+        skipped,
         reason,
     }
+}
+
+/// `value ≤ limit`, tolerating the rounding error of the limit's computation.
+fn within(value: f64, limit: f64) -> bool {
+    value <= limit + 1e-9 * limit.abs().max(1.0)
 }

@@ -127,6 +127,26 @@ struct Registry {
     order: Vec<JobId>,
 }
 
+/// Why [`JobManager::wait`] returned without a final state.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WaitError {
+    /// No job with this id (never submitted, or already removed).
+    UnknownJob,
+    /// The job had not finished when the timeout passed.
+    Timeout,
+}
+
+impl std::fmt::Display for WaitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            WaitError::UnknownJob => "unknown job",
+            WaitError::Timeout => "timed out",
+        })
+    }
+}
+
+impl std::error::Error for WaitError {}
+
 pub struct JobManager {
     next: AtomicU64,
     reg: Mutex<Registry>,
@@ -232,16 +252,16 @@ impl JobManager {
     }
 
     /// Block until job `id` has finished (done, failed or cancelled) or `timeout` passed;
-    /// its final state, or `None` for an unknown job or on timeout.
-    pub fn wait(&self, id: JobId, timeout: Duration) -> Option<JobInfo> {
-        let job = self.get(id)?;
-        let until = Instant::now() + timeout;
+    /// its final state. A timeout too large for the clock means no deadline.
+    pub fn wait(&self, id: JobId, timeout: Duration) -> Result<JobInfo, WaitError> {
+        let job = self.get(id).ok_or(WaitError::UnknownJob)?;
+        let until = Instant::now().checked_add(timeout);
         loop {
             if matches!(job.status(), JobStatus::Done | JobStatus::Failed | JobStatus::Cancelled) {
-                return Some(job.snapshot());
+                return Ok(job.snapshot());
             }
-            if Instant::now() >= until {
-                return None;
+            if until.is_some_and(|u| Instant::now() >= u) {
+                return Err(WaitError::Timeout);
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -371,6 +391,23 @@ mod tests {
         let b = m.submit("k", "t", Priority::Background, true, |_| Ok(()));
         assert_eq!(a, b);
         assert_eq!(wait(&m, a), JobStatus::Done);
+    }
+
+    #[test]
+    fn wait_unknown_timeout_and_unbounded() {
+        let m = JobManager::new(1);
+        assert_eq!(m.wait(9999, Duration::from_millis(10)).unwrap_err(), WaitError::UnknownJob);
+        let slow = m.submit("slow", "t", Priority::Background, true, |ctx| {
+            while !ctx.cancelled() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(())
+        });
+        assert_eq!(m.wait(slow, Duration::from_millis(30)).unwrap_err(), WaitError::Timeout);
+        m.cancel(slow);
+        // A timeout beyond the clock's range is no deadline, not a panic.
+        let quick = m.submit("quick", "t", Priority::Background, true, |_| Ok(()));
+        assert_eq!(m.wait(quick, Duration::MAX).unwrap().status, JobStatus::Done);
     }
 
     #[test]

@@ -19,6 +19,7 @@ clap.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 dirs.workspace = true
+ctrlc = { version = "3", features = ["termination"] }
 
 [dev-dependencies]
 tempfile.workspace = true

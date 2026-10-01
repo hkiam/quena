@@ -55,25 +55,25 @@ fn details(f: &Finding, lang: Lang) -> String {
 
 struct Suite<'a> {
     name: &'a str,
-    findings: Vec<&'a Finding>,
+    /// With their index in the report (for the gate).
+    findings: Vec<(usize, &'a Finding)>,
 }
 
 /// The report as JUnit XML: a test suite per (first) finding category, failures for the
 /// findings that fail the gate, and a suite `budgets` with a test case per budget.
 pub fn to_junit(r: &Report, gate: &GateResult, lang: Lang) -> String {
     let mut suites: Vec<Suite> = Vec::new();
-    for f in &r.findings {
+    for (i, f) in r.findings.iter().enumerate() {
         let name = f.categories.first().map_or("general", String::as_str);
         match suites.iter_mut().find(|s| s.name == name) {
-            Some(s) => s.findings.push(f),
+            Some(s) => s.findings.push((i, f)),
             None => suites.push(Suite {
                 name,
-                findings: vec![f],
+                findings: vec![(i, f)],
             }),
         }
     }
-    let failures = r.findings.iter().filter(|f| gate.is_failing(f)).count()
-        + gate.budgets.iter().filter(|b| !b.passed).count();
+    let failures = gate.failing_count() + gate.budgets.iter().filter(|b| !b.passed).count();
     let tests = r.findings.len() + gate.budgets.len();
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     let _ = writeln!(
@@ -81,15 +81,19 @@ pub fn to_junit(r: &Report, gate: &GateResult, lang: Lang) -> String {
         "<testsuites name=\"Quena diagnostics\" tests=\"{tests}\" failures=\"{failures}\" errors=\"0\">"
     );
     for s in &suites {
-        let failed = s.findings.iter().filter(|f| gate.is_failing(f)).count();
+        let failed = s
+            .findings
+            .iter()
+            .filter(|(i, _)| gate.is_failing_at(*i))
+            .count();
         let _ = writeln!(
             out,
             "  <testsuite name=\"{}\" tests=\"{}\" failures=\"{failed}\" errors=\"0\">",
             attr(s.name),
             s.findings.len()
         );
-        for f in &s.findings {
-            finding_case(&mut out, f, gate.is_failing(f), lang);
+        for &(i, f) in &s.findings {
+            finding_case(&mut out, f, gate.is_failing_at(i), lang);
         }
         out.push_str("  </testsuite>\n");
     }

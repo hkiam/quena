@@ -1,4 +1,4 @@
-use quena_report::gate::{GateConfig, Limit, evaluate, parse_budget};
+use quena_report::gate::{GateConfig, Limit, check_budgets, evaluate, parse_budget};
 use quena_report::{
     Lang, MdOptions, MetricValue, Report, Severity, compare, normalize, parse, to_github, to_json,
     to_junit, to_markdown,
@@ -311,22 +311,13 @@ fn gate_budgets() {
     assert!(g.passed);
 
     // Usage problems fail too, so that CI notices.
-    let g = evaluate(
-        &cur,
-        None,
-        &budgets(&["requests=+10%", "nope=1", "server=1"]),
-        Lang::En,
-    );
+    let g = evaluate(&cur, None, &budgets(&["nope=1", "server=1"]), Lang::En);
     assert_eq!(
         g.budgets
             .iter()
             .map(|b| b.reason.as_str())
             .collect::<Vec<_>>(),
-        [
-            "needs --baseline",
-            "metric not in report",
-            "metric is not numeric"
-        ]
+        ["metric not in report", "metric is not numeric"]
     );
     assert!(g.budgets.iter().all(|b| !b.passed));
     let bare = with(sample(), |v| v["metrics"] = json!([]));
@@ -419,7 +410,7 @@ fn markdown_with_gate_and_comparison() {
 
     let g = evaluate(&cur, Some((&base, &c)), &gate, Lang::De);
     let de = to_markdown(&cur, Some(&c), Some(&g), Lang::De, &MdOptions::default());
-    assert!(de.starts_with("**Qualitätsschranke: NICHT bestanden ❌**\n\n- 1 neuer oder verschlechterter Befund ab Schweregrad Kritisch."));
+    assert!(de.starts_with("**Quality Gate: NICHT bestanden ❌**\n\n- 1 neuer oder verschlechterter Befund ab Schweregrad Kritisch."));
     assert!(de.contains(
         "## Vergleich mit der Baseline\n\n| Schweregrad | Vorher | Nachher | Änderung | Tendenz |"
     ));
@@ -518,4 +509,222 @@ fn json_adds_comparison_and_gate() {
     let plain: Value = serde_json::from_str(&to_json(&raw, None, None)).unwrap();
     assert_eq!(plain, raw);
     assert_eq!(MetricValue::Number(1.0).as_f64(), Some(1.0));
+}
+
+fn budget_cfg(list: &[&str]) -> GateConfig {
+    GateConfig {
+        budgets: list.iter().map(|b| parse_budget(b).unwrap()).collect(),
+        ..GateConfig::default()
+    }
+}
+
+fn requests(n: f64) -> Report {
+    with(sample(), |v| v["metrics"][0]["value"] = json!(n))
+}
+
+/// The limit is the baseline plus exactly the percentage: no float rounding fails the boundary.
+#[test]
+fn relative_budget_boundary() {
+    for (base, value, pct, pass) in [
+        (100.0, 115.0, "+15%", true),
+        (100.0, 115.000001, "+15%", false),
+        (3.0, 3.3, "+10%", true),
+        (3.0, 3.31, "+10%", false),
+        (0.1, 0.11, "+10%", true),
+        (0.1, 0.3, "+200%", true),
+        (0.7, 0.77, "+10%", true),
+        (100.0, 90.0, "-10%", true),
+        (100.0, 90.1, "-10%", false),
+    ] {
+        let (b, c) = (requests(base), requests(value));
+        let g = evaluate(
+            &c,
+            Some((&b, &compare(&b, &c))),
+            &budget_cfg(&[&format!("requests={pct}")]),
+            Lang::En,
+        );
+        assert_eq!(
+            g.budgets[0].passed, pass,
+            "{base} {pct} vs {value}: {:?}",
+            g.budgets[0]
+        );
+    }
+    let (b, c) = (requests(100.0), requests(115.0));
+    let g = evaluate(
+        &c,
+        Some((&b, &compare(&b, &c))),
+        &budget_cfg(&["requests=+15%"]),
+        Lang::En,
+    );
+    assert_eq!(g.budgets[0].reason, "115 ≤ 115 (baseline 100 +15 %)");
+    assert_eq!(g.budgets[0].limit_text, "≤ baseline +15 %");
+}
+
+/// The run that creates the first baseline: relative budgets are skipped, absolute ones apply.
+#[test]
+fn relative_budget_without_baseline_is_skipped() {
+    let r = report(&sample());
+    let g = evaluate(
+        &r,
+        None,
+        &budget_cfg(&["requests=+10%", "errors=0"]),
+        Lang::En,
+    );
+    assert!(g.passed, "{g:?}");
+    assert!(g.budgets[0].passed && g.budgets[0].skipped);
+    assert_eq!(g.budgets[0].reason, "skipped: no baseline");
+    assert!(g.budgets[1].passed && !g.budgets[1].skipped);
+    assert_eq!(
+        g.reasons,
+        [
+            "Findings do not fail the gate.",
+            "Budget requests: skipped: no baseline"
+        ]
+    );
+    let g = evaluate(
+        &r,
+        None,
+        &budget_cfg(&["requests=+10%", "requests=50"]),
+        Lang::De,
+    );
+    assert!(!g.passed);
+    assert_eq!(g.budgets[0].reason, "übersprungen: keine Baseline");
+    assert_eq!(g.reasons[2], "Budget requests: 100 > 50");
+    assert_eq!(
+        serde_json::to_value(&g).unwrap()["budgets"][0]["skipped"],
+        json!(true)
+    );
+}
+
+#[test]
+fn budget_metric_missing_or_not_numeric_in_baseline() {
+    let cur = report(&sample());
+    let text = with(sample(), |v| v["metrics"][0]["value"] = json!("many"));
+    let g = evaluate(
+        &cur,
+        Some((&text, &compare(&text, &cur))),
+        &budget_cfg(&["requests=+10%"]),
+        Lang::En,
+    );
+    assert!(!g.passed);
+    assert_eq!(g.budgets[0].reason, "metric not numeric in baseline");
+    let bare = with(sample(), |v| v["metrics"] = json!([]));
+    let g = evaluate(
+        &cur,
+        Some((&bare, &compare(&bare, &cur))),
+        &budget_cfg(&["requests=+10%"]),
+        Lang::En,
+    );
+    assert_eq!(g.budgets[0].reason, "metric not in baseline");
+}
+
+#[test]
+fn budget_typo_is_a_configuration_error() {
+    let r = report(&sample());
+    assert!(check_budgets(&r, &budget_cfg(&["requests=+10%", "server=1"])).is_ok());
+    let e = check_budgets(&r, &budget_cfg(&["reqests=+10%", "errors=0"])).unwrap_err();
+    assert_eq!(
+        e,
+        "budget metric \"reqests\" not in the report; numeric metrics: requests, bytes, errors (also allowed, reported only when they apply: open, notAnalysed, rate)"
+    );
+}
+
+/// Findings sharing a key are judged one by one; each counts once.
+#[test]
+fn gate_judges_each_finding_with_a_shared_key() {
+    let r = with(sample(), |v| {
+        let f = v["findings"].as_array_mut().unwrap();
+        f.push(json!({ "id": "DUP", "key": "DUP|k", "title": "Dup crit", "severity": "critical" }));
+        f.push(json!({ "id": "DUP", "key": "DUP|k", "title": "Dup info", "severity": "info" }));
+        f.push(
+            json!({ "id": "DUP", "key": "DUP|k", "title": "Dup crit 2", "severity": "critical" }),
+        );
+    });
+    let g = evaluate(&r, None, &cfg(Some(Severity::Critical)), Lang::En);
+    assert_eq!(
+        keys(&g.failing),
+        ["PERF-SEQ|op-3", "OAUTH-FLOW|idp", "DUP|k"]
+    );
+    assert_eq!(g.failing_count(), 4);
+    assert_eq!(g.reasons, ["4 findings at Critical or above."]);
+    let failing: Vec<&str> = r
+        .findings
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| g.is_failing_at(*i))
+        .map(|(_, f)| f.title.as_str())
+        .collect();
+    assert_eq!(
+        failing,
+        ["Latency | chain", "OAuth", "Dup crit", "Dup crit 2"]
+    );
+    let md = to_markdown(&r, None, Some(&g), Lang::En, &MdOptions::default());
+    assert!(md.contains("### [Info] Dup info (DUP)"), "{md}");
+    assert!(md.contains("### ❌ [Critical] Dup crit 2 (DUP)"));
+    let x = to_junit(&r, &g, Lang::En);
+    assert_eq!(x.matches("<failure ").count(), 4);
+
+    let ignore = GateConfig {
+        ignore: vec!["DUP".into()],
+        ..cfg(Some(Severity::Critical))
+    };
+    let g = evaluate(&r, None, &ignore, Lang::En);
+    assert_eq!(g.reasons[1], "2 findings ignored by the configuration.");
+}
+
+/// `open`, `notAnalysed` and `rate` appear only when they apply: absent counts as 0 for the
+/// first two, a budget on an absent `rate` is skipped.
+#[test]
+fn optional_metrics() {
+    let r = report(&sample());
+    let cfg = budget_cfg(&["open=0", "notAnalysed=+10%", "rate=5", "open=+10%"]);
+    assert!(check_budgets(&r, &cfg).is_ok());
+    let g = evaluate(&r, Some((&r, &compare(&r, &r))), &cfg, Lang::En);
+    assert!(g.passed, "{g:?}");
+    let reasons: Vec<(&str, bool)> = g
+        .budgets
+        .iter()
+        .map(|b| (b.reason.as_str(), b.skipped))
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            ("0 ≤ 0", false),
+            ("0 ≤ 0 (baseline 0 +10 %)", false),
+            ("skipped: metric not in report", true),
+            ("0 ≤ 0 (baseline 0 +10 %)", false),
+        ]
+    );
+    // Open now, none before: the increase over a baseline of 0 fails.
+    let open = with(sample(), |v| {
+        v["metrics"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "key": "open", "label": "Still open", "value": 2, "unit": "count" }))
+    });
+    let g = evaluate(
+        &open,
+        Some((&r, &compare(&r, &open))),
+        &budget_cfg(&["open=+10%"]),
+        Lang::En,
+    );
+    assert!(!g.passed);
+    assert_eq!(g.budgets[0].reason, "2 > 0 (baseline 0 +10 %)");
+    // `rate` measured now but not in the baseline: skipped, not failed.
+    let rate = with(sample(), |v| {
+        v["metrics"].as_array_mut().unwrap().push(
+            json!({ "key": "rate", "label": "Requests per second", "value": 3.5, "unit": "rate" }),
+        )
+    });
+    let g = evaluate(
+        &rate,
+        Some((&r, &compare(&r, &rate))),
+        &budget_cfg(&["rate=+10%"]),
+        Lang::De,
+    );
+    assert!(g.passed && g.budgets[0].skipped);
+    assert_eq!(
+        g.budgets[0].reason,
+        "übersprungen: Kennzahl nicht in der Baseline"
+    );
 }

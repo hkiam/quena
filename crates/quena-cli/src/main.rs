@@ -8,13 +8,13 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use quena_app_core::diagnostics::DiagFilter;
-use quena_app_core::{AppCore, Paths};
+use quena_app_core::{AppCore, Paths, WaitError};
 use quena_report::gate::{self, GateConfig, GateResult};
 use quena_report::{Comparison, Lang, MdOptions, Report, Severity};
 use serde_json::{Map, Value};
@@ -25,6 +25,11 @@ const ANALYZER: &str = "io.github.hkiam.webdiag";
 const EXIT_GATE: u8 = 1;
 const EXIT_USAGE: u8 = 2;
 const EXIT_ANALYSIS: u8 = 3;
+/// Interrupted (Ctrl-C, SIGTERM), as shells report SIGINT.
+const EXIT_INTERRUPTED: i32 = 130;
+
+/// The engine's temporary data directory, removed when the run is interrupted.
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Parser)]
 #[command(
@@ -67,7 +72,8 @@ struct Diagnose {
     /// Language of the report texts (en, de).
     #[arg(long)]
     lang: Option<String>,
-    /// Analyzer option, e.g. `--set slowMs=1500` (repeatable; values are JSON or text).
+    /// Analyzer option, e.g. `--set slowMs=1500` (repeatable; values are JSON or text;
+    /// language and profile are set with --lang and --profile).
     #[arg(long = "set", value_name = "KEY=VALUE")]
     set: Vec<String>,
     /// Only sessions to these hosts (`api.example.com`, `*.example.com`; repeatable).
@@ -82,8 +88,9 @@ struct Diagnose {
     out: OutArgs,
     #[command(flatten)]
     plugins: PluginArgs,
-    /// Give up after this many seconds.
-    #[arg(long, default_value_t = 600)]
+    /// Give up when the whole run (loading the plugins, all imports and the analysis) takes
+    /// longer than this many seconds; exit code 3.
+    #[arg(long, value_name = "SECONDS", default_value_t = 600)]
     timeout: u64,
 }
 
@@ -93,7 +100,8 @@ struct CompareArgs {
     before: PathBuf,
     /// The new report (JSON).
     after: PathBuf,
-    /// Language of the frame texts (en, de); defaults to the report's language.
+    /// Language of the frame texts (en, de); defaults to the language of the new report
+    /// (en when it is neither).
     #[arg(long)]
     lang: Option<String>,
     #[command(flatten)]
@@ -111,8 +119,12 @@ struct GateArgs {
     #[arg(long, value_enum)]
     fail_on: Option<FailOn>,
     /// With a baseline, findings already in it break the gate too.
-    #[arg(long)]
+    #[arg(long, overrides_with = "no_fail_on_existing")]
     fail_on_existing: bool,
+    /// Only new or worsened findings break the gate, even when the settings file says
+    /// `failOnExisting: true`.
+    #[arg(long, overrides_with = "fail_on_existing")]
+    no_fail_on_existing: bool,
     /// Metric budget, e.g. `requests=+10%` (against the baseline) or `errors=0` (repeatable).
     #[arg(long = "budget", value_name = "METRIC=LIMIT")]
     budgets: Vec<String>,
@@ -120,7 +132,8 @@ struct GateArgs {
     #[arg(long = "ignore", value_name = "RULE|KEY")]
     ignore: Vec<String>,
     /// Settings file (JSON): failOn, failOnExisting, budgets, ignore, and for `diagnose`
-    /// profile, lang, options, hosts, processes. Command line arguments win.
+    /// profile, lang, options, hosts, processes (`compare` ignores those, so one file serves
+    /// both). Command line arguments win.
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
 }
@@ -140,7 +153,8 @@ struct OutArgs {
 
 #[derive(Args)]
 struct PluginArgs {
-    /// Folder with the plugins (default: next to the program).
+    /// Folder with the plugins; only this folder is searched (default: QUENA_PLUGIN_DIR, then
+    /// next to the program).
     #[arg(long, value_name = "DIR")]
     plugins: Option<PathBuf>,
 }
@@ -191,6 +205,14 @@ fn usage(msg: impl Into<String>) -> anyhow::Error {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // Interrupted (a cancelled CI job): remove the temporary store, which can hold a copy of
+    // the captured traffic. Best effort; without a handler the OS would just kill us.
+    let _ = ctrlc::set_handler(|| {
+        if let Some(d) = DATA_DIR.get() {
+            let _ = std::fs::remove_dir_all(d);
+        }
+        std::process::exit(EXIT_INTERRUPTED);
+    });
     let r = match cli.command {
         Command::Diagnose(a) => diagnose(a),
         Command::Compare(a) => compare(a),
@@ -235,7 +257,12 @@ fn read_settings(path: Option<&Path>, analysis: bool) -> Result<Settings> {
     let mut v: Map<String, Value> =
         serde_json::from_str(&text).map_err(|e| usage(format!("{}: {e}", path.display())))?;
     let mut s = Settings::default();
-    if analysis {
+    if !analysis {
+        // `compare` runs no analysis: the same settings file as for `diagnose` works.
+        for k in ["profile", "lang", "options", "hosts", "processes"] {
+            v.remove(k);
+        }
+    } else {
         let text_of = |v: Option<Value>, k: &str| -> Result<Option<String>> {
             match v {
                 None => Ok(None),
@@ -294,7 +321,11 @@ fn gate_config(args: &GateArgs, mut cfg: GateConfig) -> Result<GateConfig> {
         Some(FailOn::Info) => cfg.fail_on = Some(Severity::Info),
         None => {}
     }
-    cfg.fail_on_existing |= args.fail_on_existing;
+    if args.fail_on_existing {
+        cfg.fail_on_existing = true;
+    } else if args.no_fail_on_existing {
+        cfg.fail_on_existing = false;
+    }
     for b in &args.budgets {
         cfg.budgets
             .push(gate::parse_budget(b).map_err(|e| usage(format!("--budget {b}: {e}")))?);
@@ -325,16 +356,35 @@ fn lang_of(s: Option<&str>) -> Result<Lang> {
     }
 }
 
+/// The frame language for a report's own `lang` (`de`, `de-DE`, …): never an error.
+fn lang_of_report(s: &str) -> Lang {
+    let primary = s.split(['-', '_']).next().unwrap_or("");
+    if primary.eq_ignore_ascii_case("de") {
+        Lang::De
+    } else {
+        Lang::En
+    }
+}
+
 // ------------------------------------------------------------------ commands
 
 fn diagnose(a: Diagnose) -> Result<bool> {
+    // One deadline for the whole run.
+    let deadline = Deadline::after(a.timeout);
     let settings = read_settings(a.gate.config.as_deref(), true)?;
     let gate_cfg = gate_config(&a.gate, settings.gate)?;
     let baseline = a.gate.baseline.as_deref().map(read_report).transpose()?;
     let outputs = outputs(&a.out)?;
+    let mut seen = std::collections::HashSet::new();
     for f in &a.files {
         if !f.is_file() {
             return Err(usage(format!("{}: no such file", f.display())));
+        }
+        let canonical = f
+            .canonicalize()
+            .map_err(|e| usage(format!("{}: {e}", f.display())))?;
+        if !seen.insert(canonical) {
+            return Err(usage(format!("capture given twice: {}", f.display())));
         }
     }
     let lang = a
@@ -352,8 +402,12 @@ fn diagnose(a: Diagnose) -> Result<bool> {
         let (k, v) = kv
             .split_once('=')
             .ok_or_else(|| usage(format!("--set {kv}: expected KEY=VALUE")))?;
+        let k = k.trim();
+        if k == "lang" || k == "profile" {
+            return Err(usage(format!("--set {kv}: use --{k}")));
+        }
         options.insert(
-            k.trim().into(),
+            k.into(),
             serde_json::from_str(v).unwrap_or_else(|_| Value::String(v.into())),
         );
     }
@@ -371,15 +425,15 @@ fn diagnose(a: Diagnose) -> Result<bool> {
     };
 
     let engine = Engine::start(a.plugins.plugins.as_deref())?;
-    let timeout = Duration::from_secs(a.timeout);
     for f in &a.files {
         progress(a.out.quiet, &format!("importing {}", f.display()));
-        engine.import(f, timeout)?;
+        engine.import(f, &deadline)?;
     }
     progress(a.out.quiet, "analysing");
-    let text = engine.analyse(&Value::Object(options).to_string(), filter, timeout)?;
+    let text = engine.analyse(&Value::Object(options).to_string(), filter, &deadline)?;
     drop(engine);
     let (raw, report) = quena_report::parse(&text).map_err(|e| anyhow!("analyzer report: {e}"))?;
+    gate::check_budgets(&report, &gate_cfg).map_err(usage)?;
     finish(
         &raw,
         &report,
@@ -399,14 +453,14 @@ fn compare(a: CompareArgs) -> Result<bool> {
             "compare takes the baseline as its first argument, not --baseline",
         ));
     }
+    let outputs = outputs(&a.out)?;
     let before = read_report(&a.before)?;
     let (raw, after) = read_report(&a.after)?;
-    let lang = lang_of(
-        a.lang
-            .as_deref()
-            .or(Some(after.lang.as_str()).filter(|l| !l.is_empty())),
-    )?;
-    let outputs = outputs(&a.out)?;
+    let lang = match a.lang.as_deref() {
+        Some(l) => lang_of(Some(l))?,
+        None => lang_of_report(&after.lang),
+    };
+    gate::check_budgets(&after, &gate_cfg).map_err(usage)?;
     finish(
         &raw,
         &after,
@@ -452,11 +506,20 @@ fn finish(
         cfg,
         lang,
     );
+    // Files first: a failing write must not leave a verdict half on stdout.
     for (format, path) in outputs {
-        let text = render(*format, raw, report, cmp.as_ref(), &result, lang);
-        match path {
-            Some(p) => std::fs::write(p, text).with_context(|| format!("{}", p.display()))?,
-            None => std::io::stdout().lock().write_all(text.as_bytes())?,
+        if let Some(p) = path {
+            let text = render(*format, raw, report, cmp.as_ref(), &result, lang);
+            std::fs::write(p, text).map_err(|e| usage(format!("{}: {e}", p.display())))?;
+        }
+    }
+    for (format, path) in outputs {
+        if path.is_none() {
+            let text = render(*format, raw, report, cmp.as_ref(), &result, lang);
+            let mut out = std::io::stdout().lock();
+            out.write_all(text.as_bytes())
+                .and_then(|_| out.flush())
+                .context("stdout")?;
         }
     }
     if !quiet {
@@ -509,8 +572,13 @@ fn summary(r: &Report, cmp: Option<&Comparison>, g: &GateResult) -> String {
     }
     // The findings that break the gate, most severe first (the report's order).
     const SHOWN: usize = 10;
-    let failing: Vec<&quena_report::Finding> =
-        r.findings.iter().filter(|f| g.is_failing(f)).collect();
+    let failing: Vec<&quena_report::Finding> = r
+        .findings
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| g.is_failing_at(*i))
+        .map(|(_, f)| f)
+        .collect();
     for f in failing.iter().take(SHOWN) {
         s.push_str(&format!(
             "\n  ✖ [{}] {} ({})",
@@ -532,16 +600,44 @@ fn outputs(o: &OutArgs) -> Result<Vec<(Format, Option<PathBuf>)>> {
         let (f, p) = spec
             .split_once('=')
             .ok_or_else(|| usage(format!("-o {spec}: expected FORMAT=PATH")))?;
-        v.push((
-            Format::parse(f).map_err(|e| usage(e.to_string()))?,
-            Some(PathBuf::from(p)),
-        ));
+        let format = Format::parse(f).map_err(|e| usage(e.to_string()))?;
+        let path = PathBuf::from(p);
+        check_writable(&path).map_err(|e| usage(format!("-o {spec}: {e}")))?;
+        v.push((format, Some(path)));
     }
     match o.format.unwrap_or(Format::Md) {
         Format::None => {}
         f => v.insert(0, (f, None)),
     }
     Ok(v)
+}
+
+/// Fail before the (long) analysis rather than after it: the folder must exist and take a
+/// new file, an existing file must be writable.
+fn check_writable(path: &Path) -> std::result::Result<(), String> {
+    if path.as_os_str().is_empty() {
+        return Err("the path is empty".into());
+    }
+    if path.is_dir() {
+        return Err("is a folder".into());
+    }
+    let dir = match path.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    if !dir.is_dir() {
+        return Err(format!("no such folder: {}", dir.display()));
+    }
+    if path.exists() {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(path)
+            .map_err(|e| e.to_string())?;
+    } else {
+        tempfile::NamedTempFile::new_in(dir)
+            .map_err(|e| format!("cannot write to {}: {e}", dir.display()))?;
+    }
+    Ok(())
 }
 
 fn progress(quiet: bool, msg: &str) {
@@ -551,6 +647,36 @@ fn progress(quiet: bool, msg: &str) {
 }
 
 // ------------------------------------------------------------------ the engine
+
+/// The end of the run (`--timeout`); `None` when too far in the future to represent.
+struct Deadline {
+    at: Option<Instant>,
+    secs: u64,
+}
+
+impl Deadline {
+    fn after(secs: u64) -> Deadline {
+        Deadline {
+            at: Instant::now().checked_add(Duration::from_secs(secs)),
+            secs,
+        }
+    }
+
+    /// Time left (`Duration::MAX`: no deadline).
+    fn remaining(&self) -> Duration {
+        self.at.map_or(Duration::MAX, |at| {
+            at.saturating_duration_since(Instant::now())
+        })
+    }
+}
+
+/// Why a job did not finish as wanted.
+enum JobError {
+    /// The job ended with an error (its text).
+    Failed(String),
+    /// No result in time, or the job vanished.
+    Wait(anyhow::Error),
+}
 
 /// Quena's core on a throw-away data directory: no proxy, no ticker, no instance lock.
 struct Engine {
@@ -565,6 +691,7 @@ impl Engine {
             .prefix("quena-cli-")
             .tempdir()
             .context("temporary directory")?;
+        let _ = DATA_DIR.set(data.path().to_path_buf());
         std::fs::write(
             data.path().join("settings.json"),
             r#"{"proxy":{"actAsSystemProxy":false,"captureOnStartup":false}}"#,
@@ -574,22 +701,48 @@ impl Engine {
             paths.plugin_cache = cache;
         }
         let core = AppCore::new(paths, quena_app_core::logbuf::LogBuffer::new(100))?;
-        let dir = match plugins {
-            Some(d) if d.is_dir() => d.to_path_buf(),
+        match plugins {
+            // An explicit folder is the only one searched (not even QUENA_PLUGIN_DIR).
+            Some(d) if d.is_dir() => core.init_plugins_from(vec![d.to_path_buf()])?,
             Some(d) => return Err(usage(format!("--plugins {}: no such folder", d.display()))),
-            None => plugin_dir().ok_or_else(|| usage("no plugins folder found next to the program (use --plugins or QUENA_PLUGIN_DIR)"))?,
-        };
-        core.init_plugins(Some(dir.clone()))?;
+            None => {
+                let found = plugin_dir();
+                if found.is_none() && std::env::var_os("QUENA_PLUGIN_DIR").is_none() {
+                    return Err(usage(format!(
+                        "no plugins folder found (looked in {}); use --plugins or QUENA_PLUGIN_DIR",
+                        join_paths(&plugin_candidates())
+                    )));
+                }
+                core.init_plugins(found)?;
+            }
+        }
+        // The searched folders, without the throw-away user plugin folder.
+        let searched: Vec<PathBuf> = core
+            .plugin_search_dirs()
+            .into_iter()
+            .filter(|d| !d.starts_with(data.path()))
+            .collect();
+        let info = core
+            .plugins()
+            .into_iter()
+            .find(|p| p.id == ANALYZER)
+            .ok_or_else(|| {
+                usage(format!(
+                    "the diagnostics plugin ({ANALYZER}) is missing in {}",
+                    join_paths(&searched)
+                ))
+            })?;
+        if let Some(e) = &info.error {
+            bail!(
+                "the diagnostics plugin ({ANALYZER}) in {} failed to load: {e}",
+                info.path
+            );
+        }
         let analyzer = core
             .diag_analyzers()
             .into_iter()
             .find(|a| a.id == ANALYZER)
-            .ok_or_else(|| {
-                usage(format!(
-                    "the diagnostics plugin ({ANALYZER}) is missing in {}",
-                    dir.display()
-                ))
-            })?
+            .ok_or_else(|| anyhow!("the diagnostics plugin ({ANALYZER}) is not available"))?
             .index;
         Ok(Engine {
             core,
@@ -598,38 +751,63 @@ impl Engine {
         })
     }
 
-    fn wait(&self, job: u64, timeout: Duration, what: &str) -> Result<()> {
+    fn wait(&self, job: u64, deadline: &Deadline, what: &str) -> Result<(), JobError> {
         let info = self
             .core
             .jobs
-            .wait(job, timeout)
-            .ok_or_else(|| anyhow!("{what}: no result within {} s", timeout.as_secs()))?;
+            .wait(job, deadline.remaining())
+            .map_err(|e| {
+                JobError::Wait(match e {
+                    WaitError::Timeout => {
+                        anyhow!("{what}: no result within --timeout {} s", deadline.secs)
+                    }
+                    WaitError::UnknownJob => anyhow!("{what}: the job disappeared"),
+                })
+            })?;
         match info.status {
             quena_app_core::JobStatus::Done => Ok(()),
-            _ => bail!(
+            status => Err(JobError::Failed(format!(
                 "{what}: {}",
-                info.error.unwrap_or_else(|| format!("{:?}", info.status))
-            ),
+                info.error.unwrap_or_else(|| format!("{status:?}"))
+            ))),
         }
     }
 
-    fn import(&self, file: &Path, timeout: Duration) -> Result<()> {
+    /// Unknown, unreadable or broken captures are input errors (2), a timeout is not (3).
+    fn import(&self, file: &Path, deadline: &Deadline) -> Result<()> {
         let job = self
             .core
             .import_archive(file.to_path_buf())
             .map_err(|e| usage(format!("{}: {e}", file.display())))?;
-        self.wait(job, timeout, &file.display().to_string())
-            .map_err(|e| usage(e.to_string()))?;
+        match self.wait(job, deadline, &file.display().to_string()) {
+            Ok(()) => {}
+            Err(JobError::Failed(e)) => return Err(usage(e)),
+            Err(JobError::Wait(e)) => return Err(e),
+        }
         self.core.capture().index.tick();
         Ok(())
     }
 
-    fn analyse(&self, options: &str, filter: DiagFilter, timeout: Duration) -> Result<String> {
+    /// An empty scope is an input error (2); anything else going wrong is an analysis error (3).
+    fn analyse(&self, options: &str, filter: DiagFilter, deadline: &Deadline) -> Result<String> {
         let job = self
             .core
             .diag_run(self.analyzer, options.to_string(), None, filter)
-            .map_err(|e| usage(e.to_string()))?;
-        self.wait(job, timeout, "analysis")?;
+            .map_err(|e| {
+                let text = format!("{e:#}");
+                if text.contains("no sessions in the chosen scope") {
+                    usage(format!(
+                        "{text} (check the captures and --host / --process)"
+                    ))
+                } else {
+                    anyhow!("analysis: {text}")
+                }
+            })?;
+        match self.wait(job, deadline, "analysis") {
+            Ok(()) => {}
+            Err(JobError::Failed(e)) => bail!(e),
+            Err(JobError::Wait(e)) => return Err(e),
+        }
         Ok(self
             .core
             .diag_report()
@@ -644,34 +822,53 @@ impl Drop for Engine {
     }
 }
 
-/// Compiled plugins survive between runs (compiling the analyzer takes seconds).
-fn cache_dir() -> Option<PathBuf> {
-    std::env::var_os("QUENA_CACHE_DIR")
-        .map(PathBuf::from)
-        .or_else(|| dirs::cache_dir().map(|d| d.join("quena")))
-        .map(|d| d.join("plugin-cache"))
+fn join_paths(dirs: &[PathBuf]) -> String {
+    if dirs.is_empty() {
+        return "(no folder)".into();
+    }
+    dirs.iter()
+        .map(|d| d.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-/// `plugins/` next to the program, in a macOS bundle's resources, or the build output of a
-/// checkout (`QUENA_PLUGIN_DIR` is added by the core in any case).
-fn plugin_dir() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
-    let dir = exe.parent()?;
-    let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist");
-    let mut candidates = vec![
-        dir.join("plugins"),
-        dir.join("../Resources/plugins"),
-        dir.join("../lib/quena/plugins"),
-    ];
-    // Development builds: the freshly built plugins, not a copy the app's dev build left in
-    // target/debug/plugins.
+/// Compiled plugins survive between runs (compiling the analyzer takes seconds). The cache
+/// holds machine code that is loaded as is: it must only be writable by trusted users, so
+/// its folders get the usual permissions (no world-writable shared cache).
+fn cache_dir() -> Option<PathBuf> {
+    std::env::var_os("QUENA_CACHE_DIR")
+        .map(|d| PathBuf::from(d).join("plugin-cache"))
+        .or_else(|| dirs::cache_dir().map(|d| d.join("quena").join("plugin-cache")))
+}
+
+/// Where the plugins may be: `plugins/` next to the program, in a macOS bundle's resources,
+/// in an FHS layout; debug builds first try the build output of the checkout (release builds
+/// never do, so a packaged archive must be self-contained).
+fn plugin_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![];
     if cfg!(debug_assertions) {
-        candidates.insert(0, checkout);
-    } else {
-        candidates.push(checkout);
+        // Development builds: the freshly built plugins, not a copy the app's dev build left
+        // in target/debug/plugins.
+        candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist"));
+    }
+    if let Some(exe) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.canonicalize().ok())
+        && let Some(dir) = exe.parent()
+    {
+        candidates.extend([
+            dir.join("plugins"),
+            dir.join("../Resources/plugins"),
+            dir.join("../lib/quena/plugins"),
+        ]);
     }
     candidates
+}
+
+/// The first candidate with the diagnostics plugin (`QUENA_PLUGIN_DIR` is searched before it
+/// by the core in any case).
+fn plugin_dir() -> Option<PathBuf> {
+    plugin_candidates()
         .into_iter()
         .find(|d| d.join("webdiag").is_dir())
-        .or_else(|| std::env::var_os("QUENA_PLUGIN_DIR").map(PathBuf::from))
 }

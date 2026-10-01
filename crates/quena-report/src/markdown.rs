@@ -264,12 +264,17 @@ pub fn to_markdown(
     if !r.findings.is_empty() {
         out.push(format!("## {}", t(lang, "Findings")));
         for s in Severity::ALL {
-            let all: Vec<&Finding> = r.findings.iter().filter(|f| f.severity == s).collect();
-            for f in all.iter().take(limit) {
+            let all: Vec<(usize, &Finding)> = r
+                .findings
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.severity == s)
+                .collect();
+            for &(i, f) in all.iter().take(limit) {
                 out.push(finding_markdown(
                     f,
                     r,
-                    gate.is_some_and(|g| g.is_failing(f)),
+                    gate.is_some_and(|g| g.is_failing_at(i)),
                     lang,
                     opts.session_ids,
                 ));

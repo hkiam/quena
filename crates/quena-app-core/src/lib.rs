@@ -39,7 +39,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-pub use quena_jobs::{JobInfo, JobStatus};
+pub use quena_jobs::{JobInfo, JobStatus, WaitError};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionTimers {

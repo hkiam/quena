@@ -30,19 +30,30 @@ impl AppCore {
     /// plugins takes a while on a cold cache, so this runs in the background; the `plugins`
     /// event tells the UI when it is done (views that asked early reload their plugin lists).
     pub fn init_plugins(self: &Arc<Self>, bundled: Option<PathBuf>) -> Result<()> {
-        let r = self.start_plugin_host(bundled);
+        let r = self.start_plugin_host(Self::plugin_search_path(&self.paths.data, bundled));
         self.plugins_done.store(true, std::sync::atomic::Ordering::Release);
         self.emit("plugins", serde_json::Value::Null);
         r
     }
 
-    /// Plugin loading has finished (the list of plugins is final until a rescan).
-    pub fn plugins_ready(&self) -> bool {
-        self.plugins_done.load(std::sync::atomic::Ordering::Acquire)
+    /// Start the plugin host on exactly these directories: no user plugin dir and no
+    /// `QUENA_PLUGIN_DIR` (an explicit choice, e.g. the CLI's `--plugins`).
+    pub fn init_plugins_from(self: &Arc<Self>, dirs: Vec<PathBuf>) -> Result<()> {
+        let r = self.start_plugin_host(dirs);
+        self.plugins_done.store(true, std::sync::atomic::Ordering::Release);
+        self.emit("plugins", serde_json::Value::Null);
+        r
     }
 
-    fn start_plugin_host(self: &Arc<Self>, bundled: Option<PathBuf>) -> Result<()> {
-        let user = self.paths.data.join("plugins");
+    /// The directories the plugin host searches, in order (empty before `init_plugins`).
+    pub fn plugin_search_dirs(&self) -> Vec<PathBuf> {
+        self.plugin_host.read().as_ref().map(|h| h.dirs().to_vec()).unwrap_or_default()
+    }
+
+    /// `QUENA_PLUGIN_DIR` (development: freshly built plugins win), the user's plugin dir, then
+    /// the bundled one.
+    fn plugin_search_path(data: &std::path::Path, bundled: Option<PathBuf>) -> Vec<PathBuf> {
+        let user = data.join("plugins");
         let _ = std::fs::create_dir_all(&user);
         let mut dirs = vec![user];
         if let Some(b) = bundled {
@@ -51,6 +62,15 @@ impl AppCore {
         if let Ok(extra) = std::env::var("QUENA_PLUGIN_DIR") {
             dirs.insert(0, PathBuf::from(extra));
         }
+        dirs
+    }
+
+    /// Plugin loading has finished (the list of plugins is final until a rescan).
+    pub fn plugins_ready(&self) -> bool {
+        self.plugins_done.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn start_plugin_host(self: &Arc<Self>, dirs: Vec<PathBuf>) -> Result<()> {
         let host = PluginHost::with_cache(dirs, &self.paths.data, self.paths.plugin_cache.clone())?;
         *self.plugin_host.write() = Some(host);
         self.install_plugin_decoders(&self.capture());

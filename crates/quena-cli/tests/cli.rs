@@ -19,10 +19,15 @@ fn plugins() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist")
 }
 
-/// Skip (with a note) when the plugins were not built (`plugins/build.sh`).
+/// Skip (with a note) when the plugins were not built (`plugins/build.sh`); on CI (`CI` set)
+/// fail instead, so that a pipeline cannot go green without running these tests.
 fn have_plugins() -> bool {
     let ok = plugins().join("webdiag/webdiag.wasm").is_file();
     if !ok {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "plugins/dist/webdiag missing on CI: run plugins/build.sh before the tests"
+        );
         eprintln!("plugins/dist/webdiag missing: run plugins/build.sh");
     }
     ok
@@ -173,6 +178,29 @@ fn a_baseline_fails_only_on_what_is_new_and_on_budgets() {
         "--fail-on-existing",
     ]);
     assert_eq!(code(&o), 1, "{}", text(&o));
+    // The command line wins over the settings file, in both directions.
+    let strict = d.path().join("strict.json");
+    std::fs::write(&strict, r#"{"failOn":"warning","failOnExisting":true}"#).unwrap();
+    let strict = strict.to_str().unwrap();
+    let o = run(&[
+        "diagnose",
+        base.to_str().unwrap(),
+        "--baseline",
+        b,
+        "--config",
+        strict,
+    ]);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    let o = run(&[
+        "diagnose",
+        base.to_str().unwrap(),
+        "--baseline",
+        b,
+        "--config",
+        strict,
+        "--no-fail-on-existing",
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
     // Many more requests than the baseline: the budget breaks it.
     let more = har(d.path(), "more.har", 60, 25);
     let o = run(&[
@@ -237,4 +265,293 @@ fn input_errors_exit_with_2() {
         let o = run(&args);
         assert_eq!(code(&o), 2, "{args:?}: {}", text(&o));
     }
+}
+
+/// A saved report as `diagnose -o json=…` writes it (only what the tests need).
+fn saved(dir: &Path, name: &str, lang: &str, requests: f64) -> String {
+    let p = dir.join(name);
+    std::fs::write(
+        &p,
+        json!({
+            "schema": 1, "lang": lang,
+            "summary": { "critical": 0, "warning": 0, "info": 0 },
+            "metrics": [
+                { "key": "requests", "label": "HTTP requests", "value": requests, "unit": "count" },
+                { "key": "errors", "label": "Errors", "value": 0, "unit": "count" }
+            ],
+            "findings": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    p.to_str().unwrap().to_string()
+}
+
+#[test]
+fn help_and_version() {
+    for arg in ["--help", "--version"] {
+        let o = bin().arg(arg).output().unwrap();
+        assert_eq!(code(&o), 0, "{arg}: {}", text(&o));
+        assert!(!o.stdout.is_empty());
+    }
+    let help = bin().args(["diagnose", "--help"]).output().unwrap();
+    let help = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        help.contains("--no-fail-on-existing") && help.contains("whole run"),
+        "{help}"
+    );
+}
+
+#[test]
+fn compare_budgets_boundary_and_typos() {
+    let d = tempfile::tempdir().unwrap();
+    let (a, b) = (
+        saved(d.path(), "a.json", "en", 100.0),
+        saved(d.path(), "b.json", "en", 115.0),
+    );
+    let o = run(&[
+        "compare",
+        &a,
+        &b,
+        "--budget",
+        "requests=+15%",
+        "--format",
+        "none",
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let o = run(&[
+        "compare",
+        &a,
+        &b,
+        "--budget",
+        "requests=+14.9%",
+        "--format",
+        "none",
+    ]);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    // A budget on a metric the report does not have: a configuration error.
+    let o = run(&["compare", &a, &b, "--budget", "reqests=+10%"]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("\"reqests\"") && err.contains("requests, errors"),
+        "{err}"
+    );
+    assert!(o.stdout.is_empty(), "{}", text(&o));
+    // Metrics reported only when they apply are no typo.
+    let o = run(&[
+        "compare",
+        &a,
+        &b,
+        "--budget",
+        "open=0",
+        "--budget",
+        "rate=+10%",
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+}
+
+/// One settings file for `diagnose` and `compare`: compare ignores the analysis keys.
+#[test]
+fn compare_takes_the_diagnose_settings_file() {
+    let d = tempfile::tempdir().unwrap();
+    let (a, b) = (
+        saved(d.path(), "a.json", "en", 100.0),
+        saved(d.path(), "b.json", "en", 200.0),
+    );
+    let cfg = d.path().join("quena.json");
+    std::fs::write(&cfg, r#"{"profile":"performance","lang":"de","options":{"slowMs":1500},"hosts":["*.example.com"],"processes":["x"],"failOn":"warning","budgets":["requests=+10%"]}"#).unwrap();
+    let o = run(&[
+        "compare",
+        &a,
+        &b,
+        "--config",
+        cfg.to_str().unwrap(),
+        "--format",
+        "md",
+    ]);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    // The frame language comes from the report, not from the settings file.
+    assert!(
+        String::from_utf8_lossy(&o.stdout).contains("Quality gate: FAILED"),
+        "{}",
+        text(&o)
+    );
+}
+
+/// `compare` takes the language of the new report, also as a locale, and never fails on it.
+#[test]
+fn compare_language_from_the_report() {
+    let d = tempfile::tempdir().unwrap();
+    for (lang, expect) in [
+        ("de-DE", "Quality Gate: bestanden"),
+        ("fr", "Quality gate: passed"),
+        ("", "Quality gate: passed"),
+    ] {
+        let a = saved(d.path(), "a.json", lang, 1.0);
+        let o = run(&["compare", &a, &a]);
+        assert_eq!(code(&o), 0, "{lang}: {}", text(&o));
+        assert!(
+            String::from_utf8_lossy(&o.stdout).contains(expect),
+            "{lang}: {}",
+            text(&o)
+        );
+    }
+    let a = saved(d.path(), "a.json", "de", 1.0);
+    let o = run(&["compare", &a, &a, "--lang", "en"]);
+    assert!(String::from_utf8_lossy(&o.stdout).contains("Quality gate: passed"));
+}
+
+/// Mistakes found before the analysis: exit 2, nothing on stdout.
+#[test]
+fn usage_errors_before_the_analysis() {
+    let d = tempfile::tempdir().unwrap();
+    let h = har(d.path(), "a.har", 3, 0);
+    let h = h.to_str().unwrap();
+    let report = saved(d.path(), "r.json", "en", 1.0);
+    let missing = d.path().join("no/such/dir/out.json");
+    let bad_o = format!("json={}", missing.display());
+    let into_dir = format!("md={}", d.path().display());
+    let twice = d.path().join(".").join("a.har");
+    for args in [
+        vec!["diagnose", h, twice.to_str().unwrap()],
+        vec!["diagnose", h, h],
+        vec!["diagnose", h, "--set", "lang=de"],
+        vec!["diagnose", h, "--set", "profile=auth"],
+        vec!["diagnose", h, "-o", &bad_o],
+        vec!["diagnose", h, "-o", &into_dir],
+        vec!["compare", &report, &report, "-o", &bad_o],
+    ] {
+        let o = run(&args);
+        assert_eq!(code(&o), 2, "{args:?}: {}", text(&o));
+        assert!(o.stdout.is_empty(), "{args:?}: {}", text(&o));
+    }
+    assert!(!missing.exists());
+    let o = run(&["diagnose", h, h]);
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("given twice"),
+        "{}",
+        text(&o)
+    );
+    let o = run(&["diagnose", h, "--set", "lang=de"]);
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("--lang"),
+        "{}",
+        text(&o)
+    );
+}
+
+/// A relative budget without a baseline (the run that makes the first one) is skipped; a
+/// typo in a budget is a configuration error naming the metrics; a huge --timeout is fine.
+#[test]
+fn diagnose_budgets_without_baseline() {
+    if !have_plugins() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let h = har(d.path(), "a.har", 30, 2);
+    let h = h.to_str().unwrap();
+    let o = run(&[
+        "diagnose",
+        h,
+        "--fail-on",
+        "none",
+        "--budget",
+        "requests=+10%",
+        "--timeout",
+        "18446744073709551615",
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("skipped: no baseline"),
+        "{}",
+        text(&o)
+    );
+    let o = run(&["diagnose", h, "--fail-on", "none", "--budget", "reqests=0"]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("\"reqests\"") && err.contains("requests"),
+        "{err}"
+    );
+    assert!(o.stdout.is_empty(), "{}", text(&o));
+}
+
+/// `--plugins` is the only folder searched, also when QUENA_PLUGIN_DIR is set.
+#[test]
+fn plugins_option_beats_the_environment() {
+    if !have_plugins() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let empty = tempfile::tempdir().unwrap();
+    let h = har(d.path(), "a.har", 3, 0);
+    let o = bin()
+        .env("QUENA_PLUGIN_DIR", empty.path())
+        .args([
+            "diagnose",
+            h.to_str().unwrap(),
+            "--fail-on",
+            "none",
+            "--format",
+            "none",
+        ])
+        .args(["--plugins", plugins().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    // Only the empty folder: missing, named in the message.
+    let o = bin()
+        .args([
+            "diagnose",
+            h.to_str().unwrap(),
+            "--plugins",
+            empty.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("missing in") && err.contains(&*empty.path().to_string_lossy()),
+        "{err}"
+    );
+}
+
+/// A diagnostics plugin that is there but does not load: an analysis error (3) with the
+/// reason; an empty scope is an input error (2).
+#[test]
+fn broken_plugin_and_empty_scope() {
+    if !have_plugins() {
+        return;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let h = har(d.path(), "a.har", 3, 0);
+    let broken = d.path().join("plugins/webdiag");
+    std::fs::create_dir_all(&broken).unwrap();
+    std::fs::copy(
+        plugins().join("webdiag/plugin.toml"),
+        broken.join("plugin.toml"),
+    )
+    .unwrap();
+    std::fs::write(broken.join("webdiag.wasm"), b"not wasm").unwrap();
+    let o = bin()
+        .args(["diagnose", h.to_str().unwrap(), "--plugins"])
+        .arg(d.path().join("plugins"))
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 3, "{}", text(&o));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("failed to load"),
+        "{}",
+        text(&o)
+    );
+
+    let o = run(&["diagnose", h.to_str().unwrap(), "--host", "nowhere.invalid"]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("no sessions"),
+        "{}",
+        text(&o)
+    );
 }
