@@ -105,6 +105,37 @@ jobs:
           for p in auth-tokens jwt graphql webdiag; do cargo test --manifest-path plugins/$p/Cargo.toml; done
       - name: Rust tests
         run: cargo test --workspace --exclude quena-app --no-fail-fast
+      - name: Command line (quena-cli archive)
+        shell: bash
+        run: |
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            macOS-*) platform=macos-universal ;;
+            Windows-*) platform=windows-x64 ;;
+            Linux-X64) platform=linux-x64 ;;
+            Linux-ARM64) platform=linux-arm64 ;;
+          esac
+          if [ "${{ runner.os }}" = macOS ]; then
+            for t in aarch64-apple-darwin x86_64-apple-darwin; do cargo build -p quena-cli --profile "$BUILD_PROFILE" --target $t; done
+            mkdir -p target/cli
+            lipo -create -output target/cli/quena-cli target/aarch64-apple-darwin/$BUILD_PROFILE/quena-cli target/x86_64-apple-darwin/$BUILD_PROFILE/quena-cli
+            bin=target/cli/quena-cli
+          else
+            cargo build -p quena-cli --profile "$BUILD_PROFILE"
+            bin=target/$BUILD_PROFILE/quena-cli; [ "${{ runner.os }}" = Windows ] && bin=$bin.exe
+          fi
+          dir=$(tools/cli/stage.sh "$bin" "$platform")
+          # Smoke test of the packaged program: its own plugins folder, exit codes of the gate.
+          exe="$dir/$(basename "$bin")"
+          env -u QUENA_PLUGIN_DIR "$exe" diagnose app/e2e/fixtures/two-sessions.har --fail-on none -o "json=$RUNNER_TEMP/r.json" --format md
+          env -u QUENA_PLUGIN_DIR "$exe" compare "$RUNNER_TEMP/r.json" "$RUNNER_TEMP/r.json" --fail-on warning --quiet
+          set +e; env -u QUENA_PLUGIN_DIR "$exe" diagnose no-such-file.har --quiet; rc=$?; set -e
+          [ "$rc" = 2 ] || { echo "expected exit code 2, got $rc"; exit 1; }
+          cd "$(dirname "$dir")"
+          if [ "${{ runner.os }}" = Windows ]; then
+            pwsh -NoProfile -Command "Compress-Archive -Path '$(basename "$dir")' -DestinationPath '$(basename "$dir").zip' -Force"
+          else
+            tar -czf "$(basename "$dir").tar.gz" "$(basename "$dir")"
+          fi
       - name: Linux desktop integration (GNOME proxy settings, NSS trust)
         if: runner.os == 'Linux'
         run: dbus-run-session -- cargo test -p quena-platform -- --ignored
@@ -192,6 +223,8 @@ jobs:
             ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/deb/*.deb
             ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/rpm/*.rpm
             ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/appimage/*.AppImage
+            target/cli/quena-cli-*.tar.gz
+            target/cli/quena-cli-*.zip
 
   e2e-windows:
     name: UI end-to-end tests (Windows, WebView2)
@@ -220,9 +253,36 @@ jobs:
           unzip -q -o edgedriver.zip -d "$RUNNER_TEMP/edgedriver"
           EDGEDRIVER="$RUNNER_TEMP/edgedriver/msedgedriver.exe" app/e2e/run.sh "target/$BUILD_PROFILE/quena.exe"
 
+  cli-action:
+    name: GitHub Action (diagnose)
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: quena-Linux-X64
+          path: dist
+      - name: Unpack quena-cli
+        run: |
+          mkdir -p "$RUNNER_TEMP/cli"
+          tar -xzf "$(find dist -name 'quena-cli-*-linux-x64.tar.gz')" -C "$RUNNER_TEMP/cli"
+          echo "QUENA_CLI=$(find "$RUNNER_TEMP/cli" -name quena-cli -type f)" >> "$GITHUB_ENV"
+      - id: gate
+        uses: ./diagnose
+        with:
+          files: app/e2e/fixtures/two-sessions.har
+          fail-on: none
+          bin: ${{ env.QUENA_CLI }}
+      - name: Outputs of the action
+        run: |
+          test "${{ steps.gate.outputs.passed }}" = true
+          test -s "${{ steps.gate.outputs.report }}"
+          test -s "${{ steps.gate.outputs.junit }}"
+
   release:
     name: draft release
-    needs: [build, e2e-windows]
+    needs: [build, e2e-windows, cli-action]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

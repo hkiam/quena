@@ -1,0 +1,48 @@
+name: Docker image (quena-cli)
+# Publishes ghcr.io/hkiam/quena-cli when a release is published (not for drafts), or by hand.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (e.g. v0.2.0)
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          mkdir ctx
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'quena-cli-*-linux-*.tar.gz' --dir ctx
+          for a in ctx/*.tar.gz; do tar -xzf "$a" -C ctx; done
+          # Docker's TARGETARCH names: amd64, arm64.
+          for d in ctx/quena-cli-*-linux-x64; do mv "$d" "${d%-x64}-amd64"; done
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ctx
+          file: tools/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ env.VERSION }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/quena-cli:${{ env.VERSION }}
+            ghcr.io/${{ github.repository_owner }}/quena-cli:latest
