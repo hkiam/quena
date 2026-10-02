@@ -63,12 +63,22 @@ impl AppCore {
     /// in the settings; when the job is done, the event `export-sanitized` carries
     /// [`SanitizedExport`].
     pub fn export_sanitized(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>, opts: SanitizeOptions) -> Result<JobId> {
+        self.export_sanitized_as(ids, path, format, opts, true)
+    }
+
+    /// A sanitized export for another client (MCP): the user's remembered options stay, and
+    /// the UI shows no redaction log.
+    pub fn export_sanitized_quietly(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, opts: SanitizeOptions) -> Result<JobId> {
+        self.export_sanitized_as(ids, path, None, opts, false)
+    }
+
+    fn export_sanitized_as(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>, opts: SanitizeOptions, ui: bool) -> Result<JobId> {
         let format = format.or_else(|| format_of(&path)).ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
         if format == ArchiveFormat::Curl {
             return Err(anyhow!("a sanitized export is a .saz or .har file"));
         }
         opts.validate().map_err(|e| anyhow!(e))?;
-        {
+        if ui {
             let mut s = self.settings.write();
             s.sanitize = SanitizeExportSettings { options: opts.clone(), format: if format == ArchiveFormat::Har { "har".into() } else { "saz".into() } };
             if let Err(e) = s.save(&self.paths.settings) {
@@ -84,6 +94,9 @@ impl AppCore {
         Ok(self.jobs.submit(format!("export-sanitized:{}", path.display()), title, Priority::Background, true, move |ctx| {
             let log = sanitized_export(&cap, &ids, &path, format, opts, &tmp_root, body_cfg, &P(ctx)).map_err(|e| e.to_string())?;
             tracing::info!(target: "quena", "saved {} sanitized session(s) to {} ({} replacement(s))", log.sessions, path.display(), log.total);
+            if !ui {
+                return Ok(());
+            }
             core.emit("export-sanitized", SanitizedExport { path: path.display().to_string(), format: if format == ArchiveFormat::Har { "har".into() } else { "saz".into() }, log });
             Ok(())
         }))

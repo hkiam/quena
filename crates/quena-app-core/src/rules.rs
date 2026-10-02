@@ -560,6 +560,15 @@ fn leaves_origin(from: &str, to: &str) -> bool {
 
 /// Does this action read a local file (Map Local or a response file)? Those run off the
 /// proxy's async workers.
+/// The file or folder a mock rule action serves (`dir:folder` or a path), if any.
+pub fn action_path(action: &str) -> Option<String> {
+    if !reads_file(action) {
+        return None;
+    }
+    let a = action.trim();
+    Some(if a.len() >= 4 && a[..4].eq_ignore_ascii_case("dir:") { a[4..].trim() } else { a }.to_string())
+}
+
 fn reads_file(action: &str) -> bool {
     let a = action.trim_start().to_ascii_lowercase();
     a.starts_with("dir:") || !(a.starts_with('*') || a.starts_with("session:") || a.starts_with("http://") || a.starts_with("https://"))
@@ -1459,6 +1468,11 @@ impl Interceptor for Rules {
         }
     }
 
+    fn request_hold_limit(&self, s: &SessionView, head: &RequestHead) -> Option<u64> {
+        // Breakpoints and body matchers need the whole body; only rewriting can give up.
+        if self.bp_request(s, head) || self.needs_request_body() { None } else { Some(self.rewrite.max_body() as u64) }
+    }
+
     fn on_request(&self, s: SessionView, head: RequestHead, body: Option<Body>) -> BoxFuture<RequestAction> {
         let this = self.core().and_then(|c| c.rules.clone());
         let Some(this) = this else { return Box::pin(async { RequestAction::forward() }) };
@@ -1736,6 +1750,10 @@ impl Interceptor for Rules {
 
     fn response_mode(&self, s: &SessionView, req: &RequestHead, resp: &ResponseHead) -> Mode {
         if self.bp_response(s, req, resp) || self.rewrite.response_needs_body(req, resp) { Mode::Buffer } else { Mode::Stream }
+    }
+
+    fn response_hold_limit(&self, s: &SessionView, req: &RequestHead, resp: &ResponseHead) -> Option<u64> {
+        if self.bp_response(s, req, resp) { None } else { Some(self.rewrite.max_body() as u64) }
     }
 
     fn on_response(&self, s: SessionView, resp: ResponseHead, body: Body) -> BoxFuture<ResponseAction> {

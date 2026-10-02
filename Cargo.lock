@@ -3668,6 +3668,7 @@ dependencies = [
  "parking_lot",
  "quena-app-core",
  "quena-body",
+ "quena-formats",
  "quena-model",
  "quena-query",
  "rand 0.9.5",

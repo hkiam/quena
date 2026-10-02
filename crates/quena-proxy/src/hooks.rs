@@ -64,6 +64,12 @@ pub trait Interceptor: Send + Sync {
     fn request_mode(&self, _s: &SessionView, _head: &RequestHead) -> Mode {
         Mode::Stream
     }
+    /// With [`Mode::Buffer`]: hold back at most this many bytes of the request body. A larger
+    /// body (or one that takes too long) is forwarded unchanged as it streams, and
+    /// [`Interceptor::on_request`] gets no body. `None`: hold back completely (breakpoints).
+    fn request_hold_limit(&self, _s: &SessionView, _head: &RequestHead) -> Option<u64> {
+        None
+    }
     /// Called before forwarding. `body` is `Some` only in buffer mode.
     fn on_request(&self, _s: SessionView, _head: RequestHead, _body: Option<Body>) -> BoxFuture<RequestAction> {
         Box::pin(async { RequestAction::forward() })
@@ -83,6 +89,12 @@ pub trait Interceptor: Send + Sync {
     /// Does the response hook need the complete response body?
     fn response_mode(&self, _s: &SessionView, _req: &RequestHead, _resp: &ResponseHead) -> Mode {
         Mode::Stream
+    }
+    /// With [`Mode::Buffer`]: hold back at most this many bytes of the response body; a
+    /// larger (or slower) body streams unchanged and [`Interceptor::on_response`] is not
+    /// called. `None`: hold back completely (breakpoints).
+    fn response_hold_limit(&self, _s: &SessionView, _req: &RequestHead, _resp: &ResponseHead) -> Option<u64> {
+        None
     }
     /// Called with the buffered response (buffer mode only).
     fn on_response(&self, _s: SessionView, _resp: ResponseHead, _body: Body) -> BoxFuture<ResponseAction> {

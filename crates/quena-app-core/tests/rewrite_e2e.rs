@@ -20,17 +20,33 @@ fn server() -> u16 {
                 let mut first = String::new();
                 r.read_line(&mut first).unwrap_or(0);
                 let mut len = 0usize;
+                let mut chunked = false;
                 loop {
                     let mut line = String::new();
                     if r.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
                         break;
                     }
-                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    let l = line.to_ascii_lowercase();
+                    if let Some(v) = l.strip_prefix("content-length:") {
                         len = v.trim().parse().unwrap_or(0);
                     }
+                    chunked |= l.starts_with("transfer-encoding:") && l.contains("chunked");
                 }
                 let mut req_body = vec![0u8; len];
                 let _ = r.read_exact(&mut req_body);
+                if chunked {
+                    loop {
+                        let mut size = String::new();
+                        r.read_line(&mut size).unwrap_or(0);
+                        let n = usize::from_str_radix(size.trim(), 16).unwrap_or(0);
+                        let mut chunk = vec![0u8; n + 2];
+                        let _ = r.read_exact(&mut chunk);
+                        if n == 0 {
+                            break;
+                        }
+                        req_body.extend_from_slice(&chunk[..n]);
+                    }
+                }
                 let path = first.split_whitespace().nth(1).unwrap_or("").to_string();
                 let mut s = s;
                 let send = |s: &mut std::net::TcpStream, ct: &str, extra: &str, body: &[u8]| {
@@ -48,6 +64,22 @@ fn server() -> u16 {
                         let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: [1]\n\n");
                     }
                     "/echo" => send(&mut s, "application/json", "", &req_body),
+                    "/echo-len" => send(&mut s, "text/plain", "", req_body.len().to_string().as_bytes()),
+                    "/c/big" | "/c/small" => {
+                        // Chunked, no Content-Length (as HTTP/2 and gzip-on-the-fly APIs send it).
+                        let body: Vec<u8> = if path == "/c/big" { format!("[{}0]", "0,".repeat(3 << 20)).into_bytes() } else { b"[1,2]".to_vec() };
+                        let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+                        for c in body.chunks(64 << 10) {
+                            let _ = write!(s, "{:x}\r\n", c.len());
+                            let _ = s.write_all(c);
+                            let _ = s.write_all(b"\r\n");
+                        }
+                        let _ = s.write_all(b"0\r\n\r\n");
+                    }
+                    "/c/ndjson" => send(&mut s, "application/x-ndjson", "", b"[1]\n[2]\n"),
+                    "/c/partial" => {
+                        let _ = write!(s, "HTTP/1.1 206 Partial Content\r\nContent-Type: application/json\r\nContent-Range: bytes 0-4/10\r\nContent-Length: 5\r\nConnection: close\r\n\r\n[1,2]");
+                    }
                     _ => send(&mut s, "text/plain", "", b"plain"),
                 }
             });
@@ -110,6 +142,7 @@ fn rewrite_rules() {
                 rw("/sse", Phase::Response, vec![Op::RegexReplace { pattern: "1".into(), replacement: "2".into() }]),
                 rw("/hdr", Phase::Response, vec![Op::SetHeader { name: "X-Rewritten".into(), value: "yes".into() }, Op::SetStatus { code: 503 }]),
                 rw("METHOD:POST /echo", Phase::Request, vec![Op::JsonSet { path: "$.injected".into(), value: json!(true) }]),
+                rw("/c/", Phase::Response, vec![Op::JsonAppendAll { value: Some(json!("X")) }]),
             ],
             ..Default::default()
         })
@@ -149,6 +182,28 @@ fn rewrite_rules() {
     let (out, _) = curl(&["-x", &proxy, &url("/echo")]).join().unwrap();
     assert_eq!(out, "");
 
+    // Without a length: small bodies are rewritten, larger ones stream through unchanged
+    // (no 502, no waiting for the whole body), with a note in the session.
+    let (out, _) = curl(&["-x", &proxy, &url("/c/small")]).join().unwrap();
+    assert_eq!(out, r#"[1,2,"X"]"#);
+    let (out, err) = curl(&["-x", &proxy, &url("/c/big")]).join().unwrap();
+    assert_eq!(out.len(), (3 << 20) * 2 + 3, "{err}");
+    assert!(out.ends_with("0,0]"));
+    let d = last_session(&core, "/c/big");
+    assert!(!d.summary.has_flag(quena_model::flags::TAMPERED));
+    assert!(d.extra_flags.iter().any(|(k, v)| k == "x-quena-held-back" && v.contains("larger than")), "{:?}", d.extra_flags);
+    // Streams of JSON lines and partial content are left alone.
+    let (out, _) = curl(&["-x", &proxy, &url("/c/ndjson")]).join().unwrap();
+    assert_eq!(out, "[1]\n[2]\n");
+    let (out, _) = curl(&["-x", &proxy, &url("/c/partial")]).join().unwrap();
+    assert_eq!(out, "[1,2]");
+    // A chunked upload larger than the limit reaches the server whole.
+    let big = dir.path().join("upload.json");
+    std::fs::write(&big, format!("[{}0]", "0,".repeat(3 << 20))).unwrap();
+    let up = format!("@{}", big.display());
+    let (out, _) = curl(&["-x", &proxy, "-H", "Content-Type: application/json", "-H", "Transfer-Encoding: chunked", "--data-binary", &up, &url("/echo-len")]).join().unwrap();
+    assert_eq!(out, ((3 << 20) * 2 + 3).to_string());
+
     // A breakpoint after the response shows the rewritten body; resuming keeps it.
     core.quickexec("bpafter /list2");
     let h = curl(&["-x", &proxy, &url("/list2")]);
@@ -175,6 +230,6 @@ fn rewrite_rules() {
     assert_eq!(out, r#"{"items":[{"id":1,"name":"a"}],"count":1}"#);
     // Saved and loaded again.
     let again = quena_app_core::rewrite::Rewriter::load(dir.path());
-    assert_eq!(again.state().rules.len(), 5);
+    assert_eq!(again.state().rules.len(), 6);
     core.shutdown();
 }

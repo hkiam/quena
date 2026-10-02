@@ -123,6 +123,8 @@ pub struct EngineStatus {
     pub breakpoints: Vec<String>,
     pub paused: usize,
     pub autoresponder: bool,
+    /// Rewrite rules change real traffic.
+    pub rewrite: bool,
 }
 
 pub struct AppCore {

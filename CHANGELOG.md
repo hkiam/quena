@@ -14,16 +14,19 @@ contain breaking changes (settings, file formats, plugin API).
   mock rules and breakpoints. With *full control* they also start and stop capturing,
   remove sessions, send and replay requests, edit mock rules, set breakpoints, release
   paused sessions and export archives. The server is off by default, runs apart from the
-  proxy, rejects other `Host`/`Origin` names (DNS rebinding) and offers changing tools only
-  when they are allowed.
+  proxy and rejects other `Host`/`Origin` names (DNS rebinding). Captured credentials,
+  tokens and secret values are replaced before an agent sees them (unless allowed), and
+  agents read and write files only in one folder (*Folder for agent files*).
 - **Rewrite rules**: change real requests and responses on their way — JSON values by
   JSONPath (set, remove, append; *append to every list*, with a broken copy of the first
   element by default), regex replacements, headers and status, filtered by match pattern,
   status and content type. Set up by agents over MCP (with a dry run on a captured session)
-  and listed in the Mock Rules tab. Without rules the forwarding path is unchanged; header
-  and status changes never buffer; body changes buffer only matching text bodies up to
-  4 MB, decode gzip/br/zstd, keep charset and JSON key order, and leave event streams,
-  larger and incomplete bodies alone.
+  and listed in the Mock Rules tab; the status bar shows when they are active. Without
+  rules the forwarding path is unchanged; header and status changes never hold a body
+  back; body changes hold back only matching bodies (JSON by default) up to 4 MB and
+  30 s and otherwise forward them unchanged as they stream, decode gzip/br/zstd, keep
+  charset and JSON key order, and leave event streams, JSON lines, partial content and
+  binary bodies alone.
 - **Request collections (`.http`)** in the format of the JetBrains HTTP Client and the VS
   Code REST Client: file variables, environments from `http-client.env.json` and
   `http-client.private.env.json` (with `$shared`), dynamic values (`$uuid`, `$timestamp`,
@@ -34,6 +37,8 @@ contain breaking changes (settings, file formats, plugin API).
 
 ### Changed
 - Buffering a message for a body rule no longer shows it as paused at a breakpoint.
+- JSON written by `quena-cli` (sanitized archives, mocks) keeps the key order of
+  the source instead of sorting keys, as the app already did.
 
 ## [0.1.3] — 2026-10-01
 

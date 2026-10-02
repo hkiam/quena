@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, type McpStatus, type Recoverable, type Settings } from "../api";
 import { actions } from "../actions";
 import { fmtBytes, fmtDateTime, modKey, osNames } from "../lib/format";
@@ -408,7 +409,7 @@ function McpOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => 
   useEffect(() => {
     api.mcpStatus().then(setStatus, () => setStatus(null));
   }, []);
-  const m = s.mcp ?? { enabled: false, port: 8867, access: "readOnly", token: "" };
+  const m = s.mcp ?? { enabled: false, port: 8867, access: "readOnly", token: "", includeSecrets: false, filesDir: "" };
   const newToken = async () => {
     const token = await api.mcpNewToken();
     up((x) => (x.mcp = { ...m, ...x.mcp, token }));
@@ -440,6 +441,27 @@ function McpOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => 
           <option value="full">{t("…also change rules and breakpoints, capture and send requests")}</option>
         </select>
       </div>
+      <label className="f-check" title={t("Agents send what they read to their model provider. Off: Authorization, cookies, tokens and secret parameters and fields are replaced first.")}>
+        <input type="checkbox" checked={m.includeSecrets} onChange={(e) => up((x) => (x.mcp = { ...m, includeSecrets: e.target.checked }))} /> {t("Show credentials and tokens to agents unredacted (unsafe)")}
+      </label>
+      <div className="f-row">
+        <span>{t("Folder for agent files")}</span>
+        <input
+          className="mono"
+          placeholder={t("empty = mcp-files in the data folder")}
+          value={m.filesDir}
+          onChange={(e) => up((x) => (x.mcp = { ...m, filesDir: e.target.value }))}
+        />
+        <button
+          onClick={async () => {
+            const p = await openDialog({ directory: true, multiple: false });
+            if (typeof p === "string") up((x) => (x.mcp = { ...m, filesDir: p }));
+          }}
+        >
+          {t("Choose folder…")}
+        </button>
+      </div>
+      <p className="muted small">{t("Exports, .http collections and files served by mock rules: agents may only read and write files in this folder. Captured traffic is foreign content; an agent with full control could be misled by it, so grant full control only while you watch.")}</p>
       <div className="f-row">
         <span>{t("Token")}</span>
         <input readOnly className="mono" value={m.token} />
@@ -478,6 +500,10 @@ function OptionsDialog() {
       await api.settingsSet(s);
       set({ settings: s, dialog: null });
       say(t("Settings saved"));
+      if (s.mcp?.enabled) {
+        const st = await api.mcpStatus().catch(() => null);
+        if (st?.error) say(t("MCP server not running: {error}", { error: st.error }), "error");
+      }
     } catch (e) {
       say(String(e), "error");
     }

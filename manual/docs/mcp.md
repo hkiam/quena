@@ -11,8 +11,9 @@ can look at failing requests, set mock rules and breakpoints, send requests and 
 2. Choose what agents may do:
     - *…only read sessions, rules and statistics* (the default). Agents can list, search
       and read sessions and bodies, and see rules and breakpoints.
-    - *…also change rules and breakpoints, capture and send requests*. The changing tools
-      are only offered with this setting, and Quena checks it on every call.
+    - *…also change rules and breakpoints, capture and send requests*. Quena checks this
+      on every call; without it the changing tools say *Needs full control* and refuse, so
+      granting it later works without reconnecting the agent.
 3. Click *OK*. The tab then shows *Running at http://127.0.0.1:8867/mcp*.
 4. Copy the *Claude Code* line and run it in a terminal:
 
@@ -23,6 +24,27 @@ can look at failing requests, set mock rules and breakpoints, send requests and 
 
     Other MCP clients need the same three things: the URL, the transport *Streamable HTTP*
     and the `Authorization` header.
+
+## What agents see and touch
+
+- **Secrets are replaced.** An agent sends what it reads to its model provider. Unless
+  *Show credentials and tokens to agents unredacted* is checked, Quena replaces
+  `Authorization` and `Cookie` values, token and API-key headers, secret URL parameters
+  and secret body fields (`password`, `access_token`, JWTs …) in everything it hands out —
+  rows, headers, bodies, previews, and also in the files it writes for agents (exports,
+  `.http` collections; no private environment file). Quena itself still sends and records
+  the real values.
+  E-mail addresses and other personal data are not replaced; use
+  [sanitized export](archives.md) when that matters.
+- **One folder for files.** Exports, `.http` collections (and their body files) and files
+  served by mock rules created by agents must lie in *Folder for agent files* (empty:
+  `mcp-files` in the data folder; `status` names it). Relative paths are taken from there.
+  `{{$processEnv}}` is not available to agents.
+- **Captured traffic is foreign content.** A response can contain text written to mislead
+  an agent. With full control an agent can send requests (also into a VPN), change rules and
+  write files in its folder. Grant full control for a task you watch, and switch it off
+  again.
+- Searching (`search_sessions`) runs as its own job and never cancels your Find Sessions.
 
 The server only listens on `127.0.0.1`. It rejects requests without the token, and requests
 whose `Host` or `Origin` is not a loopback name (that blocks web pages using DNS
@@ -53,10 +75,10 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `list_http_requests` | | the requests of a [`.http` file](change-replay.md#request-collections-http-files), resolved for an environment |
 | `run_http_file` | ✓ | send a `.http` collection (or some of its requests) through Quena |
 | `sessions_to_http_file` | ✓ | write captured sessions as a `.http` file with environment files |
-| `export_archive` | ✓ | save sessions as `.har` or `.saz` (absolute path; existing files only with `overwrite`) |
+| `export_archive` | ✓ | save sessions as `.har` or `.saz` in the agents' folder (existing files only with `overwrite`) |
 
-Lists return at most 200 rows and bodies at most 1 MB per call, so an agent never pulls a
-whole capture at once. A tool error comes back as a result with `isError`, so the agent sees
+Lists return at most 200 rows and bodies at most 1 MB per call (reading from up to 8 MB into
+a body), so an agent never pulls a whole capture at once. A tool error comes back as a result with `isError`, so the agent sees
 the message, for example a filter syntax error.
 
 ## Examples for an agent

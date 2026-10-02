@@ -23,6 +23,61 @@ pub fn empty() -> ProxyBody {
     http_body_util::Empty::<Bytes>::new().map_err(|e| match e {}).boxed()
 }
 
+/// A body some of whose frames were read already (a hold-back that gave up): replays them,
+/// then continues with the rest. With no frames it is the plain inner body.
+pub struct Prefixed<B> {
+    head: std::collections::VecDeque<Frame<Bytes>>,
+    head_len: u64,
+    inner: B,
+}
+
+impl<B> Prefixed<B> {
+    pub fn new(inner: B) -> Self {
+        Prefixed { head: Default::default(), head_len: 0, inner }
+    }
+    /// Put frames read from this body back in front of it.
+    pub(crate) fn unread(mut self, mut frames: std::collections::VecDeque<Frame<Bytes>>) -> Self {
+        frames.extend(self.head.drain(..));
+        self.head_len = frames.iter().filter_map(|f| f.data_ref()).map(|d| d.len() as u64).sum();
+        self.head = frames;
+        self
+    }
+}
+
+impl<B> Body for Prefixed<B>
+where
+    B: Body<Data = Bytes> + Unpin,
+    B::Error: Into<BoxError>,
+{
+    type Data = Bytes;
+    type Error = BoxError;
+
+    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        let this = &mut *self;
+        if let Some(f) = this.head.pop_front() {
+            if let Some(d) = f.data_ref() {
+                this.head_len -= d.len() as u64;
+            }
+            return Poll::Ready(Some(Ok(f)));
+        }
+        Pin::new(&mut this.inner).poll_frame(cx).map(|o| o.map(|r| r.map_err(Into::into)))
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.head.is_empty() && self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        let inner = self.inner.size_hint();
+        let mut h = SizeHint::new();
+        h.set_lower(inner.lower() + self.head_len);
+        if let Some(u) = inner.upper() {
+            h.set_upper(u + self.head_len);
+        }
+        h
+    }
+}
+
 /// Timing information collected by a tee.
 #[derive(Debug, Default)]
 pub struct TeeTimes {

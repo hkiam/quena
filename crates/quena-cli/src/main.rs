@@ -745,7 +745,13 @@ fn http_run(a: HttpRunArgs) -> Result<bool> {
     let proxy = quena_app_core::engine::ProxyEngine::new(&core)?;
     core.set_proxy_engine(proxy);
     let results = core
-        .run_http_file(&a.file, a.env.as_deref(), &a.names, Duration::from_secs(a.timeout))
+        .run_http_file(
+            &a.file,
+            a.env.as_deref(),
+            &a.names,
+            Duration::from_secs(a.timeout),
+            &quena_formats::http_file::Access { process_env: true, root: None },
+        )
         .map_err(|e| usage(format!("{e:#}")))?;
     let mut ok = true;
     let mut out = std::io::stdout().lock();
@@ -790,7 +796,7 @@ fn http_from(a: HttpFromArgs) -> Result<()> {
     ids.sort_unstable();
     let w = engine
         .core
-        .sessions_to_http(&ids, &a.output, a.overwrite)
+        .sessions_to_http(&ids, &a.output, a.overwrite, false)
         .map_err(|e| usage(format!("{e:#}")))?;
     eprintln!("{} request(s) written to {}", w.requests, w.path);
     for f in &w.env_files {

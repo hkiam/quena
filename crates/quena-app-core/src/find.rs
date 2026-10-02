@@ -64,7 +64,18 @@ pub struct FindResult {
 }
 
 impl AppCore {
+    /// Find Sessions of the UI: a new search replaces the running one.
     pub fn find_sessions(self: &Arc<Self>, o: FindOptions) -> Result<JobId> {
+        self.find_sessions_as(o, "find:")
+    }
+
+    /// A search of another client (MCP): replaces only that client's own running search,
+    /// never the user's.
+    pub fn find_sessions_for(self: &Arc<Self>, o: FindOptions, client: &str) -> Result<JobId> {
+        self.find_sessions_as(o, &format!("find-{client}:"))
+    }
+
+    fn find_sessions_as(self: &Arc<Self>, o: FindOptions, prefix: &str) -> Result<JobId> {
         if o.text.is_empty() {
             return Err(anyhow!("nothing to find"));
         }
@@ -78,8 +89,8 @@ impl AppCore {
         let result = Arc::new(Mutex::new(FindResult { total: ids.len(), ..Default::default() }));
         let r2 = result.clone();
         let core = Arc::downgrade(self);
-        self.jobs.cancel_prefix("find:");
-        let job = self.jobs.submit(format!("find:{}", quena_model::now_us()), format!("Finding \"{}\"", o.text), Priority::Interactive, true, move |ctx| {
+        self.jobs.cancel_prefix(prefix);
+        let job = self.jobs.submit(format!("{prefix}{}", quena_model::now_us()), format!("Finding \"{}\"", o.text), Priority::Interactive, true, move |ctx| {
             let Some(core) = core.upgrade() else { return Ok(()) };
             let needle_lc = o.text.to_lowercase();
             let text_hit = |t: &str| -> bool {
@@ -183,5 +194,10 @@ impl AppCore {
 
     pub fn find_result(&self, job: JobId) -> Option<FindResult> {
         self.finds.lock().get(&job).map(|r| r.lock().clone())
+    }
+
+    /// The result, removed (a client that reads it once).
+    pub fn take_find_result(&self, job: JobId) -> Option<FindResult> {
+        self.finds.lock().remove(&job).map(|r| r.lock().clone())
     }
 }

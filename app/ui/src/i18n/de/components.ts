@@ -97,6 +97,14 @@ export const components: Record<string, string> = {
   "Running at {url}": "Läuft unter {url}",
   "Not running: {error}": "Läuft nicht: {error}",
   "Not running": "Läuft nicht",
+  "Agents send what they read to their model provider. Off: Authorization, cookies, tokens and secret parameters and fields are replaced first.":
+    "Agenten senden, was sie lesen, an ihren Modellanbieter. Aus: Authorization, Cookies, Tokens sowie geheime Parameter und Felder werden vorher ersetzt.",
+  "Show credentials and tokens to agents unredacted (unsafe)": "Zugangsdaten und Tokens ungeschwärzt an Agenten geben (unsicher)",
+  "Folder for agent files": "Ordner für Agenten-Dateien",
+  "empty = mcp-files in the data folder": "leer = mcp-files im Datenordner",
+  "Exports, .http collections and files served by mock rules: agents may only read and write files in this folder. Captured traffic is foreign content; an agent with full control could be misled by it, so grant full control only while you watch.":
+    "Exporte, .http-Collections und von Mock-Regeln ausgelieferte Dateien: Agenten dürfen nur in diesem Ordner lesen und schreiben. Mitgeschnittener Verkehr ist fremder Inhalt, der einen Agenten mit voller Steuerung täuschen kann – volle Steuerung daher nur unter Aufsicht geben.",
+  "MCP server not running: {error}": "MCP-Server läuft nicht: {error}",
   "Capture traffic on startup": "Beim Start Verkehr aufzeichnen",
   "Stream responses (instead of buffering)": "Responses streamen (statt puffern)",
   "Decode compressed bodies in inspectors": "Komprimierte Bodies in Inspektoren dekodieren",

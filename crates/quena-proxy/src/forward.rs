@@ -1,6 +1,6 @@
 //! The forwarding pipeline: record → hooks → upstream → record → client.
 
-use crate::body::{BoxError, ProxyBody, StoredStream, Tee, TeeTimes, empty, full};
+use crate::body::{BoxError, Prefixed, ProxyBody, StoredStream, Tee, TeeTimes, empty, full};
 use crate::connector::{ConnInfo, Connector};
 use crate::hooks::{Mode, RequestAction, ResponseAction, ResponseHeadAction, SessionView};
 use crate::util::{HOP_BY_HOP, title_case};
@@ -231,6 +231,69 @@ where
     Ok((w.finish(), aborted))
 }
 
+/// A hold-back gives up after this long and forwards what it has, then the rest as it comes:
+/// a slow or progressive body must not stall the peer behind a rule that edits bodies.
+const HOLD_BACK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+pub(crate) enum HeldBack<B> {
+    /// The whole body, in the store (and whether the peer aborted it).
+    Complete(StoredBody, bool),
+    /// Too large or too slow: the frames read so far in front of the rest, and why.
+    GaveUp(Prefixed<B>, String),
+}
+
+/// Read a body for a hook that only wants it when it is small: up to `limit` bytes within
+/// [`HOLD_BACK_WAIT`] (in memory), else hand it back for streaming.
+pub(crate) async fn hold_back<B>(shared: &Shared, mut body: Prefixed<B>, limit: u64) -> Result<HeldBack<B>, BoxError>
+where
+    B: http_body::Body<Data = Bytes> + Unpin,
+    B::Error: Into<BoxError>,
+{
+    let deadline = tokio::time::Instant::now() + HOLD_BACK_WAIT;
+    let mut frames = std::collections::VecDeque::new();
+    let mut len = 0u64;
+    let mut aborted = false;
+    loop {
+        let frame = match tokio::time::timeout_at(deadline, body.frame()).await {
+            Ok(f) => f,
+            Err(_) => return Ok(HeldBack::GaveUp(body.unread(frames), format!("not complete within {} s", HOLD_BACK_WAIT.as_secs()))),
+        };
+        match frame {
+            Some(Ok(f)) => {
+                if let Some(d) = f.data_ref() {
+                    len += d.len() as u64;
+                }
+                frames.push_back(f);
+                if len > limit {
+                    return Ok(HeldBack::GaveUp(body.unread(frames), format!("larger than {} KiB", limit >> 10)));
+                }
+            }
+            Some(Err(e)) => {
+                tracing::debug!("body read aborted: {e}");
+                aborted = true;
+                break;
+            }
+            None => break,
+        }
+    }
+    let mut w = shared.capture().bodies.writer_with_limit(u64::MAX);
+    for f in &frames {
+        if let Some(d) = f.data_ref() {
+            tokio::task::block_in_place(|| w.write(d)).map_err(|e| Box::new(e) as BoxError)?;
+        }
+    }
+    Ok(HeldBack::Complete(w.finish(), aborted))
+}
+
+/// Say in the session why a body a rule wanted was forwarded unchanged.
+fn note_gave_up(live: &LiveSession, part: &str, why: &str) {
+    let text = format!("{part} body {why}; forwarded unchanged");
+    live.update(move |d| {
+        d.extra_flags.retain(|(k, _)| k != "x-quena-held-back");
+        d.extra_flags.push(("x-quena-held-back".into(), text));
+    });
+}
+
 /// Entry point for every proxied request.
 pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Response<ProxyBody>, Infallible> {
     let shared = ctx.shared.clone();
@@ -275,21 +338,33 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
 
     // --- request body: stream through the tee, or buffer for the hook
     let mode = hooks.request_mode(&view, &head);
-    let (req_body_src, buffered_req): (Option<ProxyBody>, Option<StoredBody>) = if mode == Mode::Buffer {
+    let mut source = Some(Prefixed::new(incoming));
+    let mut buffered_req: Option<StoredBody> = None;
+    if mode == Mode::Buffer {
         // Buffering is not pausing: a breakpoint sets its own state when it holds the request.
         live.update(|d| d.summary.state = SessionState::SendingRequest);
-        match buffer_body(&shared, incoming).await {
-            Ok((b, _)) => {
+        let src = source.take().expect("request body");
+        let r = match hooks.request_hold_limit(&view, &head) {
+            Some(limit) => hold_back(&shared, src, limit).await,
+            None => buffer_body(&shared, src).await.map(|(b, a)| HeldBack::Complete(b, a)),
+        };
+        match r {
+            Ok(HeldBack::Complete(b, _)) => {
                 live.set_request_body(b.clone());
                 live.update(|d| d.timers.client_done_request = Some(now_us()));
-                (None, Some(b))
+                buffered_req = Some(b);
+            }
+            Ok(HeldBack::GaveUp(p, why)) => {
+                note_gave_up(&live, "request", &why);
+                source = Some(p);
             }
             Err(e) => {
                 finish_error(&live, &format!("reading the request body failed: {e}"));
                 return Ok(error_response(StatusCode::BAD_REQUEST, &e.to_string()));
             }
         }
-    } else {
+    }
+    let req_body_src: Option<ProxyBody> = if let Some(incoming) = source {
         let writer = if headers_only(&cfg, &url_host(&url), head.headers.get("content-type")) { capture.bodies.writer_with_limit(0) } else { capture.bodies.writer() };
         live.set_request_body(writer.body().clone());
         let times = Arc::new(TeeTimes::default());
@@ -306,7 +381,9 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
                 l2.update(|d| d.timers.client_done_request = Some(if last > 0 { last } else { now_us() }));
             }),
         );
-        (Some(Tee::new(incoming, shared.recorder.clone(), key, times).boxed()), None)
+        Some(Tee::new(incoming, shared.recorder.clone(), key, times).boxed())
+    } else {
+        None
     };
 
     // --- request hook
@@ -564,11 +641,34 @@ async fn deliver_response(
             b
         }
     };
-    let mode = hooks.response_mode(view, req_head, &resp_head);
+    let mut mode = hooks.response_mode(view, req_head, &resp_head);
     // Event streams never end; buffering them would only stall the client.
     let endless = resp_head.headers.get("content-type").is_some_and(|ct| ct.to_ascii_lowercase().starts_with("text/event-stream"));
+    let mut source = Some(Prefixed::new(incoming));
+    let mut held = None;
+    if mode == Mode::Buffer
+        && cfg.stream
+        && let Some(limit) = hooks.response_hold_limit(view, req_head, &resp_head)
+    {
+        match hold_back(shared, source.take().expect("response body"), limit).await {
+            Ok(HeldBack::Complete(b, aborted)) => held = Some((b, aborted)),
+            Ok(HeldBack::GaveUp(p, why)) => {
+                note_gave_up(live, "response", &why);
+                source = Some(p);
+                mode = Mode::Stream;
+            }
+            Err(e) => {
+                finish_error(live, &e.to_string());
+                return error_response(StatusCode::BAD_GATEWAY, &e.to_string());
+            }
+        }
+    }
     if mode == Mode::Buffer || (!cfg.stream && !endless) {
-        let (body, aborted) = match buffer_body(shared, incoming).await {
+        let buffered = match held {
+            Some(v) => Ok(v),
+            None => buffer_body(shared, source.take().expect("response body")).await,
+        };
+        let (body, aborted) = match buffered {
             Ok(v) => v,
             Err(e) => {
                 finish_error(live, &e.to_string());
@@ -655,6 +755,7 @@ async fn deliver_response(
     // From here the streaming body (its recorder callback) finishes the session.
     guard.disarm();
     live.update(|d| d.timers.client_begin_response = Some(now_us()));
+    let incoming = source.take().expect("response body");
     let body = throttle(Tee::new(incoming, shared.recorder.clone(), key, times).boxed());
     let mut out = Response::from_parts(parts, body);
     strip_hop_by_hop(out.headers_mut());

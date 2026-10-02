@@ -827,6 +827,11 @@ impl Sanitizer {
 
     /// A flag that, once set, makes the sanitizer stop early (the session in progress then
     /// gets placeholders instead of its bodies; the caller discards it).
+    /// A URL with its secrets (user info, secret parameters) replaced.
+    pub fn scrub_url(&mut self, url: &str) -> String {
+        self.url(url, Loc::Url)
+    }
+
     pub fn set_cancel(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         self.cancel = Some(flag);
     }

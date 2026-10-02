@@ -214,6 +214,7 @@ export interface EngineStatus {
   breakpoints: string[];
   paused: number;
   autoresponder: boolean;
+  rewrite: boolean;
 }
 
 export interface Status {
@@ -420,6 +421,10 @@ export interface McpSettings {
   port: number;
   access: "readOnly" | "full";
   token: string;
+  /** Hand captured credentials to agents unredacted. */
+  includeSecrets: boolean;
+  /** The only folder agents may read and write files in; empty: `mcp-files` in the data folder. */
+  filesDir: string;
 }
 
 export interface McpStatus {

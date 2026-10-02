@@ -72,6 +72,11 @@ export function StatusBar() {
       {!!eng?.breakpoints.length && <div className="sb-cell sb-bp">⏸ {eng.breakpoints.join(", ")}</div>}
       {!!eng?.paused && <div className="sb-cell sb-bp">{t("{n} paused", { n: eng.paused })}</div>}
       {eng?.autoresponder && <div className="sb-cell sb-ar">⚡ {t("Mock Rules")}</div>}
+      {eng?.rewrite && (
+        <div className="sb-cell sb-ar" title={t("Rewrite rules change real requests and responses (list in the Mock Rules tab)")}>
+          ✎ {t("Rewrite rules")}
+        </div>
+      )}
       {status?.recordingSuspended && <div className="sb-cell sb-warn">{t("Recording suspended (disk)")}</div>}
       {status?.mockRunning && <div className="sb-cell sb-warn">{t("Mock traffic")}</div>}
       <div className="sb-msg">

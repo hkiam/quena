@@ -98,6 +98,9 @@ impl Default for RewriteRule {
     }
 }
 
+/// Upper bound of [`RewriteState::max_body_kb`].
+pub const MAX_BODY_KB: u64 = 64 << 10;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RewriteState {
@@ -134,6 +137,8 @@ struct Compiled {
     ops: Vec<COp>,
     body_ops: bool,
     head_ops: bool,
+    /// Only JSON operations on the body: without content types, only JSON bodies apply.
+    json_only: bool,
     hits: AtomicU64,
 }
 
@@ -215,6 +220,7 @@ fn compile(r: &RewriteRule) -> Result<Compiled> {
         types,
         body_ops: r.ops.iter().any(Op::on_body),
         head_ops: r.ops.iter().any(|o| !o.on_body()),
+        json_only: r.ops.iter().filter(|o| o.on_body()).all(|o| !matches!(o, Op::RegexReplace { .. })),
         ops,
         rule: r.clone(),
         hits: AtomicU64::new(0),
@@ -227,11 +233,29 @@ impl Compiled {
     }
     fn type_ok(&self, ct: Option<&str>) -> bool {
         let ct = ct.unwrap_or("").to_ascii_lowercase();
-        if ct.starts_with("text/event-stream") {
+        if streaming_type(&ct) {
             return false;
         }
-        if self.types.is_empty() { crate::dto::is_textual_type(&ct) } else { self.types.iter().any(|t| ct.contains(t.as_str())) }
+        if !self.types.is_empty() {
+            self.types.iter().any(|t| ct.contains(t.as_str()))
+        } else if self.json_only {
+            quena_body::charset::is_json(ct.split(';').next().unwrap_or("").trim())
+        } else {
+            crate::dto::is_textual_type(&ct)
+        }
     }
+}
+
+/// Bodies that arrive piece by piece and are read that way (holding them back would stall
+/// the client): event streams, newline-delimited JSON, JSON text sequences, multipart
+/// streams, gRPC.
+fn streaming_type(ct: &str) -> bool {
+    ["event-stream", "ndjson", "jsonl", "json-seq", "stream+json", "x-mixed-replace", "grpc"].iter().any(|t| ct.contains(t))
+}
+
+/// Partial content cannot be rewritten (the change would not match the other ranges).
+fn partial(h: &Headers, status: u16) -> bool {
+    status == 206 || h.get("content-range").is_some()
 }
 
 // ------------------------------------------------------------------ engine
@@ -363,8 +387,9 @@ impl Rewriter {
         Ok(())
     }
 
-    fn max_body(&self) -> usize {
-        (self.state.read().max_body_kb.clamp(1, 256 << 10) as usize) << 10
+    /// Largest body changed (held back in memory while it arrives, so at most 64 MiB).
+    pub fn max_body(&self) -> usize {
+        (self.state.read().max_body_kb.clamp(1, MAX_BODY_KB) as usize) << 10
     }
 
     fn matching(&self, phase: Phase, req: &RequestHead, status: Option<u16>, ct: Option<&str>) -> Vec<usize> {
@@ -377,6 +402,11 @@ impl Rewriter {
             .collect()
     }
 
+    /// Any rule active (shown in the status bar: they change real traffic).
+    pub fn active(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
+    }
+
     pub fn wants_request(&self) -> bool {
         self.active.load(Ordering::Relaxed) && self.has_request.load(Ordering::Relaxed)
     }
@@ -387,7 +417,7 @@ impl Rewriter {
 
     /// Must the request body be buffered for a body change?
     pub fn request_needs_body(&self, head: &RequestHead) -> bool {
-        if !self.wants_request() || !has_body(&head.headers) {
+        if !self.wants_request() || !has_body(&head.headers) || partial(&head.headers, 0) {
             return false;
         }
         let ct = head.headers.get("content-type");
@@ -398,7 +428,7 @@ impl Rewriter {
 
     /// Must the response body be buffered for a body change?
     pub fn response_needs_body(&self, req: &RequestHead, resp: &ResponseHead) -> bool {
-        if !self.wants_response() || req.method.eq_ignore_ascii_case("HEAD") || matches!(resp.status, 100..=199 | 204 | 304) {
+        if !self.wants_response() || req.method.eq_ignore_ascii_case("HEAD") || matches!(resp.status, 100..=199 | 204 | 304) || partial(&resp.headers, resp.status) {
             return false;
         }
         let ct = resp.headers.get("content-type");
@@ -431,10 +461,8 @@ impl Rewriter {
                     _ => {}
                 }
             }
-            if !x.body_ops {
-                // Rules with body changes count once, when the body is done.
-                x.hits.fetch_add(1, Ordering::Relaxed);
-            }
+            // A rule with header changes counts here, once (its body part may not apply).
+            x.hits.fetch_add(1, Ordering::Relaxed);
             applied.names.push(name_of(&x.rule));
         }
         (!applied.names.is_empty()).then_some((head, applied))
@@ -460,9 +488,7 @@ impl Rewriter {
                     _ => {}
                 }
             }
-            if !x.body_ops {
-                x.hits.fetch_add(1, Ordering::Relaxed);
-            }
+            x.hits.fetch_add(1, Ordering::Relaxed);
             applied.names.push(name_of(&x.rule));
         }
         (!applied.names.is_empty()).then_some((out, applied))
@@ -476,7 +502,7 @@ impl Rewriter {
         let ct = headers.get("content-type");
         let c = self.compiled.read().clone();
         let rules: Vec<&Compiled> = self.matching(phase, matched_on, status, ct).into_iter().map(|i| &c[i]).filter(|x| x.body_ops && x.type_ok(ct)).collect();
-        if rules.is_empty() {
+        if rules.is_empty() || partial(headers, status.unwrap_or(0)) {
             return (None, applied);
         }
         for x in &rules {
@@ -509,7 +535,7 @@ impl Rewriter {
         let text = quena_body::charset::decode(&decoded[det.bom_len.min(decoded.len())..], det.encoding).0.into_owned();
         let (new_text, notes) = transform(&text, &rules);
         applied.notes.extend(notes);
-        for x in &rules {
+        for x in rules.iter().filter(|x| !x.head_ops) {
             x.hits.fetch_add(1, Ordering::Relaxed);
         }
         let Some(new_text) = new_text.filter(|t| *t != text) else { return (None, applied) };
@@ -664,10 +690,12 @@ fn apply_json(op: &COp, v: &mut Value) -> bool {
             changed
         }
         COp::JsonRemove(path) => {
-            // Nodes come in document order: removing from the end keeps the earlier
-            // array indices valid.
+            // Deepest and highest array index first, so the other pointers stay valid
+            // (a selector list like `[1,0]` yields them in its own order).
+            let mut ptrs = pointers(path, v);
+            ptrs.sort_by(|a, b| pointer_key(b).cmp(&pointer_key(a)));
             let mut changed = false;
-            for p in pointers(path, v).into_iter().rev() {
+            for p in ptrs {
                 changed |= remove_at(v, &p);
             }
             changed
@@ -685,6 +713,14 @@ fn apply_json(op: &COp, v: &mut Value) -> bool {
         COp::JsonAppendAll(value) => append_all(v, value),
         _ => false,
     }
+}
+
+/// Sort key of a JSON pointer: its tokens, array indices compared as numbers.
+fn pointer_key(ptr: &str) -> Vec<(u8, usize, String)> {
+    ptr.split('/').skip(1).map(|t| match t.parse::<usize>() {
+        Ok(n) => (0, n, String::new()),
+        Err(_) => (1, 0, t.to_string()),
+    }).collect()
 }
 
 fn unescape(token: &str) -> String {
@@ -747,6 +783,11 @@ mod tests {
         assert_eq!(t, r#"{"items":[{"name":"a"},{"name":"b"}]}"#);
         let (t, _) = run(doc, vec![Op::JsonRemove { path: "$.items[*]".into() }]);
         assert_eq!(t, r#"{"items":[],"total":2}"#);
+        // A selector list in any order removes exactly those elements.
+        let (t, _) = run(r#"{"a":[0,1,2,3]}"#, vec![Op::JsonRemove { path: "$.a[1,0]".into() }]);
+        assert_eq!(t, r#"{"a":[2,3]}"#);
+        let (t, _) = run(r#"{"a":[0,1,2,3,4,5,6,7,8,9,10,11]}"#, vec![Op::JsonRemove { path: "$.a[2,10]".into() }]);
+        assert_eq!(t, r#"{"a":[0,1,3,4,5,6,7,8,9,11]}"#);
         let (t, _) = run(doc, vec![Op::JsonAppend { path: "$.items".into(), value: Some(json!({"id":"oops"})) }]);
         assert!(t.ends_with(r#"{"id":"oops"}],"total":2}"#), "{t}");
         // Missing members of a plain path are created.
@@ -792,6 +833,18 @@ mod tests {
         assert!(compile(&RewriteRule { phase: Phase::Request, ..rule(vec![Op::SetStatus { code: 500 }]) }).is_err());
         assert!(compile(&RewriteRule { status: "4xx, 200-204,500".into(), ..rule(vec![Op::SetStatus { code: 500 }]) }).is_ok());
         assert!(compile(&RewriteRule { status: "abc".into(), ..rule(vec![Op::SetStatus { code: 500 }]) }).is_err());
+    }
+
+    #[test]
+    fn content_types() {
+        let json = compile(&rule(vec![Op::JsonAppendAll { value: None }])).unwrap();
+        assert!(json.type_ok(Some("application/json; charset=utf-8")) && json.type_ok(Some("application/problem+json")));
+        assert!(!json.type_ok(Some("text/html")) && !json.type_ok(Some("application/javascript")));
+        assert!(!json.type_ok(Some("application/x-ndjson")) && !json.type_ok(Some("application/stream+json")) && !json.type_ok(Some("text/event-stream")));
+        let text = compile(&rule(vec![Op::RegexReplace { pattern: "a".into(), replacement: "b".into() }])).unwrap();
+        assert!(text.type_ok(Some("text/html")) && !text.type_ok(Some("image/png")) && !text.type_ok(Some("multipart/x-mixed-replace; boundary=x")));
+        let own = compile(&RewriteRule { content_type: "xml".into(), ..rule(vec![Op::JsonAppendAll { value: None }]) }).unwrap();
+        assert!(own.type_ok(Some("application/xml")) && !own.type_ok(Some("application/json")));
     }
 
     #[test]

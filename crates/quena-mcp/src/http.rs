@@ -85,48 +85,76 @@ pub(crate) fn token_matches(given: &str, want: &str) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// Read (and drop) a small unread request body before a refusal: closing a connection
+/// with unread data makes the OS reset it, and the client may lose the answer.
+async fn drain(body: Incoming) {
+    let _ = Limited::new(body, 64 << 10).collect().await;
+}
+
 async fn handle(req: Request<Incoming>, core: Weak<AppCore>, port: u16) -> Result<Response<Full<Bytes>>, Infallible> {
-    if req.uri().path() != "/mcp" {
-        return Ok(reply(StatusCode::NOT_FOUND, "not found"));
+    let (parts, body) = req.into_parts();
+    match check(&parts, &core, port) {
+        Err(r) => {
+            drain(body).await;
+            Ok(r)
+        }
+        Ok(core) => Ok(serve_message(core, body).await),
     }
-    let h = req.headers();
+}
+
+/// Path, `Host`, `Origin`, token and method; the refusal otherwise.
+#[allow(clippy::result_large_err)] // once per request; the refusal is returned as is
+fn check(parts: &hyper::http::request::Parts, core: &Weak<AppCore>, port: u16) -> Result<Arc<AppCore>, Response<Full<Bytes>>> {
+    if parts.uri.path() != "/mcp" {
+        return Err(reply(StatusCode::NOT_FOUND, "not found"));
+    }
+    let h = &parts.headers;
     let host = h.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("");
     if !host_allowed(host, port) {
-        return Ok(reply(StatusCode::FORBIDDEN, "host not allowed"));
+        return Err(reply(StatusCode::FORBIDDEN, "host not allowed"));
     }
     if let Some(o) = h.get(header::ORIGIN)
         && !o.to_str().is_ok_and(origin_allowed)
     {
-        return Ok(reply(StatusCode::FORBIDDEN, "origin not allowed"));
+        return Err(reply(StatusCode::FORBIDDEN, "origin not allowed"));
     }
-    let Some(core) = core.upgrade() else { return Ok(reply(StatusCode::SERVICE_UNAVAILABLE, "shutting down")) };
+    let Some(core) = core.upgrade() else { return Err(reply(StatusCode::SERVICE_UNAVAILABLE, "shutting down")) };
     let token = core.settings().mcp.token;
     let given = h.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("");
     if !token_matches(given.trim(), token.trim()) {
         let mut r = reply(StatusCode::UNAUTHORIZED, "missing or wrong bearer token");
         r.headers_mut().insert(header::WWW_AUTHENTICATE, header::HeaderValue::from_static("Bearer"));
-        return Ok(r);
+        return Err(r);
     }
-    if req.method() != Method::POST {
+    if parts.method != Method::POST {
         // No server-sent event stream and no session to delete.
         let mut r = reply(StatusCode::METHOD_NOT_ALLOWED, "");
         r.headers_mut().insert(header::ALLOW, header::HeaderValue::from_static("POST"));
-        return Ok(r);
+        return Err(r);
     }
-    let body = match Limited::new(req.into_body(), MAX_MESSAGE).collect().await {
+    Ok(core)
+}
+
+async fn serve_message(core: Arc<AppCore>, body: Incoming) -> Response<Full<Bytes>> {
+    let body = match Limited::new(body, MAX_MESSAGE).collect().await {
         Ok(b) => b.to_bytes(),
-        Err(_) => return Ok(reply(StatusCode::PAYLOAD_TOO_LARGE, "message too large")),
+        Err(_) => {
+            // Too large: the rest is not read, so the connection must not be reused.
+            let mut r = reply(StatusCode::PAYLOAD_TOO_LARGE, "message too large");
+            r.headers_mut().insert(header::CONNECTION, header::HeaderValue::from_static("close"));
+            return r;
+        }
     };
     let msg: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
-        Err(e) => return Ok(json_reply(&crate::rpc::error_response(serde_json::Value::Null, -32700, &format!("parse error: {e}")))),
+        Err(e) => return json_reply(&crate::rpc::error_response(serde_json::Value::Null, -32700, &format!("parse error: {e}"))),
     };
     // Tools call the blocking core API (and may wait for jobs or requests).
     let out = tokio::task::spawn_blocking(move || handle_batch(&core, msg)).await.unwrap_or(None);
-    Ok(match out {
+    match out {
         Some(v) => json_reply(&v),
         None => reply(StatusCode::ACCEPTED, ""),
-    })
+    }
 }
 
 fn handle_batch(core: &Arc<AppCore>, msg: serde_json::Value) -> Option<serde_json::Value> {

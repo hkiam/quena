@@ -405,6 +405,7 @@ impl CaptureEngine for ProxyEngine {
             breakpoints: self.rules.read().as_ref().map(|r| r.breakpoints().labels()).unwrap_or_default(),
             paused: self.rules.read().as_ref().map(|r| r.paused().len()).unwrap_or(0),
             autoresponder: self.rules.read().as_ref().is_some_and(|r| r.autoresponder_active()),
+            rewrite: self.rules.read().as_ref().is_some_and(|r| r.rewrite.active()),
         }
     }
 

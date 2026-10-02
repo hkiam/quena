@@ -76,9 +76,15 @@ fn set_access(core: &Arc<AppCore>, full: bool) {
 #[test]
 fn mcp_over_http() {
     let dir = tempfile::tempdir().unwrap();
+    let files = dir.path().join("agent");
+    std::fs::create_dir(&files).unwrap();
     std::fs::write(
         dir.path().join("settings.json"),
-        format!(r#"{{"proxy":{{"port":18876,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}},"mcp":{{"enabled":true,"port":0,"token":"{TOKEN}"}}}}"#),
+        serde_json::to_string(&json!({
+            "proxy": { "port": 18876, "actAsSystemProxy": false, "captureOnStartup": false, "useSystemUpstream": false },
+            "mcp": { "enabled": true, "port": 0, "token": TOKEN, "filesDir": files.to_string_lossy() }
+        }))
+        .unwrap(),
     )
     .unwrap();
     let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
@@ -104,23 +110,34 @@ fn mcp_over_http() {
     assert_eq!((status, body.as_str()), (202, ""));
     assert_eq!(rpc(addr, "nope", json!({}))["error"]["code"], -32601);
 
-    // --- Read-only: write tools are neither listed nor callable
-    let names = |r: Value| r["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
-    let ro = names(rpc(addr, "tools/list", json!({})));
-    assert!(ro.contains(&"list_sessions".into()) && !ro.contains(&"send_request".into()));
+    // --- Read-only: write tools are marked and refused
+    let tools = rpc(addr, "tools/list", json!({}));
+    let send = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "send_request").unwrap().clone();
+    assert!(send["description"].as_str().unwrap().starts_with("[Needs full control"));
     let port = json_server();
     let (msg, err) = tool(addr, "send_request", json!({ "method": "GET", "url": format!("http://127.0.0.1:{port}/a") }));
     assert!(err && msg.as_str().unwrap().contains("full control"), "{msg}");
 
     // --- Full control: send a request, read it back
     set_access(&core, true);
-    assert!(names(rpc(addr, "tools/list", json!({}))).contains(&"send_request".into()));
-    let (s, err) = tool(addr, "send_request", json!({ "method": "GET", "url": format!("http://127.0.0.1:{port}/hello"), "headers": { "X-Agent": "yes" } }));
+    let (s, err) = tool(addr, "send_request", json!({ "method": "GET", "url": format!("http://127.0.0.1:{port}/hello"), "headers": { "X-Agent": "yes", "Authorization": "Bearer s3cr3t-value" } }));
     assert!(!err, "{s}");
     assert_eq!(s["response"]["status"], 200);
     assert_eq!(s["response"]["body"]["text"], r#"{"path":"/hello","items":[1,2]}"#);
     let id = s["session"]["id"].as_u64().unwrap();
     assert!(s["request"]["headers"].as_array().unwrap().iter().any(|h| h[0] == "X-Agent"));
+    // Secrets are replaced by default ...
+    assert!(!s.to_string().contains("s3cr3t-value"), "{s}");
+    assert!(s["redacted"].is_string());
+    // ... and shown only when the user allows it.
+    let mut st = core.settings();
+    st.mcp.include_secrets = true;
+    core.update_settings(st).unwrap();
+    let (s2, _) = tool(addr, "get_session", json!({ "id": id }));
+    assert!(s2.to_string().contains("s3cr3t-value") && s2["redacted"].is_null());
+    let mut st = core.settings();
+    st.mcp.include_secrets = false;
+    core.update_settings(st).unwrap();
 
     let (l, _) = tool(addr, "list_sessions", json!({ "filter": "url ~ hello" }));
     assert_eq!(l["total"], 1);
@@ -150,6 +167,15 @@ fn mcp_over_http() {
     assert!(err);
     let (_, err) = tool(addr, "add_mock_rule", json!({ "match": "regex:(", "action": "*404" }));
     assert!(err, "invalid patterns are rejected");
+    // Files only from the agents' folder.
+    let (e, err) = tool(addr, "add_mock_rule", json!({ "match": "x", "action": dir.path().join("settings.json").to_string_lossy() }));
+    assert!(err && e.as_str().unwrap().contains("outside"), "{e}");
+    let (e, err) = tool(addr, "add_mock_rule", json!({ "match": "x", "action": "dir:/" }));
+    assert!(err && e.as_str().unwrap().contains("outside"), "{e}");
+    std::fs::write(files.join("answer.json"), "{}").unwrap();
+    let (r, err) = tool(addr, "add_mock_rule", json!({ "match": "x", "action": files.join("answer.json").to_string_lossy() }));
+    assert!(!err, "{r}");
+    tool(addr, "remove_mock_rule", json!({ "id": r["id"] }));
 
     // --- Rewrite rules: preview on a captured session, then live
     let rule = json!({ "match": "/rw", "ops": [{ "op": "jsonAppendAll" }, { "op": "setHeader", "name": "X-Rw", "value": "1" }] });
@@ -176,11 +202,11 @@ fn mcp_over_http() {
     assert!(!err);
 
     // --- .http collections
-    let http = dir.path().join("api.http");
+    let http = files.join("api.http");
     std::fs::write(&http, "### first\nGET {{base}}/coll/one\nX-Token: {{token}}\n\n### second\nPOST {{base}}/coll/two\nContent-Type: application/json\n\n{\"n\": 1}\n").unwrap();
-    std::fs::write(dir.path().join("http-client.env.json"), format!(r#"{{"local":{{"base":"http://127.0.0.1:{port}"}}}}"#)).unwrap();
-    std::fs::write(dir.path().join("http-client.private.env.json"), r#"{"local":{"token":"t0"}}"#).unwrap();
-    let (l, err) = tool(addr, "list_http_requests", json!({ "path": http.to_string_lossy(), "env": "local" }));
+    std::fs::write(files.join("http-client.env.json"), format!(r#"{{"local":{{"base":"http://127.0.0.1:{port}"}}}}"#)).unwrap();
+    std::fs::write(files.join("http-client.private.env.json"), r#"{"local":{"token":"t0"}}"#).unwrap();
+    let (l, err) = tool(addr, "list_http_requests", json!({ "path": "api.http", "env": "local" }));
     assert!(!err, "{l}");
     assert_eq!(l["environments"], json!(["local"]));
     assert_eq!(l["requests"][1]["url"], format!("http://127.0.0.1:{port}/coll/two"));
@@ -190,13 +216,18 @@ fn mcp_over_http() {
     assert_eq!(r["results"][1]["name"], "second");
     let first = r["results"][0]["session"].as_u64().unwrap();
     let (s, _) = tool(addr, "get_session", json!({ "id": first }));
-    assert!(s["request"]["headers"].as_array().unwrap().iter().any(|h| h[0] == "X-Token" && h[1] == "t0"));
+    // Sent with the private value, shown redacted.
+    let token = s["request"]["headers"].as_array().unwrap().iter().find(|h| h[0] == "X-Token").unwrap()[1].as_str().unwrap().to_string();
+    assert_ne!(token, "t0");
+    assert_eq!(core.capture().detail(first).unwrap().request.headers.get("x-token"), Some("t0"));
+    let (e, err) = tool(addr, "run_http_file", json!({ "path": dir.path().join("elsewhere.http").to_string_lossy() }));
+    assert!(err && e.as_str().unwrap().contains("outside"), "{e}");
     let (r, _) = tool(addr, "run_http_file", json!({ "path": http.to_string_lossy() }));
     assert!(r["results"][0]["error"].as_str().unwrap().contains("unknown variable {{base}}"), "{r}");
     let (r, err) = tool(addr, "run_http_file", json!({ "path": http.to_string_lossy(), "env": "nope" }));
     assert!(err && r.as_str().unwrap().contains("known: local"), "{r}");
     // Captured sessions back to a file, and run again from it.
-    let out_dir = dir.path().join("out");
+    let out_dir = files.join("out");
     std::fs::create_dir(&out_dir).unwrap();
     let written = out_dir.join("captured.http");
     let (w, err) = tool(addr, "sessions_to_http_file", json!({ "path": written.to_string_lossy(), "filter": "url ~ /coll/" }));
@@ -213,10 +244,14 @@ fn mcp_over_http() {
     assert_eq!(f["total"], 1);
     let (st, _) = tool(addr, "statistics", json!({}));
     assert!(st["sessions"].as_u64().unwrap() >= 2);
-    let har = dir.path().join("out.har");
+    let har = files.join("out.har");
     let (x, err) = tool(addr, "export_archive", json!({ "path": har.to_string_lossy(), "filter": "url ~ hello" }));
     assert!(!err, "{x}");
-    assert!(std::fs::read_to_string(&har).unwrap().contains("/hello"));
+    let har_text = std::fs::read_to_string(&har).unwrap();
+    assert!(har_text.contains("/hello"));
+    // Agents read files with their own tools: exports are redacted as well.
+    assert!(!har_text.contains("s3cr3t-value"), "secret in the export");
+    assert!(!files.join("out").join("http-client.private.env.json").exists(), "no private environment while redacting");
     let (_, err) = tool(addr, "export_archive", json!({ "path": har.to_string_lossy() }));
     assert!(err, "existing files are not overwritten");
     let (c, _) = tool(addr, "clear_sessions", json!({ "filter": "status == 418" }));

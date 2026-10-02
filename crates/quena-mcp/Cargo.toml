@@ -10,6 +10,7 @@ quena-app-core.workspace = true
 quena-model.workspace = true
 quena-body.workspace = true
 quena-query.workspace = true
+quena-formats.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

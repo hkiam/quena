@@ -1,6 +1,8 @@
 // German translations: mocks from sessions (dialog, Mock Rules packages).
 export const mocks: Record<string, string> = {
   "Rewrite rules (change real traffic)": "Rewrite-Regeln (ändern echten Verkehr)",
+  "Rewrite rules": "Rewrite-Regeln",
+  "Rewrite rules change real requests and responses (list in the Mock Rules tab)": "Rewrite-Regeln ändern echte Requests und Responses (Liste im Tab Mock-Regeln)",
   "Phase": "Phase",
   "Changes": "Änderungen",
   "Mocks from Sessions": "Mocks aus Sessions",

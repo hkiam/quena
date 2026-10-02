@@ -73,7 +73,8 @@ Content-Type: application/json
   (keep that one out of version control). An environment `$shared` applies to all.
 - Dynamic values: `{{$uuid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`,
   `{{$randomInt 1 100}}`, `{{$processEnv NAME}}`.
-- `< path` sends a file as the body.
+- `< path` sends a file as the body; `<@ path` sends the file's text with its variables
+  substituted.
 - Response handler scripts (`> {% … %}`) and values from earlier responses are not
   supported; scripts are skipped with a warning, an unknown variable stops that request with
   its name and line.
@@ -92,7 +93,8 @@ answers with 400 or above. It sends directly (or through the system's upstream p
 without a listener and without touching the system proxy. `from-har` (and
 `sessions_to_http_file`) puts a scheme and host shared by all requests into `{{host}}` of the
 environment `captured`, and bearer tokens and cookies into `{{token}}` / `{{cookie}}` of the
-private environment file.
+private environment file. For agents, `.http` files and their body files must lie in the
+[agents' folder](mcp.md#what-agents-see-and-touch), and `{{$processEnv}}` is refused.
 
 ## Breakpoints and tampering
 
@@ -279,8 +281,8 @@ A rule has:
   a URL substring);
 - **phase**: `request` or `response` (default);
 - **status** (responses): `200`, `4xx`, `500-599`, several with `,`; empty: any;
-- **content type**: substrings separated by `;`; empty: any text type (JSON, XML, text,
-  JavaScript, forms);
+- **content type**: substrings separated by `;`; empty: JSON when the rule only has JSON
+  operations, else any text type (JSON, XML, text, JavaScript, forms);
 - **ops**, applied in order:
 
 | Operation | Effect |
@@ -306,9 +308,13 @@ What it costs and what it leaves alone:
 
 - Without rules nothing changes in the forwarding path.
 - Header and status changes never hold a body back; it streams as usual.
-- Body changes buffer the matching message (on disk, not in memory) up to the size limit
-  (4 MB by default, raw and decoded). Larger bodies, incomplete ones, event streams
-  (`text/event-stream`), binary types and `HEAD`/`204`/`304` responses pass unchanged.
+- Body changes hold the matching message back while it arrives, up to the size limit
+  (4 MB by default, at most 64 MB, raw and decoded) and for at most 30 seconds. A body that
+  turns out larger or slower is forwarded unchanged as it streams — nothing fails and
+  nothing waits for the end; the session's properties say why (`x-quena-held-back`).
+- Never held back: event streams, JSON lines (`ndjson`, `json-seq`, `stream+json`),
+  `multipart/x-mixed-replace`, gRPC, binary types, partial content (`206`, `Content-Range`)
+  and `HEAD`/`204`/`304` responses.
 - Compressed bodies (gzip, deflate, brotli, zstd) are decoded and sent on uncompressed with
   a new `Content-Length`; the charset is kept, key order and indentation of JSON as well.
 - If a JSON operation meets a body that is not JSON, the body passes unchanged; the session

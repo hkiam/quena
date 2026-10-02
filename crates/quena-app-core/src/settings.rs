@@ -182,11 +182,27 @@ pub struct McpSettings {
     pub access: McpAccess,
     /// Bearer token clients must send; generated when the server is first enabled.
     pub token: String,
+    /// Hand captured credentials (Authorization, cookies, tokens, secret parameters and
+    /// fields) to agents as they are. Off: they are replaced before anything leaves Quena.
+    pub include_secrets: bool,
+    /// The only folder agents may read files from and write files to (exports, `.http`
+    /// collections, mock rule files). Empty: `mcp-files` in the data folder.
+    pub files_dir: String,
 }
 
 impl Default for McpSettings {
     fn default() -> Self {
-        McpSettings { enabled: false, port: 8867, access: McpAccess::ReadOnly, token: String::new() }
+        McpSettings { enabled: false, port: 8867, access: McpAccess::ReadOnly, token: String::new(), include_secrets: false, files_dir: String::new() }
+    }
+}
+
+impl McpSettings {
+    /// The folder agents may use (see [`McpSettings::files_dir`]).
+    pub fn files_folder(&self, data: &Path) -> std::path::PathBuf {
+        match self.files_dir.trim() {
+            "" => data.join("mcp-files"),
+            d => std::path::PathBuf::from(d),
+        }
     }
 }
 
