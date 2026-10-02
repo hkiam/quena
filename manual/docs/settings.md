@@ -67,11 +67,17 @@ See [Automatic authentication](authentication.md).
 | *Headers only for content types* | empty | Record only headers for these types, e.g. `video/; audio/`. |
 | *Lossless recording (forwarding waits for the disk)* | off | Normally a recorder that falls behind truncates the recording instead of slowing traffic down; with this on, forwarding waits. |
 
+## AI agents (MCP)
+
+The MCP server for AI agents: on/off, port, what agents may do, whether they see secrets,
+their file folder and the token — see [AI agents (MCP)](mcp.md#turn-it-on).
+
 ## Data directory
 
 Quena keeps its settings, the capture database, the root certificate, mock rules
-(`autoresponder.json`), the rules script (`rules.js`), your plugins (`plugins`) and the
-plugin cache (`plugin-cache`) in one folder:
+(`autoresponder.json`), rewrite rules (`rewrite.json`), the rules script (`rules.js`), your
+plugins (`plugins`), the plugin cache (`plugin-cache`) and, unless set elsewhere, the folder
+for AI agents' files (`mcp-files`) in one folder:
 
 | Platform | Default location |
 |---|---|

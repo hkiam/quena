@@ -1613,6 +1613,7 @@ impl Interceptor for Rules {
                 }
                 if let Some(b) = body.clone() {
                     let (t, h) = (this.clone(), head.clone());
+                    let _permit = this.rewrite.transform_permit(b.len()).await;
                     // Reads and parses up to the size limit: off the async workers.
                     if let Ok((out, a)) = tokio::task::spawn_blocking(move || t.rewrite.body(crate::rewrite::Phase::Request, &h, None, &h.headers, &b)).await {
                         if let Some((headers, bytes)) = out
@@ -1768,6 +1769,7 @@ impl Interceptor for Rules {
             let mut rewritten: Option<Body> = None;
             if this.rewrite.response_needs_body(&req, &resp) {
                 let (t, h) = (this.clone(), resp.clone());
+                let _permit = this.rewrite.transform_permit(body.len()).await;
                 // Reads and parses up to the size limit: off the async workers.
                 if let Ok((out, a)) = tokio::task::spawn_blocking(move || t.rewrite.body(crate::rewrite::Phase::Response, &req, Some(h.status), &h.headers, &body)).await {
                     if let Some((headers, bytes)) = out

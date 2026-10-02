@@ -25,6 +25,30 @@ can look at failing requests, set mock rules and breakpoints, send requests and 
     Other MCP clients need the same three things: the URL, the transport *Streamable HTTP*
     and the `Authorization` header.
 
+The settings of the tab:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| *Enable MCP server* | off | listen on `127.0.0.1` while Quena runs |
+| *Port* | 8867 | the server's port; another program on it makes the start fail (Quena says so after *OK*) |
+| *Agents may* | only read | read only, or full control (see above) |
+| *Show credentials and tokens to agents unredacted (unsafe)* | off | see [What agents see and touch](#what-agents-see-and-touch) |
+| *Folder for agent files* | empty (`mcp-files` in the data folder) | the only folder agents read files from and write files to |
+| *Token* | generated | *Copy*, or *New token* to lock out every client that has the old one |
+
+To stop all agents at once, uncheck *Enable MCP server*.
+
+### Check the connection
+
+```sh
+curl -s http://127.0.0.1:8867/mcp -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"status","arguments":{}}}'
+```
+
+`401` means a wrong or missing token, `403` a `Host` or `Origin` that is not
+`127.0.0.1`/`localhost`, *connection refused* that the server is off or on another port.
+
 ## What agents see and touch
 
 - **Secrets are replaced.** An agent sends what it reads to its model provider. Unless

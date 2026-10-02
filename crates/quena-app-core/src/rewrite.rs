@@ -98,8 +98,12 @@ impl Default for RewriteRule {
     }
 }
 
-/// Upper bound of [`RewriteState::max_body_kb`].
-pub const MAX_BODY_KB: u64 = 64 << 10;
+/// Upper bound of [`RewriteState::max_body_kb`]. A JSON document takes several times its
+/// size in memory while it is changed.
+pub const MAX_BODY_KB: u64 = 16 << 10;
+
+/// Body volume (MiB) changed at the same time; a larger change waits for others to finish.
+const TRANSFORM_BUDGET_MIB: u32 = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -262,6 +266,8 @@ fn partial(h: &Headers, status: u16) -> bool {
 
 /// The rule set, compiled once per change; the forwarding path only reads an `Arc`.
 pub struct Rewriter {
+    /// Weighted by body size in MiB (see [`TRANSFORM_BUDGET_MIB`]).
+    transforms: Arc<tokio::sync::Semaphore>,
     state: RwLock<RewriteState>,
     compiled: RwLock<Arc<Vec<Compiled>>>,
     active: AtomicBool,
@@ -300,6 +306,7 @@ impl Rewriter {
             Err(_) => RewriteState::default(),
         };
         let r = Rewriter {
+            transforms: Arc::new(tokio::sync::Semaphore::new(TRANSFORM_BUDGET_MIB as usize)),
             next_id: AtomicU64::new(state.rules.iter().map(|r| r.id).max().unwrap_or(0) + 1),
             state: RwLock::new(RewriteState::default()),
             compiled: RwLock::new(Arc::new(vec![])),
@@ -387,7 +394,13 @@ impl Rewriter {
         Ok(())
     }
 
-    /// Largest body changed (held back in memory while it arrives, so at most 64 MiB).
+    /// Wait until a body of `len` bytes may be changed (bounds the memory of parallel changes).
+    pub async fn transform_permit(&self, len: u64) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        let mib = u32::try_from(len >> 20).unwrap_or(u32::MAX).clamp(1, TRANSFORM_BUDGET_MIB);
+        self.transforms.clone().acquire_many_owned(mib).await.ok()
+    }
+
+    /// Largest body changed (held back in memory while it arrives, so at most 16 MiB).
     pub fn max_body(&self) -> usize {
         (self.state.read().max_body_kb.clamp(1, MAX_BODY_KB) as usize) << 10
     }
@@ -693,7 +706,7 @@ fn apply_json(op: &COp, v: &mut Value) -> bool {
             // Deepest and highest array index first, so the other pointers stay valid
             // (a selector list like `[1,0]` yields them in its own order).
             let mut ptrs = pointers(path, v);
-            ptrs.sort_by(|a, b| pointer_key(b).cmp(&pointer_key(a)));
+            ptrs.sort_by_key(|p| std::cmp::Reverse(pointer_key(p)));
             let mut changed = false;
             for p in ptrs {
                 changed |= remove_at(v, &p);

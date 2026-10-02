@@ -235,6 +235,27 @@ where
 /// a slow or progressive body must not stall the peer behind a rule that edits bodies.
 const HOLD_BACK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// All bodies held back at the same time share this much memory; beyond it a body streams
+/// unchanged (many large matching responses in parallel must not exhaust memory).
+const HOLD_BACK_BUDGET: u64 = 256 << 20;
+static HELD_BACK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Bytes of one hold-back counted in [`HELD_BACK`] (released when it ends).
+struct HeldBytes(u64);
+
+impl HeldBytes {
+    fn add(&mut self, n: u64) -> bool {
+        self.0 += n;
+        HELD_BACK.fetch_add(n, Ordering::Relaxed) + n <= HOLD_BACK_BUDGET
+    }
+}
+
+impl Drop for HeldBytes {
+    fn drop(&mut self) {
+        HELD_BACK.fetch_sub(self.0, Ordering::Relaxed);
+    }
+}
+
 pub(crate) enum HeldBack<B> {
     /// The whole body, in the store (and whether the peer aborted it).
     Complete(StoredBody, bool),
@@ -252,6 +273,7 @@ where
     let deadline = tokio::time::Instant::now() + HOLD_BACK_WAIT;
     let mut frames = std::collections::VecDeque::new();
     let mut len = 0u64;
+    let mut held = HeldBytes(0);
     let mut aborted = false;
     loop {
         let frame = match tokio::time::timeout_at(deadline, body.frame()).await {
@@ -260,12 +282,14 @@ where
         };
         match frame {
             Some(Ok(f)) => {
-                if let Some(d) = f.data_ref() {
-                    len += d.len() as u64;
-                }
+                let n = f.data_ref().map_or(0, |d| d.len() as u64);
+                len += n;
                 frames.push_back(f);
                 if len > limit {
                     return Ok(HeldBack::GaveUp(body.unread(frames), format!("larger than {} KiB", limit >> 10)));
+                }
+                if !held.add(n) {
+                    return Ok(HeldBack::GaveUp(body.unread(frames), format!("not held back: {} MiB are held back already", HOLD_BACK_BUDGET >> 20)));
                 }
             }
             Some(Err(e)) => {
@@ -925,4 +949,23 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
         }
     }
     id
+}
+
+#[cfg(test)]
+mod hold_back_tests {
+    use super::*;
+
+    #[test]
+    fn held_bytes_are_counted_and_released() {
+        let before = HELD_BACK.load(Ordering::Relaxed);
+        {
+            let mut h = HeldBytes(0);
+            assert!(h.add(10));
+            assert!(h.add(20));
+            assert_eq!(HELD_BACK.load(Ordering::Relaxed), before + 30);
+            // Beyond the budget the add reports it (the bytes are still counted until drop).
+            assert!(!h.add(HOLD_BACK_BUDGET));
+        }
+        assert_eq!(HELD_BACK.load(Ordering::Relaxed), before);
+    }
 }

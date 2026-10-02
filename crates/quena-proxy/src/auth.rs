@@ -16,6 +16,55 @@ use quena_model::RequestHead;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Longest wait for one step of the security library (Kerberos via GSSAPI, SSPI). Without a
+/// reachable KDC — a VPN with a ticket but no route, or DNS that never answers the KDC
+/// lookup — a step can block for a minute or more; the request must not.
+const HANDSHAKE_STEP_TIMEOUT: Duration = Duration::from_secs(5);
+/// A scheme that timed out for a host is not tried there again for this long.
+const UNAVAILABLE_FOR: Duration = Duration::from_secs(600);
+
+/// (scheme, host) → until when the scheme is skipped for the host.
+static UNAVAILABLE: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<(Scheme, String), std::time::Instant>>> = std::sync::OnceLock::new();
+
+fn unavailable() -> &'static parking_lot::Mutex<std::collections::HashMap<(Scheme, String), std::time::Instant>> {
+    UNAVAILABLE.get_or_init(Default::default)
+}
+
+/// Kerberos needs a host name: for IP literals and `localhost` there is no service principal,
+/// and asking the KDC only costs time (Windows and browsers use NTLM there as well).
+fn negotiate_possible(host: &str) -> bool {
+    let h = host.trim_matches(['[', ']']);
+    !(h.eq_ignore_ascii_case("localhost") || h.parse::<std::net::IpAddr>().is_ok())
+}
+
+fn skipped(scheme: Scheme, host: &str) -> bool {
+    let mut m = unavailable().lock();
+    let key = (scheme, host.to_ascii_lowercase());
+    match m.get(&key) {
+        Some(until) if *until > std::time::Instant::now() => true,
+        Some(_) => {
+            m.remove(&key);
+            false
+        }
+        None => false,
+    }
+}
+
+/// One step of a handshake on a blocking thread, bounded by [`HANDSHAKE_STEP_TIMEOUT`]. A step
+/// that times out keeps running on its thread (the libraries cannot be interrupted) and the
+/// scheme is skipped for the host for [`UNAVAILABLE_FOR`].
+async fn bounded_step<T: Send + 'static>(scheme: Scheme, host: &str, f: impl FnOnce() -> Result<T, quena_auth::AuthError> + Send + 'static) -> Result<T, String> {
+    match tokio::time::timeout(HANDSHAKE_STEP_TIMEOUT, tokio::task::spawn_blocking(f)).await {
+        Ok(Ok(r)) => r.map_err(|e| e.to_string()),
+        Ok(Err(e)) => Err(format!("handshake step failed: {e}")),
+        Err(_) => {
+            unavailable().lock().insert((scheme, host.to_ascii_lowercase()), std::time::Instant::now() + UNAVAILABLE_FOR);
+            tracing::warn!(target: "quena::auth", "{} for {host} did not answer within {} s (no reachable KDC or domain controller?); skipped for this host for {} min", scheme.header_name(), HANDSHAKE_STEP_TIMEOUT.as_secs(), UNAVAILABLE_FOR.as_secs() / 60);
+            Err(format!("no answer within {} s", HANDSHAKE_STEP_TIMEOUT.as_secs()))
+        }
+    }
+}
+
 /// Resolves credentials for a host/realm (implemented by the app).
 pub trait CredentialResolver: Send + Sync {
     fn credentials(&self, host: &str, realm: &str) -> Option<Credentials>;
@@ -154,8 +203,9 @@ pub async fn send_with_auth(
         .iter()
         .filter(|o| match o.scheme {
             Scheme::Basic | Scheme::Ntlm => creds.is_some(),
-            Scheme::Negotiate => cfg!(target_os = "macos") || cfg!(target_os = "linux") || cfg!(windows),
+            Scheme::Negotiate => (cfg!(target_os = "macos") || cfg!(target_os = "linux") || cfg!(windows)) && negotiate_possible(&host),
         })
+        .filter(|o| !skipped(o.scheme, &host))
         .collect();
     candidates.sort_by_key(|o| std::cmp::Reverse(cfg.auth_prefer.iter().rev().position(|p| *p == o.scheme).map(|i| i as i32).unwrap_or(-1)));
     if candidates.is_empty() {
@@ -168,16 +218,15 @@ pub async fn send_with_auth(
     // rejects (a fresh challenge without a continuation token) falls through to the
     // next one — e.g. a server that advertises Negotiate but only really does NTLM.
     for cand in &candidates {
-        // Kerberos/SSPI may contact a domain controller and block for seconds: let the
-        // runtime move other tasks off this worker meanwhile.
-        let mut hs = match tokio::task::block_in_place(|| Handshake::start(cand.scheme, creds.as_ref(), &host)) {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::debug!(target: "quena::auth", "{} start failed for {host}: {e}", cand.scheme.header_name());
-                continue;
-            }
-        };
-        let first_header = match tokio::task::block_in_place(|| hs.next_header(cand.token.as_deref())) {
+        // Kerberos/SSPI may contact a domain controller: on a blocking thread, bounded.
+        let (scheme, c, h, token) = (cand.scheme, creds.clone(), host.clone(), cand.token.clone());
+        let started = bounded_step(scheme, &host, move || {
+            let mut hs = Handshake::start(scheme, c.as_ref(), &h)?;
+            let first = hs.next_header(token.as_deref())?;
+            Ok((hs, first))
+        })
+        .await;
+        let (mut hs, first_header) = match started {
             Ok(v) => v,
             Err(e) => {
                 tracing::debug!(target: "quena::auth", "{} unavailable for {host}: {e}", cand.scheme.header_name());
@@ -190,14 +239,21 @@ pub async fn send_with_auth(
         for leg in 0..6u8 {
             let header_value = match pending_header.take() {
                 Some(v) => v,
-                None => match tokio::task::block_in_place(|| hs.next_header(challenge_token.as_deref())) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::debug!(target: "quena::auth", "{} continuation failed for {host}: {e}", hs.scheme().header_name());
-                        rejected = true;
-                        break;
+                None => {
+                    let (mut moved, token) = (hs, challenge_token.clone());
+                    let scheme = moved.scheme();
+                    match bounded_step(scheme, &host, move || moved.next_header(token.as_deref()).map(|v| (moved, v))).await {
+                        Ok((back, v)) => {
+                            hs = back;
+                            v
+                        }
+                        Err(e) => {
+                            tracing::debug!(target: "quena::auth", "{} continuation failed for {host}: {e}", scheme.header_name());
+                            rejected = true;
+                            break;
+                        }
                     }
-                },
+                }
             };
             on_leg((leg as u16) + 2);
             let final_leg = !hs.is_multi_leg() || !expects_more_legs(&hs, leg);
@@ -251,4 +307,34 @@ fn err_chain(e: hyper_util::client::legacy::Error) -> String {
 
 pub fn scheme_label(s: Scheme) -> &'static str {
     s.header_name()
+}
+
+#[cfg(test)]
+mod step_tests {
+    use super::*;
+
+    #[test]
+    fn negotiate_needs_a_host_name() {
+        assert!(negotiate_possible("intranet.corp.example"));
+        assert!(!negotiate_possible("127.0.0.1"));
+        assert!(!negotiate_possible("[::1]"));
+        assert!(!negotiate_possible("LocalHost"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_hanging_step_is_cut_off_and_remembered() {
+        let host = "hangs.test.invalid";
+        let r: Result<(), String> = bounded_step(Scheme::Negotiate, host, || {
+            std::thread::sleep(HANDSHAKE_STEP_TIMEOUT + Duration::from_secs(1));
+            Ok(())
+        })
+        .await;
+        assert!(r.unwrap_err().contains("no answer"));
+        assert!(skipped(Scheme::Negotiate, "HANGS.test.invalid"));
+        assert!(!skipped(Scheme::Ntlm, host));
+        // Quick steps pass through, errors keep their text.
+        assert_eq!(bounded_step(Scheme::Ntlm, "x", || Ok(7)).await, Ok(7));
+        let e: Result<(), String> = bounded_step(Scheme::Ntlm, "x", || Err(quena_auth::AuthError::NoCredentials)).await;
+        assert!(e.is_err() && !skipped(Scheme::Ntlm, "x"));
+    }
 }

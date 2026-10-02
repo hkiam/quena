@@ -74,6 +74,26 @@ Turn on [automatic authentication](authentication.md) with
 *Settings → Connections → Use the system proxy auto-config (PAC) script* or enter the PAC
 URL. An `https://` PAC URL must be downloaded and entered as a file.
 
+## Requests with automatic authentication take seconds (VPN, Kerberos)
+
+With a Kerberos ticket (`klist` shows one) but no reachable KDC, asking for a service ticket
+can block for a minute. Quena waits at most 5 seconds per step, then uses NTLM or Basic and
+skips Kerberos for that host for 10 minutes (see
+[Automatic authentication](authentication.md#schemes-and-single-sign-on)). If every first
+request to a host is 5 seconds slow, put `ntlm` first in *Scheme order*, or connect the VPN
+so the KDC is reachable.
+
+## Responses look different from what the server sent
+
+Check the status bar: *Mock Rules* answer requests locally, *Rewrite rules* change real
+responses (both are listed in the Mock Rules tab). Changed sessions are marked *tampered*
+and name the rule in their comment. A rule an AI agent added stays until it is removed.
+
+## An AI agent cannot connect
+
+See [AI agents → Check the connection](mcp.md#check-the-connection). After *OK* in the
+options, Quena reports when the server could not start (for example, the port is in use).
+
 ## Recording stopped: "Recording suspended (disk)"
 
 The disk has less free space than *Settings → Bodies & Storage → Stop recording below free

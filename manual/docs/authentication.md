@@ -32,6 +32,12 @@ When the server offers several schemes, Quena picks the first in *Scheme order*.
 server rejects one (e.g. Negotiate is advertised but only NTLM works), Quena falls back to
 the next offered scheme. On Linux without the Kerberos library, Quena falls back to NTLM.
 
+Kerberos needs a host name: for IP addresses and `localhost` Quena skips Negotiate and uses
+the next scheme. A step of the Kerberos library (GSSAPI, SSPI) that does not answer within
+5 seconds — typically a ticket for a domain whose KDC cannot be reached, e.g. over a VPN
+without a route to it — is abandoned; Quena falls back to the next scheme and does not try
+that scheme for the host again for 10 minutes. The log says so (`quena::auth`).
+
 ## Credentials
 
 Kerberos SSO needs no stored credentials. For NTLM and Basic, add them under

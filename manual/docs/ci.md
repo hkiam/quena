@@ -250,7 +250,23 @@ quena-cli mock captures/*.har --package shop.quena-mocks --host api.example.com
 | `-q`, `--quiet` | no progress messages on stderr (errors only) |
 | `--timeout SECONDS` | give up when the whole run (imports, building and writing the mocks) takes longer (default 600); exit code 3 |
 
-Both need no plugins. Config files are read strictly: an unknown key (a typo such as
+Neither needs plugins. `.http` request collections run headless as well (see
+[Request collections](change-replay.md#request-collections-http-files)), e.g. as smoke tests
+after a deployment:
+
+```sh
+quena-cli http run smoke.http --env staging --save smoke.har   # exit code 1 on a failure or a status >= 400
+quena-cli http from-har captures/login.har -o login.http       # captured requests as a collection
+```
+
+| `http run` option | Effect |
+|---|---|
+| `--env NAME` | environment from `http-client.env.json` / `http-client.private.env.json` next to the file |
+| `--name NAME` | only these requests (`# @name`, `### title` or `line:N`; repeatable) |
+| `--save PATH` | also save the requests with their responses (`.har`, `.saz`) |
+| `--timeout SECONDS` | wait at most this long for each response (default 30) |
+
+Config files of `sanitize` and `mock` are read strictly: an unknown key (a typo such as
 `"repeat"` or `"emials"`) is an error that names it, instead of being ignored. No output may
 overwrite a capture or another output — `-o`, `--log`, `--package` and `--wiremock` are
 compared by their real path (also for files that do not exist yet), and a WireMock folder

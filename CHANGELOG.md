@@ -23,8 +23,9 @@ contain breaking changes (settings, file formats, plugin API).
   status and content type. Set up by agents over MCP (with a dry run on a captured session)
   and listed in the Mock Rules tab; the status bar shows when they are active. Without
   rules the forwarding path is unchanged; header and status changes never hold a body
-  back; body changes hold back only matching bodies (JSON by default) up to 4 MB and
-  30 s and otherwise forward them unchanged as they stream, decode gzip/br/zstd, keep
+  back; body changes hold back only matching bodies (JSON by default) up to 4 MB
+  (at most 16 MB; 256 MB for all held-back bodies together) and 30 s and otherwise
+  forward them unchanged as they stream, decode gzip/br/zstd, keep
   charset and JSON key order, and leave event streams, JSON lines, partial content and
   binary bodies alone.
 - **Request collections (`.http`)** in the format of the JetBrains HTTP Client and the VS
@@ -34,6 +35,13 @@ contain breaking changes (settings, file formats, plugin API).
   write captured sessions as a collection; `quena-cli http run` runs them headless (exit
   code 1 on failures, `--save` for a HAR/SAZ of the run), `quena-cli http from-har` writes
   one from captures. The requests appear in the capture, and rules apply.
+
+### Fixed
+- **Automatic authentication no longer hangs for a minute over a VPN**: with a Kerberos
+  ticket but no reachable KDC, Negotiate blocked each request until the library gave up.
+  Now each step of the Kerberos/SSPI library is cut off after 5 s (Quena falls back to the
+  next scheme and skips Negotiate for that host for 10 minutes), and IP addresses and
+  `localhost` never try Kerberos.
 
 ### Changed
 - Buffering a message for a body rule no longer shows it as paused at a breakpoint.

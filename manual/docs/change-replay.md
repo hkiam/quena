@@ -309,7 +309,10 @@ What it costs and what it leaves alone:
 - Without rules nothing changes in the forwarding path.
 - Header and status changes never hold a body back; it streams as usual.
 - Body changes hold the matching message back while it arrives, up to the size limit
-  (4 MB by default, at most 64 MB, raw and decoded) and for at most 30 seconds. A body that
+  (4 MB by default, at most 16 MB, raw and decoded) and for at most 30 seconds. All held
+  back bodies together use at most 256 MB of memory, and bodies of 32 MB in total are
+  changed at the same time (a JSON document takes several times its size while it is
+  changed); beyond that, bodies stream unchanged or wait their turn. A body that
   turns out larger or slower is forwarded unchanged as it streams — nothing fails and
   nothing waits for the end; the session's properties say why (`x-quena-held-back`).
 - Never held back: event streams, JSON lines (`ndjson`, `json-seq`, `stream+json`),
