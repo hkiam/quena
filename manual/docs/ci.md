@@ -14,14 +14,14 @@ certificate, no settings of the desktop app are used or changed.
 
     ```yaml
     - run: npx playwright test            # records captures/*.har
-    - uses: hkiam/quena/diagnose@v0.1.3
+    - uses: hkiam/quena/diagnose@v0.1.4
       with:
         files: captures/*.har
         fail-on: critical
     ```
 
-    The action downloads `quena-cli` of the release it is used from (`@v0.1.3` → quena-cli
-    0.1.3), writes the report to the job summary, marks the findings as annotations and
+    The action downloads `quena-cli` of the release it is used from (`@v0.1.4` → quena-cli
+    0.1.4), writes the report to the job summary, marks the findings as annotations and
     leaves `report.json`, `junit.xml` and `report.md` for later steps (outputs `report`,
     `junit`, `markdown`, `passed`). The outputs are set when the gate fails, too.
 
@@ -33,7 +33,7 @@ certificate, no settings of the desktop app are used or changed.
     | `baseline` | baseline report; leave it empty when there is none yet |
     | `budgets`, `ignore` | added to those of the settings file (budgets separated by spaces, ignore entries by new lines) |
     | `args` | further `quena-cli diagnose` arguments (split at spaces, not glob-expanded) |
-    | `version` | `0.1.3`, or `latest`: the newest published release, prereleases included. Default: the release of the action ref; for other refs (`@main`) `latest` |
+    | `version` | `0.1.4`, or `latest`: the newest published release, prereleases included. Default: the release of the action ref; for other refs (`@main`) `latest` |
     | `bin` | an existing `quena-cli` instead of a download |
     | `summary` | `"false"`: no job summary |
 
@@ -55,7 +55,7 @@ certificate, no settings of the desktop app are used or changed.
 
     ```yaml
     network-gate:
-      image: { name: ghcr.io/hkiam/quena-cli:0.1.3, entrypoint: [""] }
+      image: { name: ghcr.io/hkiam/quena-cli:0.1.4, entrypoint: [""] }
       script:
         - quena-cli diagnose captures/*.har --baseline baseline.json -o junit=quena-junit.xml -o json=report.json
       artifacts:
