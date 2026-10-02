@@ -205,6 +205,64 @@ settings travel with the file. *Match once* chains (the sequences of
 [mocks from sessions](mocks.md)) cannot be expressed in `.farx` and are left out; an XML
 comment in the file says so.
 
+## Rewrite rules
+
+Rewrite rules change **real** traffic on its way: the request still goes to the server, and
+the rule edits the request before it leaves or the response before the client gets it.
+That tests how an application copes with data it does not expect — an extra, broken element
+in every list, a missing field, a 500 instead of a 200. Mock Rules, in contrast, answer
+without the server.
+
+An AI agent sets them up over [MCP](mcp.md) (`add_rewrite_rule`, and `preview_rewrite` for
+a dry run on a captured session). The Mock Rules tab lists them while any exist, with *on/off*
+for each rule and for all of them, the hit count and *remove*. They are kept in
+`rewrite.json` in the data folder.
+
+A rule has:
+
+- **match**: the [match pattern](#match-patterns) of Mock Rules on URL, method and headers
+  (`*`, `exact:`, `prefix:`, `regex:`, `METHOD:POST /orders`, `HEADER:Accept=json`,
+  a URL substring);
+- **phase**: `request` or `response` (default);
+- **status** (responses): `200`, `4xx`, `500-599`, several with `,`; empty: any;
+- **content type**: substrings separated by `;`; empty: any text type (JSON, XML, text,
+  JavaScript, forms);
+- **ops**, applied in order:
+
+| Operation | Effect |
+|---|---|
+| `jsonSet {path, value}` | set every value the [JSONPath](https://www.rfc-editor.org/rfc/rfc9535) selects; a missing member of a plain path (`$.meta.debug`) is created |
+| `jsonRemove {path}` | remove the selected values |
+| `jsonAppend {path, value?}` | append to the selected arrays |
+| `jsonAppendAll {value?}` | append to **every** array in the document, the root included |
+| `regexReplace {pattern, replacement}` | replace in the body text; `$1`, `${name}` refer to groups |
+| `setHeader {name, value}`, `removeHeader {name}` | change a header (not the framing headers) |
+| `setStatus {code}` | change the response status |
+
+Without `value`, `jsonAppend` and `jsonAppendAll` append a *broken copy* of the list's first
+element: the same keys, all `null` (`[{"id":1,"name":"a"}]` becomes
+`[{"id":1,"name":"a"},{"id":null,"name":null}]`). Example, a broken element in every list of
+the API's responses:
+
+```json
+{ "match": "prefix:https://api.example.com/", "ops": [{ "op": "jsonAppendAll" }] }
+```
+
+What it costs and what it leaves alone:
+
+- Without rules nothing changes in the forwarding path.
+- Header and status changes never hold a body back; it streams as usual.
+- Body changes buffer the matching message (on disk, not in memory) up to the size limit
+  (4 MB by default, raw and decoded). Larger bodies, incomplete ones, event streams
+  (`text/event-stream`), binary types and `HEAD`/`204`/`304` responses pass unchanged.
+- Compressed bodies (gzip, deflate, brotli, zstd) are decoded and sent on uncompressed with
+  a new `Content-Length`; the charset is kept, key order and indentation of JSON as well.
+- If a JSON operation meets a body that is not JSON, the body passes unchanged; the session
+  comment says why. Changed sessions are marked *tampered* and name the rule in their
+  comment.
+- Mock responses are not rewritten. A breakpoint after the response shows the rewritten
+  body.
+
 ## Latency
 
 Three ways to slow things down:

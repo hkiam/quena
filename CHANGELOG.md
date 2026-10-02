@@ -16,6 +16,17 @@ contain breaking changes (settings, file formats, plugin API).
   paused sessions and export archives. The server is off by default, runs apart from the
   proxy, rejects other `Host`/`Origin` names (DNS rebinding) and offers changing tools only
   when they are allowed.
+- **Rewrite rules**: change real requests and responses on their way — JSON values by
+  JSONPath (set, remove, append; *append to every list*, with a broken copy of the first
+  element by default), regex replacements, headers and status, filtered by match pattern,
+  status and content type. Set up by agents over MCP (with a dry run on a captured session)
+  and listed in the Mock Rules tab. Without rules the forwarding path is unchanged; header
+  and status changes never buffer; body changes buffer only matching text bodies up to
+  4 MB, decode gzip/br/zstd, keep charset and JSON key order, and leave event streams,
+  larger and incomplete bodies alone.
+
+### Changed
+- Buffering a message for a body rule no longer shows it as paused at a breakpoint.
 
 ## [0.1.3] — 2026-10-01
 

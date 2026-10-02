@@ -1,7 +1,7 @@
 // Mock Rules tab: rules, rule editor, .farx import/export.
 import { useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { api, type ArRule, type ArState, type MockPackage } from "../api";
+import { api, type ArRule, type ArState, type MockPackage, type RwState } from "../api";
 import { confirmAsk, say, set, useStore } from "../store";
 import { showContextMenu } from "../components/ContextMenu";
 import { mapLocalRule, mapRemoteRule, mockPackageImported, mocksFromSelection, type MappingKind } from "./autoresponderActions";
@@ -9,6 +9,61 @@ import { plural, t } from "../i18n";
 
 const MATCH_TEMPLATES = ["*", "EXACT:https://example.com/path", "prefix:https://example.com/api/", "regex:(?i)^https://.*\\.example\\.com/api/(.*)$", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json", "URLWithBody:/soap regex:GetOrder"];
 const ACTIONS = ["dir:/path/to/folder", "https://staging.example.com/api/", "https://staging.example.com/api/ *nocreds", "*200", "*204", "*404", "*500", "*502", "*drop", "*delay:2000", "*redir:https://example.com/", "*header:X-Quena=1", "*CORSPreflightAllow", "*bpu", "*bpafter"];
+
+/** Rewrite rules change real traffic; listed here so it is visible why responses differ. */
+function RewriteRules({ version }: { version: number }) {
+  const [rw, setRw] = useState<RwState | null>(null);
+  const nonce = useStore((s) => s.arNonce);
+  useEffect(() => {
+    api.rwGet().then(setRw, () => setRw(null));
+  }, [nonce, Math.floor(version / 10)]);
+  if (!rw || rw.rules.length === 0) return null;
+  const commit = (next: RwState) =>
+    api
+      .rwSet(next)
+      .then(setRw)
+      .catch((e) => say(String(e), "error"));
+  const ops = (r: RwState["rules"][number]) => r.ops.map((o) => [o.op, o.path ?? o.pattern ?? o.name ?? o.code ?? ""].filter((x) => x !== "").join(" ")).join(", ");
+  return (
+    <fieldset className="f-section ar-rewrite">
+      <legend>
+        <label className="f-check strong">
+          <input type="checkbox" checked={rw.enabled} onChange={(e) => commit({ ...rw, enabled: e.target.checked })} /> {t("Rewrite rules (change real traffic)")}
+        </label>
+      </legend>
+      <table className="kv ar-table">
+        <thead>
+          <tr>
+            <th style={{ width: 24 }}></th>
+            <th>{t("If request matches…")}</th>
+            <th style={{ width: 80 }}>{t("Phase")}</th>
+            <th>{t("Changes")}</th>
+            <th style={{ width: 52 }}>{t("Hits")}</th>
+            <th style={{ width: 28 }}></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rw.rules.map((r) => (
+            <tr key={r.id} className={r.enabled ? "" : "disabled"} title={r.comment}>
+              <td>
+                <input type="checkbox" checked={r.enabled} onChange={(e) => commit({ ...rw, rules: rw.rules.map((x) => (x.id === r.id ? { ...x, enabled: e.target.checked } : x)) })} />
+              </td>
+              <td className="mono">{r.match}</td>
+              <td>{r.phase === "request" ? t("Request") : t("Response")}</td>
+              <td className="mono">{ops(r)}</td>
+              <td>{r.hits || ""}</td>
+              <td>
+                <button className="ar-package-x" title={t("Remove")} aria-label={t("Remove")} onClick={() => commit({ ...rw, rules: rw.rules.filter((x) => x.id !== r.id) })}>
+                  ✕
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </fieldset>
+  );
+}
 
 export default function AutoResponderPanel() {
   const [st, setSt] = useState<ArState | null>(null);
@@ -215,6 +270,7 @@ export default function AutoResponderPanel() {
         )}
       </div>
       <div className="ar-list">
+        <RewriteRules version={version} />
         <table className="kv ar-table">
           <thead>
             <tr>

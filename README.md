@@ -217,6 +217,7 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Sanitized export** (SAZ/HAR) for sharing: credentials, tokens and personal data replaced,
   with a redaction log
 - **Breakpoints & tamper** before request / after response
+- **Rewrite rules**: change real responses and requests by JSONPath, regex, header, status
 - **Composer** (parsed, raw, history) with **cURL import**
 - Replay: again, unconditionally, *n* times, sequentially, with edit
 - **JavaScript rules** with hot reload,

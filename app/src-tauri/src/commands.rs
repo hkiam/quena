@@ -560,6 +560,16 @@ async fn ar_set(core: State<'_, Core>, state: AutoResponderState) -> R<()> {
 }
 
 #[tauri::command]
+async fn rw_get(core: State<'_, Core>) -> R<quena_app_core::rewrite::RewriteState> {
+    Ok(rules(core.inner())?.rewrite.state())
+}
+
+#[tauri::command]
+async fn rw_set(core: State<'_, Core>, state: quena_app_core::rewrite::RewriteState) -> R<quena_app_core::rewrite::RewriteState> {
+    rules(core.inner())?.rewrite.set(state).map_err(e)
+}
+
+#[tauri::command]
 async fn ar_add_sessions(core: State<'_, Core>, ids: Vec<SessionId>, exact: bool) -> R<usize> {
     let r = rules(core.inner())?;
     blocking(move || r.add_rules_from_sessions(&ids, exact).map_err(e)).await
@@ -838,6 +848,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         status,
         mcp_status,
         mcp_new_token,
+        rw_get,
+        rw_set,
         app_info,
         rows,
         view_ids,

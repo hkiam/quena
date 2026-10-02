@@ -40,12 +40,15 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `search_sessions` | | text or regex in URLs, headers, bodies |
 | `statistics` | | bytes, status codes, content types, hosts |
 | `list_mock_rules`, `get_breakpoints` | | rules with hit counts; breakpoints and paused sessions |
+| `list_rewrite_rules` | | [rewrite rules](change-replay.md#rewrite-rules) with hit counts |
+| `preview_rewrite` | | apply a rewrite rule to a captured body without sending anything |
 | `set_capture` | ✓ | start or stop capturing |
 | `clear_sessions` | ✓ | remove sessions matching a filter, or all |
 | `send_request` | ✓ | send a request through Quena and return the session |
 | `replay_sessions` | ✓ | send captured requests again |
 | `add_mock_rule`, `update_mock_rule`, `remove_mock_rule`, `set_mock_options` | ✓ | [Mock Rules](change-replay.md#mock-rules) |
 | `mock_from_sessions` | ✓ | rules that answer with recorded responses |
+| `add_rewrite_rule`, `update_rewrite_rule`, `remove_rewrite_rule`, `set_rewrite_options` | ✓ | change real requests and responses (JSONPath, regex, headers, status) |
 | `set_breakpoints`, `resume_session`, `resume_all` | ✓ | [breakpoints](change-replay.md) |
 | `export_archive` | ✓ | save sessions as `.har` or `.saz` (absolute path; existing files only with `overwrite`) |
 
@@ -60,3 +63,5 @@ the message, for example a filter syntax error.
 - "Answer `GET https://api.example.com/v1/config` with a 503 and check how the app
   behaves."
 - "Pause every POST to `/orders` and show me the body before it goes out."
+- "Append a broken element to every list in the responses of `/api/` and tell me which
+  requests the app sends afterwards."

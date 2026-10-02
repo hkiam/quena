@@ -1943,6 +1943,9 @@ pre {
 .ar-table th {
   white-space: nowrap;
 }
+.ar-rewrite {
+  margin: 4px 4px 8px;
+}
 .ar-table td {
   word-break: break-all;
 }

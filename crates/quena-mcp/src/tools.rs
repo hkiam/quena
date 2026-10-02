@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow, bail};
 use quena_app_core::AppCore;
 use quena_app_core::compose::{ComposeRequest, ReplayOptions};
 use quena_app_core::dto::{is_textual_type, sniff_text, spec_of};
+use quena_app_core::rewrite::{Op, Phase, RewriteRule};
 use quena_app_core::rules::{BreakpointState, Resume, Rule};
 use quena_app_core::settings::McpAccess;
 use quena_body::Body;
@@ -130,6 +131,32 @@ static TOOLS: &[Tool] = &[
         destructive: false,
         schema: || obj(json!({})),
         run: list_mock_rules,
+    },
+    Tool {
+        name: "list_rewrite_rules",
+        description: "Rewrite rules that change real traffic (JSON values, text, headers, status), with hit counts, whether they are on, and the body size limit.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({})),
+        run: list_rewrite_rules,
+    },
+    Tool {
+        name: "preview_rewrite",
+        description: "Dry run: apply a rewrite rule (same fields as add_rewrite_rule) to the body of a captured session and return the result, without sending anything. Use it to check a rule before adding it.",
+        write: false,
+        destructive: false,
+        schema: || {
+            req(
+                json!({
+                    "rule": rewrite_rule_schema(),
+                    "id": { "type": "integer", "description": "Session whose body to use" },
+                    "part": { "type": "string", "enum": ["request", "response"], "description": "default: the rule's phase" },
+                    "max_body_bytes": { "type": "integer", "description": "Result limit (default 16384)" }
+                }),
+                &["rule", "id"],
+            )
+        },
+        run: preview_rewrite,
     },
     Tool {
         name: "get_breakpoints",
@@ -266,6 +293,49 @@ static TOOLS: &[Tool] = &[
         run: mock_from_sessions,
     },
     Tool {
+        name: "add_rewrite_rule",
+        description: "Add a rule that changes matching real requests or responses on their way (switches rewriting on). Operations run in order: `jsonSet` {path, value} (creates missing members of a plain path), `jsonRemove` {path}, `jsonAppend` {path, value?}, `jsonAppendAll` {value?} (append to every array in the document; without value a broken copy of the first element: same keys, all null), `regexReplace` {pattern, replacement}, `setHeader` {name, value}, `removeHeader` {name}, `setStatus` {code}. Paths are RFC 9535 JSONPath (`$.items[*].price`, `$..id`). Bodies are decoded (gzip, br …) and sent back uncompressed; bodies over the size limit, event streams and non-text types pass unchanged. Example, a broken element in every list of /api/ responses: {\"match\": \"/api/\", \"ops\": [{\"op\": \"jsonAppendAll\"}]}.",
+        write: true,
+        destructive: false,
+        schema: || {
+            let mut s = rewrite_rule_schema();
+            s["properties"]["position"] = json!({ "type": "string", "enum": ["first", "last"] });
+            s["required"] = json!(["match", "ops"]);
+            s
+        },
+        run: add_rewrite_rule,
+    },
+    Tool {
+        name: "update_rewrite_rule",
+        description: "Change a rewrite rule by id: `enabled`, or any field of add_rewrite_rule (the fields given replace the old ones).",
+        write: true,
+        destructive: false,
+        schema: || {
+            let mut s = rewrite_rule_schema();
+            s["properties"]["id"] = json!({ "type": "integer" });
+            s["properties"]["enabled"] = json!({ "type": "boolean" });
+            s["required"] = json!(["id"]);
+            s
+        },
+        run: update_rewrite_rule,
+    },
+    Tool {
+        name: "remove_rewrite_rule",
+        description: "Delete a rewrite rule by id.",
+        write: true,
+        destructive: true,
+        schema: || req(json!({ "id": { "type": "integer" } }), &["id"]),
+        run: remove_rewrite_rule,
+    },
+    Tool {
+        name: "set_rewrite_options",
+        description: "Switch all rewrite rules on or off, and set the largest body (KiB, default 4096) they change.",
+        write: true,
+        destructive: false,
+        schema: || obj(json!({ "enabled": { "type": "boolean" }, "max_body_kb": { "type": "integer" } })),
+        run: set_rewrite_options,
+    },
+    Tool {
         name: "set_breakpoints",
         description: "Change breakpoints (only the fields given; an empty string or 0 clears one). Paused sessions wait until `resume_session` or `resume_all` (or the timeout).",
         write: true,
@@ -329,6 +399,32 @@ static TOOLS: &[Tool] = &[
         run: export_archive,
     },
 ];
+
+fn rewrite_rule_schema() -> Value {
+    obj(json!({
+        "match": { "type": "string", "description": "Mock Rules pattern on URL, method, headers: `*`, `exact:URL`, `prefix:URL`, `regex:…`, `METHOD:POST /x`, `HEADER:Name=value`, or a URL substring" },
+        "phase": { "type": "string", "enum": ["request", "response"], "description": "default response" },
+        "status": { "type": "string", "description": "Response status filter: `200`, `2xx`, `500-599`, comma separated (empty: any)" },
+        "content_type": { "type": "string", "description": "Content type substrings, `;` separated (empty: any text type)" },
+        "comment": { "type": "string" },
+        "ops": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "op": { "type": "string", "enum": ["jsonSet", "jsonRemove", "jsonAppend", "jsonAppendAll", "regexReplace", "setHeader", "removeHeader", "setStatus"] },
+                    "path": { "type": "string" },
+                    "value": {},
+                    "pattern": { "type": "string" },
+                    "replacement": { "type": "string" },
+                    "name": { "type": "string" },
+                    "code": { "type": "integer" }
+                },
+                "required": ["op"]
+            }
+        }
+    }))
+}
 
 fn obj(props: Value) -> Value {
     json!({ "type": "object", "properties": props })
@@ -653,6 +749,83 @@ fn list_mock_rules(core: &Arc<AppCore>, _: Value) -> Result<Value> {
     Ok(serde_json::to_value(rules(core)?.autoresponder())?)
 }
 
+fn list_rewrite_rules(core: &Arc<AppCore>, _: Value) -> Result<Value> {
+    Ok(serde_json::to_value(rules(core)?.rewrite.state())?)
+}
+
+/// Rule fields as the tools take them (snake_case) or the app stores them (camelCase).
+#[derive(Deserialize, Default)]
+struct RuleArgs {
+    #[serde(rename = "match")]
+    match_: Option<String>,
+    phase: Option<Phase>,
+    status: Option<String>,
+    #[serde(alias = "contentType")]
+    content_type: Option<String>,
+    comment: Option<String>,
+    ops: Option<Vec<Op>>,
+}
+
+impl RuleArgs {
+    fn apply(self, r: &mut RewriteRule) {
+        if let Some(v) = self.match_ {
+            r.match_ = v;
+        }
+        if let Some(v) = self.phase {
+            r.phase = v;
+        }
+        if let Some(v) = self.status {
+            r.status = v;
+        }
+        if let Some(v) = self.content_type {
+            r.content_type = v;
+        }
+        if let Some(v) = self.comment {
+            r.comment = v;
+        }
+        if let Some(v) = self.ops {
+            r.ops = v;
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct PreviewArgs {
+    rule: RuleArgs,
+    id: SessionId,
+    part: Option<String>,
+    max_body_bytes: Option<usize>,
+}
+
+fn preview_rewrite(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: PreviewArgs = args(a)?;
+    let mut rule = RewriteRule::default();
+    a.rule.apply(&mut rule);
+    let cap = core.capture();
+    let d = cap.detail(a.id).ok_or_else(|| anyhow!("session #{} not found", a.id))?;
+    let (req_body, resp_body) = cap.bodies_of(a.id).ok_or_else(|| anyhow!("session #{} not found", a.id))?;
+    let part = a.part.unwrap_or_else(|| if rule.phase == Phase::Request { "request".into() } else { "response".into() });
+    let (body, headers) = match part.as_str() {
+        "request" => (req_body, d.request.headers.clone()),
+        "response" => (resp_body, d.response.as_ref().map(|r| r.headers.clone()).unwrap_or_default()),
+        p => bail!("part must be request or response, not {p}"),
+    };
+    const LIMIT: usize = 8 << 20;
+    let bytes = quena_body::text::decoded_prefix(&body, &spec_of(&headers), LIMIT + 1);
+    if bytes.len() > LIMIT {
+        bail!("body larger than {} MiB", LIMIT >> 20);
+    }
+    let det = quena_body::charset::detect(headers.get("content-type"), &bytes[..bytes.len().min(quena_body::text::DETECT_PREFIX)]);
+    let text = quena_body::charset::decode(&bytes[det.bom_len.min(bytes.len())..], det.encoding).0.into_owned();
+    let (out, notes) = rules(core)?.rewrite.preview(&rule, &text)?;
+    let max = body_limit(a.max_body_bytes);
+    let mut cut = out.len().min(max);
+    while !out.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    Ok(json!({ "changed": out != text, "notes": notes, "length": out.len(), "more": out.len() > cut, "text": &out[..cut] }))
+}
+
 fn get_breakpoints(core: &Arc<AppCore>, _: Value) -> Result<Value> {
     let r = rules(core)?;
     Ok(json!({ "breakpoints": r.breakpoints(), "paused": r.paused() }))
@@ -870,6 +1043,84 @@ fn mock_from_sessions(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: MockFromArgs = args(a)?;
     let n = rules(core)?.add_rules_from_sessions(&a.ids, a.exact.unwrap_or(true))?;
     Ok(json!({ "added": n }))
+}
+
+#[derive(Deserialize)]
+struct AddRewriteArgs {
+    #[serde(flatten)]
+    rule: RuleArgs,
+    position: Option<String>,
+}
+
+fn add_rewrite_rule(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: AddRewriteArgs = args(a)?;
+    let mut rule = RewriteRule { comment: "added by an MCP client".into(), ..Default::default() };
+    a.rule.apply(&mut rule);
+    let rw = &rules(core)?.rewrite;
+    let id = rw.add(rule, a.position.as_deref() != Some("last"))?;
+    let enabled = rw.state().enabled;
+    if !enabled {
+        rw.update(|s| s.enabled = true)?;
+    }
+    Ok(json!({ "id": id }))
+}
+
+#[derive(Deserialize)]
+struct UpdateRewriteArgs {
+    id: u64,
+    enabled: Option<bool>,
+    #[serde(flatten)]
+    rule: RuleArgs,
+}
+
+fn update_rewrite_rule(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: UpdateRewriteArgs = args(a)?;
+    let found = rules(core)?.rewrite.update(|s| {
+        let Some(r) = s.rules.iter_mut().find(|r| r.id == a.id) else { return false };
+        if let Some(v) = a.enabled {
+            r.enabled = v;
+        }
+        a.rule.apply(r);
+        true
+    })?;
+    if !found {
+        bail!("no rewrite rule with id {}", a.id);
+    }
+    Ok(json!({ "updated": a.id }))
+}
+
+fn remove_rewrite_rule(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: IdArgs = args(a)?;
+    let found = rules(core)?.rewrite.update(|s| {
+        let n = s.rules.len();
+        s.rules.retain(|r| r.id != a.id);
+        s.rules.len() != n
+    })?;
+    if !found {
+        bail!("no rewrite rule with id {}", a.id);
+    }
+    Ok(json!({ "removed": a.id }))
+}
+
+#[derive(Deserialize)]
+struct RewriteOptionArgs {
+    enabled: Option<bool>,
+    max_body_kb: Option<u64>,
+}
+
+fn set_rewrite_options(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: RewriteOptionArgs = args(a)?;
+    let rw = &rules(core)?.rewrite;
+    rw.update(|s| {
+        if let Some(v) = a.enabled {
+            s.enabled = v;
+        }
+        if let Some(v) = a.max_body_kb {
+            s.max_body_kb = v.clamp(1, 256 << 10);
+        }
+    })?;
+    let s = rw.state();
+    Ok(json!({ "enabled": s.enabled, "maxBodyKb": s.max_body_kb }))
 }
 
 #[derive(Deserialize)]

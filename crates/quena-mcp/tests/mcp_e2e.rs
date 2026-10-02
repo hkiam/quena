@@ -151,8 +151,32 @@ fn mcp_over_http() {
     let (_, err) = tool(addr, "add_mock_rule", json!({ "match": "regex:(", "action": "*404" }));
     assert!(err, "invalid patterns are rejected");
 
+    // --- Rewrite rules: preview on a captured session, then live
+    let rule = json!({ "match": "/rw", "ops": [{ "op": "jsonAppendAll" }, { "op": "setHeader", "name": "X-Rw", "value": "1" }] });
+    let (p, err) = tool(addr, "preview_rewrite", json!({ "rule": rule, "id": id }));
+    assert!(!err, "{p}");
+    assert_eq!(p["changed"], true);
+    assert_eq!(p["text"], r#"{"path":"/hello","items":[1,2,null]}"#);
+    let (r, err) = tool(addr, "add_rewrite_rule", rule);
+    assert!(!err, "{r}");
+    let rw = r["id"].as_u64().unwrap();
+    let (s, _) = tool(addr, "send_request", json!({ "method": "GET", "url": format!("http://127.0.0.1:{port}/rw") }));
+    assert_eq!(s["response"]["body"]["text"], r#"{"path":"/rw","items":[1,2,null]}"#);
+    assert!(s["response"]["headers"].as_array().unwrap().iter().any(|h| h[0] == "X-Rw"));
+    assert!(s["session"]["flags"].as_array().unwrap().contains(&json!("tampered")));
+    let (l, _) = tool(addr, "list_rewrite_rules", json!({}));
+    assert_eq!(l["rules"][0]["hits"], 1);
+    let (_, err) = tool(addr, "update_rewrite_rule", json!({ "id": rw, "enabled": false }));
+    assert!(!err);
+    let (s, _) = tool(addr, "send_request", json!({ "method": "GET", "url": format!("http://127.0.0.1:{port}/rw") }));
+    assert_eq!(s["response"]["body"]["text"], r#"{"path":"/rw","items":[1,2]}"#);
+    let (e, err) = tool(addr, "add_rewrite_rule", json!({ "match": "*", "ops": [{ "op": "jsonSet", "path": "no-dollar", "value": 1 }] }));
+    assert!(err && e.as_str().unwrap().contains("JSONPath"), "{e}");
+    let (_, err) = tool(addr, "remove_rewrite_rule", json!({ "id": rw }));
+    assert!(!err);
+
     // --- Search, statistics, export, clear
-    let (f, _) = tool(addr, "search_sessions", json!({ "text": "items", "examine": "bodies" }));
+    let (f, _) = tool(addr, "search_sessions", json!({ "text": "hello", "examine": "bodies" }));
     assert_eq!(f["total"], 1);
     let (st, _) = tool(addr, "statistics", json!({}));
     assert!(st["sessions"].as_u64().unwrap() >= 2);

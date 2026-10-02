@@ -276,7 +276,8 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
     // --- request body: stream through the tee, or buffer for the hook
     let mode = hooks.request_mode(&view, &head);
     let (req_body_src, buffered_req): (Option<ProxyBody>, Option<StoredBody>) = if mode == Mode::Buffer {
-        live.update(|d| d.summary.state = SessionState::BreakpointRequest);
+        // Buffering is not pausing: a breakpoint sets its own state when it holds the request.
+        live.update(|d| d.summary.state = SessionState::SendingRequest);
         match buffer_body(&shared, incoming).await {
             Ok((b, _)) => {
                 live.set_request_body(b.clone());
@@ -567,9 +568,6 @@ async fn deliver_response(
     // Event streams never end; buffering them would only stall the client.
     let endless = resp_head.headers.get("content-type").is_some_and(|ct| ct.to_ascii_lowercase().starts_with("text/event-stream"));
     if mode == Mode::Buffer || (!cfg.stream && !endless) {
-        if mode == Mode::Buffer {
-            live.update(|d| d.summary.state = SessionState::BreakpointResponse);
-        }
         let (body, aborted) = match buffer_body(shared, incoming).await {
             Ok(v) => v,
             Err(e) => {

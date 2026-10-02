@@ -74,7 +74,7 @@ impl Default for AutoResponderState {
     }
 }
 
-enum Matcher {
+pub(crate) enum Matcher {
     All,
     Exact(String),
     /// URL starts with this text (ASCII case-insensitive); the rest is handed to the action.
@@ -246,7 +246,7 @@ fn split_url_and_rest(rest: &str, usage: &str) -> Result<(Matcher, String)> {
 }
 
 impl Matcher {
-    fn parse(s: &str) -> Result<Matcher> {
+    pub(crate) fn parse(s: &str) -> Result<Matcher> {
         let s = s.trim();
         let lower = s.to_ascii_lowercase();
         Ok(if s == "*" || s.is_empty() {
@@ -303,7 +303,12 @@ impl Matcher {
         })
     }
 
-    fn needs_body(&self) -> bool {
+    /// Match by URL, method and headers only (rules that never look at a body).
+    pub(crate) fn matches_head(&self, head: &RequestHead) -> bool {
+        self.matches_in(&MatchCtx::new(head, None))
+    }
+
+    pub(crate) fn needs_body(&self) -> bool {
         match self {
             Matcher::UrlWithBody(..) | Matcher::BodyJson(..) | Matcher::GraphQl(..) | Matcher::BodyHash(..) => true,
             // `METHOD:POST URLWithBody:…` must buffer the body as well.
@@ -700,6 +705,8 @@ pub struct Rules {
     script: ScriptEngine,
     script_path: PathBuf,
     script_enabled: AtomicBool,
+    /// Rewrite rules (body, header and status changes of real traffic).
+    pub rewrite: crate::rewrite::Rewriter,
 }
 
 fn parse_head_text(text: &str) -> (String, Headers) {
@@ -785,6 +792,7 @@ impl Rules {
             script: ScriptEngine::new(),
             script_path: data_dir.join("rules.js"),
             script_enabled: AtomicBool::new(false),
+            rewrite: crate::rewrite::Rewriter::load(data_dir),
         });
         let _ = r.set_autoresponder(ar, false);
         r
@@ -1345,6 +1353,11 @@ impl Rules {
         r
     }
 
+    /// Bytes as a new body of the current capture.
+    fn store_bytes(&self, bytes: &[u8]) -> Option<Body> {
+        Some(self.core()?.capture().bodies.store_bytes(bytes))
+    }
+
     /// The replacement body for a resumed message with `headers` (edited text is encoded in the
     /// message's charset; if it needs UTF-8 instead, the Content-Type in `headers` says so).
     fn replacement_body(&self, r: &Resume, headers: &mut Headers) -> Option<Body> {
@@ -1412,6 +1425,26 @@ fn httpdate_now() -> String {
     )
 }
 
+/// Name the rewrite rules that applied (or why they changed nothing) in the session comment.
+fn note_rewrite(s: &SessionView, applied: &[crate::rewrite::Applied], changed: bool) {
+    let names: Vec<String> = applied.iter().flat_map(|a| a.names.iter().cloned()).collect();
+    let notes: Vec<String> = applied.iter().flat_map(|a| a.notes.iter().cloned()).collect();
+    if names.is_empty() || (!changed && notes.is_empty()) {
+        return;
+    }
+    let text = crate::rewrite::Applied { names, notes }.comment();
+    s.live.update(move |d| {
+        if changed {
+            d.summary.flags |= flags::TAMPERED;
+        }
+        if d.summary.comment.is_empty() {
+            d.summary.comment = text;
+        } else if !d.summary.comment.contains(&text) {
+            d.summary.comment = format!("{}; {text}", d.summary.comment);
+        }
+    });
+}
+
 fn fix_length(h: &mut Headers, body: &Body) {
     h.remove("transfer-encoding");
     h.set("Content-Length", body.len().to_string());
@@ -1419,7 +1452,7 @@ fn fix_length(h: &mut Headers, body: &Body) {
 
 impl Interceptor for Rules {
     fn request_mode(&self, s: &SessionView, head: &RequestHead) -> Mode {
-        if self.bp_request(s, head) || self.needs_request_body() {
+        if self.bp_request(s, head) || self.needs_request_body() || self.rewrite.request_needs_body(head) {
             Mode::Buffer
         } else {
             Mode::Stream
@@ -1555,6 +1588,33 @@ impl Interceptor for Rules {
                     }
                 }
             }
+            // 1c. Rewrite rules: after mocks and the script, before the breakpoint.
+            let mut rewritten: Option<Body> = None;
+            if this.rewrite.wants_request() {
+                let mut names = Vec::new();
+                if let Some((h, a)) = this.rewrite.request_head(&head) {
+                    head = h;
+                    script_edited = true;
+                    names.push(a);
+                }
+                if let Some(b) = body.clone() {
+                    let (t, h) = (this.clone(), head.clone());
+                    // Reads and parses up to the size limit: off the async workers.
+                    if let Ok((out, a)) = tokio::task::spawn_blocking(move || t.rewrite.body(crate::rewrite::Phase::Request, &h, None, &h.headers, &b)).await {
+                        if let Some((headers, bytes)) = out
+                            && let Some(nb) = this.store_bytes(&bytes)
+                        {
+                            head.headers = headers;
+                            fix_length(&mut head.headers, &nb);
+                            s.live.set_request_body(nb.clone());
+                            rewritten = Some(nb);
+                            script_edited = true;
+                        }
+                        names.push(a);
+                    }
+                }
+                note_rewrite(&s, &names, script_edited);
+            }
             // 2. Breakpoint before request
             if want_bp || this.bp_request(&s, &head) {
                 let r = this.clone().pause(s.clone(), "request", head.url.clone()).await;
@@ -1566,7 +1626,7 @@ impl Interceptor for Rules {
                     RequestHead { method, url, version: head.version, headers }
                 });
                 let mut head_edit = new_head.as_ref().map(|h| h.headers.clone()).unwrap_or_else(|| head.headers.clone());
-                let new_body = this.replacement_body(&r, &mut head_edit);
+                let new_body = this.replacement_body(&r, &mut head_edit).or_else(|| rewritten.clone());
                 if new_body.is_some() {
                     // The body's charset may have changed the Content-Type.
                     let h = new_head.get_or_insert_with(|| head.clone());
@@ -1599,7 +1659,7 @@ impl Interceptor for Rules {
                 return RequestAction::Forward { head: head_out, body: new_body, delay_ms: 0 };
             }
             if script_edited {
-                RequestAction::Forward { head: Some(head), body: None, delay_ms: 0 }
+                RequestAction::Forward { head: Some(head), body: rewritten, delay_ms: 0 }
             } else {
                 RequestAction::forward()
             }
@@ -1607,66 +1667,114 @@ impl Interceptor for Rules {
     }
 
     fn wants_response_head(&self, _s: &SessionView) -> bool {
-        self.script_active() && self.script.has_response_hook()
+        (self.script_active() && self.script.has_response_hook()) || self.rewrite.wants_response()
     }
 
     fn on_response_head(&self, s: SessionView, resp: ResponseHead) -> BoxFuture<quena_proxy::ResponseHeadAction> {
         use quena_proxy::ResponseHeadAction;
         let this = self.core().and_then(|c| c.rules.clone());
         let Some(this) = this else { return Box::pin(async { ResponseHeadAction::Continue }) };
-        if !this.script_active() || !this.script.has_response_hook() {
+        let script = this.script_active() && this.script.has_response_hook();
+        let rewrite = this.rewrite.wants_response();
+        if !script && !rewrite {
             return Box::pin(async { ResponseHeadAction::Continue });
         }
         Box::pin(async move {
-            let info = ResponseInfo {
-                id: s.id,
-                url: s.live.detail().request.url,
-                status: resp.status,
-                reason: resp.reason.clone(),
-                headers: headers_to_pairs(&resp.headers),
-            };
-            match this.script.on_response(&info).await {
-                ResponseDecision::Continue { status, headers, meta } => {
-                    this.apply_meta(&s, &meta);
-                    if status.is_none() && headers.is_none() {
-                        return ResponseHeadAction::Continue;
-                    }
-                    let mut h = resp;
-                    if let Some(st) = status {
-                        h.status = st;
-                        h.reason = crate::mock::reason(st).to_string();
-                    }
-                    if let Some(hs) = headers {
-                        // The response body streams unchanged, so keep the framing
-                        // headers consistent (M5).
-                        let orig_cl = h.headers.get("content-length").map(|s| s.to_string());
-                        let orig_te = h.headers.get("transfer-encoding").map(|s| s.to_string());
-                        h.headers = pairs_to_headers(hs);
-                        match (orig_cl, orig_te) {
-                            (Some(cl), _) => h.headers.set("Content-Length", cl),
-                            (None, Some(te)) => h.headers.set("Transfer-Encoding", te),
-                            (None, None) => h.headers.remove("content-length"),
+            let mut changed: Option<ResponseHead> = None;
+            if script {
+                let info = ResponseInfo {
+                    id: s.id,
+                    url: s.live.detail().request.url,
+                    status: resp.status,
+                    reason: resp.reason.clone(),
+                    headers: headers_to_pairs(&resp.headers),
+                };
+                match this.script.on_response(&info).await {
+                    ResponseDecision::Continue { status, headers, meta } => {
+                        this.apply_meta(&s, &meta);
+                        if status.is_some() || headers.is_some() {
+                            let mut h = resp.clone();
+                            if let Some(st) = status {
+                                h.status = st;
+                                h.reason = crate::mock::reason(st).to_string();
+                            }
+                            if let Some(hs) = headers {
+                                // The response body streams unchanged, so keep the framing
+                                // headers consistent (M5).
+                                let orig_cl = h.headers.get("content-length").map(|s| s.to_string());
+                                let orig_te = h.headers.get("transfer-encoding").map(|s| s.to_string());
+                                h.headers = pairs_to_headers(hs);
+                                match (orig_cl, orig_te) {
+                                    (Some(cl), _) => h.headers.set("Content-Length", cl),
+                                    (None, Some(te)) => h.headers.set("Transfer-Encoding", te),
+                                    (None, None) => h.headers.remove("content-length"),
+                                }
+                            }
+                            changed = Some(h);
                         }
                     }
-                    ResponseHeadAction::Replace(h)
+                    ResponseDecision::Abort { meta } => {
+                        this.apply_meta(&s, &meta);
+                        return ResponseHeadAction::Abort;
+                    }
                 }
-                ResponseDecision::Abort { meta } => {
-                    this.apply_meta(&s, &meta);
-                    ResponseHeadAction::Abort
+            }
+            if rewrite {
+                // Rewrite rules never touch the framing headers, so the body streams as is.
+                let req = s.live.detail().request;
+                if let Some((h, a)) = this.rewrite.response_head(&req, changed.as_ref().unwrap_or(&resp)) {
+                    changed = Some(h);
+                    note_rewrite(&s, &[a], true);
                 }
+            }
+            match changed {
+                Some(h) => ResponseHeadAction::Replace(h),
+                None => ResponseHeadAction::Continue,
             }
         })
     }
 
     fn response_mode(&self, s: &SessionView, req: &RequestHead, resp: &ResponseHead) -> Mode {
-        if self.bp_response(s, req, resp) { Mode::Buffer } else { Mode::Stream }
+        if self.bp_response(s, req, resp) || self.rewrite.response_needs_body(req, resp) { Mode::Buffer } else { Mode::Stream }
     }
 
-    fn on_response(&self, s: SessionView, resp: ResponseHead, _body: Body) -> BoxFuture<ResponseAction> {
+    fn on_response(&self, s: SessionView, resp: ResponseHead, body: Body) -> BoxFuture<ResponseAction> {
         let this = self.core().and_then(|c| c.rules.clone());
         let Some(this) = this else { return Box::pin(async { ResponseAction::Continue }) };
         Box::pin(async move {
+            let req = s.live.detail().request;
+            // Buffered for a breakpoint, a rewrite, or both.
+            let bp = this.bp_response(&s, &req, &resp);
             this.break_response.lock().remove(&s.id);
+            let mut resp = resp;
+            let mut rewritten: Option<Body> = None;
+            if this.rewrite.response_needs_body(&req, &resp) {
+                let (t, h) = (this.clone(), resp.clone());
+                // Reads and parses up to the size limit: off the async workers.
+                if let Ok((out, a)) = tokio::task::spawn_blocking(move || t.rewrite.body(crate::rewrite::Phase::Response, &req, Some(h.status), &h.headers, &body)).await {
+                    if let Some((headers, bytes)) = out
+                        && let Some(nb) = this.store_bytes(&bytes)
+                    {
+                        resp.headers = headers;
+                        fix_length(&mut resp.headers, &nb);
+                        // A breakpoint shows the rewritten message.
+                        s.live.set_response_body(nb.clone());
+                        let h = resp.clone();
+                        s.live.update(move |d| {
+                            d.response = Some(h);
+                            d.summary.flags |= flags::TAMPERED;
+                        });
+                        rewritten = Some(nb);
+                    }
+                    note_rewrite(&s, &[a], rewritten.is_some());
+                }
+            }
+            if !bp {
+                return match rewritten {
+                    Some(b) => ResponseAction::Replace { head: resp, body: Some(b) },
+                    None => ResponseAction::Continue,
+                };
+            }
             let url = s.live.detail().request.url;
             let r = this.clone().pause(s.clone(), "response", url).await;
             if r.action == "abort" {
@@ -1680,7 +1788,7 @@ impl Interceptor for Rules {
                 }
                 None => resp.clone(),
             };
-            let body = this.replacement_body(&r, &mut head.headers);
+            let body = this.replacement_body(&r, &mut head.headers).or(rewritten);
             match (&r.head_text, body) {
                 (None, None) => ResponseAction::Continue,
                 (_, body) => {

@@ -396,6 +396,25 @@ export interface Settings {
   ui: unknown;
 }
 
+/** Rewrite rules (crates/quena-app-core/src/rewrite.rs); `ops` are edited by agents (MCP) for now. */
+export interface RwRule {
+  id: number;
+  enabled: boolean;
+  match: string;
+  phase: "request" | "response";
+  status: string;
+  contentType: string;
+  ops: ({ op: string } & Record<string, unknown>)[];
+  comment: string;
+  hits: number;
+}
+
+export interface RwState {
+  enabled: boolean;
+  maxBodyKb: number;
+  rules: RwRule[];
+}
+
 export interface McpSettings {
   enabled: boolean;
   port: number;
@@ -796,6 +815,8 @@ export const api = {
   takeOpenFiles: () => invoke<string[]>("take_open_files"),
   writeTextFile: (path: string, text: string) => invoke<void>("write_text_file", { path, text }),
   arGet: () => invoke<ArState>("ar_get"),
+  rwGet: () => invoke<RwState>("rw_get"),
+  rwSet: (state: RwState) => invoke<RwState>("rw_set", { state }),
   arSet: (state: ArState) => invoke<void>("ar_set", { state }),
   arAddSessions: (ids: SessionId[], exact: boolean) => invoke<number>("ar_add_sessions", { ids, exact }),
   arImportFarx: (path: string) => invoke<ArState>("ar_import_farx", { path }),

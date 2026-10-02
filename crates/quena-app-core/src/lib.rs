@@ -18,6 +18,7 @@ pub mod mockgen;
 pub mod multipart;
 pub mod pac;
 pub mod plugins;
+pub mod rewrite;
 pub mod rules;
 pub mod sanitize;
 pub mod settings;
