@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { api, type Recoverable, type Settings } from "../api";
+import { api, type McpStatus, type Recoverable, type Settings } from "../api";
 import { actions } from "../actions";
 import { fmtBytes, fmtDateTime, modKey, osNames } from "../lib/format";
 import { get, say, set, useStore, type Dialog } from "../store";
@@ -402,9 +402,71 @@ function AuthOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) =>
   );
 }
 
+/** MCP server: lets AI agents (Claude Code …) read and, if allowed, control Quena. */
+function McpOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => void }) {
+  const [status, setStatus] = useState<McpStatus | null>(null);
+  useEffect(() => {
+    api.mcpStatus().then(setStatus, () => setStatus(null));
+  }, []);
+  const m = s.mcp ?? { enabled: false, port: 8867, access: "readOnly", token: "" };
+  const newToken = async () => {
+    const token = await api.mcpNewToken();
+    up((x) => (x.mcp = { ...m, ...x.mcp, token }));
+  };
+  const command = `claude mcp add --transport http quena http://127.0.0.1:${m.port}/mcp --header "Authorization: Bearer ${m.token}"`;
+  return (
+    <>
+      <p className="muted small">{t("AI agents connect over the Model Context Protocol (MCP) to read sessions and, with full control, set rules and send requests. Only programs on this computer that know the token can connect.")}</p>
+      <label className="f-check">
+        <input
+          type="checkbox"
+          checked={m.enabled}
+          onChange={async (e) => {
+            const enabled = e.target.checked;
+            const token = enabled && !m.token ? await api.mcpNewToken() : m.token;
+            up((x) => (x.mcp = { ...m, enabled, token }));
+          }}
+        />{" "}
+        {t("Enable MCP server")}
+      </label>
+      <div className="f-row">
+        <span>{t("Port")}</span>
+        <input type="number" min={1} max={65535} value={m.port} onChange={(e) => up((x) => (x.mcp = { ...m, port: Number(e.target.value) }))} />
+      </div>
+      <div className="f-row">
+        <span>{t("Agents may")}</span>
+        <select value={m.access} onChange={(e) => up((x) => (x.mcp = { ...m, access: e.target.value as "readOnly" | "full" }))}>
+          <option value="readOnly">{t("…only read sessions, rules and statistics")}</option>
+          <option value="full">{t("…also change rules and breakpoints, capture and send requests")}</option>
+        </select>
+      </div>
+      <div className="f-row">
+        <span>{t("Token")}</span>
+        <input readOnly className="mono" value={m.token} />
+        <button onClick={() => navigator.clipboard.writeText(m.token)} disabled={!m.token}>
+          {t("Copy")}
+        </button>
+        <button onClick={newToken}>{t("New token")}</button>
+      </div>
+      {m.token && (
+        <div className="f-row">
+          <span>{t("Claude Code")}</span>
+          <input readOnly className="mono" value={command} />
+          <button onClick={() => navigator.clipboard.writeText(command)}>{t("Copy")}</button>
+        </div>
+      )}
+      {status && (
+        <p className="muted small">
+          {status.running ? t("Running at {url}", { url: status.url ?? "" }) : status.error ? t("Not running: {error}", { error: status.error }) : t("Not running")}
+        </p>
+      )}
+    </>
+  );
+}
+
 function OptionsDialog() {
   const [s, setS] = useState<Settings | null>(get().settings);
-  const [tab, setTab] = useState<"general" | "connections" | "https" | "auth" | "bodies">("general");
+  const [tab, setTab] = useState<"general" | "connections" | "https" | "auth" | "bodies" | "mcp">("general");
   if (!s) return null;
   const up = (f: (x: Settings) => void) => {
     const n = structuredClone(s);
@@ -435,9 +497,9 @@ function OptionsDialog() {
       }
     >
       <div className="tabs-row">
-        {(["general", "connections", "https", "auth", "bodies"] as const).map((k) => (
+        {(["general", "connections", "https", "auth", "bodies", "mcp"] as const).map((k) => (
           <div key={k} className={`insp-tab ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>
-            {{ general: t("General"), connections: t("Connections"), https: "HTTPS", auth: t("Authentication"), bodies: t("Bodies & Storage") }[k]}
+            {{ general: t("General"), connections: t("Connections"), https: "HTTPS", auth: t("Authentication"), bodies: t("Bodies & Storage"), mcp: t("AI agents (MCP)") }[k]}
           </div>
         ))}
       </div>
@@ -548,6 +610,7 @@ function OptionsDialog() {
           </>
         )}
         {tab === "auth" && <AuthOptions s={s} up={up} />}
+        {tab === "mcp" && <McpOptions s={s} up={up} />}
         {tab === "bodies" && (
           <>
             <div className="f-row">

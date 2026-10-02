@@ -7,6 +7,16 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Added
+- **MCP server for AI agents** (*Options → AI agents (MCP)*): Claude Code and other MCP
+  clients connect over Streamable HTTP on `127.0.0.1` with a bearer token. They list,
+  search and read sessions and bodies (decoded, paged, size-limited), and see statistics,
+  mock rules and breakpoints. With *full control* they also start and stop capturing,
+  remove sessions, send and replay requests, edit mock rules, set breakpoints, release
+  paused sessions and export archives. The server is off by default, runs apart from the
+  proxy, rejects other `Host`/`Origin` names (DNS rebinding) and offers changing tools only
+  when they are allowed.
+
 ## [0.1.3] — 2026-10-01
 
 ### Added

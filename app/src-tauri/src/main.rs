@@ -47,13 +47,16 @@ fn main() {
     watch_session_end(core.clone());
     // Archives given on the command line (Windows/Linux file associations use argv).
     let initial_files: Vec<String> = std::env::args_os().skip(1).filter_map(|a| archive_path(std::path::Path::new(&a))).collect();
+    let mcp = quena_mcp::McpService::new();
     let exit_core = core.clone();
+    let exit_mcp = mcp.clone();
     let proto_core = core.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(core.clone())
         .manage(commands::OpenFiles(parking_lot::Mutex::new(initial_files)))
         .manage(engine.clone())
+        .manage(mcp.clone())
         .register_asynchronous_uri_scheme_protocol("quena", move |_ctx, request, responder| {
             let core = proto_core.clone();
             std::thread::spawn(move || responder.respond(protocol::handle(&core, request)));
@@ -62,6 +65,8 @@ fn main() {
             let handle = app.handle().clone();
             core.set_sink(Arc::new(TauriSink(handle.clone())));
             core.start_ticker();
+            // MCP server for AI agents (off unless enabled in the settings).
+            mcp.apply(&core);
             // Load the rules script if scripting was left enabled.
             if core.settings().scripting_enabled {
                 if let Some(r) = core.rules.clone() {
@@ -139,7 +144,10 @@ fn main() {
         .expect("error while building Quena")
         .run(move |app, event| match event {
             // Cmd+Q, dock "Quit", logout: always shut down cleanly (restores the system proxy).
-            tauri::RunEvent::Exit => exit_core.shutdown(),
+            tauri::RunEvent::Exit => {
+                exit_mcp.stop();
+                exit_core.shutdown();
+            }
             // macOS delivers "Open With" / double-clicked archives as an event.
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Opened { urls } => {

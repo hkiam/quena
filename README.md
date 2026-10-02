@@ -228,6 +228,8 @@ in the [manual](https://hkiam.github.io/quena/ci/).
   auth loops, caching, compression, OData queries, latency/bandwidth sensitivity
 - Filters, Find, Statistics, Timeline, Compare, Text Tools
 - Comments, color marks, custom column
+- **MCP server**: AI agents (Claude Code …) read the capture and, if allowed,
+  set rules and breakpoints and send requests
 
 ### Enterprise-ready
 - **Automatic authentication**: NTLM, Negotiate/Kerberos, Basic —

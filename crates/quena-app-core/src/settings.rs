@@ -130,6 +130,9 @@ pub struct Settings {
     /// Last options of the sanitized export.
     #[serde(default)]
     pub sanitize: crate::sanitize::SanitizeExportSettings,
+    /// Remote control by AI agents (MCP server on 127.0.0.1).
+    #[serde(default)]
+    pub mcp: McpSettings,
     /// Opaque UI preferences (column layout, splitters …).
     pub ui: serde_json::Value,
 }
@@ -153,8 +156,37 @@ impl Default for Settings {
             throttle_kbps: 0,
             throttle_latency_ms: 0,
             sanitize: Default::default(),
+            mcp: McpSettings::default(),
             ui: serde_json::Value::Null,
         }
+    }
+}
+
+/// What an MCP client may do.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum McpAccess {
+    /// Read sessions, bodies, rules and statistics only.
+    #[default]
+    ReadOnly,
+    /// Also change rules and breakpoints, capture, send and replay requests, export.
+    Full,
+}
+
+/// The MCP server (Streamable HTTP on `127.0.0.1:port/mcp`, bearer token).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct McpSettings {
+    pub enabled: bool,
+    pub port: u16,
+    pub access: McpAccess,
+    /// Bearer token clients must send; generated when the server is first enabled.
+    pub token: String,
+}
+
+impl Default for McpSettings {
+    fn default() -> Self {
+        McpSettings { enabled: false, port: 8867, access: McpAccess::ReadOnly, token: String::new() }
     }
 }
 

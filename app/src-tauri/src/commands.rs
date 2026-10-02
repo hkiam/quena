@@ -249,8 +249,9 @@ async fn settings_get(core: State<'_, Core>) -> R<Settings> {
 }
 
 #[tauri::command]
-async fn settings_set(core: State<'_, Core>, settings: Settings) -> R<()> {
+async fn settings_set(core: State<'_, Core>, mcp: State<'_, Mcp>, settings: Settings) -> R<()> {
     let core = core.inner().clone();
+    let mcp = mcp.inner().clone();
     let old_scripting = core.settings().scripting_enabled;
     let new_scripting = settings.scripting_enabled;
     let cc = core.clone();
@@ -260,7 +261,24 @@ async fn settings_set(core: State<'_, Core>, settings: Settings) -> R<()> {
             let _ = r.set_script_enabled(new_scripting).await;
         }
     }
-    Ok(())
+    blocking(move || {
+        mcp.apply(&core);
+        Ok(())
+    })
+    .await
+}
+
+type Mcp = std::sync::Arc<quena_mcp::McpService>;
+
+#[tauri::command]
+async fn mcp_status(mcp: State<'_, Mcp>) -> R<quena_mcp::McpStatus> {
+    Ok(mcp.status())
+}
+
+/// A new token for the settings dialog (saved with the settings).
+#[tauri::command]
+async fn mcp_new_token() -> R<String> {
+    Ok(quena_mcp::generate_token())
 }
 
 #[tauri::command]
@@ -818,6 +836,8 @@ fn take_open_files(files: State<'_, OpenFiles>) -> Vec<String> {
 pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         status,
+        mcp_status,
+        mcp_new_token,
         app_info,
         rows,
         view_ids,

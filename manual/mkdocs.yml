@@ -85,6 +85,7 @@ nav:
       - Automatic authentication: authentication.md
       - Client certificates and throttling: network.md
       - Plugins: plugins.md
+      - AI agents (MCP): mcp.md
   - Reference:
       - Settings: settings.md
       - Keyboard shortcuts: shortcuts.md

@@ -391,7 +391,22 @@ export interface Settings {
   throttleLatencyMs: number;
   /** Last options of the sanitized export. */
   sanitize?: SanitizeExportSettings;
+  /** MCP server for AI agents (crates/quena-mcp). */
+  mcp: McpSettings;
   ui: unknown;
+}
+
+export interface McpSettings {
+  enabled: boolean;
+  port: number;
+  access: "readOnly" | "full";
+  token: string;
+}
+
+export interface McpStatus {
+  running: boolean;
+  url: string | null;
+  error: string | null;
 }
 
 /** What the sanitized export replaces (crates/quena-app-core/src/sanitize.rs). */
@@ -736,6 +751,8 @@ export const api = {
   cancelJob: (id: number) => invoke<boolean>("cancel_job", { id }),
   settingsGet: () => invoke<Settings>("settings_get"),
   settingsSet: (settings: Settings) => invoke<void>("settings_set", { settings }),
+  mcpStatus: () => invoke<McpStatus>("mcp_status"),
+  mcpNewToken: () => invoke<string>("mcp_new_token"),
   saveUiPrefs: (prefs: unknown) => invoke<void>("save_ui_prefs", { prefs }),
   logSince: (seq: number) => invoke<LogEntry[]>("log_since", { seq }),
   logClear: () => invoke<void>("log_clear"),

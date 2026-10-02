@@ -1017,6 +1017,17 @@ impl Rules {
         Ok(n)
     }
 
+    /// Add one rule (first or last) and switch the mock rules on. Returns the new rule's id.
+    pub fn add_rule(&self, rule: Rule, first: bool) -> Result<u64> {
+        let _g = self.edit.lock();
+        let mut s = self.autoresponder();
+        let at = if first { 0 } else { s.rules.len() };
+        s.rules.insert(at, Rule { id: 0, ..rule });
+        s.enabled = true;
+        self.set_locked(s, true)?;
+        Ok(self.ar.read().rules[at].id)
+    }
+
     // ---- Breakpoint API
     pub fn breakpoints(&self) -> BreakpointState {
         self.bp.read().clone()

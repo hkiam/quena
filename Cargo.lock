@@ -3504,6 +3504,7 @@ dependencies = [
  "quena-app-core",
  "quena-body",
  "quena-index",
+ "quena-mcp",
  "quena-model",
  "quena-platform",
  "quena-plugin-host",
@@ -3640,6 +3641,29 @@ dependencies = [
  "crossbeam-channel",
  "parking_lot",
  "serde",
+ "tracing",
+]
+
+[[package]]
+name = "quena-mcp"
+version = "0.1.3"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "parking_lot",
+ "quena-app-core",
+ "quena-body",
+ "quena-model",
+ "quena-query",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "tracing",
 ]
 

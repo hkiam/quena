@@ -19,6 +19,7 @@ members = [
     "crates/quena-script",
     "crates/quena-report",
     "crates/quena-cli",
+    "crates/quena-mcp",
     "app/src-tauri",
 ]
 
@@ -46,6 +47,7 @@ quena-plugin-host = { path = "crates/quena-plugin-host" }
 quena-auth = { path = "crates/quena-auth" }
 quena-script = { path = "crates/quena-script" }
 quena-report = { path = "crates/quena-report" }
+quena-mcp = { path = "crates/quena-mcp" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

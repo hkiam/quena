@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 quena-app-core.workspace = true
+quena-mcp.workspace = true
 quena-model.workspace = true
 quena-body.workspace = true
 quena-script.workspace = true
