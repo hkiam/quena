@@ -24,6 +24,13 @@ contain breaking changes (settings, file formats, plugin API).
   and status changes never buffer; body changes buffer only matching text bodies up to
   4 MB, decode gzip/br/zstd, keep charset and JSON key order, and leave event streams,
   larger and incomplete bodies alone.
+- **Request collections (`.http`)** in the format of the JetBrains HTTP Client and the VS
+  Code REST Client: file variables, environments from `http-client.env.json` and
+  `http-client.private.env.json` (with `$shared`), dynamic values (`$uuid`, `$timestamp`,
+  `$randomInt`, `$processEnv` …) and file bodies. Agents list and run them over MCP and
+  write captured sessions as a collection; `quena-cli http run` runs them headless (exit
+  code 1 on failures, `--save` for a HAR/SAZ of the run), `quena-cli http from-har` writes
+  one from captures. The requests appear in the capture, and rules apply.
 
 ### Changed
 - Buffering a message for a body rule no longer shows it as paused at a breakpoint.

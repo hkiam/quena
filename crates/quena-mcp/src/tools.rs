@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const DEFAULT_LIMIT: usize = 50;
 const MAX_LIMIT: usize = 200;
@@ -157,6 +157,14 @@ static TOOLS: &[Tool] = &[
             )
         },
         run: preview_rewrite,
+    },
+    Tool {
+        name: "list_http_requests",
+        description: "The requests of a .http file (JetBrains HTTP Client / VS Code REST Client format) with variables resolved for an environment of http-client.env.json (and http-client.private.env.json) next to it; also lists the environments and parse warnings. `path` must be absolute.",
+        write: false,
+        destructive: false,
+        schema: || req(json!({ "path": { "type": "string" }, "env": { "type": "string", "description": "Environment name" } }), &["path"]),
+        run: list_http_requests,
     },
     Tool {
         name: "get_breakpoints",
@@ -334,6 +342,42 @@ static TOOLS: &[Tool] = &[
         destructive: false,
         schema: || obj(json!({ "enabled": { "type": "boolean" }, "max_body_kb": { "type": "integer" } })),
         run: set_rewrite_options,
+    },
+    Tool {
+        name: "run_http_file",
+        description: "Send the requests of a .http file through Quena, one after the other (all, or those in `names`: `# @name` / `### title`, or `line:N`), with an environment's variables. Returns per request the session id, status, duration or error; read details with get_session.",
+        write: true,
+        destructive: false,
+        schema: || {
+            req(
+                json!({
+                    "path": { "type": "string" },
+                    "env": { "type": "string" },
+                    "names": { "type": "array", "items": { "type": "string" } },
+                    "wait_ms": { "type": "integer", "description": "Wait per request (default 30000)" }
+                }),
+                &["path"],
+            )
+        },
+        run: run_http_file,
+    },
+    Tool {
+        name: "sessions_to_http_file",
+        description: "Write captured sessions (ids, or those matching `filter`) as a .http file. A shared scheme and host becomes {{host}} in environment `captured` of http-client.env.json; bearer tokens and cookies become {{token}} / {{cookie}} in http-client.private.env.json. `path` must be absolute; an existing file is only replaced with `overwrite: true`.",
+        write: true,
+        destructive: false,
+        schema: || {
+            req(
+                json!({
+                    "path": { "type": "string" },
+                    "ids": { "type": "array", "items": { "type": "integer" } },
+                    "filter": { "type": "string" },
+                    "overwrite": { "type": "boolean" }
+                }),
+                &["path"],
+            )
+        },
+        run: sessions_to_http_file,
     },
     Tool {
         name: "set_breakpoints",
@@ -826,6 +870,50 @@ fn preview_rewrite(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     Ok(json!({ "changed": out != text, "notes": notes, "length": out.len(), "more": out.len() > cut, "text": &out[..cut] }))
 }
 
+fn absolute(p: &str) -> Result<std::path::PathBuf> {
+    let p = std::path::PathBuf::from(p);
+    if !p.is_absolute() {
+        bail!("path must be absolute");
+    }
+    Ok(p)
+}
+
+#[derive(Deserialize)]
+struct HttpListArgs {
+    path: String,
+    env: Option<String>,
+}
+
+fn list_http_requests(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: HttpListArgs = args(a)?;
+    Ok(serde_json::to_value(core.http_requests(&absolute(&a.path)?, a.env.as_deref())?)?)
+}
+
+#[derive(Deserialize)]
+struct HttpRunArgs {
+    path: String,
+    env: Option<String>,
+    #[serde(default)]
+    names: Vec<String>,
+    wait_ms: Option<u64>,
+}
+
+fn run_http_file(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: HttpRunArgs = args(a)?;
+    let wait = Duration::from_millis(a.wait_ms.unwrap_or(30_000).min(300_000));
+    Ok(json!({ "results": core.run_http_file(&absolute(&a.path)?, a.env.as_deref(), &a.names, wait)? }))
+}
+
+fn sessions_to_http_file(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: ExportArgs = args(a)?;
+    let path = absolute(&a.path)?;
+    let ids = match a.ids {
+        Some(ids) if !ids.is_empty() => ids,
+        _ => matching_ids(core, a.filter.as_deref(), 0)?,
+    };
+    Ok(serde_json::to_value(core.sessions_to_http(&ids, &path, a.overwrite)?)?)
+}
+
 fn get_breakpoints(core: &Arc<AppCore>, _: Value) -> Result<Value> {
     let r = rules(core)?;
     Ok(json!({ "breakpoints": r.breakpoints(), "paused": r.paused() }))
@@ -885,28 +973,12 @@ fn send_request(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         breakpoint: false,
     })?;
     let wait = Duration::from_millis(a.wait_ms.unwrap_or(30_000).min(300_000));
-    let finished = wait_for(core, id, wait);
+    let finished = core.wait_session(id, wait);
     let mut v = session_json(core, id, true, body_limit(a.max_body_bytes))?;
     if !finished {
         v["pending"] = json!(true);
     }
     Ok(v)
-}
-
-/// Wait until a session is done, aborted or paused at a breakpoint.
-fn wait_for(core: &AppCore, id: SessionId, wait: Duration) -> bool {
-    let until = Instant::now() + wait;
-    loop {
-        match core.capture().index.get(id) {
-            Some(s) if s.state.is_final() || s.state.is_breakpoint() => return true,
-            None => return true,
-            _ => {}
-        }
-        if Instant::now() >= until {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
 }
 
 #[derive(Deserialize)]

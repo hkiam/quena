@@ -40,6 +40,60 @@ the charset the `Content-Type` declares, else in the charset it was shown in, el
 If it contains characters that charset cannot represent (an emoji in a Latin-1 form), it is
 sent as UTF-8 and the `Content-Type` gets `charset=utf-8`, so the declaration stays true.
 
+## Request collections (`.http` files)
+
+Quena runs `.http` files as written for the JetBrains HTTP Client and the VS Code REST
+Client. The requests go through Quena like Composer requests: they appear in the session
+list, and Mock Rules, rewrite rules and breakpoints apply.
+
+```text
+@base = {{host}}/v1
+
+### List users
+GET {{base}}/users?page=1
+Authorization: Bearer {{token}}
+
+### Create a user
+# @name create
+POST {{base}}/users
+Content-Type: application/json
+
+{"id": "{{$uuid}}", "name": "Test"}
+
+### Upload
+PUT {{base}}/files
+Content-Type: application/json
+
+< ./body.json
+```
+
+- Requests are separated by `###`; the text after it, or `# @name …`, names the request.
+- `{{name}}` takes values from `@name = value` lines, then from the chosen environment in
+  `http-client.env.json` next to the file, overridden by `http-client.private.env.json`
+  (keep that one out of version control). An environment `$shared` applies to all.
+- Dynamic values: `{{$uuid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`,
+  `{{$randomInt 1 100}}`, `{{$processEnv NAME}}`.
+- `< path` sends a file as the body.
+- Response handler scripts (`> {% … %}`) and values from earlier responses are not
+  supported; scripts are skipped with a warning, an unknown variable stops that request with
+  its name and line.
+
+AI agents use them over [MCP](mcp.md) (`list_http_requests`, `run_http_file`,
+`sessions_to_http_file`). On the command line:
+
+```sh
+quena-cli http run api.http --env dev            # all requests, one after the other
+quena-cli http run api.http --env dev --name create --save run.har
+quena-cli http from-har capture.har -o api.http  # captured requests as a collection
+```
+
+`http run` prints status and time per request and exits with 1 when a request fails or
+answers with 400 or above. It sends directly (or through the system's upstream proxy),
+without a listener and without touching the system proxy. `from-har` (and
+`sessions_to_http_file`) puts a scheme and host shared by all requests into `{{host}}` of the
+environment `captured`, and bearer tokens and cookies into `{{token}}` / `{{cookie}}` of the
+private environment file.
+
 ## Breakpoints and tampering
 
 A breakpoint pauses a session so you can look at it and change it — before the request

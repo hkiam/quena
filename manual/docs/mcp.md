@@ -50,6 +50,9 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `mock_from_sessions` | ✓ | rules that answer with recorded responses |
 | `add_rewrite_rule`, `update_rewrite_rule`, `remove_rewrite_rule`, `set_rewrite_options` | ✓ | change real requests and responses (JSONPath, regex, headers, status) |
 | `set_breakpoints`, `resume_session`, `resume_all` | ✓ | [breakpoints](change-replay.md) |
+| `list_http_requests` | | the requests of a [`.http` file](change-replay.md#request-collections-http-files), resolved for an environment |
+| `run_http_file` | ✓ | send a `.http` collection (or some of its requests) through Quena |
+| `sessions_to_http_file` | ✓ | write captured sessions as a `.http` file with environment files |
 | `export_archive` | ✓ | save sessions as `.har` or `.saz` (absolute path; existing files only with `overwrite`) |
 
 Lists return at most 200 rows and bodies at most 1 MB per call, so an agent never pulls a

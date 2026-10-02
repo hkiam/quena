@@ -57,6 +57,11 @@ enum Command {
     Sanitize(SanitizeArgs),
     /// Turn captures into mocks: a WireMock folder/ZIP or a Quena mock package.
     Mock(MockArgs),
+    /// `.http` request collections (JetBrains HTTP Client, VS Code REST Client).
+    Http {
+        #[command(subcommand)]
+        command: HttpCommand,
+    },
     /// List the analysis profiles and options of the analyzer.
     Profiles {
         #[arg(long, default_value = "en")]
@@ -126,6 +131,47 @@ struct SanitizeArgs {
     /// seconds; exit code 3.
     #[arg(long, default_value_t = 600)]
     timeout: u64,
+}
+
+#[derive(Subcommand)]
+enum HttpCommand {
+    /// Send the requests of a .http file one after the other and print status and time.
+    /// Exit code 1 when a request fails or answers with a status of 400 or above.
+    Run(HttpRunArgs),
+    /// Write the requests of captures (.har, .saz) as a .http file (with
+    /// http-client.env.json / http-client.private.env.json next to it).
+    FromHar(HttpFromArgs),
+}
+
+#[derive(Args)]
+struct HttpRunArgs {
+    /// The .http file.
+    file: PathBuf,
+    /// Environment from http-client.env.json (and http-client.private.env.json) next to it.
+    #[arg(long)]
+    env: Option<String>,
+    /// Only these requests (`# @name` / `### title`, or `line:N`; repeatable).
+    #[arg(long = "name", value_name = "NAME")]
+    names: Vec<String>,
+    /// Also save the requests with their responses (.har or .saz).
+    #[arg(long, value_name = "PATH")]
+    save: Option<PathBuf>,
+    /// Wait at most this many seconds for each response.
+    #[arg(long, value_name = "SECONDS", default_value_t = 30)]
+    timeout: u64,
+}
+
+#[derive(Args)]
+struct HttpFromArgs {
+    /// Captures (.har, .saz).
+    #[arg(required = true, value_name = "CAPTURE")]
+    files: Vec<PathBuf>,
+    /// The .http file to write.
+    #[arg(short = 'o', long = "output", value_name = "PATH")]
+    output: PathBuf,
+    /// Replace an existing file.
+    #[arg(long)]
+    overwrite: bool,
 }
 
 #[derive(Args)]
@@ -297,6 +343,8 @@ fn main() -> ExitCode {
         Command::Compare(a) => compare(a),
         Command::Sanitize(a) => sanitize(a).map(|_| true),
         Command::Mock(a) => mock(a).map(|_| true),
+        Command::Http { command: HttpCommand::Run(a) } => http_run(a),
+        Command::Http { command: HttpCommand::FromHar(a) } => http_from(a).map(|_| true),
         Command::Profiles { lang, plugins } => profiles(&lang, &plugins).map(|_| true),
     };
     match r {
@@ -682,6 +730,71 @@ fn sanitize(a: SanitizeArgs) -> Result<()> {
     }
     if !a.quiet {
         eprintln!("quena-cli: {} → {}: {}", ids.len(), a.output.display(), log.summary_line());
+    }
+    Ok(())
+}
+
+/// Run a .http file through a headless proxy engine (no listener, the system proxy is not
+/// touched). `Ok(false)`: a request failed.
+fn http_run(a: HttpRunArgs) -> Result<bool> {
+    if !a.file.is_file() {
+        return Err(usage(format!("{}: no such file", a.file.display())));
+    }
+    let engine = Engine::bare()?;
+    let core = engine.core.clone();
+    let proxy = quena_app_core::engine::ProxyEngine::new(&core)?;
+    core.set_proxy_engine(proxy);
+    let results = core
+        .run_http_file(&a.file, a.env.as_deref(), &a.names, Duration::from_secs(a.timeout))
+        .map_err(|e| usage(format!("{e:#}")))?;
+    let mut ok = true;
+    let mut out = std::io::stdout().lock();
+    for r in &results {
+        let name = r.name.as_deref().map(|n| format!("  ({n})")).unwrap_or_default();
+        let time = r.duration_ms.map(|d| format!("{d} ms")).unwrap_or_default();
+        let failed = r.error.is_some() || r.pending || r.status.is_none_or(|s| s >= 400);
+        ok &= !failed;
+        let status = match (r.status, r.pending) {
+            (Some(s), _) => s.to_string(),
+            (None, true) => "…".into(),
+            (None, false) => "ERR".into(),
+        };
+        writeln!(out, "{status:>4} {time:>8}  {} {}{name}", r.method, r.url)?;
+        if let Some(e) = &r.error {
+            writeln!(out, "             {e}")?;
+        } else if r.pending {
+            writeln!(out, "             no response within {} s", a.timeout)?;
+        }
+    }
+    if let Some(path) = &a.save {
+        let ids: Vec<_> = results.iter().filter_map(|r| r.session).collect();
+        let job = core.export_archive(ids, path.clone(), None).map_err(|e| usage(format!("{}: {e}", path.display())))?;
+        match engine.wait(job, &Deadline::after(600), &path.display().to_string()) {
+            Ok(()) => {}
+            Err(JobError::Failed(e)) => bail!(e),
+            Err(JobError::Wait(e)) => return Err(e),
+        }
+    }
+    core.shutdown();
+    Ok(ok)
+}
+
+fn http_from(a: HttpFromArgs) -> Result<()> {
+    check_outputs(&a.files, &[("--output", &a.output)], None)?;
+    let engine = Engine::bare()?;
+    let deadline = Deadline::after(600);
+    for f in &a.files {
+        engine.import(f, &deadline)?;
+    }
+    let mut ids = engine.core.capture().index.find_all(|_| true);
+    ids.sort_unstable();
+    let w = engine
+        .core
+        .sessions_to_http(&ids, &a.output, a.overwrite)
+        .map_err(|e| usage(format!("{e:#}")))?;
+    eprintln!("{} request(s) written to {}", w.requests, w.path);
+    for f in &w.env_files {
+        eprintln!("environment \"captured\" in {f}");
     }
     Ok(())
 }

@@ -234,6 +234,25 @@ impl AppCore {
     }
 }
 
+impl AppCore {
+    /// Wait until a session is done, aborted or paused at a breakpoint (or gone). `false`
+    /// when `timeout` passed first.
+    pub fn wait_session(&self, id: SessionId, timeout: std::time::Duration) -> bool {
+        let until = std::time::Instant::now() + timeout;
+        loop {
+            match self.capture().index.get(id) {
+                Some(s) if s.state.is_final() || s.state.is_breakpoint() => return true,
+                None => return true,
+                _ => {}
+            }
+            if std::time::Instant::now() >= until {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+}
+
 /// Minimal URL splitting (avoid pulling in a URL crate).
 mod http_uri {
     pub struct Uri {

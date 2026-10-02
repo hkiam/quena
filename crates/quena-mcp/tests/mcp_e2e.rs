@@ -175,6 +175,39 @@ fn mcp_over_http() {
     let (_, err) = tool(addr, "remove_rewrite_rule", json!({ "id": rw }));
     assert!(!err);
 
+    // --- .http collections
+    let http = dir.path().join("api.http");
+    std::fs::write(&http, "### first\nGET {{base}}/coll/one\nX-Token: {{token}}\n\n### second\nPOST {{base}}/coll/two\nContent-Type: application/json\n\n{\"n\": 1}\n").unwrap();
+    std::fs::write(dir.path().join("http-client.env.json"), format!(r#"{{"local":{{"base":"http://127.0.0.1:{port}"}}}}"#)).unwrap();
+    std::fs::write(dir.path().join("http-client.private.env.json"), r#"{"local":{"token":"t0"}}"#).unwrap();
+    let (l, err) = tool(addr, "list_http_requests", json!({ "path": http.to_string_lossy(), "env": "local" }));
+    assert!(!err, "{l}");
+    assert_eq!(l["environments"], json!(["local"]));
+    assert_eq!(l["requests"][1]["url"], format!("http://127.0.0.1:{port}/coll/two"));
+    let (r, err) = tool(addr, "run_http_file", json!({ "path": http.to_string_lossy(), "env": "local" }));
+    assert!(!err, "{r}");
+    assert_eq!(r["results"][0]["status"], 200);
+    assert_eq!(r["results"][1]["name"], "second");
+    let first = r["results"][0]["session"].as_u64().unwrap();
+    let (s, _) = tool(addr, "get_session", json!({ "id": first }));
+    assert!(s["request"]["headers"].as_array().unwrap().iter().any(|h| h[0] == "X-Token" && h[1] == "t0"));
+    let (r, _) = tool(addr, "run_http_file", json!({ "path": http.to_string_lossy() }));
+    assert!(r["results"][0]["error"].as_str().unwrap().contains("unknown variable {{base}}"), "{r}");
+    let (r, err) = tool(addr, "run_http_file", json!({ "path": http.to_string_lossy(), "env": "nope" }));
+    assert!(err && r.as_str().unwrap().contains("known: local"), "{r}");
+    // Captured sessions back to a file, and run again from it.
+    let out_dir = dir.path().join("out");
+    std::fs::create_dir(&out_dir).unwrap();
+    let written = out_dir.join("captured.http");
+    let (w, err) = tool(addr, "sessions_to_http_file", json!({ "path": written.to_string_lossy(), "filter": "url ~ /coll/" }));
+    assert!(!err, "{w}");
+    assert_eq!(w["requests"], 2);
+    let text = std::fs::read_to_string(&written).unwrap();
+    assert!(text.contains("POST {{host}}/coll/two") && text.contains("{\"n\": 1}"), "{text}");
+    let (r, _) = tool(addr, "run_http_file", json!({ "path": written.to_string_lossy(), "env": "captured", "names": ["line:2"] }));
+    assert_eq!(r["results"].as_array().unwrap().len(), 1);
+    assert_eq!(r["results"][0]["status"], 200, "{r}");
+
     // --- Search, statistics, export, clear
     let (f, _) = tool(addr, "search_sessions", json!({ "text": "hello", "examine": "bodies" }));
     assert_eq!(f["total"], 1);

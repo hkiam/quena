@@ -219,6 +219,7 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Breakpoints & tamper** before request / after response
 - **Rewrite rules**: change real responses and requests by JSONPath, regex, header, status
 - **Composer** (parsed, raw, history) with **cURL import**
+- **`.http` request collections** with environments (JetBrains / VS Code format), also headless
 - Replay: again, unconditionally, *n* times, sequentially, with edit
 - **JavaScript rules** with hot reload,
   custom menu commands and a custom column
