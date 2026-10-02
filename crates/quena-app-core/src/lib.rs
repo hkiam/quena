@@ -142,6 +142,7 @@ pub struct AppCore {
     pub(crate) plugins_done: std::sync::atomic::AtomicBool,
     filters: RwLock<FilterSettings>,
     quick_filter: RwLock<String>,
+    group: RwLock<quena_index::GroupBy>,
     pub(crate) mock: Mutex<Option<mock::MockHandle>>,
     pub(crate) searches: Mutex<std::collections::HashMap<JobId, Arc<Mutex<SearchResult>>>>,
     /// Charset per body id (decoded prefix examined once).
@@ -178,6 +179,7 @@ impl AppCore {
             capture_switch: Mutex::new(()),
             filters: RwLock::new(FilterSettings::default()),
             quick_filter: RwLock::new(String::new()),
+            group: RwLock::new(Default::default()),
             mock: Mutex::new(None),
             searches: Mutex::new(Default::default()),
             charsets: Mutex::new(Default::default()),
@@ -405,6 +407,26 @@ impl AppCore {
         self.capture().index.set_sort(s);
     }
 
+    /// "Group by" of the session list (kept when the capture is replaced).
+    pub fn set_group(&self, by: quena_index::GroupBy) {
+        *self.group.write() = by;
+        self.capture().index.set_group(by);
+    }
+
+    /// Collapse or expand the group of a session; the new state (`None`: no group).
+    pub fn toggle_group(&self, id: SessionId) -> Option<bool> {
+        self.capture().index.toggle_group(id)
+    }
+
+    pub fn collapse_groups(&self, collapse: bool) {
+        self.capture().index.collapse_all(collapse);
+    }
+
+    /// The sessions of a session's group (for "Select group").
+    pub fn group_ids(&self, id: SessionId) -> Vec<SessionId> {
+        self.capture().index.group_ids(id)
+    }
+
     pub fn filters(&self) -> FilterSettings {
         self.filters.read().clone()
     }
@@ -593,6 +615,7 @@ impl AppCore {
         self.diag_reset();
         let _ = self.apply_filter();
         let cap = self.capture();
+        cap.index.set_group(*self.group.read());
         cap.index.tick();
         self.emit("list", ListEvent { version: cap.index.version() + 1, total: cap.index.view_len(), count: cap.index.len() });
         if let Some(e) = self.engine() {

@@ -1,7 +1,7 @@
 // Page cache for viewport rows. The core owns the list; we only keep the
 // pages around the viewport (R1). Pages are refetched when the list version
 // moves on; stale data stays visible until fresh data arrives (no flicker).
-import { api, type SessionSummary } from "../api";
+import { api, type RowGroup, type SessionSummary } from "../api";
 
 export const PAGE = 64;
 const MAX_PAGES = 64;
@@ -9,6 +9,7 @@ const MAX_PAGES = 64;
 interface Page {
   version: number;
   rows: SessionSummary[];
+  groups?: (RowGroup | null)[];
   used: number;
 }
 
@@ -37,6 +38,12 @@ export class RowCache {
     return p.rows[index % PAGE];
   }
 
+  /** The row's group while the list is grouped. */
+  group(index: number): RowGroup | null {
+    const p = this.pages.get(Math.floor(index / PAGE));
+    return p?.groups?.[index % PAGE] ?? null;
+  }
+
   isFresh(index: number): boolean {
     const p = this.pages.get(Math.floor(index / PAGE));
     return !!p && p.version >= this.version;
@@ -63,7 +70,7 @@ export class RowCache {
       const w = await api.rows(p * PAGE, PAGE);
       const cur = this.pages.get(p);
       if (!cur || cur.version <= w.version) {
-        this.pages.set(p, { version: w.version, rows: w.rows, used: ++this.tick });
+        this.pages.set(p, { version: w.version, rows: w.rows, groups: w.groups, used: ++this.tick });
       }
       if (w.version > this.version) this.version = w.version;
       this.total = w.total;

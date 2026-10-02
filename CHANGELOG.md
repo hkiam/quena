@@ -28,6 +28,14 @@ contain breaking changes (settings, file formats, plugin API).
   forward them unchanged as they stream, decode gzip/br/zstd, keep
   charset and JSON key order, and leave event streams, JSON lines, partial content and
   binary bodies alone.
+- **Grouping in the session list** (*Group by* in the heading's context menu and the command
+  palette): by client connection (keep-alive, HTTP/2), host, process, trace or correlation
+  id (`traceparent`, B3, Jaeger, X-Ray, `X-Correlation-ID` …), session cookie (shown as name
+  and hash, never the value) or the Custom column. Groups keep the order of their first
+  session and are sorted inside by the chosen column; they can be collapsed and expanded
+  (click ▾/▸, `←`/`→`, all at once) and selected as a whole; live traffic joins its group.
+  New filter fields `conn`, `trace` and `session`. Connection ids no longer start at 1 on
+  every run, so a recovered capture and new traffic never share one.
 - **Request collections (`.http`)** in the format of the JetBrains HTTP Client and the VS
   Code REST Client: file variables, environments from `http-client.env.json` and
   `http-client.private.env.json` (with `$shared`), dynamic values (`$uuid`, `$timestamp`,

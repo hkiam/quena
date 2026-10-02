@@ -1,8 +1,32 @@
 import { actions } from "./actions";
+import type { GroupBy } from "./api";
 import type { MenuItem } from "./components/ContextMenu";
 import { get } from "./store";
 import { modKey } from "./lib/format";
 import { t } from "./i18n";
+
+/** "Group by" choices, and collapsing while grouped. */
+export function groupMenu(): MenuItem[] {
+  const cur = get().layout.groupBy ?? "none";
+  const choices: [GroupBy, string][] = [
+    ["none", t("No grouping")],
+    ["connection", t("Connection (keep-alive)")],
+    ["host", t("Host")],
+    ["process", t("Process")],
+    ["trace", t("Trace / correlation id")],
+    ["session", t("Session cookie")],
+    ["custom", t("Custom column")],
+  ];
+  const items: MenuItem[] = choices.map(([g, label]) => ({ label, checked: cur === g, action: () => void actions.setGroup(g) }));
+  if (cur !== "none") {
+    items.push(
+      { separator: true },
+      { label: t("Collapse all groups"), action: () => void actions.collapseGroups(true) },
+      { label: t("Expand all groups"), action: () => void actions.collapseGroups(false) },
+    );
+  }
+  return items;
+}
 
 export function sessionMenu(): MenuItem[] {
   const n = get().selection.size;
@@ -59,6 +83,19 @@ export function sessionMenu(): MenuItem[] {
         { label: t("All Sessions"), shortcut: "Ctrl+X", action: () => actions.removeAll() },
       ],
     },
+    ...(get().layout.groupBy && get().layout.groupBy !== "none"
+      ? [
+          {
+            label: t("Group"),
+            submenu: [
+              { label: t("Select group"), disabled: !one, action: () => void actions.selectGroup() },
+              { label: t("Collapse / expand group"), disabled: !one, action: () => get().focusIndex != null && void actions.toggleGroupAt(get().focusIndex!) },
+              { separator: true },
+              ...groupMenu(),
+            ],
+          } as MenuItem,
+        ]
+      : []),
     {
       label: t("Filter Now"),
       submenu: [

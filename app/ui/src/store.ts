@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { NetworkProfile } from "./lib/diagReport";
-import type { FilterSettings, JobInfo, LogEntry, SanitizedExport, SessionId, Settings, Sort, Status } from "./api";
+import type { FilterSettings, GroupBy, JobInfo, LogEntry, SanitizedExport, SessionId, Settings, Sort, Status } from "./api";
 import { t } from "./i18n";
 
 export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "structure" | "diagnostics";
@@ -19,7 +19,9 @@ export type ColumnKey =
   | "custom"
   | "method"
   | "duration"
-  | "started";
+  | "started"
+  /** The Group column, shown first while the list is grouped (not stored in `columns`). */
+  | "group";
 
 export interface ColumnConf {
   key: ColumnKey;
@@ -45,6 +47,7 @@ export const COLUMN_TITLES: Record<ColumnKey, string> = {
   method: t("Method"),
   duration: t("Duration"),
   started: t("Started"),
+  group: t("Group"),
 };
 
 const col = (key: ColumnKey, width: number, visible: boolean, align?: "left" | "right"): ColumnConf => ({
@@ -108,6 +111,9 @@ export interface Layout {
   rememberViews?: boolean;
   /** `request:json` → `syntaxview`, `response:soap` → `xml`, … */
   viewByType?: Record<string, string>;
+  /** "Group by" of the session list, and the width of its Group column. */
+  groupBy?: GroupBy;
+  groupWidth?: number;
   /** Arrangement preset the layout started from. */
   preset: LayoutPreset;
   /** The user picked a preset (first-run choice done). */
@@ -162,7 +168,7 @@ export function restoreLayout(saved: Partial<Layout> | undefined): Layout {
   // Titles from the key; columns added in newer versions are appended (hidden if unknown to the preset).
   const known = new Set(layout.columns.map((c) => c.key));
   layout.columns = [...layout.columns, ...base.columns.filter((c) => !known.has(c.key))]
-    .filter((c) => c.key in COLUMN_TITLES)
+    .filter((c) => c.key in COLUMN_TITLES && c.key !== "group")
     .map((c) => ({ ...c, title: COLUMN_TITLES[c.key] }));
   return layout;
 }

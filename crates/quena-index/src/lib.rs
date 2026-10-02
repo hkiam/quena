@@ -41,6 +41,58 @@ pub struct Sort {
     pub descending: bool,
 }
 
+/// "Group by" of the list: rows with the same key stay together (groups in the order of
+/// their first session), sorted inside their group by the chosen column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum GroupBy {
+    #[default]
+    None,
+    /// The client connection (keep-alive, HTTP/2).
+    Connection,
+    Host,
+    Process,
+    /// Trace or correlation id.
+    Trace,
+    /// Session cookie.
+    Session,
+    /// The Custom column (set by rules scripts).
+    Custom,
+}
+
+/// Group of a row in a [`RowWindow`].
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RowGroup {
+    /// The first row of its group in the view.
+    pub start: bool,
+    /// Stable per group (0–7), for its colour.
+    pub hue: u8,
+    /// Sessions in the group (the filter applied, collapsed ones included).
+    pub size: u32,
+    pub collapsed: bool,
+    /// The group's first session (its place in the list; names a connection).
+    pub first: SessionId,
+}
+
+fn hash_str(s: &str, fold_case: bool) -> u64 {
+    // FNV-1a; equal keys only need equal hashes (a collision merges two groups).
+    s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ if fold_case { b.to_ascii_lowercase() } else { b } as u64).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
+    let text = |s: &str, fold: bool| (!s.is_empty()).then(|| hash_str(s, fold));
+    match by {
+        GroupBy::None => None,
+        GroupBy::Connection => (r.conn != 0).then_some(r.conn),
+        GroupBy::Host => text(&r.host, true),
+        GroupBy::Process => text(&r.process, false),
+        GroupBy::Trace => text(&r.trace, false),
+        GroupBy::Session => text(&r.session, false),
+        GroupBy::Custom => text(&r.custom, false),
+    }
+}
+
 /// Case-insensitive order without allocating (hosts are ASCII / punycode). The sort
 /// comparator runs O(n log n) times — two `to_lowercase()` Strings per call made a
 /// 500k-row Host sort several seconds slow on Windows.
@@ -84,23 +136,120 @@ struct Inner {
     rebuild: bool,
     version: u64,
     last_full_sort: Option<Instant>,
+    // ---- grouping (empty unless `group` is set)
+    group: GroupBy,
+    /// Group key per row position (`rows` order); positions beyond are computed on demand.
+    keys: Vec<Option<u64>>,
+    /// Smallest id of the filter-matching rows of each group: the group's place in the list.
+    first: HashMap<u64, SessionId>,
+    /// Filter-matching rows per group.
+    counts: HashMap<u64, u32>,
+    /// Filter-matching positions (in the view, or hidden in a collapsed group).
+    members: HashSet<u32>,
+    collapsed: HashSet<u64>,
 }
 
 impl Inner {
     fn is_default_sort(&self) -> bool {
-        self.sort.column == Column::Id
+        self.sort.column == Column::Id && self.group == GroupBy::None
+    }
+
+    fn grouped(&self) -> bool {
+        self.group != GroupBy::None
+    }
+
+    fn key(&self, p: u32) -> Option<u64> {
+        match self.keys.get(p as usize) {
+            Some(k) => *k,
+            None => group_key(&self.rows[p as usize], self.group),
+        }
+    }
+
+    /// Place of a row's group: the first id of its group, or its own id when it has none.
+    fn rank(&self, p: u32) -> SessionId {
+        self.key(p).and_then(|k| self.first.get(&k).copied()).unwrap_or(self.rows[p as usize].id)
     }
 
     fn cmp_pos(&self, a: u32, b: u32) -> Ordering {
         let (ra, rb) = (&self.rows[a as usize], &self.rows[b as usize]);
+        if self.grouped() {
+            let (ga, gb) = (self.rank(a), self.rank(b));
+            if ga != gb {
+                // Groups in the order of their first session (newest first for "# descending").
+                let o = ga.cmp(&gb);
+                return if self.sort.column == Column::Id && self.sort.descending { o.reverse() } else { o };
+            }
+        }
         let o = if self.sort.column == Column::Id { ra.id.cmp(&rb.id) } else { compare(ra, rb, self.sort.column) };
         if self.sort.descending { o.reverse() } else { o }
+    }
+
+    /// A filter-matching row is shown unless its group is collapsed (the group's first
+    /// session stands for it).
+    fn shown(&self, p: u32) -> bool {
+        match self.key(p) {
+            Some(k) if self.collapsed.contains(&k) => self.first.get(&k) == Some(&self.rows[p as usize].id),
+            _ => true,
+        }
+    }
+
+    /// A row joins the filter-matching set. `false`: the order of its group changes (it is
+    /// older than the group's first session), a rebuild is needed.
+    fn join(&mut self, p: u32) -> bool {
+        self.members.insert(p);
+        let id = self.rows[p as usize].id;
+        if let Some(k) = self.key(p) {
+            *self.counts.entry(k).or_default() += 1;
+            match self.first.get(&k) {
+                Some(&f) if f <= id => {}
+                Some(_) => return false,
+                None => {
+                    self.first.insert(k, id);
+                }
+            }
+        }
+        true
+    }
+
+    /// A row leaves the filter-matching set. `false`: it was its group's first session.
+    fn leave(&mut self, p: u32, key: Option<u64>) -> bool {
+        self.members.remove(&p);
+        let id = self.rows[p as usize].id;
+        if let Some(k) = key {
+            let n = self.counts.entry(k).or_default();
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                self.counts.remove(&k);
+                self.first.remove(&k);
+                return true;
+            }
+            if self.first.get(&k) == Some(&id) {
+                return false;
+            }
+        }
+        true
     }
 
     fn full_rebuild(&mut self) {
         let filter = self.filter.clone();
         let mut view: Vec<u32> = (0..self.rows.len() as u32).filter(|&p| filter.matches(&self.rows[p as usize])).collect();
-        if self.sort.column == Column::Host {
+        if self.grouped() {
+            let by = self.group;
+            self.keys = self.rows.iter().map(|r| group_key(r, by)).collect();
+            self.first.clear();
+            self.counts.clear();
+            for &p in &view {
+                if let Some(k) = self.keys[p as usize] {
+                    *self.counts.entry(k).or_default() += 1;
+                    let id = self.rows[p as usize].id;
+                    self.first.entry(k).and_modify(|f| *f = (*f).min(id)).or_insert(id);
+                }
+            }
+            self.collapsed.retain(|k| self.counts.contains_key(k));
+            self.members = view.iter().copied().collect();
+            view.retain(|&p| self.shown(p));
+            view.sort_unstable_by(|&a, &b| self.cmp_pos(a, b));
+        } else if self.sort.column == Column::Host {
             // Lower-case each host once (O(n)) instead of inside the comparator
             // (O(n log n) allocations); same order as `cmp_ignore_ascii_case`.
             let mut keyed: Vec<(String, SessionId, u32)> = view
@@ -126,6 +275,77 @@ impl Inner {
         self.pending_upd.clear();
         self.rebuild = false;
         self.last_full_sort = Some(Instant::now());
+    }
+
+    /// [`SessionIndex::tick`] while grouped: few changes in place, else (or when a group's
+    /// order changes) a rebuild.
+    fn tick_grouped(&mut self, filter: &Arc<Filter>, new: Vec<u32>, upd: HashSet<u32>) -> bool {
+        let throttle = self.rows.len() > 100_000 && self.last_full_sort.is_some_and(|t| t.elapsed() < Duration::from_millis(500));
+        if new.len() + upd.len() > 256 {
+            if throttle {
+                self.pending_new = new;
+                self.pending_upd = upd;
+                return false;
+            }
+            self.full_rebuild();
+            self.version += 1;
+            return true;
+        }
+        let by = self.group;
+        let mut rebuild = false;
+        for &p in &upd {
+            let old = self.keys.get(p as usize).copied().flatten();
+            let now = group_key(&self.rows[p as usize], by);
+            let was = self.members.contains(&p);
+            let is = filter.matches(&self.rows[p as usize]);
+            self.remove_from_view(p);
+            if old != now && (was || is) {
+                rebuild = true;
+                break;
+            }
+            match (was, is) {
+                (true, false) => rebuild |= !self.leave(p, old),
+                (false, true) => rebuild |= !self.join(p),
+                _ => {}
+            }
+            if rebuild {
+                break;
+            }
+            if is && self.shown(p) {
+                self.insert_sorted(p);
+            }
+        }
+        if !rebuild {
+            if self.keys.len() < self.rows.len() {
+                let from = self.keys.len();
+                let rows = &self.rows[from..];
+                self.keys.extend(rows.iter().map(|r| group_key(r, by)));
+            }
+            for p in new {
+                if !filter.matches(&self.rows[p as usize]) {
+                    continue;
+                }
+                if !self.join(p) {
+                    rebuild = true;
+                    break;
+                }
+                if self.shown(p) {
+                    self.insert_sorted(p);
+                }
+            }
+        }
+        if rebuild {
+            self.full_rebuild();
+        } else {
+            // Keys of updated rows are current now.
+            for p in upd {
+                if let Some(k) = self.keys.get_mut(p as usize) {
+                    *k = group_key(&self.rows[p as usize], by);
+                }
+            }
+        }
+        self.version += 1;
+        true
     }
 
     fn insert_sorted(&mut self, p: u32) {
@@ -158,6 +378,9 @@ pub struct RowWindow {
     pub total: usize,
     pub start: usize,
     pub rows: Vec<SessionSummary>,
+    /// Per row, its group (only while grouped; `None`: the row has no group key).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<Option<RowGroup>>,
 }
 
 impl SessionIndex {
@@ -235,8 +458,8 @@ impl SessionIndex {
     pub fn clear(&self) -> Vec<SessionId> {
         let mut g = self.inner.write();
         let ids = g.rows.iter().map(|r| r.id).collect();
-        let (filter, sort) = (g.filter.clone(), g.sort);
-        *g = Inner { filter, sort, version: g.version + 1, ..Default::default() };
+        let (filter, sort, group) = (g.filter.clone(), g.sort, g.group);
+        *g = Inner { filter, sort, group, version: g.version + 1, ..Default::default() };
         ids
     }
 
@@ -278,6 +501,9 @@ impl SessionIndex {
             for p in &new {
                 upd.remove(p);
             }
+        }
+        if g.grouped() {
+            return g.tick_grouped(&filter, new, upd) || removed;
         }
         if !natural {
             // Sort keys may have changed. Many changes: rebuild (throttled for huge lists);
@@ -352,12 +578,83 @@ impl SessionIndex {
         let g = self.inner.read();
         let end = (start + count).min(g.view.len());
         let start = start.min(end);
+        let groups = if g.grouped() {
+            (start..end)
+                .map(|i| {
+                    let p = g.view[i];
+                    let k = g.key(p)?;
+                    let begins = i == 0 || g.key(g.view[i - 1]) != Some(k);
+                    let first = g.first.get(&k).copied().unwrap_or(g.rows[p as usize].id);
+                    Some(RowGroup {
+                        start: begins,
+                        hue: (k % 8) as u8,
+                        size: g.counts.get(&k).copied().unwrap_or(1),
+                        collapsed: g.collapsed.contains(&k),
+                        first,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         RowWindow {
             version: g.version,
             total: g.view.len(),
             start,
             rows: g.view[start..end].iter().map(|&p| g.rows[p as usize].clone()).collect(),
+            groups,
         }
+    }
+
+    pub fn set_group(&self, by: GroupBy) {
+        let mut g = self.inner.write();
+        if g.group != by {
+            g.group = by;
+            g.collapsed.clear();
+            g.keys.clear();
+            g.first.clear();
+            g.counts.clear();
+            g.members.clear();
+            g.rebuild = true;
+        }
+    }
+
+    pub fn group(&self) -> GroupBy {
+        self.inner.read().group
+    }
+
+    /// Collapse or expand the group of a session. Returns the new state (`None`: the
+    /// session has no group).
+    pub fn toggle_group(&self, id: SessionId) -> Option<bool> {
+        let mut g = self.inner.write();
+        let p = *g.pos.get(&id)?;
+        let k = g.key(p)?;
+        let collapsed = if g.collapsed.remove(&k) {
+            false
+        } else {
+            g.collapsed.insert(k);
+            true
+        };
+        g.rebuild = true;
+        Some(collapsed)
+    }
+
+    /// Collapse (or expand) all groups.
+    pub fn collapse_all(&self, collapse: bool) {
+        let mut g = self.inner.write();
+        g.collapsed = if collapse { g.counts.keys().copied().collect() } else { HashSet::new() };
+        g.rebuild = true;
+    }
+
+    /// The filter-matching sessions of a session's group (ascending), collapsed ones
+    /// included; just the session when it has no group.
+    pub fn group_ids(&self, id: SessionId) -> Vec<SessionId> {
+        let g = self.inner.read();
+        let Some(&p) = g.pos.get(&id) else { return vec![] };
+        let Some(k) = g.key(p).filter(|_| g.grouped()) else { return vec![id] };
+        let mut ids: Vec<SessionId> = g.members.iter().filter(|&&q| g.key(q) == Some(k)).map(|&q| g.rows[q as usize].id).collect();
+        ids.sort_unstable();
+        ids
     }
 
     /// Ids of the current view in display order for a range.
@@ -552,7 +849,165 @@ mod tests {
         let t = Instant::now();
         idx.tick();
         let sort = t.elapsed();
-        eprintln!("ingest {ingest:?} window {window:?} sort {sort:?}");
+        // Grouped: by connection (6 sessions per keep-alive connection), then live traffic.
+        idx.set_sort(Sort::default());
+        for id in 1..=500_000u64 {
+            idx.update(id, |r| r.conn = 1 + id / 6);
+        }
+        idx.tick();
+        idx.set_group(GroupBy::Connection);
+        let t = Instant::now();
+        idx.tick();
+        let group = t.elapsed();
+        let t = Instant::now();
+        let w = idx.window(250_000, 60);
+        let gwindow = t.elapsed();
+        assert_eq!(w.groups.len(), 60);
+        let t = Instant::now();
+        for id in 500_001..=500_100u64 {
+            idx.upsert(SessionSummary { conn: 1 + id / 6, ..row(id, 200, "host.example") });
+        }
+        idx.tick();
+        let live = t.elapsed();
+        eprintln!("ingest {ingest:?} window {window:?} sort {sort:?} group {group:?} grouped window {gwindow:?} 100 live {live:?}");
         assert!(window < Duration::from_millis(5));
+        assert!(gwindow < Duration::from_millis(5));
+    }
+
+    fn conn_row(id: u64, conn: u64, status: u16) -> SessionSummary {
+        SessionSummary { id, conn, status, host: "h".into(), url: format!("/{id}"), ..Default::default() }
+    }
+
+    fn starts(idx: &SessionIndex) -> Vec<(u64, bool, u32)> {
+        let w = idx.window(0, 100);
+        w.rows.iter().zip(&w.groups).map(|(r, g)| (r.id, g.as_ref().is_some_and(|g| g.start), g.as_ref().map_or(0, |g| g.size))).collect()
+    }
+
+    #[test]
+    fn groups_keep_together_in_order_of_their_first_session() {
+        let idx = SessionIndex::new();
+        // Two keep-alive connections interleaved, one session without a connection.
+        for (id, conn) in [(1, 10), (2, 20), (3, 10), (4, 0), (5, 20), (6, 10)] {
+            idx.upsert(conn_row(id, conn, 200));
+        }
+        idx.tick();
+        idx.set_group(GroupBy::Connection);
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![1, 3, 6, 2, 5, 4]);
+        assert_eq!(starts(&idx), vec![(1, true, 3), (3, false, 3), (6, false, 3), (2, true, 2), (5, false, 2), (4, false, 0)]);
+        assert_eq!(idx.window(4, 1).groups[0].as_ref().unwrap().first, 2);
+        // Sorted inside each group; the groups keep their place.
+        idx.set_sort(Sort { column: Column::Url, descending: true });
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![6, 3, 1, 5, 2, 4]);
+        // Newest groups first with "# descending".
+        idx.set_sort(Sort { column: Column::Id, descending: true });
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![4, 5, 2, 6, 3, 1]);
+        idx.set_sort(Sort::default());
+        idx.tick();
+        // Live traffic: new sessions join their group, a new connection goes last.
+        idx.upsert(conn_row(7, 20, 200));
+        idx.upsert(conn_row(8, 30, 200));
+        assert!(idx.tick());
+        assert_eq!(idx.view_ids(0, 10), vec![1, 3, 6, 2, 5, 7, 4, 8]);
+        assert_eq!(idx.group_ids(5), vec![2, 5, 7]);
+        // Back to the plain list.
+        idx.set_group(GroupBy::None);
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        assert!(idx.window(0, 10).groups.is_empty());
+    }
+
+    #[test]
+    fn collapse_and_filter_changes() {
+        let idx = SessionIndex::new();
+        for (id, conn) in [(1, 10), (2, 20), (3, 10), (4, 20)] {
+            idx.upsert(conn_row(id, conn, 200));
+        }
+        idx.set_group(GroupBy::Connection);
+        idx.tick();
+        assert_eq!(idx.toggle_group(3), Some(true));
+        idx.tick();
+        // The collapsed group shows its first session only, and still counts all.
+        assert_eq!(idx.view_ids(0, 10), vec![1, 2, 4]);
+        assert_eq!(starts(&idx)[0], (1, true, 2));
+        assert!(idx.window(0, 1).groups[0].as_ref().unwrap().collapsed);
+        // New members of a collapsed group stay hidden.
+        idx.upsert(conn_row(5, 10, 200));
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![1, 2, 4]);
+        assert_eq!(starts(&idx)[0], (1, true, 3));
+        idx.collapse_all(false);
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![1, 3, 5, 2, 4]);
+        // A session that leaves the filter leaves its group; the first one moves the group.
+        idx.set_filter(quena_query::Filter::compile(&FilterSettings { enabled: true, hide_success: true, ..Default::default() }).unwrap());
+        idx.tick();
+        assert!(idx.view_ids(0, 10).is_empty());
+        idx.update(4, |r| r.status = 500);
+        idx.update(3, |r| r.status = 404);
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![3, 4]);
+        idx.update(3, |r| r.status = 200);
+        idx.update(1, |r| r.status = 500);
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![1, 4]);
+        assert_eq!(starts(&idx), vec![(1, true, 1), (4, true, 1)]);
+        // Removing sessions keeps the grouping.
+        idx.set_filter(quena_query::Filter::default());
+        idx.remove(&[1u64].into_iter().collect());
+        idx.tick();
+        // Connection 10 now starts with #3, after connection 20 (#2).
+        assert_eq!(idx.view_ids(0, 10), vec![2, 4, 3, 5]);
+        assert_eq!(idx.toggle_group(99), None);
+    }
+
+    #[test]
+    fn groups_by_text_keys() {
+        let idx = SessionIndex::new();
+        let r = |id: u64, host: &str, trace: &str| SessionSummary { id, host: host.into(), trace: trace.into(), url: "/".into(), ..Default::default() };
+        for x in [r(1, "A.example", "t1"), r(2, "b.example", "t2"), r(3, "a.example", "t1"), r(4, "b.example", "")] {
+            idx.upsert(x);
+        }
+        idx.set_group(GroupBy::Host);
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![1, 3, 2, 4], "host ignores case");
+        assert_eq!(idx.window(1, 1).groups[0].as_ref().unwrap().first, 1);
+        idx.set_group(GroupBy::Trace);
+        idx.tick();
+        assert_eq!(idx.view_ids(0, 10), vec![1, 3, 2, 4]);
+        assert!(idx.window(3, 1).groups[0].is_none(), "no trace id, no group");
+    }
+
+    #[test]
+    fn grouped_view_matches_a_rebuild_under_random_traffic() {
+        use rand::Rng;
+        let mut rng = rand::rng();
+        let idx = SessionIndex::new();
+        idx.set_group(GroupBy::Connection);
+        idx.set_filter(quena_query::Filter::compile(&FilterSettings { enabled: true, hide_success: true, ..Default::default() }).unwrap());
+        let mut next = 1u64;
+        for round in 0..200 {
+            for _ in 0..rng.random_range(0..5) {
+                idx.upsert(conn_row(next, rng.random_range(0..6), if rng.random_bool(0.5) { 200 } else { 500 }));
+                next += 1;
+            }
+            for _ in 0..rng.random_range(0..4) {
+                if next > 1 {
+                    let id = rng.random_range(1..next);
+                    let st = if rng.random_bool(0.5) { 200 } else { 404 };
+                    idx.update(id, |r| r.status = st);
+                }
+            }
+            if round % 37 == 0 && next > 1 {
+                idx.toggle_group(rng.random_range(1..next));
+            }
+            idx.tick();
+            let live = idx.view_ids(0, 10_000);
+            idx.inner.write().rebuild = true;
+            idx.tick();
+            assert_eq!(live, idx.view_ids(0, 10_000), "round {round}");
+        }
     }
 }

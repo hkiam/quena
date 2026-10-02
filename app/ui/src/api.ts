@@ -54,6 +54,24 @@ export interface SessionSummary {
   startedAt: number;
   durationMs: number | null;
   clientIp: string;
+  /** Client connection (keep-alive, HTTP/2); 0: unknown. */
+  conn: number;
+  /** Trace or correlation id of the request. */
+  trace?: string;
+  /** Session cookie as `NAME #hash`. */
+  session?: string;
+}
+
+/** "Group by" of the session list (crates/quena-index). */
+export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom";
+
+export interface RowGroup {
+  start: boolean;
+  hue: number;
+  size: number;
+  collapsed: boolean;
+  /** The group's first session. */
+  first: SessionId;
 }
 
 export type Headers = [string, string][];
@@ -202,6 +220,8 @@ export interface RowWindow {
   total: number;
   start: number;
   rows: SessionSummary[];
+  /** Per row, while the list is grouped (null: the row has no group). */
+  groups?: (RowGroup | null)[];
 }
 
 export interface EngineStatus {
@@ -746,6 +766,10 @@ export const api = {
   status: () => invoke<Status>("status"),
   appInfo: () => invoke<{ version: string; dataDir: string; captureDir: string; platform: string }>("app_info"),
   rows: (start: number, count: number) => invoke<RowWindow>("rows", { start, count }),
+  setGroup: (group: GroupBy) => invoke<void>("set_group", { group }),
+  toggleGroup: (id: SessionId) => invoke<boolean | null>("toggle_group", { id }),
+  collapseGroups: (collapse: boolean) => invoke<void>("collapse_groups", { collapse }),
+  groupIds: (id: SessionId) => invoke<SessionId[]>("group_ids", { id }),
   viewIds: (start: number, count: number) => invoke<SessionId[]>("view_ids", { start, count }),
   positionOf: (id: SessionId) => invoke<number | null>("position_of", { id }),
   setSort: (sort: Sort) => invoke<void>("set_sort", { sort }),

@@ -79,6 +79,7 @@ function useBoot() {
       const layout = restoreLayout(ui.layout);
       const status = await api.status();
       set({ settings, layout, filters: await api.getFilters(), status, log: await api.logSince(0) });
+      if (layout.groupBy && layout.groupBy !== "none") await api.setGroup(layout.groupBy).catch(() => {});
       // Capture starts in the background after launch: show that instead of "Paused".
       if (settings.proxy.captureOnStartup && !status.engine.capturing) {
         set({ captureBusy: "starting" });

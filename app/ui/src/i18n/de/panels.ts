@@ -1,6 +1,26 @@
 // German translations: panels (right-hand tabs), session context menu, status messages of the
 // top-level actions, session list column titles.
 export const panels: Record<string, string> = {
+  "Connection of #{id} · {client}": "Connection von #{id} · {client}",
+  "Connection of #{id}": "Connection von #{id}",
+  "Trace {id}": "Trace {id}",
+  "No grouping": "Keine Gruppierung",
+  "Group by connection (keep-alive)": "Nach Connection gruppieren (Keep-alive)",
+  "Group by host": "Nach Host gruppieren",
+  "Group by process": "Nach Prozess gruppieren",
+  "Group by trace / correlation id": "Nach Trace-/Correlation-ID gruppieren",
+  "Group by session cookie": "Nach Session-Cookie gruppieren",
+  "Group by Custom column": "Nach Spalte Custom gruppieren",
+  "Collapse all groups": "Alle Gruppen zuklappen",
+  "Expand all groups": "Alle Gruppen aufklappen",
+  "Group": "Gruppe",
+  "Group by": "Gruppieren nach",
+  "Connection (keep-alive)": "Connection (Keep-alive)",
+  "Trace / correlation id": "Trace-/Correlation-ID",
+  "Session cookie": "Session-Cookie",
+  "Custom column": "Spalte Custom",
+  "Select group": "Gruppe auswählen",
+  "Collapse / expand group": "Gruppe zu-/aufklappen",
   // Tabs and shared texts
   "Inspect": "Inspektor",
   "Composer": "Composer",

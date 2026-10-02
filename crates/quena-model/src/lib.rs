@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod correlation;
 mod headers;
 pub use headers::{Headers, latin1_to_string, string_to_latin1};
 
@@ -300,6 +301,15 @@ pub struct SessionSummary {
     /// Total duration in milliseconds, once known.
     pub duration_ms: Option<u32>,
     pub client_ip: String,
+    /// The client connection the request came on (keep-alive, HTTP/2); 0: unknown.
+    #[serde(default)]
+    pub conn: u64,
+    /// Trace or correlation id the client sent ([`correlation::trace_id`]).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub trace: String,
+    /// Session cookie as name and hash ([`correlation::session_key`]).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub session: String,
 }
 
 impl SessionSummary {
@@ -354,6 +364,9 @@ impl SessionDetail {
             s.url = String::new();
         }
         s.protocol = protocol_label(&self.request.url, self.request.version, s.kind);
+        s.conn = self.connection.client_conn_id.unwrap_or(0);
+        s.trace = correlation::trace_id(&self.request.headers);
+        s.session = correlation::session_key(&self.request.headers);
         s.request_body_len = self.request_body.wire_len();
         if let Some(resp) = &self.response {
             s.status = resp.status;

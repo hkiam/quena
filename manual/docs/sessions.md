@@ -31,6 +31,38 @@ layout shows more columns.
 - **Resize** by dragging the edge of a heading, **reorder** by dragging a heading onto
   another.
 
+## Grouping
+
+*Group by* (right-click the heading row, or the command palette) keeps sessions that
+belong together in one block:
+
+| Group by | Sessions that share |
+|---|---|
+| *Connection (keep-alive)* | the client connection: requests a browser sent over one keep-alive or HTTP/2 connection |
+| *Host* | the target host |
+| *Process* | the client application |
+| *Trace / correlation id* | the trace id (`traceparent`, B3, `uber-trace-id`, `X-Amzn-Trace-Id`, `X-Cloud-Trace-Context`) or a correlation header (`X-Correlation-ID` …) — one user action across connections |
+| *Session cookie* | the session cookie (`JSESSIONID`, `PHPSESSID`, `ASP.NET_SessionId`, `connect.sid`, `sessionid` …) — one login |
+| *Custom column* | the value a [rules script](scripting.md) puts into *Custom*: your own grouping |
+
+- Groups appear in the order of their first session; **inside each group the list is
+  sorted** by the column you click. With `#` descending, the newest groups come first.
+- The *Group* column shows, on each group's first row, what the sessions share and how many
+  there are; a coloured bar marks the group. Sessions without a key (no trace id, no
+  session cookie …) stay single rows.
+- **Collapse** a group by clicking ▾ in its *Group* cell, or with `←` on one of its rows;
+  `→` or ▸ expands it. A collapsed group shows its first session. *Collapse all groups* /
+  *Expand all groups* in the same menu. Right-click a session → *Group → Select group*
+  selects all of it.
+- New traffic joins its group while capturing. Filters apply first: a group counts its
+  sessions that pass the filter.
+- The session cookie's value is never shown or stored in the list: equal values give equal
+  groups, the label shows the cookie name and a short hash.
+
+The filter fields `conn`, `trace` and `session` select the same sessions, e.g.
+`conn == 1825362123456` or `trace == 4bf92f3577b34da6a3ce929d0e0e4736` (see
+[syntax](syntax.md#fields)).
+
 ## Colours
 
 The list is meant to be read at a glance:

@@ -275,7 +275,9 @@ impl Proxy {
             creds: RwLock::new(Arc::new(NoCredentials)),
             upstream: RwLock::new(upstream),
             listen: RwLock::new(vec![]),
-            conn_ids: std::sync::atomic::AtomicU64::new(1),
+            // Unique across runs, so a recovered capture and new traffic never share a
+            // connection id (the list groups by it).
+            conn_ids: std::sync::atomic::AtomicU64::new(conn_id_base()),
             conn_limit: Arc::new(tokio::sync::Semaphore::new(MAX_CLIENT_CONNECTIONS)),
             closing: tokio::sync::watch::channel(0).0,
         });
@@ -458,4 +460,12 @@ const IPPROTO_IPV6: i32 = 41;
 #[cfg(unix)]
 unsafe extern "C" {
     fn setsockopt(socket: i32, level: i32, name: i32, value: *const std::ffi::c_void, option_len: u32) -> i32;
+}
+
+/// First connection id of this run: the start time in seconds, shifted so the ids of
+/// different runs do not overlap (2^20 connections per second between two starts). Stays
+/// below 2^53, so the UI (JavaScript numbers) shows it exactly.
+fn conn_id_base() -> u64 {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    (secs << 20) | 1
 }

@@ -1,5 +1,5 @@
 // Native menu → actions.
-import { api, type MarkColor } from "./api";
+import { api, type GroupBy, type MarkColor } from "./api";
 import { actions } from "./actions";
 import { get, say, set } from "./store";
 import { patchSettings } from "./settingsActions";
@@ -98,6 +98,18 @@ export async function handleMenu(id: string) {
       return actions.showTab("structure");
     case "view.diagnostics":
       return actions.showTab("diagnostics");
+    case "view.group-none":
+    case "view.group-connection":
+    case "view.group-host":
+    case "view.group-process":
+    case "view.group-trace":
+    case "view.group-session":
+    case "view.group-custom":
+      return actions.setGroup(id.slice("view.group-".length) as GroupBy);
+    case "view.groups-collapse":
+      return actions.collapseGroups(true);
+    case "view.groups-expand":
+      return actions.collapseGroups(false);
     case "view.stacked":
       set((s) => ({ layout: { ...s.layout, stacked: true } }));
       return actions.saveLayout();

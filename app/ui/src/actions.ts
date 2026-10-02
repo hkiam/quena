@@ -1,7 +1,7 @@
 // Central command dispatcher shared by menu, toolbar, keyboard, context menu
 // and the command field. Every action returns immediately (optimistic UI, R11); the
 // core confirms asynchronously.
-import { api, type Detail, type MarkColor, type SessionId, type Sort } from "./api";
+import { api, type Detail, type GroupBy, type MarkColor, type SessionId, type Sort } from "./api";
 import { confirmAsk, get, say, set, PRESETS, type LayoutPreset, type RightTab } from "./store";
 import { grid, idAtIndex, rowCache } from "./grid/SessionGrid";
 import { buildCurl, buildFetch, buildPowerShell, buildPython, rawRequestText, rawResponseHead } from "./lib/http";
@@ -108,6 +108,32 @@ export const actions = {
     set({ sort });
     await api.setSort(sort);
     setTimeout(() => actions.refocus(), 80);
+  },
+
+  /** Group the session list (kept with the layout). */
+  async setGroup(groupBy: GroupBy) {
+    set((s) => ({ layout: { ...s.layout, groupBy } }));
+    actions.saveLayout();
+    await api.setGroup(groupBy);
+    setTimeout(() => actions.refocus(), 80);
+  },
+
+  /** Collapse or expand the group of the row at a list position. */
+  async toggleGroupAt(index: number) {
+    const r = rowCache.get(index);
+    if (r) await api.toggleGroup(r.id);
+  },
+
+  async collapseGroups(collapse: boolean) {
+    await api.collapseGroups(collapse);
+  },
+
+  /** Select all sessions of the focused session's group. */
+  async selectGroup() {
+    const s = get();
+    const id = s.focusId ?? [...s.selection][0];
+    if (id == null) return;
+    await actions.selectIds(await api.groupIds(id));
   },
 
   resetColumns() {
@@ -295,6 +321,13 @@ export const actions = {
     const mod = e.metaKey || e.ctrlKey;
     const k = e.key;
     const page = Math.max(1, grid.visibleCount() - 1);
+    // Grouped list: ← collapses, → expands the focused row's group.
+    const fi = get().focusIndex;
+    if ((k === "ArrowLeft" || k === "ArrowRight") && !mod && fi != null) {
+      const g = rowCache.group(fi);
+      if (g && g.collapsed === (k === "ArrowRight")) void actions.toggleGroupAt(fi);
+      return !!g;
+    }
     switch (k) {
       case "ArrowDown":
         actions.moveFocus(1, e.shiftKey);

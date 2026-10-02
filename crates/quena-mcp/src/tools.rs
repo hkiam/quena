@@ -48,7 +48,7 @@ static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "list_sessions",
-        description: "List captured sessions (oldest first) as compact rows: id, method, url, status, content type, sizes, duration, state, flags. Use `filter` with Quena's expression syntax (e.g. `host ~= \"*.example.com\" and status >= 400`, `method == POST`, `type ~ json`, `size > 100k`, `time > 1s`; a bare word matches the URL) and `since_id` to fetch only new sessions.",
+        description: "List captured sessions (oldest first) as compact rows: id, method, url, status, content type, sizes, duration, state, flags, client connection (`conn`) and trace id. Use `filter` with Quena's expression syntax (e.g. `host ~= \"*.example.com\" and status >= 400`, `method == POST`, `type ~ json`, `size > 100k`, `time > 1s`; a bare word matches the URL) and `since_id` to fetch only new sessions.",
         write: false,
         destructive: false,
         schema: || {
@@ -592,6 +592,13 @@ impl View {
         }
         if !s.process.is_empty() {
             v["process"] = json!(s.process);
+        }
+        // What ties sessions together (filter with `conn == …`, `trace == …`).
+        if s.conn != 0 {
+            v["conn"] = json!(s.conn);
+        }
+        if !s.trace.is_empty() {
+            v["trace"] = json!(s.trace);
         }
         v
     }

@@ -229,6 +229,7 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Diagnostics**: prioritised findings with evidence — N+1, duplicates, polling, retries,
   auth loops, caching, compression, OData queries, latency/bandwidth sensitivity
 - Filters, Find, Statistics, Timeline, Compare, Text Tools
+- **Grouping** by keep-alive connection, host, process, trace id or session cookie
 - Comments, color marks, custom column
 - **MCP server**: AI agents (Claude Code …) read the capture and, if allowed,
   set rules and breakpoints and send requests

@@ -348,6 +348,16 @@ impl Capture {
                 }
             }
             let mut s = d.summary.clone();
+            // Captures of older versions have no grouping keys yet.
+            if s.conn == 0 {
+                s.conn = d.connection.client_conn_id.unwrap_or(0);
+            }
+            if s.trace.is_empty() {
+                s.trace = quena_model::correlation::trace_id(&d.request.headers);
+            }
+            if s.session.is_empty() {
+                s.session = quena_model::correlation::session_key(&d.request.headers);
+            }
             if !s.state.is_final() {
                 s.state = SessionState::Aborted;
             }

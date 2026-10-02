@@ -69,6 +69,28 @@ async fn set_sort(core: State<'_, Core>, sort: Sort) -> R<()> {
 }
 
 #[tauri::command]
+async fn set_group(core: State<'_, Core>, group: quena_index::GroupBy) -> R<()> {
+    core.set_group(group);
+    Ok(())
+}
+
+#[tauri::command]
+async fn toggle_group(core: State<'_, Core>, id: SessionId) -> R<Option<bool>> {
+    Ok(core.toggle_group(id))
+}
+
+#[tauri::command]
+async fn collapse_groups(core: State<'_, Core>, collapse: bool) -> R<()> {
+    core.collapse_groups(collapse);
+    Ok(())
+}
+
+#[tauri::command]
+async fn group_ids(core: State<'_, Core>, id: SessionId) -> R<Vec<SessionId>> {
+    Ok(core.group_ids(id))
+}
+
+#[tauri::command]
 async fn get_filters(core: State<'_, Core>) -> R<FilterSettings> {
     Ok(core.filters())
 }
@@ -848,6 +870,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         status,
         mcp_status,
         mcp_new_token,
+        set_group,
+        toggle_group,
+        collapse_groups,
+        group_ids,
         rw_get,
         rw_set,
         app_info,

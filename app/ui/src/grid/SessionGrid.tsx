@@ -9,7 +9,7 @@ import { RowCache } from "./rowCache";
 import { methodPill, readPalette, rowStyle, stateMark, statusPill, type Palette, type Pill } from "./style";
 import { actions } from "../actions";
 import { showContextMenu } from "../components/ContextMenu";
-import { sessionMenu } from "../menus";
+import { groupMenu, sessionMenu } from "../menus";
 import { t } from "../i18n";
 
 /** Row height: roomy in the Quena layout, dense in Classic. */
@@ -28,6 +28,34 @@ export const rowCache = new RowCache();
  * or the last one) takes the rest, so a wide window shows longer URLs instead of empty space.
  * Stored widths stay as the user set them; they act as minimums here.
  */
+/** What the sessions of a group share, for its first row. */
+function groupLabel(r: SessionSummary, first: number): string {
+  switch (get().layout.groupBy) {
+    case "connection":
+      return r.clientIp ? t("Connection of #{id} · {client}", { id: first, client: r.clientIp }) : t("Connection of #{id}", { id: first });
+    case "host":
+      return r.host;
+    case "process":
+      return r.process;
+    case "trace":
+      return t("Trace {id}", { id: r.trace ?? "" });
+    case "session":
+      return r.session ?? "";
+    case "custom":
+      return r.custom;
+    default:
+      return "";
+  }
+}
+
+/** The Group column (first, while the list is grouped) and the visible columns, fitted. */
+export function displayColumns(width: number): ColumnConf[] {
+  const { layout } = get();
+  const group: ColumnConf[] =
+    layout.groupBy && layout.groupBy !== "none" ? [{ key: "group", title: t("Group"), width: layout.groupWidth ?? 240, visible: true }] : [];
+  return fitColumns([...group, ...layout.columns], width);
+}
+
 export function fitColumns(cols: ColumnConf[], width: number): ColumnConf[] {
   const vis = cols.filter((c) => c.visible);
   const total = vis.reduce((a, c) => a + c.width, 0);
@@ -66,6 +94,8 @@ function cellText(r: SessionSummary, key: ColumnKey): string {
       return fmtMs(r.durationMs);
     case "started":
       return fmtTime(r.startedAt);
+    case "group":
+      return "";
   }
 }
 
@@ -178,7 +208,14 @@ export class GridController {
           ROW_H = rowHeightFor(s.layout.preset);
           this.updateSpacer();
         }
-        if (s.selection !== prev.selection || s.focusIndex !== prev.focusIndex || s.layout.columns !== prev.layout.columns || s.layout.preset !== prev.layout.preset) {
+        if (
+          s.selection !== prev.selection ||
+          s.focusIndex !== prev.focusIndex ||
+          s.layout.columns !== prev.layout.columns ||
+          s.layout.preset !== prev.layout.preset ||
+          s.layout.groupBy !== prev.layout.groupBy ||
+          s.layout.groupWidth !== prev.layout.groupWidth
+        ) {
           this.updateSpacer();
           this.schedule();
         }
@@ -199,7 +236,46 @@ export class GridController {
   }
 
   columns(): ColumnConf[] {
-    return fitColumns(get().layout.columns, this.vw);
+    return displayColumns(this.vw);
+  }
+
+  /** The column at a client x position. */
+  columnAt(clientX: number): ColumnConf | undefined {
+    const rect = this.canvas.getBoundingClientRect();
+    let x = clientX - rect.left + this.scroller.scrollLeft;
+    for (const c of this.columns()) {
+      if (x < c.width) return c;
+      x -= c.width;
+    }
+    return undefined;
+  }
+
+  /** Colour of a group (stable per group). */
+  private hue(h: number): string {
+    const p = this.pal;
+    const all = [p.marks.blue, p.marks.green, p.marks.orange, p.marks.purple, p.marks.red, p.marks.gold, p.tones.info.fg, p.tones.violet.fg];
+    return all[h % all.length];
+  }
+
+  /** The Group cell: a colour bar, and on a group's first row ▾/▸, what it shares and its size. */
+  private groupCell(r: SessionSummary, i: number, x: number, y: number, width: number, sel: boolean) {
+    const g = rowCache.group(i);
+    if (!g) return;
+    const ctx = this.ctx;
+    ctx.fillStyle = this.hue(g.hue);
+    ctx.fillRect(x + 6, y + 2, 3, ROW_H - 4);
+    if (!g.start) return;
+    const p = this.pal;
+    const head = `${g.collapsed ? "▸" : "▾"} ${groupLabel(r, g.first)}`;
+    const count = ` ${fmtInt(g.size)}`;
+    ctx.font = FONT_BOLD;
+    ctx.fillStyle = sel ? p.selFg : p.fg;
+    const cw = ctx.measureText(count).width;
+    const text = this.ell.fit(ctx, head, width - 22 - cw, FONT_BOLD);
+    ctx.fillText(text, x + 14, y + ROW_H / 2 + 0.5);
+    ctx.font = FONT;
+    ctx.fillStyle = sel ? p.selFg : p.muted;
+    ctx.fillText(count, x + 14 + ctx.measureText(text).width + 2, y + ROW_H / 2 + 0.5);
   }
 
   totalWidth(): number {
@@ -345,7 +421,10 @@ export class GridController {
         if (x > this.vw) break;
         const fg = selected && this.hasFocus ? p.selFg : st.fg;
         const sel = selected && this.hasFocus;
-        if (c.key === "id") {
+        if (c.key === "group") {
+          this.groupCell(r, i, x, y, c.width, sel);
+          ctx.font = font;
+        } else if (c.key === "id") {
           ctx.fillStyle = sel ? p.selFg : p.muted;
           ctx.fillText(this.ell.fit(ctx, String(r.id), c.width - 12, font), x + 8, y + ROW_H / 2 + 0.5);
         } else if (c.key === "method" || c.key === "result") {
@@ -380,6 +459,12 @@ export class GridController {
       if (focusIndex === i && this.hasFocus) {
         ctx.strokeStyle = p.focus;
         ctx.strokeRect(0.5, y + 0.5, this.vw - 1, ROW_H - 1);
+      }
+      // A group starts: a line across, in the group's colour.
+      const g = rowCache.group(i);
+      if (g?.start && i > 0) {
+        ctx.fillStyle = this.hue(g.hue);
+        ctx.fillRect(0, y, this.vw, 1);
       }
     }
     // Soft row separators (the Classic layout keeps column lines instead).
@@ -418,7 +503,10 @@ export const grid = new GridController();
 function Header({ scrollX }: { scrollX: number }) {
   const columns = useStore((s) => s.layout.columns);
   const gridWidth = useStore((s) => s.gridWidth);
-  const shown = fitColumns(columns, gridWidth);
+  // Re-render when the Group column comes or goes or is resized.
+  useStore((s) => s.layout.groupBy);
+  useStore((s) => s.layout.groupWidth);
+  const shown = displayColumns(gridWidth);
   const sort = useStore((s) => s.sort);
   const drag = useRef<{ key: ColumnKey; startX: number; startW: number } | null>(null);
   const [dragOver, setDragOver] = useState<ColumnKey | null>(null);
@@ -436,7 +524,8 @@ function Header({ scrollX }: { scrollX: number }) {
       const d = drag.current;
       if (!d) return;
       const w = Math.max(24, d.startW + ev.clientX - d.startX);
-      set((s) => ({ layout: { ...s.layout, columns: s.layout.columns.map((x) => (x.key === d.key ? { ...x, width: w } : x)) } }));
+      if (d.key === "group") set((s) => ({ layout: { ...s.layout, groupWidth: w } }));
+      else set((s) => ({ layout: { ...s.layout, columns: s.layout.columns.map((x) => (x.key === d.key ? { ...x, width: w } : x)) } }));
     };
     const up = () => {
       drag.current = null;
@@ -449,6 +538,7 @@ function Header({ scrollX }: { scrollX: number }) {
   };
 
   const onHeaderClick = (c: ColumnConf) => {
+    if (c.key === "group") return;
     const cur = get().sort;
     let next;
     if (cur.column !== c.key) next = { column: c.key, descending: false };
@@ -466,6 +556,8 @@ function Header({ scrollX }: { scrollX: number }) {
         action: () => setColumns(columns.map((x) => (x.key === c.key ? { ...x, visible: !x.visible } : x))),
       })),
       { separator: true },
+      { label: t("Group by"), submenu: groupMenu() },
+      { separator: true },
       { label: t("Reset Columns"), action: () => actions.resetColumns() },
     ]);
   };
@@ -478,7 +570,7 @@ function Header({ scrollX }: { scrollX: number }) {
               key={c.key}
               className={`gh-cell ${dragOver === c.key ? "drag-over" : ""} ${c.align === "right" ? "gh-right" : ""}`}
               style={{ width: c.width }}
-              draggable
+              draggable={c.key !== "group"}
               onDragStart={(e) => e.dataTransfer.setData("quena/column", c.key)}
               onDragOver={(e) => {
                 if (e.dataTransfer.types.includes("quena/column")) {
@@ -537,6 +629,12 @@ export function SessionGrid() {
       return;
     }
     if (e.button !== 0) return;
+    // The Group cell of a group's first row collapses or expands the group.
+    if (grid.columnAt(e.clientX)?.key === "group" && rowCache.group(i)?.start && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      actions.selectIndex(i, "single");
+      void actions.toggleGroupAt(i);
+      return;
+    }
     if (e.shiftKey) actions.selectIndex(i, "range");
     else if (e.metaKey || e.ctrlKey) actions.selectIndex(i, "toggle");
     else actions.selectIndex(i, "single");

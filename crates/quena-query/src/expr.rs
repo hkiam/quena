@@ -44,6 +44,10 @@ pub enum Field {
     Client,
     Custom,
     Decoder,
+    /// Client connection id.
+    Conn,
+    Trace,
+    Session,
 }
 
 impl Field {
@@ -67,11 +71,14 @@ impl Field {
             "client" | "clientip" => Field::Client,
             "custom" => Field::Custom,
             "decoder" => Field::Decoder,
+            "conn" | "connection" => Field::Conn,
+            "trace" | "correlation" => Field::Trace,
+            "session" | "sessioncookie" => Field::Session,
             _ => return None,
         })
     }
     fn numeric(self) -> bool {
-        matches!(self, Field::Id | Field::Status | Field::Size | Field::ReqSize | Field::Duration)
+        matches!(self, Field::Id | Field::Status | Field::Size | Field::ReqSize | Field::Duration | Field::Conn)
     }
 }
 
@@ -134,6 +141,9 @@ fn text_of(f: Field, s: &SessionSummary) -> String {
         Field::Client => s.client_ip.clone(),
         Field::Custom => s.custom.clone(),
         Field::Decoder => String::new(),
+        Field::Conn => s.conn.to_string(),
+        Field::Trace => s.trace.clone(),
+        Field::Session => s.session.clone(),
         Field::Id => s.id.to_string(),
         Field::Status => s.status.to_string(),
         Field::Size => s.response_body_len.to_string(),
@@ -149,6 +159,7 @@ fn num_of(f: Field, s: &SessionSummary) -> Option<u64> {
         Field::Size => s.response_body_len,
         Field::ReqSize => s.request_body_len,
         Field::Duration => s.duration_ms? as u64,
+        Field::Conn => s.conn,
         _ => return None,
     })
 }
@@ -462,6 +473,9 @@ mod tests {
             content_type: "application/json".into(),
             response_body_len: 20_000,
             duration_ms: Some(1200),
+            conn: 1_234_567,
+            trace: "4bf92f3577b34da6a3ce929d0e0e4736".into(),
+            session: "JSESSIONID #1a2b3c4d".into(),
             ..Default::default()
         }
     }
@@ -484,6 +498,10 @@ mod tests {
             ("(method == GET or method == POST) && !(status < 500)", true),
             ("url =~ 'v[0-9]/log'", true),
             ("process ~ chrome", false),
+            ("conn == 1234567", true),
+            ("connection > 1234567", false),
+            ("trace == 4bf92f3577b34da6a3ce929d0e0e4736", true),
+            ("session ~ jsessionid", true),
         ];
         for (src, want) in cases {
             assert_eq!(parse(src).unwrap().eval(&s()), want, "{src}");

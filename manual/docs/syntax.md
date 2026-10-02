@@ -60,6 +60,9 @@ not kind == tunnel
 | `client` | `clientip` | client address |
 | `custom` | | the Custom column |
 | `id` | `#` | session number |
+| `conn` | `connection` | client connection id (sessions of one keep-alive or HTTP/2 connection) |
+| `trace` | `correlation` | trace or correlation id of the request |
+| `session` | `sessioncookie` | session cookie as `NAME #hash` |
 
 ### Operators
 
