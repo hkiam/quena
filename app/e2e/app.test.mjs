@@ -369,7 +369,8 @@ test("timeline: sessions a day apart, the last bar visible, readable axis", asyn
   assert.equal(res.breaks, 0);
   assert.deepEqual(res.cut, [], `bars outside the graph: ${JSON.stringify(res)}`);
   assert.ok(!res.ticks.some((t) => /\d{4,}[.,]\d s/.test(t)), `axis labels must use h/d, not thousands of seconds: ${res.ticks}`);
-  assert.ok(res.ticks.some((t) => / h|1 d/.test(t)), `hours on the axis: ${res.ticks}`);
+  // Hours or days, depending on how long ago the fixture was recorded (the live session is from now).
+  assert.ok(res.ticks.some((t) => / h| d/.test(t)), `hours or days on the axis: ${res.ticks}`);
   await d.click((await d.findAll(".tl-compress input"))[0]);
   await d.exec(`window.__quena.menu("view.inspectors")`);
 });

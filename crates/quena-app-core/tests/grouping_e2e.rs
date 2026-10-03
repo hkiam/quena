@@ -42,8 +42,10 @@ fn keep_alive_server() -> u16 {
     port
 }
 
+const NULL: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
+
 fn curl(proxy: &str, args: &[&str]) {
-    let o = Command::new("curl").args(["-sS", "--max-time", "20", "-x", proxy, "-o", if cfg!(windows) { "NUL" } else { "/dev/null" }]).args(args).output().unwrap();
+    let o = Command::new("curl").args(["-sS", "--max-time", "20", "-x", proxy, "-o", NULL]).args(args).output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }
 
@@ -66,8 +68,8 @@ fn groups_real_keep_alive_connections() {
 
     // One curl reuses its connection for all its URLs; the second curl is another one.
     let trace = "traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-    curl(&proxy, &["-H", trace, "-H", "Cookie: JSESSIONID=S1", &url("/a1"), "-o", "/dev/null", &url("/a2"), "-o", "/dev/null", &url("/a3")]);
-    curl(&proxy, &["-H", "Cookie: JSESSIONID=S1", &url("/b1"), "-o", "/dev/null", &url("/b2")]);
+    curl(&proxy, &["-H", trace, "-H", "Cookie: JSESSIONID=S1", &url("/a1"), "-o", NULL, &url("/a2"), "-o", NULL, &url("/a3")]);
+    curl(&proxy, &["-H", "Cookie: JSESSIONID=S1", &url("/b1"), "-o", NULL, &url("/b2")]);
     curl(&proxy, &["-H", trace, &url("/a4")]);
 
     let cap = core.capture();
