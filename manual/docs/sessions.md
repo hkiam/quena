@@ -37,11 +37,14 @@ The navigator left of the list (off by default) gives an overview and narrows th
 one part of the traffic. Show it with the ▯ button at the left of the toolbar,
 *View → Navigator* or `Ctrl/⌘ Alt N`.
 
+![The navigator's structure: shop.example.com/api/ is picked, the list shows only its 8 sessions](img/navigator.png)
+
 - **Groups** lists the groups of the sessions (see *Grouping* below) — every connection,
   host, process, trace id, session cookie or Custom value — with how many sessions and
   errors each has. The choice of *Group by* is the list's own, so the list shows the same
   groups.
-- **Structure** shows hosts and paths as a tree (see [Analyze](analyze.md#structure)).
+- **Structure** shows hosts and paths as a tree (see [Analyze](analyze.md#structure)). It
+  is what the navigator opens with while the list is not grouped.
 - **Click an entry to show only its sessions** in the list. A bar above the list says what
   it shows; ✕ there, *All sessions* or a second click on the entry shows everything
   again. The navigator itself always lists everything the filters let through.

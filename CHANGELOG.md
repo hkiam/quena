@@ -33,7 +33,7 @@ contain breaking changes (settings, file formats, plugin API).
   same URL (a rewrite rule).
 - **More context menus**: below the sessions (open archive, save all, select all, remove
   all), on timeline rows (inspect, copy URL, remove from the timeline, the selection's menu),
-  on structure nodes (selects their sessions, then the session menu), on diagnostic findings
+  on navigator entries (show only, select their sessions), on diagnostic findings
   (select affected sessions, copy), log lines and statistics.
 
 - **Navigator** left of the session list (off by default; toolbar button, *View → Navigator*,
@@ -42,7 +42,9 @@ contain breaking changes (settings, file formats, plugin API).
   narrows the list to that group or path, on top of the filters; a bar above the list
   shows it and brings everything back. *Structure* moved from the right pane into the
   navigator; there a click now narrows the list instead of selecting (right-click →
-  *Select These Sessions*).
+  *Select These Sessions*). It opens with the structure until the list is grouped; while
+  it is open, the list's Group column starts narrower.
+- README and manual screenshots retaken with the new defaults, plus one of the navigator.
 
 ### Fixed
 - A plain XML document sent as `text/xml` or `application/xml` no longer opens in the SOAP
@@ -50,6 +52,9 @@ contain breaking changes (settings, file formats, plugin API).
   element of the decoded body (SOAP envelope, Atom feed or entry, OData metadata) instead
   of trusting the content type. JSON and XML with a wrong or missing content type get the
   matching views.
+- The session count of a list group no longer overlaps the group's name.
+- A saved layout without a preset (e.g. only a theme set by hand) opened with the Classic
+  columns; it now gets the Quena layout.
 
 ## [0.1.4] — 2026-10-02
 

@@ -45,8 +45,12 @@ See [Archives and copying](archives.md) and [Mock Rules](change-replay.md#mock-r
 Quena starts with its own layout: the session list on the left, the request above the
 response. If you prefer a dense list with more columns, choose **Classic** in
 *Settings → General*; *View → Request Above / Beside Response* switches only the inspector
-arrangement. Inspectors show as many views as
-fit as tabs; the others are under **More**.
+arrangement. Each inspector has the sections *Headers*, *Body*, *Cookies*, *Auth* and *Raw*;
+below *Body* are the views that fit the content (JSON tree, SOAP, image …), the others under
+**Other**. *Settings → General → Inspector views → Flat* brings back Fiddler's single row of
+tabs. The optional **navigator** (`Ctrl/⌘ Alt N`) left of the list narrows it to a host,
+path, connection or process — like Fiddler's *Filter Now* on a host, without touching the
+filters.
 
 ## Map Remote and Map Local
 

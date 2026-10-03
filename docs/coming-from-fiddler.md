@@ -36,12 +36,15 @@ keyboard shortcuts. Quena uses its own names for some features — this page map
 
 ## Layout
 
-Quena starts with its own layout: the session list on the left, request and response side by
-side, rows coloured by outcome. If you prefer a dense list with more columns and the request
-above the response, choose **Classic** — on first start, in *Settings → General*, or switch the
-inspector arrangement any time with *View → Request Above / Beside Response*.
-Inspectors show the most common views (Headers, Body, Cookies, Raw and the content-specific
-ones) as tabs; the others are under **More**.
+Quena starts with its own layout: the session list on the left, the request above the
+response. If you prefer a dense list with more columns, choose **Classic** in
+*Settings → General*; *View → Request Above / Beside Response* switches only the inspector
+arrangement. Each inspector has the sections *Headers*, *Body*, *Cookies*, *Auth* and *Raw*;
+below *Body* are the views that fit the content (JSON tree, SOAP, image …), the others under
+**Other**. *Settings → General → Inspector views → Flat* brings back Fiddler's single row of
+tabs. The optional **navigator** (`Ctrl/⌘ Alt N`) left of the list narrows it to a host,
+path, connection or process — like Fiddler's *Filter Now* on a host, without touching the
+filters.
 
 ## Map Remote and Map Local
 

@@ -114,6 +114,9 @@ export const actions = {
 
   /** Group the session list (kept with the layout). */
   async setGroup(groupBy: GroupBy) {
+    // A navigator group of the old group-by means nothing under the new one.
+    const scope = get().scope?.scope;
+    if (scope?.kind === "group" && scope.by !== groupBy) await actions.setScope(null);
     set((s) => ({ layout: { ...s.layout, groupBy } }));
     actions.saveLayout();
     await api.setGroup(groupBy);
@@ -122,6 +125,7 @@ export const actions = {
 
   /** Narrow the list to a navigator group or path (`null`: all sessions again). */
   async setScope(scope: NavScope | null, label = "") {
+    if (!scope && !get().scope) return; // nothing to widen: keep the list as it is
     await api.setScope(scope);
     set({ scope: scope ? { scope, label } : null });
     rowCache.clear();

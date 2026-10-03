@@ -26,7 +26,9 @@ const REFRESH_MS = 1500;
 const SHOW = 500;
 
 export function Navigator() {
-  const mode = useStore((s) => s.layout.navMode ?? "groups");
+  // Until chosen: the groups when the list is grouped, else the structure (groups need a
+  // group-by first).
+  const mode = useStore((s) => s.layout.navMode ?? (s.layout.groupBy && s.layout.groupBy !== "none" ? "groups" : "structure"));
   const set = (m: "structure" | "groups") => {
     if (m === mode) return;
     void actions.setScope(null);
@@ -61,29 +63,34 @@ function GroupList() {
   const [filter, setFilter] = useState("");
   const [show, setShow] = useState(SHOW);
   const last = useRef(0);
+  const loadedBy = useRef<GroupBy | null>(null);
   const timer = useRef<number | undefined>(undefined);
 
   // At once when the group-by changes, at most every REFRESH_MS while sessions come in.
   useEffect(() => {
-    if (by === "none") return setData(null);
+    if (by === "none") {
+      loadedBy.current = null;
+      return setData(null);
+    }
+    const changed = loadedBy.current !== by;
+    if (changed) setShow(SHOW);
     const load = () => {
       last.current = Date.now();
-      void api.navGroups(by).then(setData, () => setData(null));
+      // A late answer for the previous group-by is dropped.
+      void api.navGroups(by).then(
+        (d) => loadedBy.current === by && setData(d),
+        () => loadedBy.current === by && setData(null),
+      );
     };
+    loadedBy.current = by;
     window.clearTimeout(timer.current);
-    const wait = Math.max(0, last.current + REFRESH_MS - Date.now());
+    const wait = changed ? 0 : Math.max(0, last.current + REFRESH_MS - Date.now());
     timer.current = window.setTimeout(load, wait);
     return () => window.clearTimeout(timer.current);
   }, [by, version]);
-  useEffect(() => {
-    last.current = 0;
-    setShow(SHOW);
-  }, [by]);
 
-  const choose = (g: GroupBy) => {
-    void actions.setScope(null);
-    void actions.setGroup(g);
-  };
+  // Narrowed to a group of another group-by, setGroup widens the list again.
+  const choose = (g: GroupBy) => void actions.setGroup(g);
   const active = (key: string) => scope?.kind === "group" && scope.by === by && scope.key === key;
   const f = filter.trim().toLowerCase();
   const groups = (data?.groups ?? []).filter((g) => !f || g.label.toLowerCase().includes(f));

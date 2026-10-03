@@ -230,6 +230,7 @@ in the [manual](https://hkiam.github.io/quena/ci/).
   auth loops, caching, compression, OData queries, latency/bandwidth sensitivity
 - Filters, Find, Statistics, Timeline, Compare, Text Tools
 - **Grouping** by keep-alive connection, host, process, trace id or session cookie
+- **Navigator**: hosts and paths or the groups next to the list; a click narrows it
 - Comments, color marks, custom column
 - **MCP server**: AI agents (Claude Code …) read the capture and, if allowed,
   set rules and breakpoints and send requests
@@ -252,31 +253,37 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 <table>
 <tr>
 <td width="50%">
-<img src="docs/screenshots/overview.png" alt="Quena main window: session list, request headers and pretty-printed JSON response side by side">
-<p align="center"><sub><b>Inspect</b> — session list, headers and pretty-printed bodies side by side</sub></p>
+<img src="docs/screenshots/overview.png" alt="Quena main window: session list on the left, the request headers above the pretty-printed JSON response on the right">
+<p align="center"><sub><b>Inspect</b> — session list, request above response, the views that fit the body</sub></p>
 </td>
 <td width="50%">
-<img src="docs/screenshots/soap-inspector.png" alt="SOAP request: header table with topic tags and the SOAP inspector showing the parsed response">
-<p align="center"><sub><b>SOAP & XML</b> — pretty-printed, with auto-detected SOAP and Atom/OData inspectors</sub></p>
+<img src="docs/screenshots/soap-inspector.png" alt="SOAP request and response in the SOAP inspector: version, action, operation and the parsed body">
+<p align="center"><sub><b>SOAP & XML</b> — detected by content, with SOAP and Atom/OData inspectors</sub></p>
 </td>
 </tr>
 <tr>
 <td width="50%">
-<img src="docs/screenshots/statistics.png" alt="Statistics for 13 selected sessions: timing, response codes, bytes by content type">
+<img src="docs/screenshots/navigator.png" alt="The navigator's host/path structure on the left; shop.example.com/api/ is picked and the list shows only its 8 sessions">
+<p align="center"><sub><b>Navigator</b> — optional: hosts, paths or groups; a click narrows the list</sub></p>
+</td>
+<td width="50%">
+<img src="docs/screenshots/statistics.png" alt="Statistics for 24 selected sessions: timing, response codes, bytes by content type and hosts">
 <p align="center"><sub><b>Statistics</b> — timing, status codes and bytes by content type for any selection</sub></p>
 </td>
+</tr>
+<tr>
 <td width="50%">
 <img src="docs/screenshots/scripting.png" alt="Rules Script editor with a JavaScript rules script and its console output">
 <p align="center"><sub><b>JavaScript rules</b> — hooks, custom menu and column, live console</sub></p>
 </td>
+<td width="50%">
+<img src="docs/screenshots/classic-layout.png" alt="Optional Classic layout: dense session list with more columns, request above response">
+<p align="center"><sub><b>Classic layout</b> — optional: denser list with more columns</sub></p>
+</td>
 </tr>
 <tr>
-<td width="50%">
-<img src="docs/screenshots/classic-layout.png" alt="Optional Classic layout: dense session list, request above response">
-<p align="center"><sub><b>Classic layout</b> — optional: denser list, request above response</sub></p>
-</td>
-<td width="50%">
-<img src="docs/screenshots/overview-dark.png" alt="Inspecting an OData JSON response in the dark theme">
+<td colspan="2" align="center">
+<img src="docs/screenshots/overview-dark.png" alt="Inspecting an OData JSON response in the dark theme" width="50%">
 <p align="center"><sub><b>Dark theme</b> — or light, or like the system</sub></p>
 </td>
 </tr>

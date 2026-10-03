@@ -44,7 +44,8 @@ before(async () => {
   );
   await d.waitFor(".statusbar", { text: "68 sessions", timeout: 30000 });
   await d.cmd("POST", d.s("/window/rect"), { width: 1600, height: 1000 });
-  await d.exec(`window.__quena.setLayout({ leftWidth: 0.36, theme: "light" })`);
+  // The default arrangement (run.sh sets request beside response for the tests).
+  await d.exec(`window.__quena.setLayout({ leftWidth: 0.36, stacked: true, theme: "light" })`);
 });
 after(async () => {
   await d.quit();

@@ -168,10 +168,11 @@ export const DEFAULT_LAYOUT: Layout = {
 /** Merge a saved layout (possibly from an older version) with the current defaults. */
 export function restoreLayout(saved: Partial<Layout> | undefined): Layout {
   if (!saved) return { ...DEFAULT_LAYOUT, columns: [...DEFAULT_COLUMNS] };
-  // Layouts saved before presets existed: stacked inspectors meant the classic arrangement.
-  // Unknown/legacy preset names (e.g. from before the rename) fall back by arrangement.
+  // Layouts saved before presets existed (they always had their columns): stacked inspectors
+  // meant the classic arrangement. Unknown/legacy preset names (e.g. from before the rename)
+  // fall back by arrangement; a layout with only a few settings (theme, language …) is Quena's.
   const preset: LayoutPreset =
-    saved.preset && saved.preset in PRESETS ? saved.preset : saved.stacked === false ? "quena" : "classic";
+    saved.preset && saved.preset in PRESETS ? saved.preset : saved.columns && saved.stacked !== false ? "classic" : "quena";
   const base = PRESETS[preset];
   const layout: Layout = { ...DEFAULT_LAYOUT, ...base, ...saved, preset };
   // Titles from the key; columns added in newer versions are appended (hidden if unknown to the preset).

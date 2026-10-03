@@ -21,7 +21,7 @@ settings() {
   # Each suite starts clean: the previous app was killed by the driver, which Quena rightly
   # treats as a crash (it would offer to recover that capture).
   find "$QUENA_DATA_DIR" -mindepth 1 -maxdepth 1 ! -name tauri-driver.log -exec rm -rf {} +
-  echo '{"proxy":{"actAsSystemProxy":false,"port":0},"ui":{"layout":{"preset":"quena","presetChosen":true,"stacked":false,"language":"'"$1"'"}}}' > "$QUENA_DATA_DIR/settings.json"
+  echo '{"proxy":{"actAsSystemProxy":false,"port":0},"ui":{"layout":{"preset":"quena","stacked":false,"language":"'"$1"'"}}}' > "$QUENA_DATA_DIR/settings.json"
 }
 settings en
 export WEBKIT_DISABLE_DMABUF_RENDERER=1 NO_AT_BRIDGE=1

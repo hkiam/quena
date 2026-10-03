@@ -11,7 +11,7 @@ nothing is selected — and updates while traffic arrives:
 - **Response Bytes (by Content-Type)** as bars;
 - **Hosts** and **Processes**.
 
-![Statistics for 13 selected sessions: timing, response codes, bytes by content type](img/statistics.png)
+![Statistics for 24 selected sessions: timing, response codes, bytes by content type and hosts](img/statistics.png)
 
 ## Timeline
 

@@ -4,7 +4,7 @@
 traffic between your applications and the servers they talk to, and lets you inspect,
 change, replay and mock it — **and it diagnoses it.**
 
-![Quena main window: session list, request headers and pretty-printed JSON response side by side](img/overview.png)
+![Quena main window: session list on the left, the request headers above the pretty-printed JSON response on the right](img/overview.png)
 
 ## Diagnostics: from thousands of sessions to what matters
 

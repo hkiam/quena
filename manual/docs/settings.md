@@ -26,7 +26,7 @@ Switching the layout also resets the columns to that layout's set.
 *View → Request Above Response / Request Beside Response* changes only the inspector
 arrangement.
 
-![Optional Classic layout: dense session list, request above response](img/classic-layout.png)
+![Optional Classic layout: dense session list with more columns, request above response](img/classic-layout.png)
 
 ## Connections
 

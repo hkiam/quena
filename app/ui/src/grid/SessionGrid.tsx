@@ -52,8 +52,9 @@ function groupLabel(r: SessionSummary, first: number): string {
 /** The Group column (first, while the list is grouped) and the visible columns, fitted. */
 export function displayColumns(width: number): ColumnConf[] {
   const { layout } = get();
-  const group: ColumnConf[] =
-    layout.groupBy && layout.groupBy !== "none" ? [{ key: "group", title: t("Group"), width: layout.groupWidth ?? 240, visible: true }] : [];
+  // With the navigator open it lists the groups' names: the column needs less room.
+  const groupWidth = layout.groupWidth ?? (layout.navOpen ? 150 : 240);
+  const group: ColumnConf[] = layout.groupBy && layout.groupBy !== "none" ? [{ key: "group", title: t("Group"), width: groupWidth, visible: true }] : [];
   return fitColumns([...group, ...layout.columns], width);
 }
 
@@ -215,7 +216,8 @@ export class GridController {
           s.layout.columns !== prev.layout.columns ||
           s.layout.preset !== prev.layout.preset ||
           s.layout.groupBy !== prev.layout.groupBy ||
-          s.layout.groupWidth !== prev.layout.groupWidth
+          s.layout.groupWidth !== prev.layout.groupWidth ||
+          s.layout.navOpen !== prev.layout.navOpen
         ) {
           this.updateSpacer();
           this.schedule();
@@ -274,9 +276,10 @@ export class GridController {
     const cw = ctx.measureText(count).width;
     const text = this.ell.fit(ctx, head, width - 22 - cw, FONT_BOLD);
     ctx.fillText(text, x + 14, y + ROW_H / 2 + 0.5);
+    const tw = ctx.measureText(text).width; // in the bold font it was drawn in
     ctx.font = FONT;
     ctx.fillStyle = sel ? p.selFg : p.muted;
-    ctx.fillText(count, x + 14 + ctx.measureText(text).width + 2, y + ROW_H / 2 + 0.5);
+    ctx.fillText(count, x + 14 + tw + 2, y + ROW_H / 2 + 0.5);
   }
 
   totalWidth(): number {
@@ -507,6 +510,7 @@ function Header({ scrollX }: { scrollX: number }) {
   // Re-render when the Group column comes or goes or is resized.
   useStore((s) => s.layout.groupBy);
   useStore((s) => s.layout.groupWidth);
+  useStore((s) => s.layout.navOpen);
   const shown = displayColumns(gridWidth);
   const sort = useStore((s) => s.sort);
   const drag = useRef<{ key: ColumnKey; startX: number; startW: number } | null>(null);

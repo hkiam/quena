@@ -10,7 +10,7 @@ with its own row of views.
 - Drag the splitter between them to change the proportions.
 - The response card shows the status as a badge.
 
-![SOAP request: header table with topic tags and the SOAP inspector showing the parsed response](img/soap-inspector.png)
+![SOAP request and response in the SOAP inspector: version, action, operation and the parsed body](img/soap-inspector.png)
 
 ## Sections and views
 
