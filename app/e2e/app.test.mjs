@@ -371,7 +371,11 @@ test("timeline: a waterfall of the selected sessions", async () => {
   await d.cmd("DELETE", d.s("/actions"));
   await new Promise((r) => setTimeout(r, 200));
   const g3 = await geo();
-  assert.ok(g3.url > g1.url + 50, `URL column wider after dragging its edge: ${JSON.stringify([g1.url, g3.url])}`);
+  // On failure: what lies on the handle (something covering it swallows the drag).
+  const onHandle = () =>
+    d.exec(`const h = arguments[0].getBoundingClientRect(), e = document.elementFromPoint(h.left + h.width / 2, h.top + h.height / 2);
+      return { handle: [h.left, h.top, h.width, h.height].map(Math.round), top: e ? e.tagName + "." + e.className : null, win: [innerWidth, innerHeight] };`, [{ "element-6066-11e4-a52e-4f735466cecf": handle }]);
+  assert.ok(g3.url > g1.url + 50, `URL column wider after dragging its edge: ${JSON.stringify([g1.url, g3.url, await onHandle()])}`);
   // Every bar lies completely inside the graph — also the one that ends last.
   const outside = await d.exec(`return [...document.querySelectorAll('.tl-row')].flatMap((row) => {
       const cell = row.querySelector('.tl-c-graph').getBoundingClientRect();
@@ -383,20 +387,27 @@ test("timeline: a waterfall of the selected sessions", async () => {
 
 test("views still fit after coming back from another tab", async () => {
   // Regression: while Inspect is hidden, tab widths measure 0; they must be measured again.
-  await selectRow(1);
-  for (const tab of ["view.structure", "view.statistics", "view.inspectors"]) {
-    await d.exec(`window.__quena.menu(${JSON.stringify(tab)})`);
-    await new Promise((r) => setTimeout(r, 300));
-  }
-  await selectRow(2);
-  await new Promise((r) => setTimeout(r, 400));
-  const res = await d.exec(`
-    return [...document.querySelectorAll('.insp-pane')].map((pane) => {
-      const wrap = pane.querySelector('.view-tabs').getBoundingClientRect();
-      const segs = [...pane.querySelectorAll('.view-tabs > .segmented:not(.view-tabs-measure) .seg')].map((e) => e.getBoundingClientRect());
-      return { outside: segs.some((r) => r.left < wrap.left - 0.5 || r.right > wrap.right + 0.5), shown: segs.length };
+  // Each row of views (flat; grouped: the sections and the views below them) stays inside
+  // its own strip.
+  const fit = () =>
+    d.exec(`
+    return [...document.querySelectorAll('.insp-pane .view-tabs')].map((bar) => {
+      const wrap = bar.getBoundingClientRect();
+      const segs = [...bar.querySelectorAll(':scope > .segmented:not(.view-tabs-measure) .seg')].map((e) => e.getBoundingClientRect());
+      return { bar: bar.className, outside: segs.some((r) => r.left < wrap.left - 0.5 || r.right > wrap.right + 0.5), shown: segs.length };
     });`);
-  assert.ok(res.every((p) => !p.outside && p.shown > 0), `view tabs overflow after a tab switch: ${JSON.stringify(res)}`);
+  for (const inspectorTabs of ["flat", "grouped"]) {
+    await d.exec(`window.__quena.setLayout({ inspectorTabs: ${JSON.stringify(inspectorTabs)} })`);
+    await selectRow(1);
+    for (const tab of ["view.timeline", "view.statistics", "view.inspectors"]) {
+      await d.exec(`window.__quena.menu(${JSON.stringify(tab)})`);
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    await selectRow(2);
+    await new Promise((r) => setTimeout(r, 400));
+    const res = await fit();
+    assert.ok(res.length >= 2 && res.every((p) => !p.outside && p.shown > 0), `${inspectorTabs}: view tabs overflow after a tab switch: ${JSON.stringify(res)}`);
+  }
 });
 
 test("an archive dropped onto the window is loaded", async () => {

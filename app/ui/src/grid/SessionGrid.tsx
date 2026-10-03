@@ -621,7 +621,9 @@ export function SessionGrid() {
     return () => grid.detach();
   }, []);
 
+  const rightDownAt = useRef(-Infinity);
   const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 2 || (e.button === 0 && e.ctrlKey)) rightDownAt.current = performance.now(); // Ctrl+click on macOS
     scrollerRef.current?.focus();
     const i = grid.indexAt(e.clientY);
     if (i < 0 || i >= get().listTotal) {
@@ -649,8 +651,9 @@ export function SessionGrid() {
     if (browserMenuWanted(e)) return;
     e.preventDefault();
     // From the keyboard (Shift+F10, menu key) the selection's menu; with the mouse, below the
-    // last row (or with nothing selected), what applies to the list as a whole.
-    const keyboard = e.nativeEvent.detail === 0;
+    // last row (or with nothing selected), what applies to the list as a whole. A mouse menu
+    // follows a right button press (`detail` is 0 for synthetic clicks too, e.g. WebKitGTK's).
+    const keyboard = performance.now() - rightDownAt.current > 1000;
     const i = grid.indexAt(e.clientY);
     const onRow = keyboard || (i >= 0 && i < get().listTotal);
     if (!onRow || get().selection.size === 0) showContextMenu(e.clientX, e.clientY, listMenu());
