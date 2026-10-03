@@ -115,8 +115,14 @@ export class Driver {
         },
       ],
     });
-    // Release the input state: WebKitGTK otherwise carries it into later pointer actions
-    // (a drag after a right-click then moves nothing).
+    // WebKitWebDriver keeps the right button pressed after its pointerUp (later events carry
+    // buttons: 2, and a left press is then a chord without pointerdown, so drags never start):
+    // release it once more, then the input state.
+    if (button !== 0) {
+      await this.cmd("POST", this.s("/actions"), {
+        actions: [{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerUp", button }] }],
+      });
+    }
     await this.cmd("DELETE", this.s("/actions"));
   }
 
