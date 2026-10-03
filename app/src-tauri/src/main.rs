@@ -53,6 +53,7 @@ fn main() {
     let proto_core = core.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(core.clone())
         .manage(commands::OpenFiles(parking_lot::Mutex::new(initial_files)))
         .manage(engine.clone())
@@ -165,7 +166,9 @@ fn main() {
 
 /// WebView2 handles browser shortcuts itself (Ctrl+F opens its page search, Ctrl+R/F5
 /// reload, Ctrl+P print) before the app sees them. Turn them off so Quena's own shortcuts
-/// work; editing keys (copy, paste, undo) are not affected.
+/// work; editing keys (copy, paste, undo) are not affected. Release builds also lose the
+/// browser's context menu (Reload, Inspect …) and the developer tools: Quena shows its own
+/// menus, and the preview frame, whose right-clicks the page never sees, gets none.
 #[cfg(windows)]
 fn disable_browser_accelerators(w: &tauri::WebviewWindow) {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
@@ -175,7 +178,13 @@ fn disable_browser_accelerators(w: &tauri::WebviewWindow) {
             pw.controller()
                 .CoreWebView2()
                 .and_then(|wv| wv.Settings())
-                .and_then(|s| s.cast::<ICoreWebView2Settings3>())
+                .and_then(|s| {
+                    if !cfg!(debug_assertions) {
+                        s.SetAreDefaultContextMenusEnabled(false)?;
+                        s.SetAreDevToolsEnabled(false)?;
+                    }
+                    s.cast::<ICoreWebView2Settings3>()
+                })
                 .and_then(|s3| s3.SetAreBrowserAcceleratorKeysEnabled(false))
         };
         if let Err(e) = r {

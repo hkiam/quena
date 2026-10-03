@@ -68,7 +68,13 @@ function MenuList({ items, x, y, depth }: { items: MenuItem[]; x: number; y: num
   }, [items, hi, depth]);
 
   return (
-    <div ref={ref} className="ctx-menu" style={{ left: pos.x, top: pos.y }} onMouseDown={(e) => e.stopPropagation()}>
+    <div ref={ref} className="ctx-menu" style={{ left: pos.x, top: pos.y }} onMouseDown={(e) => {
+        // Keep the focus (and selection) where the menu was opened: Cut/Paste act on it.
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
       {items.map((it, i) =>
         it.separator ? (
           <div key={i} className="ctx-sep" />

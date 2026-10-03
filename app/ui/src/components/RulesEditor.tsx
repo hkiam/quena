@@ -13,6 +13,7 @@ import { say } from "../store";
 import { actions } from "../actions";
 import { modKey } from "../lib/format";
 import { t } from "../i18n";
+import { registerEditor } from "../lib/cmEditTarget";
 
 const editorTheme = EditorView.theme({
   "&": { height: "100%", fontSize: "12px", backgroundColor: "var(--panel-bg)", color: "var(--fg)" },
@@ -55,6 +56,7 @@ export function RulesEditor() {
   // Build the editor once we have the initial source.
   useEffect(() => {
     let cancelled = false;
+    let unregister = () => {};
     api.scriptGet().then((s) => {
       if (cancelled || !host.current) return;
       setState(s);
@@ -84,9 +86,11 @@ export function RulesEditor() {
         ],
       });
       view.current = new EditorView({ state: startState, parent: host.current });
+      unregister = registerEditor(view.current);
     });
     return () => {
       cancelled = true;
+      unregister();
       view.current?.destroy();
       view.current = null;
     };

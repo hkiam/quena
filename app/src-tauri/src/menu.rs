@@ -217,7 +217,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "view.tearoff", "Tear off Inspectors", None)?,
             &sep()?,
             &item(app, "view.jobs", "Jobs", None)?,
+            &item(app, "dev.overlay", "Performance Overlay", Some("CmdOrCtrl+Shift+P"))?,
+            // Mock data and reloading the UI are for developing Quena: debug builds only.
+            #[cfg(debug_assertions)]
             &sep()?,
+            #[cfg(debug_assertions)]
             &Submenu::with_items(
                 app,
                 tr("Developer"),
@@ -232,7 +236,6 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                     &item(app, "dev.mock-big", "Generate large bodies (≈1.4 GB)", None)?,
                     &item(app, "dev.mock-huge", "Generate huge bodies (≈14 GB)", None)?,
                     &sep()?,
-                    &item(app, "dev.overlay", "Performance Overlay", Some("CmdOrCtrl+Shift+P"))?,
                     &item(app, "dev.reload", "Reload UI", None)?,
                 ],
             )?,

@@ -24,6 +24,7 @@ quena-plugin-host.workspace = true
 quena-platform.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

@@ -6,7 +6,8 @@ import "./styles.css";
 // The language is set before the UI modules load, so their constants are translated too.
 async function start() {
   if (isTauri) setLang((await api.uiLanguage().catch(() => "en")) === "de" ? "de" : "en");
-  const [{ App }, { AppCrash, ErrorBoundary }] = await Promise.all([import("./App"), import("./components/ErrorBoundary")]);
+  const [{ App }, { AppCrash, ErrorBoundary }, { installContextMenus }] = await Promise.all([import("./App"), import("./components/ErrorBoundary"), import("./components/contextMenus")]);
+  installContextMenus();
   createRoot(document.getElementById("root")!).render(
     <ErrorBoundary name="app" fallback={(e) => <AppCrash error={e} />}>
       <App />

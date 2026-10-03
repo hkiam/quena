@@ -1,5 +1,9 @@
 // German translations: components.
 export const components: Record<string, string> = {
+  Redo: "Wiederholen",
+  Cut: "Ausschneiden",
+  Paste: "Einfügen",
+  "Select All": "Alles auswählen",
   "Comment ({n} session)": "Kommentar ({n} Session)",
   "Comment ({n} sessions)": "Kommentar ({n} Sessions)",
   "select sessions whose URL contains text": "Sessions auswählen, deren URL text enthält",

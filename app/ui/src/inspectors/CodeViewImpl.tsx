@@ -5,6 +5,7 @@ import { EditorView, lineNumbers, highlightActiveLine, keymap, drawSelection } f
 import { defaultHighlightStyle, syntaxHighlighting, bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches, search } from "@codemirror/search";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { registerEditor } from "../lib/cmEditTarget";
 
 import type { Lang } from "./CodeView";
 import { t } from "../i18n";
@@ -126,7 +127,11 @@ export function CodeView({
       ],
     });
     view.current = new EditorView({ state, parent: host.current! });
-    return () => view.current?.destroy();
+    const unregister = registerEditor(view.current);
+    return () => {
+      unregister();
+      view.current?.destroy();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

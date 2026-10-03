@@ -19,6 +19,13 @@ contain breaking changes (settings, file formats, plugin API).
   layout choice on first start is gone. *Settings → General → Layout* and
   *View → Request Beside Response* still switch. Existing layouts are kept.
 
+- **No browser menu on right-click any more** (Reload, Inspect Element …). Text fields and
+  editors get an Edit menu (Undo, Redo, Cut, Copy, Paste, Select All), selected text a Copy
+  menu, and places without a sensible menu none. In release builds the developer tools are
+  off, and on Windows WebView2's own menus too (this also covers the HTML preview). The
+  *Developer* menu (mock data, Reload UI) is only in debug builds; *Performance Overlay*
+  moved to *View*.
+
 ### Fixed
 - A plain XML document sent as `text/xml` or `application/xml` no longer opens in the SOAP
   view, and is no longer offered the SOAP and Atom/OData views. Quena now checks the root
