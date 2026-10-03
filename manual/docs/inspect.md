@@ -40,6 +40,20 @@ JSON tree.
 back the strip of all views from earlier versions. The views, and which view is
 remembered, are the same in both.
 
+## Right-click
+
+| Where | Menu |
+|---|---|
+| Header row | Copy value, name, the header or all headers; *Show only* this header in the table |
+| Body, Raw, Hex, Image | Copy (selection), Select All, *Copy Body*, *Save Body…*; in the body also *Wrap* and *Format* |
+| JSON tree | Copy value, key or **JSONPath**; Expand / Collapse All; **change or remove this value, or append a broken element to this list, in later messages of the same URL** (adds a [rewrite rule](change-replay.md)) |
+| XML tree (also SOAP) | Copy text, **XPath** or the element as XML; Expand / Collapse All |
+| Tables (form data, cookies, encoding) | Copy value, row or all rows (tab-separated) |
+| WebSocket frame, SSE event, multipart part | Copy the message / data / event; save the part |
+| Text fields and editors | Undo, Redo, Cut, Copy, Paste, Select All |
+
+Elsewhere a right-click shows nothing, or *Copy* for selected text.
+
 ## Views
 
 | View | Request | Response | Shows |

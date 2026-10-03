@@ -1,6 +1,6 @@
 // Smaller inspectors: WebForms, Auth, Cookies, Caching, Image, WebView,
 // Transformer, Raw, JSON and XML trees.
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { api, bodyUrl, type Detail, type HeaderInspection, type Part, type Variant } from "../api";
 import { fmtBytes, fmtInt, headerValue, latin1ToUtf8 } from "../lib/format";
 import { b64decode, formCharset, parseCookies, parseForm, parseQuery, rawResponseHead, requestLine } from "../lib/http";
@@ -11,6 +11,8 @@ import { BodyText } from "./BodyText";
 import { get } from "../store";
 import { parseXml } from "../lib/xml";
 import { plural, t } from "../i18n";
+import { openMenu, withSelection } from "../components/contextMenus";
+import { jsonItems, jsonPath, tableItems, xmlItems } from "./inspectMenus";
 
 const TREE_LIMIT = 5 << 20;
 /** Rows / children rendered before a "more" control (hostile bodies can have millions). */
@@ -40,7 +42,13 @@ function Table({ rows, head = [t("Name"), t("Value")] }: { rows: (string | React
         </thead>
         <tbody>
           {rows.slice(0, limit).map((r, i) => (
-            <tr key={i}>
+            <tr
+              key={i}
+              onContextMenu={(e) => {
+                const text = (row: (string | React.ReactNode)[]) => row.map((c) => (typeof c === "string" ? c : ""));
+                openMenu(e, withSelection(tableItems(text(r), rows.map(text), head), e.target as Element));
+              }}
+            >
               {r.map((c, j) => (
                 <td key={j}>{c}</td>
               ))}
@@ -419,16 +427,44 @@ export function RawView({ detail, part, wrap }: { detail: Detail; part: Part; wr
 
 // ------------------------------------------------------------------ trees
 
+/** Expand All / Collapse All of a tree: remounts it with every node open or closed. */
+interface TreeControl {
+  all: boolean | null;
+  expand: (all: boolean) => void;
+  menu?: { detail: Detail; part: Part };
+}
+const TreeCtx = createContext<TreeControl>({ all: null, expand: () => {} });
+
+export function TreeRoot({ children, detail, part }: { children: React.ReactNode; detail?: Detail; part?: Part }) {
+  const [state, setState] = useState<{ all: boolean | null; n: number }>({ all: null, n: 0 });
+  const ctx = useMemo<TreeControl>(() => ({ all: state.all, expand: (all) => setState((s) => ({ all, n: s.n + 1 })), menu: detail && part ? { detail, part } : undefined }), [state.all, detail, part]);
+  return (
+    <TreeCtx.Provider value={ctx}>
+      <div key={state.n} style={{ display: "contents" }}>
+        {children}
+      </div>
+    </TreeCtx.Provider>
+  );
+}
+
+/** Nodes start open above this depth, unless Expand/Collapse All was chosen. */
+const startsOpen = (all: boolean | null, depth: number, auto: number) => (all === null ? depth < auto : all || depth === 0);
+
 type J = unknown;
 
-function JNode({ k, v, depth }: { k: string | null; v: J; depth: number }) {
-  const [open, setOpen] = useState(depth < 2);
+function JNode({ k, v, depth, path }: { k: string | null; v: J; depth: number; path: string }) {
+  const tree = useContext(TreeCtx);
+  const [open, setOpen] = useState(startsOpen(tree.all, depth, 2));
+  const onMenu = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (tree.menu) openMenu(e, withSelection(jsonItems(tree.menu.detail, tree.menu.part, path, k, v, tree.expand), e.target as Element));
+  };
   const [limit, setLimit] = useState(500);
   const isObj = v !== null && typeof v === "object";
   if (!isObj) {
     const cls = typeof v === "string" ? "j-str" : typeof v === "number" ? "j-num" : "j-lit";
     return (
-      <div className="j-row">
+      <div className="j-row" onContextMenu={onMenu}>
         {k !== null && <span className="j-key">{k}: </span>}
         <span className={cls}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>
       </div>
@@ -436,7 +472,7 @@ function JNode({ k, v, depth }: { k: string | null; v: J; depth: number }) {
   }
   const entries: [string, J][] = Array.isArray(v) ? v.map((x, i) => [String(i), x]) : Object.entries(v as Record<string, J>);
   return (
-    <div className="j-row">
+    <div className="j-row" onContextMenu={onMenu}>
       <span className="j-toggle" onClick={() => setOpen(!open)}>
         {open ? "▾" : "▸"}
       </span>
@@ -445,7 +481,7 @@ function JNode({ k, v, depth }: { k: string | null; v: J; depth: number }) {
       {open && (
         <div className="j-children">
           {entries.slice(0, limit).map(([ck, cv]) => (
-            <JNode key={ck} k={ck} v={cv} depth={depth + 1} />
+            <JNode key={ck} k={ck} v={cv} depth={depth + 1} path={jsonPath(path, ck, Array.isArray(v))} />
           ))}
           {entries.length > limit && (
             <div className="j-more" onClick={() => setLimit(limit + 1000)}>
@@ -493,20 +529,29 @@ export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
   if (parsed.err) return <div className="placeholder">{t("Not valid JSON: {error}", { error: parsed.err })}</div>;
   return (
     <div className="scroll pad mono">
-      <JNode k={null} v={parsed.v} depth={0} />
+      <TreeRoot detail={detail} part={part}>
+        <JNode k={null} v={parsed.v} depth={0} path="$" />
+      </TreeRoot>
     </div>
   );
 }
 
 export function XNode({ n, depth }: { n: Element; depth: number }) {
-  const [open, setOpen] = useState(depth < 3);
+  const tree = useContext(TreeCtx);
+  const [open, setOpen] = useState(startsOpen(tree.all, depth, 3));
   const [limit, setLimit] = useState(ROW_CAP);
   const kids = Array.from(n.childNodes).filter((c) => c.nodeType === 1 || (c.nodeType === 3 && (c.textContent ?? "").trim()) || c.nodeType === 4);
   const allAttrs = n.attributes;
   const attrs = Array.from(allAttrs).slice(0, 200);
   const onlyText = kids.length === 1 && kids[0].nodeType !== 1;
   return (
-    <div className="j-row">
+    <div
+      className="j-row"
+      onContextMenu={(e) => {
+        e.stopPropagation();
+        openMenu(e, withSelection(xmlItems(n, tree.expand), e.target as Element));
+      }}
+    >
       {!onlyText && kids.length > 0 ? (
         <span className="j-toggle" onClick={() => setOpen(!open)}>
           {open ? "▾" : "▸"}
@@ -551,7 +596,9 @@ export function XmlView({ detail, part }: { detail: Detail; part: Part }) {
   if ("error" in doc) return <div className="placeholder">{doc.error}</div>;
   return (
     <div className="scroll pad mono">
-      <XNode n={doc.root} depth={0} />
+      <TreeRoot>
+        <XNode n={doc.root} depth={0} />
+      </TreeRoot>
     </div>
   );
 }

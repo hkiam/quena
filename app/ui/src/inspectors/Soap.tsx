@@ -6,7 +6,7 @@ import { loadText } from "../lib/bodytext";
 import { useCharsetOverride } from "./CharsetPicker";
 import { parseXml } from "../lib/xml";
 import { fmtBytes, headerValue } from "../lib/format";
-import { ROW_CAP, XNode } from "./views";
+import { ROW_CAP, TreeRoot, XNode } from "./views";
 import { t } from "../i18n";
 
 const SOAP11 = "http://schemas.xmlsoap.org/soap/envelope/";
@@ -163,12 +163,16 @@ export function SoapView({ detail, part }: { detail: Detail; part: Part }) {
       <h4>{t("Body")}</h4>
       {fault?.detail && (
         <div className="mono">
-          <XNode n={fault.detail} depth={0} />
+          <TreeRoot>
+            <XNode n={fault.detail} depth={0} />
+          </TreeRoot>
         </div>
       )}
       {payload ? (
         <div className="mono">
-          <XNode n={payload} depth={0} />
+          <TreeRoot>
+            <XNode n={payload} depth={0} />
+          </TreeRoot>
         </div>
       ) : (
         <div className="muted">{t("Empty body")}</div>

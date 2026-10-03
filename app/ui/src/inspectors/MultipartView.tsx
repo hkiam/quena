@@ -9,6 +9,8 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { say } from "../store";
 import { MoreRows } from "./views";
 import { plural, t } from "../i18n";
+import { openMenu } from "../components/contextMenus";
+import { copyItem } from "./inspectMenus";
 
 /** Parts listed before "more". */
 const PARTS = 500;
@@ -60,6 +62,17 @@ export function MultipartView({ detail, part }: { detail: Detail; part: Part }) 
     };
   }, [detail.summary.id, part, p?.offset, p?.len, p?.isText, charset]);
 
+  const savePart = async (p: Multipart["parts"][number]) => {
+    const name = p.filename || p.name || `part-${p.index}`;
+    try {
+      const path = await save({ defaultPath: name });
+      if (!path) return;
+      await api.saveBodyRange(detail.summary.id, part, p.offset, p.len, path);
+      say(t("Saved {name}", { name }));
+    } catch (e) {
+      say(t("Save failed: {error}", { error: String(e) }));
+    }
+  };
   if (error) return <div className="placeholder">{t("Could not parse the parts: {error}", { error })}</div>;
   if (!mp) return <div className="placeholder">{t("Parsing…")}</div>;
   if (mp.error) return <div className="placeholder">{t("Not multipart: {error}", { error: mp.error })}</div>;
@@ -73,7 +86,15 @@ export function MultipartView({ detail, part }: { detail: Detail; part: Part }) 
       <div className="mp-split">
         <div className="mp-list">
           {mp.parts.slice(0, limit).map((pt, i) => (
-            <div key={i} className={`mp-part ${sel === i ? "sel" : ""}`} onClick={() => setSel(i)}>
+            <div
+              key={i}
+              className={`mp-part ${sel === i ? "sel" : ""}`}
+              onClick={() => setSel(i)}
+              onContextMenu={(e) => {
+                setSel(i);
+                openMenu(e, [{ label: t("Save Part…"), action: () => void savePart(pt) }, ...(pt.contentId ? [copyItem(t("Copy Content-ID"), pt.contentId)] : [])]);
+              }}
+            >
               <div className="mp-part-ct">
                 {mp.start && pt.contentId === mp.start ? "★ " : ""}
                 {pt.contentType}
@@ -97,19 +118,7 @@ export function MultipartView({ detail, part }: { detail: Detail; part: Part }) 
               </span>
               <span className="tp-spacer" />
               {p.isText && p.charset && <CharsetPicker detected={p.charset} value={override} onChange={setOverride} />}
-              <button
-                onClick={async () => {
-                  const name = p.filename || p.name || `part-${p.index}`;
-                  try {
-                    const path = await save({ defaultPath: name });
-                    if (!path) return;
-                    await api.saveBodyRange(detail.summary.id, part, p.offset, p.len, path);
-                    say(t("Saved {name}", { name }));
-                  } catch (e) {
-                    say(t("Save failed: {error}", { error: String(e) }));
-                  }
-                }}
-              >
+              <button onClick={() => void savePart(p)}>
                 {t("Save…")}
               </button>
             </div>

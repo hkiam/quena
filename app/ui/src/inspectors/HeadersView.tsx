@@ -6,6 +6,9 @@ import { latin1ToUtf8 } from "../lib/format";
 import { extParams, requestLine } from "../lib/http";
 import { CodeView } from "./CodeView";
 import { plural, t } from "../i18n";
+import { copyText } from "../actions";
+import { openMenu, withSelection } from "../components/contextMenus";
+import { copyItem } from "./inspectMenus";
 
 type Topic = "auth" | "cookie" | "cache" | "cors" | "content" | "conn" | "fetch" | "policy";
 
@@ -110,14 +113,34 @@ export function HeadersView({ detail, part }: { detail: Detail; part: Part }) {
           A–Z
         </button>
         <button onClick={() => setRaw(true)}>{t("Raw")}</button>
-        <button onClick={() => navigator.clipboard.writeText(text("\r\n"))}>{t("Copy")}</button>
+        <button onClick={() => void copyText(text("\r\n"))}>{t("Copy")}</button>
       </div>
       <div className="hv-scroll">
         <div className="hv-first">{first}</div>
         <table className="hv-table">
           <tbody>
             {rows.map((h, i) => (
-              <tr key={i} title={t("Double-click to copy")} onDoubleClick={() => navigator.clipboard.writeText(`${h.k}: ${h.v}`)}>
+              <tr
+                key={i}
+                title={t("Double-click to copy")}
+                onDoubleClick={() => void copyText(`${h.k}: ${h.v}`)}
+                onContextMenu={(e) =>
+                  openMenu(
+                    e,
+                    withSelection(
+                      [
+                        copyItem(t("Copy Value"), h.v),
+                        copyItem(t("Copy Name"), h.k),
+                        copyItem(t("Copy Header"), `${h.k}: ${h.v}`),
+                        copyItem(t("Copy All Headers"), text("\r\n")),
+                        { separator: true },
+                        { label: t("Show Only {name}", { name: h.k }), action: () => setFilter(h.k) },
+                      ],
+                      e.target as Element,
+                    ),
+                  )
+                }
+              >
                 <td className="hv-name">{h.k}</td>
                 <td className="hv-value">
                   {h.v}

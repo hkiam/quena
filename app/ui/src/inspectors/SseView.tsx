@@ -6,6 +6,8 @@ import { decodeBytes } from "../lib/bodytext";
 import { useCharsetOverride } from "./CharsetPicker";
 import { useStore } from "../store";
 import { t } from "../i18n";
+import { openMenu, withSelection } from "../components/contextMenus";
+import { copyItem } from "./inspectMenus";
 
 interface Event {
   id?: string;
@@ -106,7 +108,19 @@ export function SseView({ detail }: { detail: Detail }) {
         </div>
       )}
       {events.slice(from).map((e, i) => (
-        <div key={from + i} className="sse-event">
+        <div
+          key={from + i}
+          className="sse-event"
+          onContextMenu={(ev) =>
+            openMenu(
+              ev,
+              withSelection(
+                [copyItem(t("Copy Data"), e.data), copyItem(t("Copy Event"), [`event: ${e.event}`, e.id && `id: ${e.id}`, ...e.data.split("\n").map((l) => `data: ${l}`)].filter(Boolean).join("\n"))],
+                ev.target as Element,
+              ),
+            )
+          }
+        >
           <div className="sse-head">
             <span className="sse-type">{e.event}</span>
             {e.id && <span className="muted">id: {e.id}</span>}

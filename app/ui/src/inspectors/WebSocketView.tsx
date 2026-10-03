@@ -5,6 +5,8 @@ import { fmtBytes, fmtInt, fmtTime } from "../lib/format";
 import { CodeView } from "./CodeView";
 import { useStore } from "../store";
 import { t } from "../i18n";
+import { openMenu, withSelection } from "../components/contextMenus";
+import { copyItem } from "./inspectMenus";
 
 const PAGE = 500;
 
@@ -95,7 +97,15 @@ export function WebSocketView({ detail }: { detail: Detail }) {
           }}
         >
           {shown.map((f) => (
-            <div key={f.seq} className={`ws-frame ${sel === f.seq ? "sel" : ""} op-${f.opcodeName}`} onClick={() => setSel(f.seq)}>
+            <div
+              key={f.seq}
+              className={`ws-frame ${sel === f.seq ? "sel" : ""} op-${f.opcodeName}`}
+              onClick={() => setSel(f.seq)}
+              onContextMenu={(e) => {
+                setSel(f.seq);
+                openMenu(e, withSelection([copyItem(t("Copy Message"), f.text ?? f.preview ?? "")], e.target as Element));
+              }}
+            >
               <span className={`ws-dir ${f.dir === 0 ? "out" : "in"}`}>{f.dir === 0 ? "▲" : "▼"}</span>
               <span className="ws-op">{f.opcodeName}</span>
               <span className="ws-time">{fmtTime(f.time)}</span>

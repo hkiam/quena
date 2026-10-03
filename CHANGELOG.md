@@ -26,6 +26,12 @@ contain breaking changes (settings, file formats, plugin API).
   *Developer* menu (mock data, Reload UI) is only in debug builds; *Performance Overlay*
   moved to *View*.
 
+- **Context menus in the inspector**: copy header values, table rows, JSON values with their
+  JSONPath, XML elements with their XPath, WebSocket messages and SSE events; copy or save
+  bodies and multipart parts; expand or collapse trees. From the JSON tree a value can be
+  changed or removed, or a broken element appended to a list, in later messages of the
+  same URL (a rewrite rule).
+
 ### Fixed
 - A plain XML document sent as `text/xml` or `application/xml` no longer opens in the SOAP
   view, and is no longer offered the SOAP and Atom/OData views. Quena now checks the root

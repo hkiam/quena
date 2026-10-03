@@ -18,6 +18,8 @@ import { SseView } from "./SseView";
 import { MultipartView, multipartCandidate } from "./MultipartView";
 import { GrpcView, grpcCandidate } from "./GrpcView";
 import { ViewTabs } from "./ViewTabs";
+import { bodyItems } from "./inspectMenus";
+import { openMenu, withSelection } from "../components/contextMenus";
 import { SECTIONS, bodyViews, defaultView, orderViews, sectionOf, sectionViews, viewFamily, type Section } from "./viewChoice";
 import { methodPill, statusPill } from "../grid/style";
 import { ErrorBoundary } from "../components/ErrorBoundary";
@@ -140,8 +142,21 @@ function TextPane({ detail, part, syntax }: { detail: Detail; part: Part; syntax
   const want = bodyVariant(detail, part, decode, pretty);
   const text = info.isText || want !== "raw";
   const v = text && info.charset ? textVariant(info, want, override) : want;
+  const onMenu = (e: React.MouseEvent) =>
+    openMenu(
+      e,
+      withSelection(
+        [
+          ...bodyItems(detail, part),
+          { separator: true },
+          { label: t("Wrap"), checked: wrap, action: () => setWrap(!wrap) },
+          ...(info.variants.includes("pretty") ? [{ label: t("Format"), checked: pretty, action: () => setPretty(!pretty) }] : []),
+        ],
+        e.target as Element,
+      ),
+    );
   return (
-    <div className="textpane">
+    <div className="textpane" onContextMenu={onMenu}>
       <EncodedBanner detail={detail} part={part} />
       <div className="tp-bar">
         <label>
@@ -389,7 +404,14 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         {tabsRow}
       </div>
       {grouped && <div className="insp-sub">{subRow}</div>}
-      <div className="insp-content">
+      <div
+        className="insp-content"
+        onContextMenu={(e) => {
+          // Views without a menu of their own (Hex, Image, Raw …): the body's, if it has one.
+          if (e.nativeEvent.defaultPrevented || !detail || tamper || !["body", "raw"].includes(sectionOf(tab))) return;
+          openMenu(e, withSelection(bodyItems(detail, part), e.target as Element));
+        }}
+      >
         <ErrorBoundary name={`${part} ${tab}`} resetKey={`${detail?.summary.id ?? ""}:${tab}:${tamper ? "tamper" : ""}`}>
           {content}
         </ErrorBoundary>
