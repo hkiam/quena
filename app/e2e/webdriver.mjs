@@ -115,6 +115,9 @@ export class Driver {
         },
       ],
     });
+    // Release the input state: WebKitGTK otherwise carries it into later pointer actions
+    // (a drag after a right-click then moves nothing).
+    await this.cmd("DELETE", this.s("/actions"));
   }
 
   /** Press a key chord, e.g. keys(["Control", "f"]). */

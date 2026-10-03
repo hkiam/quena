@@ -257,8 +257,9 @@ test("right-click: Quena's menus, never the browser's", async () => {
   items = await menu();
   assert.ok(["Cut", "Copy", "Paste", "Select All"].every((x) => items.includes(x)), `edit menu: ${items}`);
   await close();
-  // A header row: copy its value.
-  await rightClick((await d.findAll(".hv-table tr"))[0]);
+  // A header row (a shown one: the other pane may keep its table hidden): copy its value.
+  const row = await d.exec(`return [...document.querySelectorAll('.hv-table tr')].find((r) => r.offsetHeight > 0 && r.offsetWidth > 0)`);
+  await rightClick(row["element-6066-11e4-a52e-4f735466cecf"]);
   items = await menu();
   assert.ok(items.includes("Copy Value") && items.includes("Copy All Headers"), `header menu: ${items}`);
   await close();
