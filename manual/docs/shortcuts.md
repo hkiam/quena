@@ -26,6 +26,16 @@ Shortcuts* shows this list in the app.
 | Close a dialog | `Esc` |
 | Performance overlay | `Ctrl/⌘ Shift P` |
 
+## Inspect
+
+These work while the focus is in the request or response card (e.g. after clicking one of
+its tabs), not while typing in a text field.
+
+| Action | Shortcut |
+|---|---|
+| Section *Headers*, *Body*, *Cookies*, *Auth*, *Raw* (grouped views) | `Alt 1` … `Alt 5` |
+| Previous / next view (of the section, or of the row with flat views) | `Alt ←` / `Alt →` |
+
 ## Session list
 
 These work while the session list has the focus.

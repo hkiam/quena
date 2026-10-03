@@ -22,6 +22,7 @@ export function atomCandidate(detail: Detail, part: Part): boolean {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const ct = (info.contentType ?? "").toLowerCase();
   if (!info.len) return false;
+  if (info.shape !== undefined && info.isText) return info.shape === "atom" || info.shape === "edmx";
   return ct.includes("atom") || ct.includes("fastinfoset") || ct.includes("xml") || /\$metadata/.test(detail.request.url);
 }
 

@@ -7,6 +7,25 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Changed
+- **Inspector views in two levels**: each request and response card first offers the
+  sections *Headers*, *Body*, *Cookies*, *Auth* and *Raw* (with the number of headers and
+  cookies, and a dot for authentication), then, below them, only the body views that fit
+  the content, the best one first. For example, *Formatted · Tree · Plain Text* for JSON and
+  *SOAP · Formatted · Tree · Plain Text* for SOAP. Views that do not fit stay reachable under
+  *Other*. `Alt 1`…`Alt 5` pick the section, `Alt ←/→` the view. The single row of all views
+  is still available: *Settings → General → Inspector views → Flat*.
+- **New installations start in the Quena layout with the request above the response**; the
+  layout choice on first start is gone. *Settings → General → Layout* and
+  *View → Request Beside Response* still switch. Existing layouts are kept.
+
+### Fixed
+- A plain XML document sent as `text/xml` or `application/xml` no longer opens in the SOAP
+  view, and is no longer offered the SOAP and Atom/OData views. Quena now checks the root
+  element of the decoded body (SOAP envelope, Atom feed or entry, OData metadata) instead
+  of trusting the content type. JSON and XML with a wrong or missing content type get the
+  matching views.
+
 ## [0.1.4] — 2026-10-02
 
 ### Added

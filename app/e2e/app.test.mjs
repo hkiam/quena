@@ -119,7 +119,8 @@ const chooseView = async (pane, label) => {
 };
 
 test("views: as many as fit are shown directly, More only holds the rest", async () => {
-  await d.exec(`window.__quena.setLayout({ stacked: true, leftWidth: 0.4 })`);
+  // The flat strip (all views in one row), still available as an option.
+  await d.exec(`window.__quena.setLayout({ stacked: true, leftWidth: 0.4, inspectorTabs: "flat" })`);
   for (const [width, height] of [[1920, 1080], [1100, 700]]) {
     await d.cmd("POST", d.s("/window/rect"), { width, height });
     await selectRow(1);
@@ -142,7 +143,7 @@ test("views: as many as fit are shown directly, More only holds the rest", async
 });
 
 test("views: sensible default per content, and the choice is remembered per kind of content", async () => {
-  await d.exec(`window.__quena.setLayout({ viewByType: {}, rememberViews: true, stacked: true })`);
+  await d.exec(`window.__quena.setLayout({ viewByType: {}, rememberViews: true, stacked: true, inspectorTabs: "flat" })`);
   await selectRow(3); // SOAP
   await d.waitFor(".insp-url", { text: "GetOrder" });
   assert.equal(await activeView(1), "SOAP", "SOAP responses open in the SOAP view");
@@ -169,7 +170,61 @@ test("views: sensible default per content, and the choice is remembered per kind
   await selectRow(1);
   await d.waitFor(".insp-url", { text: "v1/items" });
   assert.equal(await activeView(1), "Raw");
-  await d.exec(`window.__quena.setLayout({ rememberViews: true, viewByType: {}, stacked: false })`);
+  await d.exec(`window.__quena.setLayout({ rememberViews: true, viewByType: {}, stacked: false, inspectorTabs: "grouped" })`);
+});
+
+test("grouped views: sections first, then the views that fit the body", async () => {
+  await d.exec(`window.__quena.setLayout({ viewByType: {}, subViews: {}, rememberViews: true, stacked: true, inspectorTabs: "grouped" })`);
+  const rows = (pane) =>
+    d.exec(
+      `const p = document.querySelectorAll('.insp-pane')[arguments[0]];
+       const segs = (sel) => [...p.querySelectorAll(sel + ' > .segmented:not(.view-tabs-measure) .seg')];
+       const label = (e) => e.firstChild ? e.firstChild.textContent : e.textContent;
+       return { sections: segs('.view-sections').map(label), section: segs('.view-sections').filter((e) => e.classList.contains('active')).map(label)[0] ?? null,
+                views: segs('.view-sub').map(label), view: segs('.view-sub').filter((e) => e.classList.contains('active')).map(label)[0] ?? null,
+                other: !!p.querySelector('.view-sub > .seg-more') };`,
+      [pane],
+    );
+  const pick = async (pane, sel, label) => {
+    const panes = await d.findAll(".insp-pane");
+    for (const b of await d.findIn(panes[pane], `${sel} > .segmented:not(.view-tabs-measure) .seg`)) if ((await d.text(b)).startsWith(label)) return d.click(b);
+    throw new Error(`${label} not shown in pane ${pane}`);
+  };
+  await selectRow(1); // JSON
+  await d.waitFor(".insp-url", { text: "v1/items" });
+  let r = await rows(1);
+  assert.deepEqual(r.sections, ["Headers", "Body", "Cookies", "Auth", "Raw"], JSON.stringify(r));
+  assert.equal(r.section, "Body", JSON.stringify(r));
+  assert.equal(r.view, "Formatted", JSON.stringify(r));
+  assert.ok(r.views.includes("Tree") && !r.views.includes("SOAP") && !r.views.includes("Image") && r.other, `only fitting views directly: ${JSON.stringify(r)}`);
+  // SOAP opens in the SOAP view; choosing the tree is remembered for SOAP only.
+  await selectRow(3);
+  await d.waitFor(".insp-url", { text: "GetOrder" });
+  r = await rows(1);
+  assert.equal(r.view, "SOAP", JSON.stringify(r));
+  assert.ok(!r.views.includes("Image"), JSON.stringify(r));
+  await pick(1, ".view-sub", "Tree");
+  await selectRow(4);
+  await d.waitFor(".insp-url", { text: "GetCustomer" });
+  assert.equal((await rows(1)).view, "Tree");
+  await selectRow(1);
+  await d.waitFor(".insp-url", { text: "v1/items" });
+  assert.equal((await rows(1)).view, "Formatted");
+  // Headers, then Body again: back to the view chosen for the body.
+  await pick(1, ".view-sections", "Headers");
+  assert.equal((await rows(1)).section, "Headers");
+  await d.waitFor(".hv-table");
+  await pick(1, ".view-sections", "Body");
+  r = await rows(1);
+  assert.equal(r.section, "Body");
+  assert.equal(r.view, "Formatted");
+  // The request of a GET has no body: Body is there, but faint.
+  const faint = await d.exec(`return [...document.querySelectorAll('.insp-pane')[0].querySelectorAll('.view-sections > .segmented:not(.view-tabs-measure) .seg')].map((e) => e.classList.contains('dim'));`);
+  assert.equal(faint[1], true, `empty request body shown faint: ${faint}`);
+  // Switching to the flat strip keeps the view.
+  await d.exec(`window.__quena.setLayout({ inspectorTabs: "flat" })`);
+  assert.equal(await activeView(1), "Body");
+  await d.exec(`window.__quena.setLayout({ inspectorTabs: "grouped", viewByType: {}, subViews: {}, stacked: false })`);
 });
 
 test("layout fills the window at small and large sizes, side by side and stacked", async () => {

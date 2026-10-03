@@ -87,16 +87,10 @@ function useBoot() {
       }
       // Load any script-registered menu commands (if scripting was left enabled).
       void actions.refreshScriptMenus();
-      let recovering = false;
       if (settings.offerRecovery !== false) {
         const rec = await api.recoverable();
-        if (rec.length) {
-          set({ dialog: { kind: "recover" } });
-          recovering = true;
-        }
+        if (rec.length) set({ dialog: { kind: "recover" } });
       }
-      // First run: let the user pick the layout once (the recovery dialog wins; ask next time).
-      if (!recovering && !layout.presetChosen) set({ dialog: { kind: "choose-layout" } });
       const w = await api.rows(0, 0);
       set({ listVersion: w.version, listTotal: w.total });
       // Archives Quena was started with (double-click, command line).

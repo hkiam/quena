@@ -4,14 +4,41 @@ Select a session and the **Inspect** tab (`F8`) shows it: a header line with met
 session number, duration and process, then a **Request** and a **Response** card, each
 with its own row of views.
 
-- In the **Quena** layout, request and response are side by side; in **Classic** the
-  request is above the response. Switch any time with
+- By default the request is above the response. Switch any time with
   *View → Request Above Response / Request Beside Response*. In a narrow pane they go
   above each other automatically.
 - Drag the splitter between them to change the proportions.
 - The response card shows the status as a badge.
 
 ![SOAP request: header table with topic tags and the SOAP inspector showing the parsed response](img/soap-inspector.png)
+
+## Sections and views
+
+Each card has two rows of tabs:
+
+1. **Sections**: *Headers*, *Body*, *Cookies*, *Auth*, *Raw*, always in this order.
+   *Headers* and *Cookies* show how many there are, and *Auth* has a dot when the message
+   carries authentication. Sections with nothing in them are faint but can still be opened.
+   For WebSockets and SSE streams, *Body* is called *Messages*.
+2. **Views of the section**: for *Body*, only the views that fit the content, the best one
+   first. For example, *Formatted · Tree · Plain Text* for JSON,
+   *SOAP · Formatted · Tree · Plain Text* for a SOAP envelope, and *Image · Hex* for a PNG.
+   The other views are under **Other**: first those that may help (such as *Hex* for text),
+   then those that do not fit the content, marked so. They stay selectable in case the
+   content is mislabelled. On responses, *Headers* has a second view, *Caching*.
+
+Quena does not trust the `Content-Type` alone. It also looks at the start of the body,
+decoded: a SOAP `Envelope`, an Atom `feed`/`entry`, OData metadata (`edmx:Edmx`), OData JSON,
+plain JSON, XML or HTML. A plain XML document sent as `text/xml` therefore opens in
+*Formatted* with the XML tree, not in the SOAP view, and JSON sent as `text/plain` gets the
+JSON tree.
+
+`Alt 1`…`Alt 5` choose the section and `Alt ←`/`Alt →` the view; see
+[Keyboard shortcuts](shortcuts.md#inspect).
+
+**Prefer the single row of views?** *Settings → General → Inspector views → Flat* brings
+back the strip of all views from earlier versions. The views, and which view is
+remembered, are the same in both.
 
 ## Views
 
@@ -55,10 +82,9 @@ SOAP and Atom/OData also work on the output of decoder plugins, e.g. Fast Infose
 
 ## Which view opens
 
-- The views are ordered by how well they fit the content: *Headers* first, then the special
-  and plugin views, then *Body*, and so on.
-- As many views as fit the width are shown as tabs; the rest are under **More**. The active
-  view is always visible.
+- With flat views, the views are ordered by how well they fit the content: *Headers* first,
+  then the special and plugin views, then *Body*, and so on. As many views as fit the
+  width are shown as tabs; the rest are under **More**. The active view is always visible.
 - Until you choose a view for a kind of content, the one that fits opens: *SOAP* for SOAP,
   *gRPC* for gRPC, *WebSocket* for WebSockets, *Image* for images, *Form Data* for form
   requests, *Body* for JSON, XML, HTML, JavaScript, CSS and text, *Hex* for binary content,

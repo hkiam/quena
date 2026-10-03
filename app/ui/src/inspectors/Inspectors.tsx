@@ -18,7 +18,7 @@ import { SseView } from "./SseView";
 import { MultipartView, multipartCandidate } from "./MultipartView";
 import { GrpcView, grpcCandidate } from "./GrpcView";
 import { ViewTabs } from "./ViewTabs";
-import { defaultView, orderViews, viewFamily } from "./viewChoice";
+import { SECTIONS, bodyViews, defaultView, orderViews, sectionOf, sectionViews, viewFamily, type Section } from "./viewChoice";
 import { methodPill, statusPill } from "../grid/style";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { CharsetPicker, useCharsetOverride } from "./CharsetPicker";
@@ -49,6 +49,22 @@ const TITLES: Record<string, string> = {
   multipart: t("Parts"),
   grpc: "gRPC",
 };
+
+/** Grouped tabs: titles of the sections, and of views where the section names the context. */
+const SECTION_TITLES: Record<Section, string> = { headers: t("Headers"), body: t("Body"), cookies: t("Cookies"), auth: t("Auth"), raw: t("Raw") };
+const SUB_TITLES: Record<string, string> = { headers: t("List"), syntaxview: t("Formatted"), json: t("Tree"), xml: t("Tree") };
+
+const headerNames = (h: [string, string][] | undefined) => (h ?? []).map(([n]) => n.toLowerCase());
+
+/** Section badges: number of headers and cookies, a mark when there is authentication. */
+function sectionFacts(detail: Detail, part: Part) {
+  const heads = part === "request" ? detail.request.headers : detail.response?.headers;
+  const names = headerNames(heads);
+  const cookies =
+    part === "request" ? (heads ?? []).filter(([n]) => n.toLowerCase() === "cookie").reduce((n, [, v]) => n + v.split(";").filter((c) => c.trim()).length, 0) : names.filter((n) => n === "set-cookie").length;
+  const auth = part === "request" ? names.some((n) => n === "authorization" || n === "proxy-authorization") : names.some((n) => n === "www-authenticate" || n === "proxy-authenticate" || n === "authentication-info");
+  return { headers: names.length, cookies, auth };
+}
 
 /** Body variants as shown in the text view's status line. */
 const VARIANT_LABELS: Record<string, string> = { raw: t("raw"), decoded: t("decoded"), pretty: t("formatted") };
@@ -185,6 +201,8 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   const globalTab = useStore((s) => (part === "request" ? s.layout.requestTab : s.layout.responseTab));
   const remember = useStore((s) => s.layout.rememberViews ?? true);
   const viewByType = useStore((s) => s.layout.viewByType);
+  const grouped = useStore((s) => (s.layout.inspectorTabs ?? "grouped") === "grouped");
+  const subViews = useStore((s) => s.layout.subViews);
   const decode = useStore((s) => s.settings?.decode ?? true);
   const info0 = detail ? (part === "request" ? detail.requestBody : detail.responseBody) : null;
   const pluginTabs = (info0?.plugins ?? []).map((p) => ({ key: `plugin:${p.variant}`, title: p.tab, p }));
@@ -198,12 +216,24 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...special, ...pluginTabs.map((t) => t.key)];
   const family = detail ? viewFamily(detail, part, special, pluginTabs.map((t) => t.key)) : null;
   const memoKey = family ? `${part}:${family}` : null;
+  const body = grouped && detail ? bodyViews(detail, part, tabs, special) : [];
+  const bodyKey = `${part}:body:${family ?? ""}`;
+  /** Grouped: the view a section opens with — the last one chosen there, else the best. */
+  const sectionStart = (sec: Section): string => {
+    if (sec === "body") {
+      const last = subViews?.[bodyKey];
+      return last && body.some((b) => b.view === last) ? last : (body[0]?.view ?? "syntaxview");
+    }
+    const views = sectionViews(sec, tabs, body);
+    const last = subViews?.[`${part}:${sec}`];
+    return last && views.includes(last) ? last : (views[0] ?? sec);
+  };
   // The view for this message: remembered for its kind of content, else a sensible default;
   // with remembering off, the last view chosen anywhere (the classic behaviour).
   let tab: string;
   if (remember && memoKey && family) {
     const chosen = viewByType?.[memoKey];
-    tab = chosen && tabs.includes(chosen) ? chosen : defaultView(family, part, tabs);
+    tab = chosen && tabs.includes(chosen) ? chosen : grouped && family !== "empty" && family !== "unknown" && body[0] ? body[0].view : defaultView(family, part, tabs);
   } else {
     tab = globalTab;
     if (part === "response" && detail?.summary.kind === "webSocket" && !["websocket", "headers", "raw"].includes(tab)) tab = "websocket";
@@ -215,6 +245,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         ...s.layout,
         [part === "request" ? "requestTab" : "responseTab"]: t,
         ...(remember && memoKey ? { viewByType: { ...(s.layout.viewByType ?? {}), [memoKey]: t } } : {}),
+        ...(grouped ? { subViews: { ...(s.layout.subViews ?? {}), [sectionOf(t) === "body" ? bodyKey : `${part}:${sectionOf(t)}`]: t } } : {}),
       },
     }));
     actions.saveLayout();
@@ -299,16 +330,65 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
       }
     }
   }
-  const views = orderViews(tabs, special, family);
   const title = (t: string) => TITLES[t] ?? pluginTabs.find((p) => p.key === t)?.title ?? t;
   const pill = part === "response" && detail ? statusPill(detail.summary) : null;
+  let tabsRow: React.ReactNode;
+  let subRow: React.ReactNode = null;
+  /** Views Alt+←/→ steps through: those of the section (grouped) or of the row (flat). */
+  let cycle: string[] = [];
+  if (grouped) {
+    const section = sectionOf(tab);
+    const facts = detail ? sectionFacts(detail, part) : null;
+    const emptyBody = !!detail && !info0?.len && !special.length && !pluginTabs.length;
+    if (section === "body" && emptyBody && !tamper) content = <div className="placeholder">{t("No body")}</div>;
+    const messages = special.includes("websocket") || special.includes("sse");
+    tabsRow = (
+      <ViewTabs
+        className="view-sections"
+        views={[...SECTIONS]}
+        active={section}
+        title={(v) => (v === "body" && messages ? t("Messages") : SECTION_TITLES[v as Section])}
+        badge={(v) => (!facts ? null : v === "headers" && facts.headers ? String(facts.headers) : v === "cookies" && facts.cookies ? String(facts.cookies) : v === "auth" && facts.auth ? "•" : null)}
+        dim={(v) => !!facts && ((v === "cookies" && !facts.cookies) || (v === "auth" && !facts.auth) || (v === "body" && emptyBody))}
+        hint={(v) => (v === "body" && emptyBody ? t("No body") : undefined)}
+        onSelect={(v) => setTab(sectionStart(v as Section))}
+      />
+    );
+    if (section === "body" && !emptyBody) {
+      const good = body.filter((b) => b.fit >= 2 || b.view === tab).map((b) => b.view);
+      const others = body.filter((b) => !good.includes(b.view));
+      cycle = good;
+      if (good.length > 1 || others.length) subRow = <ViewTabs className="view-sub" views={good} active={tab} title={(v) => SUB_TITLES[v] ?? title(v)} onSelect={setTab} others={others} />;
+    } else if (detail && section === "headers" && tabs.includes("caching")) {
+      cycle = sectionViews("headers", tabs, body);
+      subRow = <ViewTabs className="view-sub" views={sectionViews("headers", tabs, body)} active={tab} title={(v) => SUB_TITLES[v] ?? title(v)} onSelect={setTab} />;
+    }
+  } else {
+    cycle = orderViews(tabs, special, family);
+    tabsRow = <ViewTabs views={cycle} active={tab} title={title} onSelect={setTab} />;
+  }
+  // Alt+1…5: section (grouped); Alt+←/→: previous/next view. Not while typing.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!detail || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const el = e.target as HTMLElement;
+    if (el.closest("input, textarea, select, [contenteditable=true], .cm-editor")) return;
+    const n = Number(e.code.startsWith("Digit") ? e.code.slice(5) : NaN);
+    if (grouped && n >= 1 && n <= SECTIONS.length) setTab(sectionStart(SECTIONS[n - 1]));
+    else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && cycle.length > 1) {
+      const i = cycle.indexOf(tab);
+      setTab(cycle[(i + (e.key === "ArrowRight" ? 1 : cycle.length - 1)) % cycle.length]);
+    } else return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
   return (
-    <div className="insp-pane">
+    <div className={`insp-pane ${grouped ? "grouped" : ""}`} onKeyDown={onKeyDown}>
       <div className="insp-head">
         <span className="insp-part">{part === "request" ? t("Request") : t("Response")}</span>
         {pill && <span className={`pill pill-${pill.tone}`}>{pill.text}</span>}
-        <ViewTabs views={views} active={tab} title={title} onSelect={setTab} />
+        {tabsRow}
       </div>
+      {grouped && <div className="insp-sub">{subRow}</div>}
       <div className="insp-content">
         <ErrorBoundary name={`${part} ${tab}`} resetKey={`${detail?.summary.id ?? ""}:${tab}:${tamper ? "tamper" : ""}`}>
           {content}

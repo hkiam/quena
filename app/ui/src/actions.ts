@@ -143,7 +143,7 @@ export const actions = {
 
   /** Switch the arrangement (list/inspector split, stacking, columns) to a preset. */
   applyLayoutPreset(preset: LayoutPreset) {
-    set((s) => ({ layout: { ...s.layout, ...PRESETS[preset], columns: [...PRESETS[preset].columns], preset, presetChosen: true } }));
+    set((s) => ({ layout: { ...s.layout, ...PRESETS[preset], columns: [...PRESETS[preset].columns], preset } }));
     rowCache.clear();
     set((s) => ({ gridNonce: s.gridNonce + 1 }));
     actions.saveLayout();

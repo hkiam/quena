@@ -18,9 +18,11 @@ export function soapCandidate(detail: Detail, part: Part): boolean {
   const info = part === "request" ? detail.requestBody : detail.responseBody;
   const ct = (info.contentType ?? "").toLowerCase();
   if (!info.len) return false;
+  // A text body: its root element decides (plain XML sent as text/xml is no SOAP).
+  if (info.shape !== undefined && info.isText) return info.shape === "soap";
   if (ct.includes("soap") || ct.includes("fastinfoset")) return true;
   if (part === "request" && headerValue(detail.request.headers, "soapaction")) return true;
-  return ct.includes("text/xml") || ct.includes("application/xml");
+  return info.shape === undefined && (ct.includes("text/xml") || ct.includes("application/xml"));
 }
 
 function sourceVariant(detail: Detail, part: Part): Variant {

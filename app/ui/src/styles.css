@@ -791,6 +791,41 @@ kbd,
   font-weight: 600;
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12);
 }
+/* Grouped inspector tabs: sections in the head, the section's views in a row below. */
+.insp-pane.grouped {
+  grid-template-rows: auto auto 1fr;
+}
+.view-sections {
+  justify-content: flex-start;
+}
+.insp-sub {
+  display: flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  min-width: 0;
+  overflow: hidden;
+}
+.insp-sub:empty {
+  padding: 0;
+  border: 0;
+}
+.view-sub {
+  justify-content: flex-start;
+  font-size: 11.5px;
+}
+.view-sub .seg {
+  padding: 1px 8px;
+}
+.seg.dim:not(.active) {
+  opacity: 0.55;
+}
+.seg-badge {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  margin-left: 2px;
+}
 .insp-content {
   min-height: 0;
   min-width: 0;
@@ -2347,7 +2382,7 @@ pre {
   color: var(--muted);
 }
 
-/* Layout preset choice (Settings → General, first-run dialog) */
+/* Layout preset choice (Settings → General) */
 .layout-choice {
   align-items: start;
   margin-bottom: 8px;
@@ -2359,37 +2394,6 @@ pre {
   display: grid;
   gap: 4px;
 }
-.layout-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 8px;
-}
-.layout-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
-  text-align: left;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-bg);
-  color: var(--fg);
-  cursor: pointer;
-  white-space: normal;
-  height: auto;
-}
-.layout-card:hover,
-.layout-card:focus-visible {
-  border-color: var(--accent);
-}
-.layout-card span {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 /* command palette */
 .pal-back {
   align-items: flex-start;

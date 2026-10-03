@@ -111,13 +111,17 @@ export interface Layout {
   rememberViews?: boolean;
   /** `request:json` → `syntaxview`, `response:soap` → `xml`, … */
   viewByType?: Record<string, string>;
+  /** Inspector tabs: sections (Headers, Body, …) with the body's views below them, or all
+   * views in one row (the classic strip). */
+  inspectorTabs?: "grouped" | "flat";
+  /** Grouped tabs: last view per section, `response:headers` → `caching`,
+   * `request:body:json` → `json`. */
+  subViews?: Record<string, string>;
   /** "Group by" of the session list, and the width of its Group column. */
   groupBy?: GroupBy;
   groupWidth?: number;
   /** Arrangement preset the layout started from. */
   preset: LayoutPreset;
-  /** The user picked a preset (first-run choice done). */
-  presetChosen: boolean;
   /** Diagnostics panel: last analyzer, profile, scope and option overrides. */
   diag?: DiagPrefs;
   /** Timeline columns: order of the visible ones and their widths. */
@@ -138,8 +142,8 @@ export interface DiagPrefs {
 type PresetParts = Pick<Layout, "leftWidth" | "inspectorSplit" | "stacked" | "columns">;
 
 export const PRESETS: Record<LayoutPreset, PresetParts> = {
-  // List left, request and response side by side.
-  quena: { leftWidth: 0.5, inspectorSplit: 0.5, stacked: false, columns: DEFAULT_COLUMNS },
+  // List left, request above response.
+  quena: { leftWidth: 0.5, inspectorSplit: 0.5, stacked: true, columns: DEFAULT_COLUMNS },
   // Dense list, request above response.
   classic: { leftWidth: 0.52, inspectorSplit: 0.42, stacked: true, columns: CLASSIC_COLUMNS },
 };
@@ -152,8 +156,9 @@ export const DEFAULT_LAYOUT: Layout = {
   theme: "system",
   language: "system",
   viewByType: {},
+  inspectorTabs: "grouped",
+  subViews: {},
   preset: "quena",
-  presetChosen: false,
 };
 
 /** Merge a saved layout (possibly from an older version) with the current defaults. */
@@ -164,7 +169,7 @@ export function restoreLayout(saved: Partial<Layout> | undefined): Layout {
   const preset: LayoutPreset =
     saved.preset && saved.preset in PRESETS ? saved.preset : saved.stacked === false ? "quena" : "classic";
   const base = PRESETS[preset];
-  const layout: Layout = { ...DEFAULT_LAYOUT, ...base, ...saved, preset, presetChosen: saved.presetChosen ?? false };
+  const layout: Layout = { ...DEFAULT_LAYOUT, ...base, ...saved, preset };
   // Titles from the key; columns added in newer versions are appended (hidden if unknown to the preset).
   const known = new Set(layout.columns.map((c) => c.key));
   layout.columns = [...layout.columns, ...base.columns.filter((c) => !known.has(c.key))]
@@ -202,7 +207,6 @@ export type Dialog =
    *  starts with; it can switch while there is a selection), and its redaction log afterwards. */
   | { kind: "sanitize"; selected: SessionId[]; scope: "selected" | "all" }
   | { kind: "sanitize-result"; result: SanitizedExport }
-  | { kind: "choose-layout" }
   | { kind: "compare"; a: string; b: string; titleA: string; titleB: string }
   | { kind: "prompt"; title: string; label: string; initial: string; resolve: (v: string | null) => void }
   | { kind: "confirm"; title: string; message: string; confirm: string; resolve: (ok: boolean) => void };

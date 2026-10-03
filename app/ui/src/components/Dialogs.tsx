@@ -168,6 +168,8 @@ const SHORTCUTS: [string, string][] = [
   [`${modKey}R`, t("Customize rules")],
   [`${modKey}E`, t("Text Tools")],
   ["F7 / F8 / F9", t("Statistics / Inspectors / Composer")],
+  ["Alt+1…5", t("Inspector: Headers, Body, Cookies, Auth, Raw (grouped views)")],
+  ["Alt+← / Alt+→", t("Inspector: previous / next view")],
   ["F11 / Alt+F11 / Shift+F11", t("Break before requests / after responses / off")],
   [t("Alt+Q or /"), t("Focus the command field")],
   [`${modKey}K`, t("Command palette")],
@@ -761,7 +763,8 @@ function LanguageChoice() {
 function RememberViewsOption() {
   const on = useStore((st) => st.layout.rememberViews ?? true);
   const count = useStore((st) => Object.keys(st.layout.viewByType ?? {}).length);
-  const update = (patch: { rememberViews?: boolean; viewByType?: Record<string, string> }) => {
+  const tabs = useStore((st) => st.layout.inspectorTabs ?? "grouped");
+  const update = (patch: { rememberViews?: boolean; viewByType?: Record<string, string>; subViews?: Record<string, string>; inspectorTabs?: "grouped" | "flat" }) => {
     set((st) => ({ layout: { ...st.layout, ...patch } }));
     actions.saveLayout();
   };
@@ -770,6 +773,13 @@ function RememberViewsOption() {
       <span>{t("Inspector views")}</span>
       <div className="layout-options">
         <label className="f-check">
+          <input type="radio" name="insp-tabs" checked={tabs === "grouped"} onChange={() => update({ inspectorTabs: "grouped" })} />{" "}
+          {t("Grouped: Headers, Body, Cookies, Auth, Raw; below them the views that fit the body")}
+        </label>
+        <label className="f-check">
+          <input type="radio" name="insp-tabs" checked={tabs === "flat"} onChange={() => update({ inspectorTabs: "flat" })} /> {t("Flat: all views in one row")}
+        </label>
+        <label className="f-check">
           <input type="checkbox" checked={on} onChange={(e) => update({ rememberViews: e.target.checked })} />{" "}
           {t("Remember the chosen view for each kind of content, separately for request and response (e.g. SOAP → XML, JSON → Body)")}
         </label>
@@ -777,7 +787,7 @@ function RememberViewsOption() {
           <div className="muted small">
             {count ? `${t("{n} remembered", { n: count })} · ` : `${t("Until you pick one, Quena opens the view that fits the content.")} `}
             {count > 0 && (
-              <button className="linklike" onClick={() => update({ viewByType: {} })}>
+              <button className="linklike" onClick={() => update({ viewByType: {}, subViews: {} })}>
                 {t("Forget remembered views")}
               </button>
             )}
@@ -795,35 +805,13 @@ function LayoutChoice() {
       <span>{t("Layout")}</span>
       <div className="layout-options">
         <label className="f-check">
-          <input type="radio" name="layout-preset" checked={preset === "quena"} onChange={() => actions.applyLayoutPreset("quena")} /> {t("Quena — list left, request and response side by side")}
+          <input type="radio" name="layout-preset" checked={preset === "quena"} onChange={() => actions.applyLayoutPreset("quena")} /> {t("Quena — list left, request above response")}
         </label>
         <label className="f-check">
           <input type="radio" name="layout-preset" checked={preset === "classic"} onChange={() => actions.applyLayoutPreset("classic")} /> {t("Classic — dense list, request above response, more columns")}
         </label>
       </div>
     </div>
-  );
-}
-
-function ChooseLayoutDialog() {
-  const pick = (p: "quena" | "classic") => {
-    actions.applyLayoutPreset(p);
-    close();
-  };
-  return (
-    <Modal title={t("Choose a layout")} onClose={() => pick(get().layout.preset)}>
-      <p className="muted">{t("You can change this any time in Settings → General or with View → Request Above / Beside Response.")}</p>
-      <div className="layout-cards">
-        <button className="layout-card" onClick={() => pick("quena")}>
-          <b>Quena</b>
-          <span>{t("Session list on the left, request and response side by side. Rows coloured by outcome.")}</span>
-        </button>
-        <button className="layout-card" onClick={() => pick("classic")}>
-          <b>{t("Classic")}</b>
-          <span>{t("Dense session list with more columns, request above response. For long-time proxy users.")}</span>
-        </button>
-      </div>
-    </Modal>
   );
 }
 
@@ -912,8 +900,6 @@ function DialogBody({ d }: { d: Dialog }) {
           <PluginsPanel />
         </Modal>
       );
-    case "choose-layout":
-      return <ChooseLayoutDialog />;
     case "palette":
       return <CommandPalette />;
     case "rules":

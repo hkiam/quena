@@ -11,10 +11,11 @@ This manual uses the English names of menus and settings.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| *Layout* | Quena | **Quena** — list left, request and response side by side. **Classic** — dense list, request above response, more columns. |
+| *Layout* | Quena | **Quena** — list left, request above response. **Classic** — dense list, request above response, more columns. *View → Request Beside Response* puts them side by side in either. |
 | *Theme* | Like the system | *Like the system*, *Light* or *Dark*. |
 | *Language* | Like the system | *Like the system*, *English* or *Deutsch*. Switching reloads the window and the menus. |
-| *Inspector views* | on | Remember the chosen view for each kind of content, separately for request and response (e.g. SOAP → XML, JSON → Body). Shows how many are remembered, with *Forget remembered views*. |
+| *Inspector views* | grouped | *Grouped*: sections Headers, Body, Cookies, Auth, Raw, with the views that fit the body below them. *Flat*: all views in one row, as before 0.1.5. See [Inspect](inspect.md#sections-and-views). |
+| *Inspector views: remember* | on | Remember the chosen view for each kind of content, separately for request and response (e.g. SOAP → XML, JSON → Body). Shows how many are remembered, with *Forget remembered views*. |
 | *Capture traffic on startup* | on | Start capturing when Quena starts. |
 | *Stream responses (instead of buffering)* | on | Same as the *Stream* toolbar toggle. |
 | *Decode compressed bodies in inspectors* | on | Same as the *Decode* toolbar toggle. |

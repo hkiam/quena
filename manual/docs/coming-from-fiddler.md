@@ -42,10 +42,10 @@ See [Archives and copying](archives.md) and [Mock Rules](change-replay.md#mock-r
 
 ## Layout
 
-Quena starts with its own layout: the session list on the left, request and response side
-by side. If you prefer a dense list with more columns and the request above the response,
-choose **Classic** — on first start, in *Settings → General*, or switch only the inspector
-arrangement with *View → Request Above / Beside Response*. Inspectors show as many views as
+Quena starts with its own layout: the session list on the left, the request above the
+response. If you prefer a dense list with more columns, choose **Classic** in
+*Settings → General*; *View → Request Above / Beside Response* switches only the inspector
+arrangement. Inspectors show as many views as
 fit as tabs; the others are under **More**.
 
 ## Map Remote and Map Local

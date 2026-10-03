@@ -58,11 +58,10 @@ automatic authentication falls back to NTLM.
 
 ## First start
 
-1. **Start Quena.** On the very first start Quena asks you to choose a layout:
-    - **Quena** — session list on the left, request and response side by side.
-    - **Classic** — dense session list with more columns, request above response.
-
-    You can change this any time in *Settings → General*.
+1. **Start Quena.** It opens in the **Quena** layout: session list on the left, request
+    above response on the right. *Settings → General → Layout* switches to **Classic**
+    (dense list with more columns), and *View → Request Beside Response* puts request and
+    response side by side.
 
 2. **Traffic appears.** Quena starts capturing right away and — with
    *Act as system proxy while capturing* (on by default) — registers itself as the system

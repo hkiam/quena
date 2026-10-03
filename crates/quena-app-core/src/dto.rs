@@ -87,6 +87,8 @@ pub struct BodyInfo {
     pub plugins: Vec<PluginCandidate>,
     /// Effective charset of a text body (determined on the decoded body).
     pub charset: Option<CharsetDto>,
+    /// What the text is, judged from its start (see [`shape_of`]); picks the inspector views.
+    pub shape: Option<&'static str>,
 }
 
 /// The charset a text is in and where that came from (see `quena_body::charset`).
@@ -157,6 +159,110 @@ pub fn sniff_text(sample: &[u8]) -> bool {
     printable * 100 / sample.len() >= 95
 }
 
+/// Bytes of a text body looked at to tell its shape.
+const SHAPE_PREFIX: usize = 8 << 10;
+
+const SOAP_NS: &[&str] = &["http://schemas.xmlsoap.org/soap/envelope/", "http://www.w3.org/2003/05/soap-envelope"];
+const ATOM_NS: &str = "http://www.w3.org/2005/Atom";
+const EDMX_NS: &[&str] = &["http://schemas.microsoft.com/ado/2007/06/edmx", "http://docs.oasis-open.org/odata/ns/edmx"];
+
+/// The kind of a text from its start, whatever the Content-Type claims:
+/// `json`, `odata-json`, `soap`, `atom` (Atom feed or entry), `edmx` (OData metadata),
+/// `xml`, `html`; `None` for anything else.
+pub fn shape_of(text: &str) -> Option<&'static str> {
+    let t = text.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    if t.starts_with('{') || t.starts_with('[') {
+        let odata = t.contains("\"@odata.context\"") || t.contains("\"odata.metadata\"") || {
+            let rest = t[1..].trim_start();
+            rest.starts_with("\"d\"") && rest[3..].trim_start().starts_with(':')
+        };
+        return Some(if odata { "odata-json" } else { "json" });
+    }
+    if !t.starts_with('<') {
+        return None;
+    }
+    let lower = t[..t.len().min(64)].to_ascii_lowercase();
+    if lower.starts_with("<!doctype html") || lower.starts_with("<html") {
+        return Some("html");
+    }
+    let (name, tag) = xml_root(t)?;
+    let (prefix, local) = name.split_once(':').unwrap_or(("", name));
+    if local.eq_ignore_ascii_case("html") && prefix.is_empty() {
+        return Some("html");
+    }
+    let ns = xml_namespace(tag, prefix).unwrap_or("");
+    Some(match local {
+        "Envelope" if SOAP_NS.contains(&ns) => "soap",
+        "feed" | "entry" if ns == ATOM_NS => "atom",
+        "Edmx" if EDMX_NS.contains(&ns) => "edmx",
+        _ => "xml",
+    })
+}
+
+/// Name and start tag (without `<`/`>`) of the root element, after the XML declaration,
+/// processing instructions, comments and a doctype.
+fn xml_root(mut t: &str) -> Option<(&str, &str)> {
+    loop {
+        t = t.trim_start();
+        if let Some(r) = t.strip_prefix("<?") {
+            t = &r[r.find("?>")? + 2..];
+        } else if let Some(r) = t.strip_prefix("<!--") {
+            t = &r[r.find("-->")? + 3..];
+        } else if let Some(r) = t.strip_prefix("<!") {
+            // A doctype; an internal subset in brackets may hold `>`.
+            let end = match (r.find('['), r.find('>')) {
+                (Some(b), Some(g)) if b < g => r[b..].find("]>").map(|e| b + e + 1)?,
+                (_, g) => g?,
+            };
+            t = &r[end + 1..];
+        } else {
+            let r = t.strip_prefix('<')?;
+            let mut quote = None;
+            let end = r.char_indices().find(|&(_, c)| match quote {
+                Some(q) => {
+                    if c == q {
+                        quote = None;
+                    }
+                    false
+                }
+                None if c == '"' || c == '\'' => {
+                    quote = Some(c);
+                    false
+                }
+                None => c == '>',
+            });
+            // Without the end of the start tag (cut off), what is there is still checked.
+            let tag = end.map(|(i, _)| &r[..i]).unwrap_or(r);
+            let name_end = tag.find(|c: char| c.is_whitespace() || c == '/').unwrap_or(tag.len());
+            let name = &tag[..name_end];
+            return (!name.is_empty() && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')).then_some((name, tag));
+        }
+    }
+}
+
+/// The namespace bound to `prefix` (`""`: the default namespace) in a start tag.
+fn xml_namespace<'a>(tag: &'a str, prefix: &str) -> Option<&'a str> {
+    let attr = if prefix.is_empty() { "xmlns".to_string() } else { format!("xmlns:{prefix}") };
+    let mut rest = tag;
+    while let Some(i) = rest.find(&attr) {
+        let before_ok = i == 0 || rest[..i].ends_with(|c: char| c.is_whitespace());
+        let after = rest[i + attr.len()..].trim_start();
+        rest = &rest[i + attr.len()..];
+        if !before_ok {
+            continue;
+        }
+        let Some(v) = after.strip_prefix('=') else { continue };
+        let v = v.trim_start();
+        let q = v.chars().next()?;
+        if q != '"' && q != '\'' {
+            continue;
+        }
+        let v = &v[1..];
+        return Some(&v[..v.find(q)?]);
+    }
+    None
+}
+
 impl BodyInfo {
     pub fn build(body: &Body, headers: &Headers) -> BodyInfo {
         let spec = spec_of(headers);
@@ -175,7 +281,15 @@ impl BodyInfo {
         if variant_applies(&spec, Variant::Pretty) {
             variants.push(Variant::Pretty);
         }
-        let charset = is_text.then(|| CharsetDto::from(&quena_body::text::detect_body(body, &spec)));
+        let (charset, shape) = if is_text {
+            let prefix = quena_body::text::decoded_prefix(body, &spec, quena_body::text::DETECT_PREFIX);
+            let det = quena_body::charset::detect(spec.content_type.as_deref(), &prefix);
+            let head = &prefix[det.bom_len.min(prefix.len())..];
+            let head = quena_body::charset::decode(&head[..head.len().min(SHAPE_PREFIX)], det.encoding).0;
+            (Some(CharsetDto::from(&det)), shape_of(&head))
+        } else {
+            (None, None)
+        };
         BodyInfo {
             body_id: body.id(),
             len: body.len(),
@@ -190,6 +304,7 @@ impl BodyInfo {
             variants,
             plugins: vec![],
             charset,
+            shape,
         }
     }
 }
@@ -303,5 +418,50 @@ mod tests {
         // Serialised for the UI without empty fields.
         let j = serde_json::to_value(info(&store, b"{}", &[("Content-Type", "application/json")]).charset).unwrap();
         assert_eq!(j, serde_json::json!({ "name": "UTF-8", "source": "default" }));
+    }
+
+    #[test]
+    fn shapes() {
+        let s = shape_of;
+        assert_eq!(s(" \n{\"a\":1}"), Some("json"));
+        assert_eq!(s("\u{feff}[1,2]"), Some("json"));
+        assert_eq!(s("{\"@odata.context\":\"$metadata#X\",\"value\":[]}"), Some("odata-json"));
+        assert_eq!(s("{ \"d\" : {\"results\":[]}}"), Some("odata-json"));
+        assert_eq!(s("{\"data\":1}"), Some("json"));
+        let soap11 = r#"<?xml version="1.0"?><!-- c --><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body/></soap:Envelope>"#;
+        assert_eq!(s(soap11), Some("soap"));
+        assert_eq!(s(r#"<env:Envelope xmlns:env='http://www.w3.org/2003/05/soap-envelope'>"#), Some("soap"));
+        // An Envelope in another namespace is plain XML.
+        assert_eq!(s(r#"<Envelope xmlns="urn:x"><a/></Envelope>"#), Some("xml"));
+        assert_eq!(s(r#"<feed xml:base="x" xmlns="http://www.w3.org/2005/Atom" xmlns:m="m"><entry/></feed>"#), Some("atom"));
+        assert_eq!(s(r#"<a:entry xmlns:a="http://www.w3.org/2005/Atom">"#), Some("atom"));
+        assert_eq!(s(r#"<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">"#), Some("edmx"));
+        assert_eq!(s(r#"<?xml version="1.0"?><!DOCTYPE note [<!ENTITY a "b">]><note><to>x</to></note>"#), Some("xml"));
+        // Cut off inside the start tag: still judged.
+        assert_eq!(s(r#"<soap:Envelope a="1" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" b="lon"#), Some("soap"));
+        assert_eq!(s("<!DOCTYPE html><html>"), Some("html"));
+        assert_eq!(s("<html lang=de>"), Some("html"));
+        assert_eq!(s("hello"), None);
+        assert_eq!(s("<"), None);
+        assert_eq!(s("< 3"), None);
+    }
+
+    #[test]
+    fn body_info_reports_the_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
+        // Plain XML sent as text/xml is not SOAP.
+        assert_eq!(info(&store, b"<note/>", &[("Content-Type", "text/xml")]).shape, Some("xml"));
+        // Decoded first.
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(b"<feed xmlns=\"http://www.w3.org/2005/Atom\"/>").unwrap();
+        assert_eq!(info(&store, &gz.finish().unwrap(), &[("Content-Type", "application/xml"), ("Content-Encoding", "gzip")]).shape, Some("atom"));
+        // UTF-16 with BOM.
+        let mut u16 = vec![0xFF, 0xFE];
+        u16.extend("{\"a\":1}".encode_utf16().flat_map(|c| c.to_le_bytes()));
+        assert_eq!(info(&store, &u16, &[("Content-Type", "application/json")]).shape, Some("json"));
+        // JSON sent as text/plain is still JSON; binary has no shape.
+        assert_eq!(info(&store, b"[1]", &[("Content-Type", "text/plain")]).shape, Some("json"));
+        assert_eq!(info(&store, b"\x89PNG\r\n", &[("Content-Type", "image/png")]).shape, None);
     }
 }

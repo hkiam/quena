@@ -120,6 +120,8 @@ export interface BodyInfo {
   plugins: { variant: Variant; tab: string; confidence: number; output: "text" | "xml" | "json" }[];
   /** Effective charset of a text body (null for binary bodies). */
   charset: Charset | null;
+  /** What a text body is, from its start: json, odata-json, soap, atom, edmx, xml, html. */
+  shape?: "json" | "odata-json" | "soap" | "atom" | "edmx" | "xml" | "html" | null;
 }
 
 export interface PluginInfo {
