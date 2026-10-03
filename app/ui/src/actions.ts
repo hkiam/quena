@@ -1,7 +1,7 @@
 // Central command dispatcher shared by menu, toolbar, keyboard, context menu
 // and the command field. Every action returns immediately (optimistic UI, R11); the
 // core confirms asynchronously.
-import { api, isTauri, type Detail, type GroupBy, type MarkColor, type SessionId, type Sort } from "./api";
+import { api, isTauri, type Detail, type GroupBy, type NavScope, type MarkColor, type SessionId, type Sort } from "./api";
 import { confirmAsk, get, say, set, PRESETS, type LayoutPreset, type RightTab } from "./store";
 import { grid, idAtIndex, rowCache } from "./grid/SessionGrid";
 import { buildCurl, buildFetch, buildPowerShell, buildPython, rawRequestText, rawResponseHead } from "./lib/http";
@@ -118,6 +118,22 @@ export const actions = {
     actions.saveLayout();
     await api.setGroup(groupBy);
     setTimeout(() => actions.refocus(), 80);
+  },
+
+  /** Narrow the list to a navigator group or path (`null`: all sessions again). */
+  async setScope(scope: NavScope | null, label = "") {
+    await api.setScope(scope);
+    set({ scope: scope ? { scope, label } : null });
+    rowCache.clear();
+    set((s) => ({ gridNonce: s.gridNonce + 1 }));
+  },
+
+  /** Show or hide the navigator (`mode`: also switch it to structure or groups). */
+  showNavigator(open: boolean, mode?: "structure" | "groups") {
+    set((s) => ({ layout: { ...s.layout, navOpen: open, ...(mode ? { navMode: mode } : {}) } }));
+    actions.saveLayout();
+    // Hidden, it must not keep narrowing the list unseen.
+    if (!open && get().scope) void actions.setScope(null);
   },
 
   /** Collapse or expand the group of the row at a list position. */

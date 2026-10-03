@@ -8,6 +8,8 @@ import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
 import { SessionGrid } from "./grid/SessionGrid";
 import { RightPane } from "./panels/RightPane";
+import { Navigator, ScopeBar } from "./panels/Navigator";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { get, restoreLayout, say, set, useStore, type Layout } from "./store";
 import { installGlobalKeys } from "./keys";
 import { installFileDrop } from "./lib/dropImport";
@@ -57,6 +59,8 @@ function useBoot() {
       }),
     );
     unlisten.push(on<string>("menu", (id) => actions.menu(id)));
+    // Another archive was loaded: the navigator no longer narrows the list.
+    unlisten.push(on<null>("scope", () => set({ scope: null })));
     // Plugins finished loading in the background: views that asked early reload their lists.
     unlisten.push(
       on("plugins", () => {
@@ -150,6 +154,8 @@ export function App() {
   useBoot();
   useTheme();
   const leftWidth = useStore((s) => s.layout.leftWidth);
+  const navOpen = useStore((s) => !!s.layout.navOpen);
+  const navWidth = useStore((s) => s.layout.navWidth ?? 0.17);
   const overlay = useStore((s) => s.overlay);
   if (!isTauri) {
     return <div className="not-tauri">{t("Quena UI must run inside the Quena app ({command}).", { command: "npm exec --prefix app/ui -- tauri dev" })}</div>;
@@ -157,12 +163,23 @@ export function App() {
   return (
     <div className="app">
       <Toolbar />
-      <div className="main" style={{ gridTemplateColumns: `minmax(280px, ${leftWidth * 100}%) 8px minmax(380px, 1fr)` }}>
-        <div className="left">
-          <SessionGrid />
+      <div className={navOpen ? "main-nav" : "main-nav off"} style={navOpen ? { gridTemplateColumns: `minmax(170px, ${navWidth * 100}%) 8px minmax(0, 1fr)` } : undefined}>
+        {navOpen && (
+          <>
+            <ErrorBoundary name="navigator">
+              <Navigator />
+            </ErrorBoundary>
+            <Splitter min={[170, 760]} onDrag={(f) => set((s) => ({ layout: { ...s.layout, navWidth: f } }))} />
+          </>
+        )}
+        <div className="main" style={{ gridTemplateColumns: `minmax(280px, ${leftWidth * 100}%) 8px minmax(380px, 1fr)` }}>
+          <div className="left">
+            <ScopeBar />
+            <SessionGrid />
+          </div>
+          <Splitter min={[320, 420]} onDrag={(f) => set((s) => ({ layout: { ...s.layout, leftWidth: f } }))} />
+          <RightPane />
         </div>
-        <Splitter min={[320, 420]} onDrag={(f) => set((s) => ({ layout: { ...s.layout, leftWidth: f } }))} />
-        <RightPane />
       </div>
       <StatusBar />
       <ContextMenuHost />

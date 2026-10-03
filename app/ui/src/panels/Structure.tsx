@@ -1,16 +1,15 @@
-// Structure view: the visible sessions as a tree of hosts and paths. Levels are loaded
-// lazily from the backend (all shown levels in one call); clicking a node selects its
-// sessions in the list.
+// Structure (in the navigator): the filtered sessions as a tree of hosts and paths. Levels
+// are loaded lazily from the backend (all shown levels in one call); clicking a node narrows
+// the session list to it, clicking it again shows all sessions.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Globe } from "lucide-react";
 import { api, type TreeNode } from "../api";
 import { fmtBytes, fmtInt } from "../lib/format";
 import { actions } from "../actions";
 import { useStore } from "../store";
+import type { MenuItem } from "../components/ContextMenu";
+import { openMenu } from "../components/contextMenus";
 import { plural, t } from "../i18n";
-import { showContextMenu } from "../components/ContextMenu";
-import { sessionMenu } from "../menus";
-import { browserMenuWanted } from "../components/contextMenus";
 
 interface Level {
   nodes: TreeNode[];
@@ -31,6 +30,11 @@ export function StructurePanel() {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
+  // Narrowing ended elsewhere (the bar above the list, another archive): nothing is picked.
+  const scoped = useStore((s) => s.scope?.scope.kind === "path");
+  useEffect(() => {
+    if (!scoped) setPicked(null);
+  }, [scoped]);
 
   const load = useCallback(async (keys: string[]) => {
     const got = await api.structure(
@@ -79,10 +83,20 @@ export function StructurePanel() {
       return n;
     });
 
-  const select = async (key: string, host: string, path: string, exact = false) => {
+  const label = (host: string, path: string, exact: boolean) => (path ? `${host}${path}${exact ? ` ${t("(this path)")}` : ""}` : host);
+  const select = (key: string, host: string, path: string, exact = false) => {
+    if (picked === key) {
+      setPicked(null);
+      void actions.setScope(null);
+      return;
+    }
     setPicked(key);
-    await actions.selectIds(await api.structureIds(host, path, exact));
+    void actions.setScope({ kind: "path", host, path, exact }, label(host, path, exact));
   };
+  const menu = (key: string, host: string, path: string, exact = false): MenuItem[] => [
+    { label: t("Show Only These Sessions"), checked: picked === key, action: () => picked !== key && select(key, host, path, exact) },
+    { label: t("Select These Sessions"), action: async () => actions.selectIds(await api.structureIds(host, path, exact)) },
+  ];
 
   const root = levels.get(keyOf(null, ""));
   if (!root) return <div className="placeholder">{t("Loading…")}</div>;
@@ -103,7 +117,7 @@ export function StructurePanel() {
       const k = exact ? exactKeyOf(host, path) : keyOf(host, path);
       const dir = n.name.endsWith("/");
       rows.push(
-        <Row key={k} node={n} label={n.name || t("(this path)")} depth={depth} open={open.has(k)} expandable={dir && n.hasChildren} picked={picked === k} onToggle={() => toggle(k)} onPick={() => select(k, host, path, exact)} />,
+        <Row key={k} node={n} label={n.name || t("(this path)")} depth={depth} open={open.has(k)} expandable={dir && n.hasChildren} picked={picked === k} onToggle={() => toggle(k)} onPick={() => select(k, host, path, exact)} menu={() => menu(k, host, path, exact)} />,
       );
       if (dir && open.has(k)) walk(host, path, depth + 1);
     }
@@ -112,7 +126,7 @@ export function StructurePanel() {
   for (const h of hosts) {
     const k = keyOf(h.name, "/");
     const hk = keyOf(h.name, "");
-    rows.push(<Row key={hk} node={h} label={h.name} host depth={0} open={open.has(k)} expandable={h.hasChildren} picked={picked === hk} onToggle={() => toggle(k)} onPick={() => select(hk, h.name, "")} />);
+    rows.push(<Row key={hk} node={h} label={h.name} host depth={0} open={open.has(k)} expandable={h.hasChildren} picked={picked === hk} onToggle={() => toggle(k)} onPick={() => select(hk, h.name, "")} menu={() => menu(hk, h.name, "")} />);
     if (open.has(k)) walk(h.name, "/", 1);
   }
 
@@ -133,20 +147,14 @@ export function StructurePanel() {
   );
 }
 
-function Row(p: { node: TreeNode; label: string; depth: number; open: boolean; expandable: boolean; picked: boolean; host?: boolean; onToggle: () => void; onPick: () => void | Promise<void> }) {
+function Row(p: { node: TreeNode; label: string; depth: number; open: boolean; expandable: boolean; picked: boolean; host?: boolean; onToggle: () => void; onPick: () => void; menu: () => MenuItem[] }) {
   const Chev = p.open ? ChevronDown : ChevronRight;
   return (
     <div
       className={`st-row ${p.picked ? "picked" : ""}`}
       style={{ paddingLeft: 4 + p.depth * 14 }}
       onClick={p.onPick}
-      onContextMenu={(e) => {
-        // Select the node's sessions, then offer what the session list offers for them.
-        if (browserMenuWanted(e)) return;
-        e.preventDefault();
-        const { clientX: x, clientY: y } = e;
-        void Promise.resolve(p.onPick()).then(() => showContextMenu(x, y, sessionMenu()));
-      }}
+      onContextMenu={(e) => openMenu(e, p.menu())}
       onDoubleClick={() => p.expandable && p.onToggle()}
       title={t("{sessions}, {errors}, {size} received", { sessions: plural(p.node.count, "{n} session", "{n} sessions"), errors: plural(p.node.errors, "{n} error", "{n} errors"), size: fmtBytes(p.node.bytes) })}
     >

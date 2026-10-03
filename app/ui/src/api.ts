@@ -432,6 +432,25 @@ export interface RwRule {
   hits: number;
 }
 
+/** What the navigator narrows the session list to (crates/quena-app-core/src/navigator.rs). */
+export type NavScope = { kind: "group"; by: GroupBy; key: string } | { kind: "path"; host: string; path: string; exact: boolean };
+
+export interface NavGroup {
+  key: string;
+  label: string;
+  count: number;
+  errors: number;
+  bytes: number;
+  first: SessionId;
+}
+
+export interface NavGroups {
+  groups: NavGroup[];
+  total: number;
+  ungrouped: number;
+  truncated: boolean;
+}
+
 export interface RwState {
   enabled: boolean;
   maxBodyKb: number;
@@ -846,6 +865,9 @@ export const api = {
   takeOpenFiles: () => invoke<string[]>("take_open_files"),
   writeTextFile: (path: string, text: string) => invoke<void>("write_text_file", { path, text }),
   arGet: () => invoke<ArState>("ar_get"),
+  navGroups: (by: GroupBy) => invoke<NavGroups>("nav_groups", { by }),
+  setScope: (scope: NavScope | null) => invoke<void>("set_scope", { scope }),
+  navIds: (scope: NavScope) => invoke<SessionId[]>("nav_ids", { scope }),
   rwGet: () => invoke<RwState>("rw_get"),
   rwSet: (state: RwState) => invoke<RwState>("rw_set", { state }),
   arSet: (state: ArState) => invoke<void>("ar_set", { state }),

@@ -198,8 +198,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "view.filters", "Filters", None)?,
             &item(app, "view.log", "Log", None)?,
             &item(app, "view.timeline", "Timeline", None)?,
-            &item(app, "view.structure", "Structure", None)?,
             &item(app, "view.diagnostics", "Diagnostics", None)?,
+            &sep()?,
+            &item(app, "view.navigator", "Navigator", Some("CmdOrCtrl+Alt+N"))?,
+            &item(app, "view.groups", "Navigator: Groups", None)?,
+            &item(app, "view.structure", "Navigator: Structure", None)?,
             &sep()?,
             &Submenu::with_items(
                 app,

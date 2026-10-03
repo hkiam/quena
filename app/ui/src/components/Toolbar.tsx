@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { AppWindow, ChevronDown, FileArchive, History, MessageSquareText, Play, RotateCw, Save, Search, Settings, Trash2, Waves, WandSparkles } from "lucide-react";
+import { AppWindow, ChevronDown, PanelLeft, FileArchive, History, MessageSquareText, Play, RotateCw, Save, Search, Settings, Trash2, Waves, WandSparkles } from "lucide-react";
 import { api } from "../api";
 import { actions } from "../actions";
 import { set, useStore } from "../store";
@@ -39,9 +39,11 @@ export function Toolbar() {
   const settings = useStore((s) => s.settings);
   const paused = useStore((s) => s.status?.engine.paused ?? 0);
   const keep = settings?.keepSessions ?? 0;
+  const navOpen = useStore((s) => !!s.layout.navOpen);
 
   return (
     <div className="toolbar">
+      <Btn icon={PanelLeft} active={navOpen} title={t("Navigator: narrow the list to a group or path")} onClick={() => actions.showNavigator(!navOpen)} />
       <CaptureSwitch />
       <div className="tb-group">
         <Btn

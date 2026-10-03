@@ -34,13 +34,14 @@ on a reused connection) are left out.
 
 ## Structure
 
-The **Structure** tab shows the **visible** sessions (after filters) as a tree: hosts at
-the top, then path segments. Each node shows how many sessions it contains, how many of
-them are errors and how many bytes were received.
+*Structure* in the [navigator](sessions.md#navigator) shows the sessions the filters let
+through as a tree: hosts at the top, then path segments. Each node shows how many sessions
+it contains, how many of them are errors and how many bytes were received.
 
 - Expand hosts and folders to drill down; levels load on demand.
-- **Click a host or folder to select all its sessions** in the list — then use Statistics,
-  Timeline, Copy, Save or Remove on exactly that part of the traffic.
+- **Click a host or folder to show only its sessions** in the list; click it again (or ✕
+  above the list) for all. Right-click → *Select These Sessions* selects them instead —
+  then use Statistics, Timeline, Copy, Save or Remove on exactly that part of the traffic.
 - A filter box narrows the tree.
 
 ## Compare

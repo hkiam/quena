@@ -11,12 +11,34 @@ pub use expr::{Expr, ParseError};
 pub use settings::{FilterSettings, HostMode, ProcessMode};
 
 use quena_model::SessionSummary;
+use std::sync::Arc;
+
+/// A predicate narrowing the list on top of the filters (the navigator's group or path).
+#[derive(Clone)]
+pub struct Scope(Arc<dyn Fn(&SessionSummary) -> bool + Send + Sync>);
+
+impl Scope {
+    pub fn new(f: impl Fn(&SessionSummary) -> bool + Send + Sync + 'static) -> Scope {
+        Scope(Arc::new(f))
+    }
+
+    pub fn matches(&self, s: &SessionSummary) -> bool {
+        (self.0)(s)
+    }
+}
+
+impl std::fmt::Debug for Scope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Scope(..)")
+    }
+}
 
 /// Compiled filter used by the session index.
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
     settings: Option<settings::Compiled>,
     expr: Option<Expr>,
+    scope: Option<Scope>,
 }
 
 impl Filter {
@@ -32,18 +54,29 @@ impl Filter {
             "" => None,
             e => Some(expr::parse(e)?),
         };
-        Ok(Filter { settings: Some(settings::Compiled::new(settings)), expr })
+        Ok(Filter { settings: Some(settings::Compiled::new(settings)), expr, scope: None })
     }
 
     pub fn from_expr(e: Expr) -> Filter {
-        Filter { settings: None, expr: Some(e) }
+        Filter { settings: None, expr: Some(e), scope: None }
+    }
+
+    /// This filter, narrowed to `scope` as well.
+    pub fn with_scope(mut self, scope: Option<Scope>) -> Filter {
+        self.scope = scope;
+        self
     }
 
     pub fn is_all(&self) -> bool {
-        self.settings.is_none() && self.expr.is_none()
+        self.settings.is_none() && self.expr.is_none() && self.scope.is_none()
     }
 
     pub fn matches(&self, s: &SessionSummary) -> bool {
+        if let Some(sc) = &self.scope
+            && !(sc.0)(s)
+        {
+            return false;
+        }
         if let Some(c) = &self.settings {
             if !c.matches(s) {
                 return false;

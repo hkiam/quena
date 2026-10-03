@@ -36,6 +36,14 @@ contain breaking changes (settings, file formats, plugin API).
   on structure nodes (selects their sessions, then the session menu), on diagnostic findings
   (select affected sessions, copy), log lines and statistics.
 
+- **Navigator** left of the session list (off by default; toolbar button, *View → Navigator*,
+  `Ctrl/⌘ Alt N`): the groups of the sessions (connection, host, process, trace id,
+  session cookie, Custom) or the host/path structure, with counts and errors. A click
+  narrows the list to that group or path, on top of the filters; a bar above the list
+  shows it and brings everything back. *Structure* moved from the right pane into the
+  navigator; there a click now narrows the list instead of selecting (right-click →
+  *Select These Sessions*).
+
 ### Fixed
 - A plain XML document sent as `text/xml` or `application/xml` no longer opens in the SOAP
   view, and is no longer offered the SOAP and Atom/OData views. Quena now checks the root

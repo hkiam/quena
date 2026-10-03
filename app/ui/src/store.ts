@@ -3,7 +3,7 @@ import type { NetworkProfile } from "./lib/diagReport";
 import type { FilterSettings, GroupBy, JobInfo, LogEntry, SanitizedExport, SessionId, Settings, Sort, Status } from "./api";
 import { t } from "./i18n";
 
-export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "structure" | "diagnostics";
+export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "diagnostics";
 
 export type ColumnKey =
   | "id"
@@ -117,6 +117,10 @@ export interface Layout {
   /** Grouped tabs: last view per section, `response:headers` → `caching`,
    * `request:body:json` → `json`. */
   subViews?: Record<string, string>;
+  /** The navigator left of the session list: shown, its width (px), and what it lists. */
+  navOpen?: boolean;
+  navWidth?: number;
+  navMode?: "structure" | "groups";
   /** "Group by" of the session list, and the width of its Group column. */
   groupBy?: GroupBy;
   groupWidth?: number;
@@ -222,6 +226,8 @@ export interface AppState {
   focusId: SessionId | null;
   anchorIndex: number | null;
   activeTab: RightTab;
+  /** The navigator narrows the list to this group or path (with what to call it). */
+  scope: { scope: import("./api").NavScope; label: string } | null;
   jobs: JobInfo[];
   log: LogEntry[];
   message: Message | null;
@@ -258,6 +264,7 @@ export const useStore = create<AppState>(() => ({
   focusId: null,
   anchorIndex: null,
   activeTab: "inspectors",
+  scope: null,
   jobs: [],
   log: [],
   message: null,

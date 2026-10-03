@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, type McpStatus, type Recoverable, type Settings } from "../api";
 import { actions } from "../actions";
-import { fmtBytes, fmtDateTime, modKey, osNames } from "../lib/format";
+import { fmtBytes, fmtDateTime, isMac, modKey, osNames } from "../lib/format";
 import { get, say, set, useStore, type Dialog } from "../store";
 import { FindDialog } from "./FindDialog";
 import { HttpsPanel } from "./HttpsDialog";
@@ -168,6 +168,7 @@ const SHORTCUTS: [string, string][] = [
   [`${modKey}R`, t("Customize rules")],
   [`${modKey}E`, t("Text Tools")],
   ["F7 / F8 / F9", t("Statistics / Inspectors / Composer")],
+  [`${modKey}${isMac ? "⌥" : "Alt+"}N`, t("Navigator: groups or structure")],
   ["Alt+1…5", t("Inspector: Headers, Body, Cookies, Auth, Raw (grouped views)")],
   ["Alt+← / Alt+→", t("Inspector: previous / next view")],
   ["F11 / Alt+F11 / Shift+F11", t("Break before requests / after responses / off")],

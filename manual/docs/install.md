@@ -92,8 +92,11 @@ automatic authentication falls back to NTLM.
   keep-sessions toggles; process filter; the **command field**; Find, Save, Comment,
   Text Tools and Settings.
 - **Session list** — one row per request. See [Session list](sessions.md).
+- **Navigator** (optional, left; ▯ in the toolbar or `Ctrl/⌘ Alt N`) — the sessions'
+  groups or host/path structure; a click narrows the list. See
+  [Session list](sessions.md#navigator).
 - **Right pane** — tabs *Inspect*, *Composer*, *Mock Rules*, *Filters*, *Timeline*,
-  *Structure*, *Statistics* and *Log*. A dot on *Filters* or *Mock Rules* tells you they
+  *Diagnostics*, *Statistics* and *Log*. A dot on *Filters* or *Mock Rules* tells you they
   are active.
 - **Status bar** — proxy address and state (*system proxy*, *HTTPS decrypt*), the process
   scope (click to change), the number of visible/total sessions (with a *filtered* tag),

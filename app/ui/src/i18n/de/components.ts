@@ -1,6 +1,7 @@
 // German translations: components.
 export const components: Record<string, string> = {
   Redo: "Wiederholen",
+  "Navigator: groups or structure": "Navigator: Gruppen oder Struktur",
   "Could not read the clipboard: {error}": "Zwischenablage konnte nicht gelesen werden: {error}",
   Cut: "Ausschneiden",
   Paste: "Einfügen",
@@ -207,7 +208,6 @@ export const components: Record<string, string> = {
   "Show Mock Rules": "Mock-Regeln anzeigen",
   "Show Filters": "Filter anzeigen",
   "Show Timeline": "Zeitachse anzeigen",
-  "Show Structure (hosts and paths)": "Struktur anzeigen (Hosts und Pfade)",
   "Show Statistics": "Statistik anzeigen",
   "Show Log": "Protokoll anzeigen",
   "Request above response": "Request über Response",

@@ -290,15 +290,37 @@ test("layout fills the window at small and large sizes, side by side and stacked
   assert.deepEqual(problems, [], "unused space in the layout");
 });
 
-test("structure: hosts and paths as a tree, a click selects the sessions below", async () => {
+test("navigator: structure and groups narrow the session list", async () => {
+  const count = async () => Number((await d.text(await d.waitFor(".statusbar"))).match(/(\d+) sessions/)[1]);
+  const all = await count();
+  // Structure: hosts and paths as a tree; a click shows only that host, a second click all.
   await d.exec(`window.__quena.menu("view.structure")`);
-  const host = await d.waitFor(".st-row", { text: "soap.example.com" });
+  const host = await d.waitFor(".navigator .st-row", { text: "soap.example.com" });
   await d.click(host);
-  await d.waitFor(".insp-url", { text: "soap.example.com/shop/" });
+  await d.waitFor(".scope-bar", { text: (t) => t.includes("soap.example.com") && t.includes("2 sessions") });
   await d.click(await d.findIn(host, ".st-chev").then((c) => c[0]));
   const shop = await d.waitFor(".st-row", { text: (t) => t.startsWith("shop/") });
   await d.click(await d.findIn(shop, ".st-chev").then((c) => c[0]));
   await d.waitFor(".st-row", { text: "GetCustomer" });
+  await d.click(await d.waitFor(".navigator .st-row", { text: "soap.example.com" }));
+  await d.waitFor(".scope-bar", { text: (t) => t === "" });
+  // Groups by host: the list shows one host; the bar above it brings all back.
+  await d.click(await d.waitFor(".nav-head .seg", { text: "Groups" }));
+  await d.exec(`window.__quena.menu("view.group-host")`);
+  const api = await d.waitFor(".nav-row", { text: (t) => t.startsWith("api.example.com") });
+  await d.click(api);
+  await d.waitFor(".scope-bar", { text: (t) => t.includes("api.example.com") && t.includes("2 sessions") });
+  assert.ok((await d.findAll(".nav-row")).length >= 3, "all groups stay listed: All + the hosts");
+  await d.click(await d.waitFor(".scope-bar .icon-btn"));
+  await d.waitFor(".scope-bar", { text: (t) => t === "" });
+  assert.equal(await count(), all);
+  // Hiding the navigator ends any narrowing; the list grouping stays as chosen.
+  await d.click(api);
+  await d.exec(`window.__quena.menu("view.navigator")`);
+  await d.waitFor(".scope-bar", { text: (t) => t === "" });
+  assert.equal((await d.findAll(".navigator")).length, 0);
+  await d.exec(`window.__quena.menu("view.group-none")`);
+  await d.exec(`window.__quena.menu("view.inspectors")`);
 });
 
 test("timeline: a waterfall of the selected sessions", async () => {

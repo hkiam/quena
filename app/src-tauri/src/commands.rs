@@ -167,6 +167,27 @@ async fn structure_ids(core: State<'_, Core>, host: String, path: String, exact:
     blocking(move || Ok(core.structure_ids(&host, &path, exact.unwrap_or(false)))).await
 }
 
+/// The navigator's groups of the sessions the filters let through.
+#[tauri::command]
+async fn nav_groups(core: State<'_, Core>, by: quena_index::GroupBy) -> R<quena_app_core::navigator::NavGroups> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.nav_groups(by))).await
+}
+
+/// The sessions of a group or structure node (the filters applied).
+#[tauri::command]
+async fn nav_ids(core: State<'_, Core>, scope: quena_app_core::navigator::NavScope) -> R<Vec<SessionId>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.nav_ids(&scope))).await
+}
+
+/// Narrow the list to a group or structure node (`null`: no narrowing).
+#[tauri::command]
+async fn set_scope(core: State<'_, Core>, scope: Option<quena_app_core::navigator::NavScope>) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.set_scope(scope).map_err(e)).await
+}
+
 /// Language of the UI: the saved preference resolved to "en" or "de".
 #[tauri::command]
 async fn ui_language(core: State<'_, Core>) -> R<String> {
@@ -942,6 +963,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         set_language,
         structure,
         structure_ids,
+        nav_groups,
+        nav_ids,
+        set_scope,
         drop_chunk,
         take_open_files,
         write_text_file,

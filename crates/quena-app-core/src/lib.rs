@@ -16,6 +16,7 @@ pub mod grpc;
 pub mod logbuf;
 pub mod mock;
 pub mod mockgen;
+pub mod navigator;
 pub mod multipart;
 pub mod pac;
 pub mod plugins;
@@ -142,6 +143,10 @@ pub struct AppCore {
     pub(crate) plugins_done: std::sync::atomic::AtomicBool,
     filters: RwLock<FilterSettings>,
     quick_filter: RwLock<String>,
+    /// The navigator's group or path the list is narrowed to.
+    scope: RwLock<Option<navigator::NavScope>>,
+    /// The filters without the scope (the navigator lists what they let through).
+    base_filter: RwLock<Arc<quena_query::Filter>>,
     group: RwLock<quena_index::GroupBy>,
     pub(crate) mock: Mutex<Option<mock::MockHandle>>,
     pub(crate) searches: Mutex<std::collections::HashMap<JobId, Arc<Mutex<SearchResult>>>>,
@@ -179,6 +184,8 @@ impl AppCore {
             capture_switch: Mutex::new(()),
             filters: RwLock::new(FilterSettings::default()),
             quick_filter: RwLock::new(String::new()),
+            scope: RwLock::new(None),
+            base_filter: RwLock::new(Arc::new(quena_query::Filter::all())),
             group: RwLock::new(Default::default()),
             mock: Mutex::new(None),
             searches: Mutex::new(Default::default()),
@@ -451,7 +458,7 @@ impl AppCore {
             }
         }
         let f = Filter::compile(&fs).map_err(|e| anyhow!("filter: {e}"))?;
-        self.capture().index.set_filter(f);
+        self.capture().index.set_filter(self.scoped(f));
         Ok(())
     }
 
@@ -613,6 +620,10 @@ impl AppCore {
         let old = std::mem::replace(&mut *self.capture.write(), cap);
         old.close(!self.settings.read().keep_captures);
         self.diag_reset();
+        // A group or path of the old capture means nothing in the new one.
+        if self.scope.write().take().is_some() {
+            self.emit("scope", serde_json::Value::Null);
+        }
         let _ = self.apply_filter();
         let cap = self.capture();
         cap.index.set_group(*self.group.read());

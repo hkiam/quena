@@ -5,6 +5,7 @@ import { CornerDownLeft } from "lucide-react";
 import { actions } from "../actions";
 import { set, useStore } from "../store";
 import { t } from "../i18n";
+import { isMac } from "../lib/format";
 import { de } from "../i18n/de";
 
 // The English names match as well when the UI is in another language.
@@ -56,7 +57,9 @@ const COMMANDS: Cmd[] = [
   { id: "view.autoresponder", label: t("Show Mock Rules"), group: t("View") },
   { id: "view.filters", label: t("Show Filters"), group: t("View") },
   { id: "view.timeline", label: t("Show Timeline"), group: t("View") },
-  { id: "view.structure", label: t("Show Structure (hosts and paths)"), group: t("View") },
+  { id: "view.navigator", label: t("Show or hide the navigator"), group: t("View"), keys: isMac ? "⌘⌥N" : "Ctrl+Alt+N" },
+  { id: "view.groups", label: t("Navigator: groups (connection, host, trace id …)"), group: t("View") },
+  { id: "view.structure", label: t("Navigator: structure (hosts and paths)"), group: t("View") },
   { id: "view.diagnostics", label: t("Show Diagnostics (analyze performance and errors)"), group: t("View") },
   { id: "view.statistics", label: t("Show Statistics"), group: t("View"), keys: "F7" },
   { id: "view.log", label: t("Show Log"), group: t("View") },

@@ -14,6 +14,7 @@ Shortcuts* shows this list in the app.
 | Statistics | `F7` |
 | Inspect | `F8` (also `Ctrl I`) |
 | Composer | `F9` |
+| Navigator (groups / structure) | `Ctrl/⌘ Alt N` |
 | Command palette | `Ctrl/⌘ K` |
 | Focus the command field | `Alt Q` |
 | Find sessions | `Ctrl/⌘ F` |

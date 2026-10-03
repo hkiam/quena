@@ -95,7 +95,11 @@ export async function handleMenu(id: string) {
     case "view.timeline":
       return actions.showTab("timeline");
     case "view.structure":
-      return actions.showTab("structure");
+      return actions.showNavigator(true, "structure");
+    case "view.groups":
+      return actions.showNavigator(true, "groups");
+    case "view.navigator":
+      return actions.showNavigator(!get().layout.navOpen);
     case "view.diagnostics":
       return actions.showTab("diagnostics");
     case "view.group-none":

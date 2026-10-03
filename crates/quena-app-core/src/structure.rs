@@ -174,13 +174,19 @@ impl AppCore {
 
     /// Several levels (the hosts and every open node) in one pass over the view.
     pub fn structure_levels(&self, queries: &[LevelQuery]) -> Vec<TreeLevel> {
-        let cap = self.capture();
-        levels(|f| cap.index.for_each_view(f), queries)
+        // The whole tree, also while the navigator narrows the list to one of its nodes.
+        levels(|f| self.for_each_unscoped(f), queries)
     }
 
     /// Visible sessions of a node, in view order (`exact`: see [`matches`]).
     pub fn structure_ids(&self, host: &str, path: &str, exact: bool) -> Vec<SessionId> {
-        self.capture().index.find(|s| matches(s, host, path, exact))
+        let mut ids = Vec::new();
+        self.for_each_unscoped(|s| {
+            if matches(s, host, path, exact) {
+                ids.push(s.id)
+            }
+        });
+        ids
     }
 }
 
