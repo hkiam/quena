@@ -258,7 +258,8 @@ test("right-click: Quena's menus, never the browser's", async () => {
   assert.ok(["Cut", "Copy", "Paste", "Select All"].every((x) => items.includes(x)), `edit menu: ${items}`);
   await close();
   // A header row (a shown one: the other pane may keep its table hidden): copy its value.
-  const row = await d.exec(`return [...document.querySelectorAll('.hv-table tr')].find((r) => r.offsetHeight > 0 && r.offsetWidth > 0)`);
+  // (Its first cell: WebKitWebDriver has no rect for a table row.)
+  const row = await d.exec(`return [...document.querySelectorAll('.hv-table td')].find((c) => c.offsetHeight > 0 && c.offsetWidth > 0)`);
   await rightClick(row["element-6066-11e4-a52e-4f735466cecf"]);
   items = await menu();
   assert.ok(items.includes("Copy Value") && items.includes("Copy All Headers"), `header menu: ${items}`);
@@ -354,6 +355,8 @@ test("timeline: a waterfall of the selected sessions", async () => {
   assert.ok(Math.abs((await geo()).graph - g1.graph) < 2, "Fit restores the width");
   // Resize the URL column by dragging its header edge.
   const handle = (await d.findAll(".tl-hrow .tl-c-url .tl-resize"))[0];
+  // On failure: which pointer events arrived during the drag.
+  await d.exec(`window.__tlEvents = []; for (const t of ["pointerdown", "pointermove", "pointerup", "mousedown", "mouseup", "dragstart"]) window.addEventListener(t, (e) => window.__tlEvents.length < 40 && window.__tlEvents.push(t + ":" + Math.round(e.clientX) + ":" + e.buttons + ":" + (e.target.className || e.target.tagName)), true);`);
   await d.cmd("POST", d.s("/actions"), {
     actions: [
       {
@@ -375,7 +378,7 @@ test("timeline: a waterfall of the selected sessions", async () => {
   // On failure: what lies on the handle (something covering it swallows the drag).
   const onHandle = () =>
     d.exec(`const h = arguments[0].getBoundingClientRect(), e = document.elementFromPoint(h.left + h.width / 2, h.top + h.height / 2);
-      return { handle: [h.left, h.top, h.width, h.height].map(Math.round), top: e ? e.tagName + "." + e.className : null, win: [innerWidth, innerHeight] };`, [{ "element-6066-11e4-a52e-4f735466cecf": handle }]);
+      return { handle: [h.left, h.top, h.width, h.height].map(Math.round), top: e ? e.tagName + "." + e.className : null, win: [innerWidth, innerHeight], events: window.__tlEvents };`, [{ "element-6066-11e4-a52e-4f735466cecf": handle }]);
   assert.ok(g3.url > g1.url + 50, `URL column wider after dragging its edge: ${JSON.stringify([g1.url, g3.url, await onHandle()])}`);
   // Every bar lies completely inside the graph — also the one that ends last.
   const outside = await d.exec(`return [...document.querySelectorAll('.tl-row')].flatMap((row) => {
