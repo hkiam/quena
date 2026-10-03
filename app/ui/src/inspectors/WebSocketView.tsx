@@ -103,7 +103,7 @@ export function WebSocketView({ detail }: { detail: Detail }) {
               onClick={() => setSel(f.seq)}
               onContextMenu={(e) => {
                 setSel(f.seq);
-                openMenu(e, withSelection([copyItem(t("Copy Message"), f.text ?? f.preview ?? "")], e.target as Element));
+                openMenu(e, withSelection([copyItem(f.text != null && f.len <= 4096 ? t("Copy Message") : t("Copy Preview"), f.text ?? f.preview ?? "")], e.target as Element));
               }}
             >
               <span className={`ws-dir ${f.dir === 0 ? "out" : "in"}`}>{f.dir === 0 ? "▲" : "▼"}</span>

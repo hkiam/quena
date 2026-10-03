@@ -1,7 +1,7 @@
 // Central command dispatcher shared by menu, toolbar, keyboard, context menu
 // and the command field. Every action returns immediately (optimistic UI, R11); the
 // core confirms asynchronously.
-import { api, type Detail, type GroupBy, type MarkColor, type SessionId, type Sort } from "./api";
+import { api, isTauri, type Detail, type GroupBy, type MarkColor, type SessionId, type Sort } from "./api";
 import { confirmAsk, get, say, set, PRESETS, type LayoutPreset, type RightTab } from "./store";
 import { grid, idAtIndex, rowCache } from "./grid/SessionGrid";
 import { buildCurl, buildFetch, buildPowerShell, buildPython, rawRequestText, rawResponseHead } from "./lib/http";
@@ -11,7 +11,9 @@ const MARKS: MarkColor[] = ["red", "blue", "gold", "green", "orange", "purple"];
 
 export async function copyText(text: string) {
   try {
-    await navigator.clipboard.writeText(text);
+    // Through the app under Tauri: works after an await too (WebKit drops the user gesture).
+    if (isTauri) await (await import("@tauri-apps/plugin-clipboard-manager")).writeText(text);
+    else await navigator.clipboard.writeText(text);
   } catch {
     const ta = document.createElement("textarea");
     ta.value = text;

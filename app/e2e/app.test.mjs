@@ -245,7 +245,8 @@ test("right-click: Quena's menus, never the browser's", async () => {
   assert.ok(items.includes("Copy") && items.includes("Replay"), `session menu: ${items}`);
   await close();
   // Below the last session: the list's menu.
-  await rightClick(await d.waitFor(".grid-canvas"), 80, 300);
+  const canvas = await d.waitFor(".grid-canvas");
+  await rightClick(canvas, 80, (await d.rect(canvas)).height - 10);
   items = await menu();
   assert.ok(items.includes("Open archive") && items.includes("Select all"), `list menu: ${items}`);
   await close();

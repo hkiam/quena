@@ -1,6 +1,7 @@
 // German translations: components.
 export const components: Record<string, string> = {
   Redo: "Wiederholen",
+  "Could not read the clipboard: {error}": "Zwischenablage konnte nicht gelesen werden: {error}",
   Cut: "Ausschneiden",
   Paste: "Einfügen",
   "Select All": "Alles auswählen",

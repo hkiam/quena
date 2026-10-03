@@ -46,7 +46,7 @@ export function LogPanel() {
                 withSelection(
                   [
                     { label: t("Copy Line"), action: () => void copyText(line(l)) },
-                    { label: t("Copy"), action: () => void copyText(log.map(line).join("\n")) },
+                    { label: t("Copy All"), action: () => void copyText(log.map(line).join("\n")) },
                     { separator: true },
                     { label: t("Clear"), action: clear },
                   ],

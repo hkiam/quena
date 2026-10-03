@@ -10,6 +10,7 @@ import { useStore } from "../store";
 import { plural, t } from "../i18n";
 import { showContextMenu } from "../components/ContextMenu";
 import { sessionMenu } from "../menus";
+import { browserMenuWanted } from "../components/contextMenus";
 
 interface Level {
   nodes: TreeNode[];
@@ -141,6 +142,7 @@ function Row(p: { node: TreeNode; label: string; depth: number; open: boolean; e
       onClick={p.onPick}
       onContextMenu={(e) => {
         // Select the node's sessions, then offer what the session list offers for them.
+        if (browserMenuWanted(e)) return;
         e.preventDefault();
         const { clientX: x, clientY: y } = e;
         void Promise.resolve(p.onPick()).then(() => showContextMenu(x, y, sessionMenu()));

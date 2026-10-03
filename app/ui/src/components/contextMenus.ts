@@ -8,6 +8,7 @@ import { copyText } from "../actions";
 import { isTauri } from "../api";
 import { editTargetFor, type EditTarget } from "../lib/editTargets";
 import { modKey } from "../lib/format";
+import { say } from "../store";
 import { t } from "../i18n";
 
 export async function readClipboard(): Promise<string> {
@@ -17,6 +18,17 @@ export async function readClipboard(): Promise<string> {
   }
   return navigator.clipboard.readText();
 }
+
+/** Paste `text` with `insert`; a clipboard that cannot be read is reported. */
+const pasteInto = (insert: (text: string) => void) => () =>
+  void readClipboard().then(
+    (text) => text && insert(text),
+    (e) => say(t("Could not read the clipboard: {error}", { error: String(e) }), "error"),
+  );
+
+/** While developing, Shift+right-click keeps the browser's menu (Inspect Element), also on
+ * views with a menu of their own. */
+export const browserMenuWanted = (e: { shiftKey: boolean }) => import.meta.env.DEV && e.shiftKey;
 
 const TEXT_INPUTS = new Set(["text", "search", "url", "email", "tel", "password", ""]);
 
@@ -55,7 +67,7 @@ export function fieldMenu(f: HTMLInputElement | HTMLTextAreaElement): MenuItem[]
     { separator: true },
     { label: t("Cut"), shortcut: keys("X"), disabled: !editable || !selected || secret, action: () => void copyText(selected).then(() => replace("")) },
     { label: t("Copy"), shortcut: keys("C"), disabled: !selected || secret, action: () => void copyText(selected) },
-    { label: t("Paste"), shortcut: keys("V"), disabled: !editable, action: () => void readClipboard().then((text) => text && replace(text)) },
+    { label: t("Paste"), shortcut: keys("V"), disabled: !editable, action: pasteInto(replace) },
     { separator: true },
     {
       label: t("Select All"),
@@ -82,15 +94,19 @@ export function editorMenu(ed: EditTarget): MenuItem[] {
       { label: t("Cut"), shortcut: keys("X"), disabled: !selected, action: () => void copyText(selected).then(() => ed.replaceSelection("")) },
     );
   items.push({ label: t("Copy"), shortcut: keys("C"), disabled: !selected, action: () => void copyText(selected) });
-  if (editable) items.push({ label: t("Paste"), shortcut: keys("V"), action: () => void readClipboard().then((text) => text && ed.replaceSelection(text)) });
+  if (editable) items.push({ label: t("Paste"), shortcut: keys("V"), action: pasteInto((text) => ed.replaceSelection(text)) });
   items.push({ separator: true }, { label: t("Select All"), shortcut: keys("A"), action: () => ed.selectAll() });
   return items;
 }
 
-/** Text selected in the page (outside fields and editors) under `target`'s view. */
-function selectedText(): string {
+/** Text selected in the page (outside fields and editors) where the right-click happened:
+ * a selection elsewhere (e.g. in another view) is not offered. */
+function selectedText(target: Element | null): string {
   const sel = window.getSelection();
-  return sel && !sel.isCollapsed ? sel.toString() : "";
+  if (!sel || sel.isCollapsed || !target) return "";
+  const block = target.closest("div, td, pre, li, tr") ?? target;
+  for (let i = 0; i < sel.rangeCount; i++) if (sel.getRangeAt(i).intersectsNode(block)) return sel.toString();
+  return "";
 }
 
 /** The menu for a right-click nobody handled: Edit in fields and editors, Copy for a
@@ -100,20 +116,24 @@ export function defaultMenu(target: Element | null): MenuItem[] {
   if (f) return fieldMenu(f);
   const ed = editTargetFor(target);
   if (ed) return editorMenu(ed);
-  const text = selectedText();
+  const text = selectedText(target);
   if (text) return [{ label: t("Copy"), shortcut: keys("C"), action: () => void copyText(text) }];
   return [];
 }
 
-/** Menu items followed by a separator and the Edit items of a selection, if there is one:
- * for views with their own menu that also show selectable text. */
+/** The Edit items of a field, editor or selection under `target` (if any), a separator, then
+ * `items`: for views with their own menu that also show selectable text. */
 export function withSelection(items: MenuItem[], target: Element | null): MenuItem[] {
   const edit = defaultMenu(target);
   return edit.length ? [...edit, { separator: true }, ...items] : items;
 }
 
 /** Show `items` for a right-click (React handler); nothing when the list is empty. */
-export function openMenu(e: { clientX: number; clientY: number; preventDefault(): void }, items: MenuItem[]) {
+export function openMenu(e: { clientX: number; clientY: number; shiftKey: boolean; preventDefault(): void; stopPropagation(): void }, items: MenuItem[]) {
+  if (browserMenuWanted(e)) {
+    e.stopPropagation(); // no menu of an enclosing view either
+    return;
+  }
   e.preventDefault();
   if (items.length) showContextMenu(e.clientX, e.clientY, items);
 }
@@ -121,7 +141,7 @@ export function openMenu(e: { clientX: number; clientY: number; preventDefault()
 export function installContextMenus() {
   document.addEventListener("contextmenu", (e) => {
     if (e.defaultPrevented) return; // a view showed its own menu
-    if (import.meta.env.DEV && e.shiftKey) return; // the browser's, for Inspect Element
+    if (browserMenuWanted(e)) return; // the browser's, for Inspect Element
     e.preventDefault();
     const items = defaultMenu(e.target instanceof Element ? e.target : null);
     if (items.length) showContextMenu(e.clientX, e.clientY, items);

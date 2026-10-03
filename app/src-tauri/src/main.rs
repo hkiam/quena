@@ -174,21 +174,18 @@ fn disable_browser_accelerators(w: &tauri::WebviewWindow) {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
     use windows_core::Interface;
     let res = w.with_webview(|pw| {
-        let r = unsafe {
-            pw.controller()
-                .CoreWebView2()
-                .and_then(|wv| wv.Settings())
-                .and_then(|s| {
-                    if !cfg!(debug_assertions) {
-                        s.SetAreDefaultContextMenusEnabled(false)?;
-                        s.SetAreDevToolsEnabled(false)?;
-                    }
-                    s.cast::<ICoreWebView2Settings3>()
-                })
-                .and_then(|s3| s3.SetAreBrowserAcceleratorKeysEnabled(false))
+        let settings = unsafe { pw.controller().CoreWebView2().and_then(|wv| wv.Settings()) };
+        let settings = match settings {
+            Ok(s) => s,
+            Err(e) => return tracing::warn!(target: "quena", "WebView2 settings not available: {e}"),
         };
-        if let Err(e) = r {
+        if let Err(e) = unsafe { settings.cast::<ICoreWebView2Settings3>().and_then(|s3| s3.SetAreBrowserAcceleratorKeysEnabled(false)) } {
             tracing::warn!(target: "quena", "could not disable WebView2 browser shortcuts: {e}");
+        }
+        if !cfg!(debug_assertions)
+            && let Err(e) = unsafe { settings.SetAreDefaultContextMenusEnabled(false).and_then(|_| settings.SetAreDevToolsEnabled(false)) }
+        {
+            tracing::warn!(target: "quena", "could not disable WebView2 context menus and developer tools: {e}");
         }
     });
     if let Err(e) = res {

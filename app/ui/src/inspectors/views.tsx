@@ -431,13 +431,13 @@ export function RawView({ detail, part, wrap }: { detail: Detail; part: Part; wr
 interface TreeControl {
   all: boolean | null;
   expand: (all: boolean) => void;
-  menu?: { detail: Detail; part: Part };
+  menu?: { detail: Detail; part: Part; rewrite: boolean };
 }
 const TreeCtx = createContext<TreeControl>({ all: null, expand: () => {} });
 
-export function TreeRoot({ children, detail, part }: { children: React.ReactNode; detail?: Detail; part?: Part }) {
+export function TreeRoot({ children, detail, part, rewrite = false }: { children: React.ReactNode; detail?: Detail; part?: Part; rewrite?: boolean }) {
   const [state, setState] = useState<{ all: boolean | null; n: number }>({ all: null, n: 0 });
-  const ctx = useMemo<TreeControl>(() => ({ all: state.all, expand: (all) => setState((s) => ({ all, n: s.n + 1 })), menu: detail && part ? { detail, part } : undefined }), [state.all, detail, part]);
+  const ctx = useMemo<TreeControl>(() => ({ all: state.all, expand: (all) => setState((s) => ({ all, n: s.n + 1 })), menu: detail && part ? { detail, part, rewrite } : undefined }), [state.all, detail, part, rewrite]);
   return (
     <TreeCtx.Provider value={ctx}>
       <div key={state.n} style={{ display: "contents" }}>
@@ -447,8 +447,9 @@ export function TreeRoot({ children, detail, part }: { children: React.ReactNode
   );
 }
 
-/** Nodes start open above this depth, unless Expand/Collapse All was chosen. */
-const startsOpen = (all: boolean | null, depth: number, auto: number) => (all === null ? depth < auto : all || depth === 0);
+/** Nodes start open above this depth, unless Expand/Collapse All was chosen (Expand All stops
+ * at a depth that keeps huge documents responsive). */
+const startsOpen = (all: boolean | null, depth: number, auto: number) => (all === null ? depth < auto : all ? depth < 12 : depth === 0);
 
 type J = unknown;
 
@@ -457,7 +458,8 @@ function JNode({ k, v, depth, path }: { k: string | null; v: J; depth: number; p
   const [open, setOpen] = useState(startsOpen(tree.all, depth, 2));
   const onMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (tree.menu) openMenu(e, withSelection(jsonItems(tree.menu.detail, tree.menu.part, path, k, v, tree.expand), e.target as Element));
+    const m = tree.menu;
+    openMenu(e, withSelection(m ? jsonItems(m.detail, m.part, path, k, v, tree.expand, m.rewrite) : [], e.target as Element));
   };
   const [limit, setLimit] = useState(500);
   const isObj = v !== null && typeof v === "object";
@@ -497,16 +499,16 @@ function JNode({ k, v, depth, path }: { k: string | null; v: J; depth: number; p
 export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
   const { text, info, error } = useBodyText(detail, part, TREE_LIMIT);
   const parsed = useMemo(() => {
-    if (text == null) return { err: null, v: undefined };
+    if (text == null) return { err: null, v: undefined, plain: false };
     const s = text.trim();
     try {
-      return { err: null, v: JSON.parse(s) as J };
+      return { err: null, v: JSON.parse(s) as J, plain: true };
     } catch (e) {
       // NDJSON / JSONP
       const lines = s.split("\n").filter(Boolean);
       if (lines.length > 1) {
         try {
-          return { err: null, v: lines.slice(0, 10000).map((l) => JSON.parse(l)) };
+          return { err: null, v: lines.slice(0, 10000).map((l) => JSON.parse(l)), plain: false };
         } catch {
           /* fall through */
         }
@@ -514,12 +516,12 @@ export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
       const m = s.match(/^[\w$.]+\(([\s\S]*)\);?$/);
       if (m) {
         try {
-          return { err: null, v: JSON.parse(m[1]) };
+          return { err: null, v: JSON.parse(m[1]), plain: false };
         } catch {
           /* ignore */
         }
       }
-      return { err: String(e), v: undefined };
+      return { err: String(e), v: undefined, plain: false };
     }
   }, [text]);
   if (!info.len) return <div className="placeholder">{t("No body")}</div>;
@@ -529,7 +531,7 @@ export function JsonView({ detail, part }: { detail: Detail; part: Part }) {
   if (parsed.err) return <div className="placeholder">{t("Not valid JSON: {error}", { error: parsed.err })}</div>;
   return (
     <div className="scroll pad mono">
-      <TreeRoot detail={detail} part={part}>
+      <TreeRoot detail={detail} part={part} rewrite={parsed.plain}>
         <JNode k={null} v={parsed.v} depth={0} path="$" />
       </TreeRoot>
     </div>

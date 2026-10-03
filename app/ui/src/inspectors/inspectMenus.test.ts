@@ -9,5 +9,9 @@ describe("JSONPath of a tree node", () => {
     expect(jsonPath("$", "it's", false)).toBe("$['it\\'s']");
     expect(jsonPath("$", "@odata.context", false)).toBe("$['@odata.context']");
     expect(jsonPath("$", "1abc", false)).toBe("$['1abc']");
+    // Control characters must be escaped in RFC 9535 string literals.
+    expect(jsonPath("$", "a\nb\tc", false)).toBe("$['a\\nb\\tc']");
+    expect(jsonPath("$", "x\u0001", false)).toBe("$['x\\u0001']");
+    expect(jsonPath("$", "back\\slash", false)).toBe("$['back\\\\slash']");
   });
 });

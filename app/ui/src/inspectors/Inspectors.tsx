@@ -408,7 +408,8 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         className="insp-content"
         onContextMenu={(e) => {
           // Views without a menu of their own (Hex, Image, Raw …): the body's, if it has one.
-          if (e.nativeEvent.defaultPrevented || !detail || tamper || !["body", "raw"].includes(sectionOf(tab))) return;
+          // (Not for views of a part of the body: parts, frames, events, messages.)
+          if (e.nativeEvent.defaultPrevented || !detail || tamper || !["body", "raw"].includes(sectionOf(tab)) || ["multipart", "websocket", "sse", "grpc"].includes(tab)) return;
           openMenu(e, withSelection(bodyItems(detail, part), e.target as Element));
         }}
       >

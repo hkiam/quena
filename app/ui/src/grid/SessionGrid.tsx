@@ -11,6 +11,7 @@ import { actions } from "../actions";
 import { showContextMenu } from "../components/ContextMenu";
 import { groupMenu, listMenu, sessionMenu } from "../menus";
 import { t } from "../i18n";
+import { browserMenuWanted } from "../components/contextMenus";
 
 /** Row height: roomy in the Quena layout, dense in Classic. */
 let ROW_H = 24;
@@ -641,10 +642,14 @@ export function SessionGrid() {
   };
 
   const onContextMenu = (e: React.MouseEvent) => {
+    if (browserMenuWanted(e)) return;
     e.preventDefault();
+    // From the keyboard (Shift+F10, menu key) the selection's menu; with the mouse, below the
+    // last row (or with nothing selected), what applies to the list as a whole.
+    const keyboard = e.nativeEvent.detail === 0;
     const i = grid.indexAt(e.clientY);
-    // Below the last row: what applies to the list as a whole.
-    if (i < 0 || i >= get().listTotal || get().selection.size === 0) showContextMenu(e.clientX, e.clientY, listMenu());
+    const onRow = keyboard || (i >= 0 && i < get().listTotal);
+    if (!onRow || get().selection.size === 0) showContextMenu(e.clientX, e.clientY, listMenu());
     else showContextMenu(e.clientX, e.clientY, sessionMenu());
   };
 

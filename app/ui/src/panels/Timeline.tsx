@@ -33,6 +33,7 @@ import { grid } from "../grid/SessionGrid";
 import { showContextMenu } from "../components/ContextMenu";
 import { currentLang, fmtNum, plural, t } from "../i18n";
 import { sessionMenu } from "../menus";
+import { browserMenuWanted } from "../components/contextMenus";
 
 /** Numbers with fixed decimals in the UI language (axis labels). */
 const num = (n: number, decimals: number) => n.toLocaleString(currentLang() === "de" ? "de-DE" : "en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -415,6 +416,7 @@ export function TimelinePanel() {
                 style={{ height: ROW_H }}
                 onClick={() => void focusSession(r.id)}
                 onContextMenu={(e) => {
+                  if (browserMenuWanted(e)) return;
                   e.preventDefault();
                   void focusSession(r.id);
                   // The rows are the selection: this row's own items, the selection's in a submenu.
