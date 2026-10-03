@@ -7,6 +7,8 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-10-03
+
 ### Changed
 - **Inspector views in two levels**: each request and response card first offers the
   sections *Headers*, *Body*, *Cookies*, *Auth* and *Raw* (with the number of headers and
@@ -494,7 +496,8 @@ Internal test build (not tagged) — an early preview for trying Quena on macOS 
 - Client certificates (mTLS) per host; bandwidth and latency simulation.
 - SAZ (compatible with Fiddler Classic) and HAR 1.2 import/export; copy as cURL.
 
-[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/hkiam/quena/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/hkiam/quena/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/hkiam/quena/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/hkiam/quena/compare/v0.1.1...v0.1.2
