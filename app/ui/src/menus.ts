@@ -28,6 +28,18 @@ export function groupMenu(): MenuItem[] {
   return items;
 }
 
+/** Right-click below the sessions (or with none selected): the list as a whole. */
+export function listMenu(): MenuItem[] {
+  const empty = get().listTotal === 0;
+  return [
+    { label: t("Open archive"), shortcut: `${modKey}O`, action: () => actions.menu("file.load") },
+    { label: t("Save all sessions"), shortcut: `${modKey}S`, disabled: empty, action: () => actions.menu("file.save-all") },
+    { separator: true },
+    { label: t("Select all"), shortcut: `${modKey}A`, disabled: empty, action: () => actions.selectAll() },
+    { label: t("Remove all sessions"), disabled: empty, action: () => actions.menu("edit.remove-all") },
+  ];
+}
+
 export function sessionMenu(): MenuItem[] {
   const n = get().selection.size;
   const one = n === 1;

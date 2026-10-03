@@ -3,6 +3,8 @@ import { api, type Statistics } from "../api";
 import { fmtBytes, fmtDateTime, fmtInt, fmtMs } from "../lib/format";
 import { useStore } from "../store";
 import { plural, t } from "../i18n";
+import { openMenu, withSelection } from "../components/contextMenus";
+import { copyItem } from "../inspectors/inspectMenus";
 
 export function StatisticsPanel() {
   const selection = useStore((s) => s.selection);
@@ -16,7 +18,7 @@ export function StatisticsPanel() {
   const maxCt = Math.max(1, ...st.contentTypes.map((c) => c[2]));
   const elapsed = st.firstRequest && st.lastResponse ? (st.lastResponse - st.firstRequest) / 1000 : null;
   return (
-    <div className="scroll pad stats">
+    <div className="scroll pad stats" onContextMenu={(e) => openMenu(e, withSelection([copyItem(t("Copy All"), e.currentTarget.innerText)], e.target as Element))}>
       <div className="muted">{selection.size ? plural(selection.size, "{n} selected session", "{n} selected sessions") : t("All sessions")}</div>
       <table className="kv">
         <tbody>

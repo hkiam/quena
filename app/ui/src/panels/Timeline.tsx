@@ -28,10 +28,11 @@ import {
   type TlLayout,
 } from "../lib/timelineScale";
 import { set, useStore } from "../store";
-import { actions } from "../actions";
+import { actions, copyText } from "../actions";
 import { grid } from "../grid/SessionGrid";
 import { showContextMenu } from "../components/ContextMenu";
 import { currentLang, fmtNum, plural, t } from "../i18n";
+import { sessionMenu } from "../menus";
 
 /** Numbers with fixed decimals in the UI language (axis labels). */
 const num = (n: number, decimals: number) => n.toLocaleString(currentLang() === "de" ? "de-DE" : "en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -413,6 +414,24 @@ export function TimelinePanel() {
                 className={`tl-row ${focusId === r.id ? "focused" : ""}`}
                 style={{ height: ROW_H }}
                 onClick={() => void focusSession(r.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  void focusSession(r.id);
+                  // The rows are the selection: this row's own items, the selection's in a submenu.
+                  showContextMenu(e.clientX, e.clientY, [
+                    {
+                      label: t("Inspect"),
+                      action: () => {
+                        void focusSession(r.id);
+                        actions.showTab("inspectors");
+                      },
+                    },
+                    { label: t("Copy URL"), action: () => void api.detail(r.id).then((d) => d && copyText(d.request.url)) },
+                    { label: t("Remove from Timeline"), disabled: rows.length < 2, action: () => void actions.selectIds(rows.map((x) => x.id).filter((id) => id !== r.id)) },
+                    { separator: true },
+                    { label: t("Selected Sessions"), submenu: sessionMenu() },
+                  ]);
+                }}
                 onDoubleClick={() => {
                   void focusSession(r.id);
                   actions.showTab("inspectors");

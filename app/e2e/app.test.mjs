@@ -227,6 +227,54 @@ test("grouped views: sections first, then the views that fit the body", async ()
   await d.exec(`window.__quena.setLayout({ inspectorTabs: "grouped", viewByType: {}, subViews: {}, stacked: false })`);
 });
 
+test("right-click: Quena's menus, never the browser's", async () => {
+  const menu = () => d.exec(`return [...document.querySelectorAll('.ctx-menu .ctx-label')].map((e) => e.textContent);`);
+  const close = async () => {
+    await d.keys(["Escape"]);
+    await new Promise((r) => setTimeout(r, 100));
+  };
+  const rightClick = async (el, x, y) => {
+    const r = await d.rect(el);
+    await d.clickAt(el, x ?? r.width / 2, y ?? r.height / 2, 2);
+    await new Promise((r) => setTimeout(r, 200));
+  };
+  await d.exec(`window.__quena.setLayout({ inspectorTabs: "grouped", stacked: true, viewByType: {}, subViews: {} })`);
+  // A session: the session menu.
+  await rightClick(await d.waitFor(".grid-canvas"), 80, 12);
+  let items = await menu();
+  assert.ok(items.includes("Copy") && items.includes("Replay"), `session menu: ${items}`);
+  await close();
+  // Below the last session: the list's menu.
+  await rightClick(await d.waitFor(".grid-canvas"), 80, 300);
+  items = await menu();
+  assert.ok(items.includes("Open archive") && items.includes("Select all"), `list menu: ${items}`);
+  await close();
+  // A text field: the Edit menu.
+  await selectRow(1);
+  await d.waitFor(".insp-url", { text: "v1/items" });
+  await rightClick(await d.waitFor(".hv-filter"));
+  items = await menu();
+  assert.ok(["Cut", "Copy", "Paste", "Select All"].every((x) => items.includes(x)), `edit menu: ${items}`);
+  await close();
+  // A header row: copy its value.
+  await rightClick((await d.findAll(".hv-table tr"))[0]);
+  items = await menu();
+  assert.ok(items.includes("Copy Value") && items.includes("Copy All Headers"), `header menu: ${items}`);
+  await close();
+  // The JSON tree: copy the JSONPath, change the value in later responses.
+  const panes = await d.findAll(".insp-pane");
+  for (const b of await d.findIn(panes[1], ".view-sub > .segmented:not(.view-tabs-measure) .seg")) if ((await d.text(b)) === "Tree") await d.click(b);
+  const key = await d.waitFor(".j-children .j-key");
+  await rightClick(key);
+  items = await menu();
+  assert.ok(items.includes("Copy JSONPath") && items.some((x) => x.startsWith("Change Value")), `JSON menu: ${items}`);
+  await close();
+  // The toolbar: no menu at all (and not the browser's, which would block the driver).
+  await rightClick(await d.waitFor(".capture-switch"));
+  assert.deepEqual(await menu(), []);
+  await d.exec(`window.__quena.setLayout({ stacked: false, viewByType: {}, subViews: {} })`);
+});
+
 test("layout fills the window at small and large sizes, side by side and stacked", async () => {
   const problems = [];
   for (const patch of [{ stacked: false, leftWidth: 0.5 }, { stacked: true, leftWidth: 0.5 }, { stacked: false, leftWidth: 0.72 }]) {

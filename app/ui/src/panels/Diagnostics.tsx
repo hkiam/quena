@@ -12,6 +12,7 @@ import { say, set as setApp, useStore, type DiagPrefs } from "../store";
 import { showContextMenu } from "../components/ContextMenu";
 import { currentLang, plural, t } from "../i18n";
 import { fmtDateTime, fmtInt, fmtTime } from "../lib/format";
+import { openMenu } from "../components/contextMenus";
 import {
   compare,
   confidenceLabel,
@@ -803,7 +804,17 @@ function FindingRow(p: { f: DiagFinding; idx: number; picked: boolean; onPick: (
   const Chev = p.picked ? ChevronDown : ChevronRight;
   return (
     <div className={`diag-f sev-${f.severity} ${p.picked ? "picked" : ""}`} data-finding={p.idx}>
-      <div className="diag-f-row" {...pressable(p.onPick)} aria-expanded={p.picked}>
+      <div
+        className="diag-f-row"
+        {...pressable(p.onPick)}
+        aria-expanded={p.picked}
+        onContextMenu={(e) =>
+          openMenu(e, [
+            { label: t("Select affected sessions"), disabled: !f.sessions.length, action: () => void actions.selectIds(f.sessions) },
+            { label: t("Copy Finding"), action: () => void copyText([f.title, ...f.sessions.slice(0, 50).map((id) => `#${id}`)].join("\n")) },
+          ])
+        }
+      >
         <Chev size={12} className="diag-f-chev" />
         <div className="diag-f-text">
           <div className="diag-f-title">{f.title}</div>

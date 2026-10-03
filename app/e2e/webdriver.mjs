@@ -94,8 +94,9 @@ export class Driver {
     return this.cmd("GET", this.s(`/element/${el}/rect`));
   }
 
-  /** Click at (x, y) from the element's top-left corner (e.g. a row of the canvas list). */
-  async clickAt(el, x, y) {
+  /** Click at (x, y) from the element's top-left corner (e.g. a row of the canvas list);
+   * `button` 2 is a right-click. */
+  async clickAt(el, x, y, button = 0) {
     // WebDriver measures element-relative pointer offsets from the element's centre.
     const r = await this.rect(el);
     x = Math.round(x - r.width / 2);
@@ -108,8 +109,8 @@ export class Driver {
           parameters: { pointerType: "mouse" },
           actions: [
             { type: "pointerMove", origin: { [ELEMENT]: el }, x, y },
-            { type: "pointerDown", button: 0 },
-            { type: "pointerUp", button: 0 },
+            { type: "pointerDown", button },
+            { type: "pointerUp", button },
           ],
         },
       ],

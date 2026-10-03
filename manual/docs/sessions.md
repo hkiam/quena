@@ -87,6 +87,8 @@ session, the accent colour while the session is in flight, purple for a response
 - Arrow keys, `Page Up`/`Page Down`, `Home`/`End` move the focus (with `Shift` to extend).
 - `Enter` or a double-click opens *Inspect*; `Esc` clears the selection.
 - Right-click → **Select → Same Host / Same Process / Duplicate Requests**.
+- Right-click below the last session: *Open archive*, *Save all sessions*, *Select all*,
+  *Remove all sessions*.
 - The command field selects by text, host, status and more (see below).
 
 The status bar shows how many sessions are selected, visible and recorded in total.

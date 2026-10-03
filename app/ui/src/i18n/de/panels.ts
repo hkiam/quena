@@ -1,6 +1,10 @@
 // German translations: panels (right-hand tabs), session context menu, status messages of the
 // top-level actions, session list column titles.
 export const panels: Record<string, string> = {
+  "Select affected sessions": "Betroffene Sessions auswählen",
+  "Copy Finding": "Befund kopieren",
+  "Copy Line": "Zeile kopieren",
+  "Remove from Timeline": "Aus der Timeline entfernen",
   "Connection of #{id} · {client}": "Connection von #{id} · {client}",
   "Connection of #{id}": "Connection von #{id}",
   "Trace {id}": "Trace {id}",

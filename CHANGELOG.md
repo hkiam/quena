@@ -31,6 +31,10 @@ contain breaking changes (settings, file formats, plugin API).
   bodies and multipart parts; expand or collapse trees. From the JSON tree a value can be
   changed or removed, or a broken element appended to a list, in later messages of the
   same URL (a rewrite rule).
+- **More context menus**: below the sessions (open archive, save all, select all, remove
+  all), on timeline rows (inspect, copy URL, remove from the timeline, the selection's menu),
+  on structure nodes (selects their sessions, then the session menu), on diagnostic findings
+  (select affected sessions, copy), log lines and statistics.
 
 ### Fixed
 - A plain XML document sent as `text/xml` or `application/xml` no longer opens in the SOAP

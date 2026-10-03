@@ -9,7 +9,7 @@ import { RowCache } from "./rowCache";
 import { methodPill, readPalette, rowStyle, stateMark, statusPill, type Palette, type Pill } from "./style";
 import { actions } from "../actions";
 import { showContextMenu } from "../components/ContextMenu";
-import { groupMenu, sessionMenu } from "../menus";
+import { groupMenu, listMenu, sessionMenu } from "../menus";
 import { t } from "../i18n";
 
 /** Row height: roomy in the Quena layout, dense in Classic. */
@@ -642,8 +642,10 @@ export function SessionGrid() {
 
   const onContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (get().selection.size === 0) return;
-    showContextMenu(e.clientX, e.clientY, sessionMenu());
+    const i = grid.indexAt(e.clientY);
+    // Below the last row: what applies to the list as a whole.
+    if (i < 0 || i >= get().listTotal || get().selection.size === 0) showContextMenu(e.clientX, e.clientY, listMenu());
+    else showContextMenu(e.clientX, e.clientY, sessionMenu());
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {

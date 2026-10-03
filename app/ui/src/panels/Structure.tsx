@@ -8,6 +8,8 @@ import { fmtBytes, fmtInt } from "../lib/format";
 import { actions } from "../actions";
 import { useStore } from "../store";
 import { plural, t } from "../i18n";
+import { showContextMenu } from "../components/ContextMenu";
+import { sessionMenu } from "../menus";
 
 interface Level {
   nodes: TreeNode[];
@@ -130,13 +132,19 @@ export function StructurePanel() {
   );
 }
 
-function Row(p: { node: TreeNode; label: string; depth: number; open: boolean; expandable: boolean; picked: boolean; host?: boolean; onToggle: () => void; onPick: () => void }) {
+function Row(p: { node: TreeNode; label: string; depth: number; open: boolean; expandable: boolean; picked: boolean; host?: boolean; onToggle: () => void; onPick: () => void | Promise<void> }) {
   const Chev = p.open ? ChevronDown : ChevronRight;
   return (
     <div
       className={`st-row ${p.picked ? "picked" : ""}`}
       style={{ paddingLeft: 4 + p.depth * 14 }}
       onClick={p.onPick}
+      onContextMenu={(e) => {
+        // Select the node's sessions, then offer what the session list offers for them.
+        e.preventDefault();
+        const { clientX: x, clientY: y } = e;
+        void Promise.resolve(p.onPick()).then(() => showContextMenu(x, y, sessionMenu()));
+      }}
       onDoubleClick={() => p.expandable && p.onToggle()}
       title={t("{sessions}, {errors}, {size} received", { sessions: plural(p.node.count, "{n} session", "{n} sessions"), errors: plural(p.node.errors, "{n} error", "{n} errors"), size: fmtBytes(p.node.bytes) })}
     >
