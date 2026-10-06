@@ -115,8 +115,9 @@ pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<(
         crate::write_atomic(backup, &serde_json::to_vec_pretty(&b).expect("backup json"))?;
     }
     reg_set_str("ProxyServer", &format!("http=127.0.0.1:{port};https=127.0.0.1:{port}"))?;
-    let mut o: Vec<String> = bypass.iter().map(|b| b.replace("169.254/16", "169.254.*")).collect();
-    o.push("<local>".into());
+    // No `<local>`: that is "bypass the proxy for local addresses", which would hide
+    // intranet and VPN hosts without a dot from Quena.
+    let o: Vec<String> = bypass.iter().map(|b| b.replace("169.254/16", "169.254.*")).collect();
     reg_set_str("ProxyOverride", &o.join(";"))?;
     reg_set_dword("ProxyEnable", 1)?;
     notify_wininet();

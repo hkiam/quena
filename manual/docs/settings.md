@@ -38,7 +38,7 @@ arrangement.
 | *Allowed remote networks* | empty (local subnets) | CIDR ranges or addresses, `;`-separated. |
 | *Chain to the previous system proxy (upstream gateway)* | on | Forward to the proxy that was active before. |
 | *Manual upstream proxy* | empty | `host:port`; overrides the system upstream and PAC. |
-| *Bypass upstream for* | `localhost;127.0.0.1;::1;*.local` | Hosts that go direct. |
+| *Bypass upstream for* | `localhost;127.0.0.1;::1;*.local` | Hosts that go direct; also networks (`10.0.0.0/8`) and `<local>` (names without a dot). The previous system proxy's exceptions apply as well. |
 | *Use the system proxy auto-config (PAC) script* | on | |
 | *PAC URL or file* | empty | Overrides the system PAC. |
 | *Throttle (kbit/s)* / *Added latency (ms)* | 0 | [Bandwidth simulation](network.md#bandwidth-and-latency-simulation). |
@@ -98,7 +98,8 @@ web view's cache and storage are kept there as well, and bundled plugins are fou
 `plugins` folder next to the executable.
 
 The Windows portable ZIP ships in this form. Delete the `portable` file (and `quena-data`)
-to use the normal per-user location again.
+to use the normal per-user location again. The folder must be writable: on a read-only
+drive Quena shows a message on start and quits.
 
 Things outside the folder that Quena touches only when you use them: the system proxy
 (restored on quit), a trusted root certificate (remove it in *HTTPS Settings*), and saved

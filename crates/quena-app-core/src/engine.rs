@@ -29,7 +29,21 @@ struct State {
     error: Option<String>,
     /// System proxy found before Quena took over (used as upstream).
     detected_upstream: Option<(String, u16)>,
+    /// That proxy's exceptions: hosts the system reached directly, so Quena does too.
+    detected_bypass: Vec<String>,
     pac_url: Option<String>,
+}
+
+/// Exceptions Quena writes into the system proxy settings while capturing. macOS and Linux
+/// keep their usual defaults (Bonjour names, link-local addresses). Windows gets none: the
+/// system default there is empty, and `<local>` ("bypass for local addresses") would let
+/// intranet and VPN hosts without a dot pass Quena unseen.
+fn system_bypass() -> Vec<String> {
+    if cfg!(windows) {
+        vec![]
+    } else {
+        vec!["*.local".into(), "169.254/16".into()]
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,11 +84,17 @@ pub fn install_panic_hook(data: &std::path::Path) {
     }));
 }
 
-pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, pac: Option<Arc<dyn UpstreamResolver>>) -> ProxyConfig {
+pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, system_bypass: &[String], pac: Option<Arc<dyn UpstreamResolver>>) -> ProxyConfig {
+    let mut upstream_bypass = split_list(&s.proxy.upstream_bypass);
     let upstream = if !s.proxy.manual_upstream.trim().is_empty() {
         let (h, p) = split_host_port(s.proxy.manual_upstream.trim(), 8080);
         Some((h, p))
     } else if s.proxy.use_system_upstream {
+        // Hosts the system proxy's exceptions sent direct go direct from Quena too (Quena
+        // sets its own, shorter exceptions, so it now sees these hosts).
+        if detected.is_some() {
+            upstream_bypass.extend(system_bypass.iter().map(|b| b.trim().to_string()).filter(|b| !b.is_empty()));
+        }
         detected
     } else {
         None
@@ -96,7 +116,7 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, pac: Option<A
         enable_http2: s.https.enable_http2,
         http2_downgrade_hosts: split_list(&s.https.http2_downgrade_hosts),
         upstream,
-        upstream_bypass: split_list(&s.proxy.upstream_bypass),
+        upstream_bypass,
         pac,
         stream: s.stream,
         headers_only_hosts: split_list(&s.headers_only_hosts),
@@ -150,7 +170,7 @@ impl ProxyEngine {
         // The PAC file (possibly a download) is loaded by the first `apply`, i.e. when
         // capturing starts on its background thread, not while the app is starting up.
         let pac_slot: Mutex<Option<Arc<crate::pac::PacResolver>>> = Mutex::new(None);
-        let proxy = Proxy::new(core.capture(), proxy_config(&s, detected.0.clone(), None), ca.clone()).map_err(|e| anyhow!("{e}"))?;
+        let proxy = Proxy::new(core.capture(), proxy_config(&s, detected.0.clone(), &detected.2, None), ca.clone()).map_err(|e| anyhow!("{e}"))?;
         proxy.shared.recorder.set_lossless(s.lossless_recording);
         if let Some(r) = &core.rules {
             proxy.set_interceptor(r.clone());
@@ -160,7 +180,7 @@ impl ProxyEngine {
             proxy,
             ca: RwLock::new(ca),
             data_dir: data,
-            state: Mutex::new(State { detected_upstream: detected.0, pac_url: detected.1, ..Default::default() }),
+            state: Mutex::new(State { detected_upstream: detected.0, pac_url: detected.1, detected_bypass: detected.2, ..Default::default() }),
             rules: RwLock::new(core.rules.clone()),
             pac: pac_slot,
         });
@@ -242,10 +262,12 @@ impl ProxyEngine {
         if s.https.decrypt {
             self.ensure_ca()?;
         }
-        let detected = self.state.lock().detected_upstream.clone();
-        let system_pac = self.state.lock().pac_url.clone();
+        let (detected, system_pac, detected_bypass) = {
+            let st = self.state.lock();
+            (st.detected_upstream.clone(), st.pac_url.clone(), st.detected_bypass.clone())
+        };
         let pac = resolve_pac(&self.pac, &s, system_pac.as_deref());
-        let cfg = proxy_config(&s, detected, pac);
+        let cfg = proxy_config(&s, detected, &detected_bypass, pac);
         self.state.lock().upstream = cfg.upstream.as_ref().map(|(h, p)| format!("{h}:{p}"));
         self.proxy.shared.recorder.set_lossless(s.lossless_recording);
         self.apply_client_certs(&s);
@@ -332,9 +354,9 @@ fn resolve_pac(
     Some(resolver as Arc<dyn UpstreamResolver>)
 }
 
-fn detect_upstream(own_port: u16) -> (Option<(String, u16)>, Option<String>) {
+fn detect_upstream(own_port: u16) -> (Option<(String, u16)>, Option<String>, Vec<String>) {
     match quena_platform::system_proxy() {
-        Ok(p) if p.points_to(own_port) => (None, None),
+        Ok(p) if p.points_to(own_port) => (None, None, vec![]),
         Ok(p) => {
             let up = p.https.clone().or(p.http.clone());
             if let Some((h, port)) = &up {
@@ -343,11 +365,11 @@ fn detect_upstream(own_port: u16) -> (Option<(String, u16)>, Option<String>) {
             if let Some(pac) = &p.pac_url {
                 tracing::info!(target: "quena", "the system uses a proxy auto-config script ({pac}); Quena will evaluate it when \"use system PAC\" is enabled");
             }
-            (up, p.pac_url)
+            (up, p.pac_url, p.exceptions)
         }
         Err(e) => {
             tracing::debug!("system proxy detection failed: {e}");
-            (None, None)
+            (None, None, vec![])
         }
     }
 }
@@ -366,8 +388,7 @@ impl CaptureEngine for ProxyEngine {
         let s = core.settings();
         if s.proxy.act_as_system_proxy {
             let port = addrs[0].port();
-            let bypass: Vec<String> = vec!["*.local".into(), "169.254/16".into()];
-            match quena_platform::set_system_proxy(port, &bypass, &backup_path(&self.data_dir)) {
+            match quena_platform::set_system_proxy(port, &system_bypass(), &backup_path(&self.data_dir)) {
                 Ok(()) => self.state.lock().system_proxy = true,
                 Err(e) => {
                     // Some services may already point to us: undo the partial change.
@@ -417,7 +438,7 @@ impl CaptureEngine for ProxyEngine {
         let new_port = self.proxy.listen_addrs().first().map(|a| a.port());
         if was_running && old_port != new_port && self.state.lock().system_proxy {
             if let Some(p) = new_port {
-                let _ = quena_platform::set_system_proxy(p, &["*.local".into(), "169.254/16".into()], &backup_path(&self.data_dir));
+                let _ = quena_platform::set_system_proxy(p, &system_bypass(), &backup_path(&self.data_dir));
             }
         }
         Ok(())
@@ -434,4 +455,31 @@ impl CaptureEngine for ProxyEngine {
 
 pub fn pac_url(e: &ProxyEngine) -> Option<String> {
     e.state.lock().pac_url.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_exceptions_go_direct() {
+        let mut s = Settings::default();
+        let corp = Some(("proxy.corp".to_string(), 8080));
+        let exc = vec!["<local>".to_string(), "*.corp.example".to_string(), " ".to_string()];
+        let cfg = proxy_config(&s, corp.clone(), &exc, None);
+        assert_eq!(cfg.upstream_for("appserver:80"), None);
+        assert_eq!(cfg.upstream_for("wiki.corp.example:443"), None);
+        assert_eq!(cfg.upstream_for("example.com:443"), corp);
+        // A manual upstream comes with its own bypass list.
+        s.proxy.manual_upstream = "gw.example:3128".into();
+        let cfg = proxy_config(&s, corp, &exc, None);
+        assert_eq!(cfg.upstream_for("appserver:80"), Some(("gw.example".to_string(), 3128)));
+    }
+
+    #[test]
+    fn windows_keeps_local_addresses_in_capture() {
+        let b = system_bypass();
+        assert!(!b.iter().any(|e| e == "<local>"));
+        assert_eq!(b.is_empty(), cfg!(windows));
+    }
 }

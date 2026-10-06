@@ -30,6 +30,13 @@ applications send their traffic through it automatically.
 | Windows | the proxy of the current user |
 | Linux | the GNOME or KDE Plasma proxy setting that browsers follow |
 
+Quena's own exceptions while it captures: on macOS and Linux `*.local` and `169.254/16`
+(Bonjour names and link-local addresses, as in the macOS defaults); on Windows none. In
+particular, Windows' *Don't use the proxy server for local (intranet) addresses* stays
+off, so intranet and VPN hosts without a dot (`http://appserver/`) are recorded too. The
+exceptions of the previous proxy are not lost: those hosts still go direct from Quena
+instead of through the upstream proxy (see [Upstream proxy and PAC](#upstream-proxy-and-pac)).
+
 The previous proxy setting is saved and **restored when you quit** — and, if Quena ever
 crashes, at the next start. On Windows, logging off or shutting down while Quena runs
 restores it as well.
@@ -58,7 +65,7 @@ In a corporate network, Quena forwards to the proxy you used before. The options
 |---|---|
 | *Chain to the previous system proxy (upstream gateway)* | On by default: the proxy that was active before Quena took over becomes Quena's upstream. |
 | *Manual upstream proxy* | `host:port` of a proxy to use instead. A manual upstream overrides PAC. |
-| *Bypass upstream for* | Hosts that go direct instead of through the upstream. Default: `localhost;127.0.0.1;::1;*.local`. |
+| *Bypass upstream for* | Hosts that go direct instead of through the upstream. Default: `localhost;127.0.0.1;::1;*.local`. Patterns: `*.corp.example`, `10.1.*`, networks (`10.0.0.0/8`, `169.254/16`) and `<local>` for names without a dot. With the chained system proxy, its exceptions apply as well. |
 | *Use the system proxy auto-config (PAC) script* | On by default: evaluate the PAC script the OS proxy settings point to. |
 | *PAC URL or file* | A PAC script of your own (`http://…/proxy.pac`, `file://…` or a local path). Empty means the system PAC. |
 

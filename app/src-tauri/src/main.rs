@@ -26,19 +26,30 @@ pub type Core = Arc<AppCore>;
 fn main() {
     let log = quena_app_core::init_tracing();
     let paths = Paths::default_paths();
+    // Without a writable data folder Quena cannot run (a portable copy on a read-only drive,
+    // a locked-down profile): say so instead of quitting silently.
+    if let Err(e) = check_writable(&paths.data) {
+        fatal(&cannot_write_text(&paths, &e));
+    }
     // One instance per data directory: a second one would run crash recovery and restore
     // (i.e. undo) the system proxy the running instance set.
     let _instance = match lock_instance(&paths.data) {
         Some(l) => l,
         None => {
             tracing::warn!(target: "quena", "Quena is already running with data in {}; exiting", paths.data.display());
-            eprintln!("Quena is already running (data directory {}).", paths.data.display());
+            let text = if german() {
+                format!("Quena läuft bereits (Datenordner {}).", paths.data.display())
+            } else {
+                format!("Quena is already running (data folder {}).", paths.data.display())
+            };
+            eprintln!("{text}");
+            show_message(&text, false);
             return;
         }
     };
-    let core = AppCore::new(paths, log).expect("initialise Quena core");
+    let core = AppCore::new(paths, log).unwrap_or_else(|e| fatal(&start_failed_text(&format!("{e:#}"))));
     quena_app_core::engine::install_panic_hook(&core.paths.data);
-    let engine = quena_app_core::engine::ProxyEngine::new(&core).expect("initialise capture engine");
+    let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap_or_else(|e| fatal(&start_failed_text(&format!("{e:#}"))));
     core.set_proxy_engine(engine.clone());
     tracing::info!(target: "quena", "Quena {} started, data in {}", env!("CARGO_PKG_VERSION"), core.paths.data.display());
 
@@ -261,6 +272,73 @@ fn archive_path(p: &std::path::Path) -> Option<String> {
         Some(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().into_owned())
     } else {
         None
+    }
+}
+
+/// Creates the data folder and writes a test file into it (one per process, so that two
+/// starts at once do not remove each other's file).
+fn check_writable(data: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(data)?;
+    let probe = data.join(format!(".write-test-{}", std::process::id()));
+    std::fs::write(&probe, b"quena")?;
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
+fn german() -> bool {
+    i18n::resolve("system") == "de"
+}
+
+fn cannot_write_text(paths: &Paths, e: &std::io::Error) -> String {
+    let dir = paths.data.display();
+    match (paths.is_portable(), german()) {
+        (true, true) => format!(
+            "Quena läuft als portable Version und speichert alle Daten (Einstellungen, Aufzeichnungen, Zertifikat) im Ordner neben der Anwendung:\n\n{dir}\n\nDort kann Quena nicht schreiben ({e}). Wahrscheinlich ist das Laufwerk schreibgeschützt.\n\nKopieren Sie den Quena-Ordner an einen beschreibbaren Ort, zum Beispiel auf die Festplatte, und starten Sie Quena dort. Alternativ legt die Umgebungsvariable QUENA_DATA_DIR einen anderen, beschreibbaren Datenordner fest."
+        ),
+        (true, false) => format!(
+            "Quena is running as a portable copy and keeps all its data (settings, captures, certificate) in the folder beside the application:\n\n{dir}\n\nQuena cannot write there ({e}). The drive is probably read-only.\n\nCopy the Quena folder to a writable place, such as the hard disk, and start Quena there. Alternatively, the environment variable QUENA_DATA_DIR sets another, writable data folder."
+        ),
+        (false, true) => format!("Quena kann seinen Datenordner nicht anlegen oder nicht darin schreiben:\n\n{dir}\n\n{e}"),
+        (false, false) => format!("Quena cannot create or write its data folder:\n\n{dir}\n\n{e}"),
+    }
+}
+
+fn start_failed_text(e: &str) -> String {
+    if german() { format!("Quena konnte nicht starten:\n\n{e}") } else { format!("Quena could not start:\n\n{e}") }
+}
+
+/// Startup failed before there is a window: log it, show it in a system dialog and quit.
+fn fatal(text: &str) -> ! {
+    tracing::error!(target: "quena", "{text}");
+    eprintln!("{text}");
+    show_message(text, true);
+    std::process::exit(1);
+}
+
+/// A message in a system dialog, for when Quena has no window (yet).
+#[cfg(windows)]
+fn show_message(text: &str, error: bool) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK};
+    let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let (text, title) = (wide(text), wide("Quena"));
+    // SAFETY: both buffers are NUL-terminated and outlive the (modal) call.
+    unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_OK | if error { MB_ICONERROR } else { MB_ICONINFORMATION }) };
+}
+
+#[cfg(target_os = "macos")]
+fn show_message(text: &str, error: bool) {
+    let script = format!("display alert \"Quena\" message \"{}\"{}", text.replace('\\', "\\\\").replace('"', "\\\""), if error { " as critical" } else { "" });
+    let _ = std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).status();
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn show_message(text: &str, error: bool) {
+    // Whichever dialog tool the desktop has; the text is on stderr and in the log anyway.
+    let kind = if error { "error" } else { "info" };
+    let tried = std::process::Command::new("zenity").args([&format!("--{kind}"), "--title=Quena", "--no-markup", &format!("--text={text}")]).status();
+    if tried.is_err() {
+        let kind = if error { "--error" } else { "--msgbox" };
+        let _ = std::process::Command::new("kdialog").args(["--title", "Quena", kind, text]).status();
     }
 }
 

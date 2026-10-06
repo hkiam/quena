@@ -14,6 +14,9 @@
 - Is another program using port 8866? Change *Settings → Connections → Listen port*.
 - Linux: only GNOME and KDE Plasma proxy settings are supported; on other desktops,
   configure the proxy in the browser.
+- Windows, intranet or VPN hosts without a dot (`http://appserver/`) missing: Quena 0.1.5
+  and older switched on *Don't use the proxy server for local (intranet) addresses* while
+  capturing. Untick it in the Windows proxy settings, or update Quena.
 
 ## I have no internet after Quena crashed
 
@@ -61,6 +64,21 @@ opt in; for other apps, put their hosts into *Skip decryption for*.
 Quena's window uses the **Microsoft Edge WebView2 Runtime**. Windows 11 and current
 Windows 10 include it; on older or stripped-down systems, install it from
 [developer.microsoft.com/microsoft-edge/webview2](https://developer.microsoft.com/microsoft-edge/webview2/).
+
+## Quena says it cannot write its data folder
+
+Quena needs a writable data folder for its settings, captures and certificate. A portable
+copy keeps it next to the program (`quena-data`), so it cannot run from a read-only place:
+a write-protected USB stick, a CD, a network share without write access. Quena says so on
+start and quits. Copy the Quena folder to a writable place (e.g. the hard disk) and start
+it there, or point `QUENA_DATA_DIR` to a writable folder (see
+[Data directory](settings.md#data-directory)).
+
+## Quena says it is already running
+
+Only one Quena runs per data folder: a second one would undo the system proxy the first
+one set. Switch to the open window; to open an archive there, use *File → Load Archive…* or drag
+it onto the window.
 
 ## macOS says the app is damaged or from an unidentified developer
 

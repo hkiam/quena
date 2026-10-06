@@ -7,6 +7,20 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Fixed
+- **Windows: intranet and VPN hosts are recorded.** While capturing, Quena no longer turns on
+  *Don't use the proxy server for local (intranet) addresses*, which let requests to hosts
+  without a dot (`http://appserver/`) pass Quena unseen, and no longer adds the macOS
+  exceptions `*.local` and `169.254.*` to the Windows proxy settings. Hosts that the
+  previous system proxy's exceptions sent direct still go direct from Quena, not through
+  the upstream proxy; *Bypass upstream for* now also understands `<local>` and networks
+  such as `10.0.0.0/8` or `169.254/16`.
+- **Quena no longer quits without a word when it cannot start.** A portable copy on a
+  read-only drive (write-protected stick, CD, read-only share) now says that its
+  `quena-data` folder beside the program cannot be written and what to do; other start
+  errors are shown in a system dialog too. Starting a second Quena with the same data
+  folder now says that Quena is already running.
+
 ## [0.1.5] — 2026-10-03
 
 ### Changed

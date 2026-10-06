@@ -9,6 +9,10 @@ captured sessions, mock rules, the rules script, the root certificate and the we
 own data. The empty file "portable" switches this on; delete it (and quena-data) to use
 the normal per-user location instead.
 
+The folder must be writable. From a write-protected USB stick, a CD or a read-only
+network share Quena cannot start; it says so and quits. Copy the folder to a writable
+place first (or set the environment variable QUENA_DATA_DIR to a writable folder).
+
 What still touches the machine, and only when you use it:
 - "Act as system proxy" (Settings -> Connections, on by default) points the Windows proxy
   of the current user to Quena and restores it when Quena quits, or on the next start

@@ -14,7 +14,14 @@ impl Cidr {
             Some((a, p)) => (a, p.parse().ok()?),
             None => (s, if s.contains(':') { 128 } else { 32 }),
         };
-        let addr: IpAddr = a.parse().ok()?;
+        // Short IPv4 networks as macOS writes them: `169.254/16` is 169.254.0.0/16.
+        let addr: IpAddr = match a.parse() {
+            Ok(addr) => addr,
+            Err(_) if !a.is_empty() && a.split('.').count() < 4 && a.split('.').all(|o| o.parse::<u8>().is_ok()) => {
+                format!("{a}{}", ".0".repeat(4 - a.split('.').count())).parse().ok()?
+            }
+            Err(_) => return None,
+        };
         Some(Cidr { addr, prefix: p })
     }
 
@@ -98,6 +105,28 @@ mod tests {
         assert!(Cidr::parse("fe80::/10").unwrap().contains("fe80::1".parse().unwrap()));
         assert!(is_private("10.1.2.3".parse().unwrap()));
         assert!(!is_private("8.8.8.8".parse().unwrap()));
+        // Short networks as in macOS' proxy exceptions.
+        let ll = Cidr::parse("169.254/16").unwrap();
+        assert!(ll.contains("169.254.10.1".parse().unwrap()));
+        assert!(!ll.contains("169.255.0.1".parse().unwrap()));
+        assert!(Cidr::parse("10/8").unwrap().contains("10.9.8.7".parse().unwrap()));
+        assert!(Cidr::parse("intranet/8").is_none());
+    }
+    #[test]
+    fn bypass_patterns() {
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let local = l(&["<local>"]);
+        assert!(crate::host_matches(&local, "appserver:8080"));
+        assert!(!crate::host_matches(&local, "app.corp.example"));
+        assert!(!crate::host_matches(&local, "10.1.2.3"));
+        assert!(!crate::host_matches(&local, "[::1]:80"));
+        let nets = l(&["169.254/16", "10.0.0.0/8", "*.corp"]);
+        assert!(crate::host_matches(&nets, "169.254.1.1:80"));
+        assert!(crate::host_matches(&nets, "10.20.30.40"));
+        assert!(crate::host_matches(&nets, "corp"));
+        assert!(crate::host_matches(&nets, "wiki.corp"));
+        assert!(crate::host_matches(&l(&["*.Corp.Example"]), "corp.example"));
+        assert!(!crate::host_matches(&nets, "192.168.0.1"));
     }
     #[test]
     fn hostport() {

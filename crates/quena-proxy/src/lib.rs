@@ -139,9 +139,18 @@ pub(crate) async fn resolve_upstream(cfg: &Arc<ProxyConfig>, host_port: String) 
     tokio::task::spawn_blocking(move || cfg.upstream_for(&host_port)).await.unwrap_or(None)
 }
 
+/// Host patterns: globs (`*.example.com`, `10.1.*`), a domain with its subdomains
+/// (`*.corp` also matches `corp`), address ranges (`169.254/16`, `10.0.0.0/8`) and, as in
+/// Windows' proxy exceptions, `<local>` for names without a dot (`intranet`, `appserver`).
 pub fn host_matches(list: &[String], host: &str) -> bool {
     let h = quena_query::host_without_port(host).trim_matches(['[', ']']).to_ascii_lowercase();
-    list.iter().any(|p| quena_query::glob_match(p, &h) || (p.starts_with("*.") && h == p[2..]))
+    let ip: Option<IpAddr> = h.parse().ok();
+    list.iter().any(|p| {
+        quena_query::glob_match(p, &h)
+            || (p.starts_with("*.") && h.eq_ignore_ascii_case(&p[2..]))
+            || (p.eq_ignore_ascii_case("<local>") && ip.is_none() && !h.is_empty() && !h.contains('.'))
+            || (p.contains('/') && ip.is_some_and(|ip| util::Cidr::parse(p).is_some_and(|c| c.contains(ip))))
+    })
 }
 
 impl ProxyConfig {

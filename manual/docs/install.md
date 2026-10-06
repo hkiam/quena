@@ -28,7 +28,9 @@ Unzip `Quena_<version>_x64-portable.zip` anywhere — a USB stick, a network sha
 
 Everything Quena stores stays in the `quena-data` folder next to `Quena.exe`: settings,
 captured sessions, mock rules, the rules script, the root certificate and the web view's own
-data. Only what you actually use touches the machine:
+data. The folder must therefore be **writable**; from a write-protected stick or a read-only
+share Quena says so on start and quits (copy the folder elsewhere first). Only what you
+actually use touches the machine:
 
 - *Act as system proxy* points the current user's Windows proxy to Quena and restores it
   when Quena quits (or at the next start after a crash).
