@@ -90,6 +90,7 @@ test("Mocks from Sessions → Create Mock Rules now answers through the proxy", 
   await d.waitFor(".ar-package", { text: "1 rule", timeout: 20000 });
   await d.waitFor(".ar-table", { text: "items" });
 
+  await d.ensureCapturing();
   const status = await d.text(await d.waitFor(".sb-capture", { text: "Proxy 127.0.0.1:" }));
   const port = Number(status.match(/127\.0\.0\.1:(\d+)/)[1]);
   const res = await viaProxy(port, "http://mock-e2e.invalid/api/items?page=2&_=1800000000");

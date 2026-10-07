@@ -44,6 +44,15 @@ export class Driver {
     }
   }
 
+  /** Switch capturing on if it is paused: an archive passed at start is an import, and
+   *  imports stop capturing (on Windows archives are loaded through the test hook instead). */
+  async ensureCapturing() {
+    const sw = await this.waitFor(".capture-switch");
+    if ((await this.text(sw)).includes("Capturing")) return;
+    await this.click(sw);
+    await this.waitFor(".capture-switch", { text: "Capturing" });
+  }
+
   async quit() {
     if (this.id) await this.cmd("DELETE", `/session/${this.id}`).catch(() => {});
     this.id = null;

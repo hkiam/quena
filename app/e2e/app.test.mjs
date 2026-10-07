@@ -20,7 +20,9 @@ after(() => d.quit());
 
 test("starts and lists the sessions of the HAR passed on the command line", async () => {
   await d.waitFor(".statusbar", { text: "4 sessions", timeout: 20000 });
-  await d.waitFor(".capture-switch");
+  // Opening an archive is an import, which stops capturing (Windows uses the test hook).
+  if (process.platform !== "win32") await d.waitFor(".capture-switch", { text: "Paused" });
+  await d.ensureCapturing();
 });
 
 test("selecting a session shows its URL, headers and pretty JSON body", async () => {
@@ -70,6 +72,7 @@ test("the plugins dialog keeps its columns readable", async () => {
 });
 
 test("live traffic through the proxy appears in the list", async () => {
+  await d.ensureCapturing();
   const status = await d.text(await d.waitFor(".sb-capture", { text: "Proxy 127.0.0.1:" }));
   const port = Number(status.match(/127\.0\.0\.1:(\d+)/)[1]);
   // A tiny local server, requested through Quena.
