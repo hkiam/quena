@@ -32,8 +32,9 @@ Record whole packets: current `tcpdump` versions do by default; with a small sna
 - On the command line: `quena-cli` takes captures wherever it takes HAR and SAZ files (see
   [Command line](#command-line)).
 
-The import runs as a background job with its progress in the status bar and can be
-cancelled. The new
+Like loading an archive, importing a capture stops capturing and, when the list is not
+empty, asks whether its sessions go or stay ([details](archives.md#loading)). The import
+runs as a background job with its progress in the status bar and can be cancelled. The new
 sessions are added to the list in the order of their requests and marked *imported*. A summary goes to the log, for example: *packet capture trace.pcap:
 48 211 packet(s), 312 TCP connection(s), 1 204 session(s): 290 TLS connection(s) decrypted,
 6 connection(s) not HTTP*. A capture with no HTTP at all is reported as an error that says

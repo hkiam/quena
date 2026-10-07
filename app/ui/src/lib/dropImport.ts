@@ -4,6 +4,7 @@ import { api, isTauri } from "../api";
 import { say } from "../store";
 import { plural, t } from "../i18n";
 import { isImportableName } from "./importFormats";
+import { prepareImport } from "./importPrep";
 
 const CHUNK = 4 << 20;
 
@@ -34,6 +35,7 @@ export async function importDropped(files: File[]) {
   }
   const ok = files.filter((f) => isImportableName(f.name));
   const skipped = files.length - ok.length;
+  if (ok.length && !(await prepareImport(ok.length === 1 ? ok[0].name : plural(ok.length, "{n} file", "{n} files")))) return;
   if (skipped) say(plural(skipped, "{n} file skipped: only session archives (.saz, .har) and packet captures (.pcap, .pcapng, .cap) can be dropped", "{n} files skipped: only session archives (.saz, .har) and packet captures (.pcap, .pcapng, .cap) can be dropped"), ok.length ? undefined : "error");
   for (const f of ok) {
     try {

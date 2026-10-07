@@ -103,6 +103,51 @@ function ConfirmDialog({ title, message, confirm, resolve }: { title: string; me
   );
 }
 
+/** Before an import into a non-empty list: remove or keep its sessions (Esc cancels). */
+function ImportExistingDialog({ total, what, resolve }: { total: number; what: string; resolve: (a: { choice: "remove" | "keep"; remember: boolean } | null) => void }) {
+  const answered = useRef(false);
+  const [remember, setRemember] = useState(false);
+  const done = (choice: "remove" | "keep" | null) => {
+    if (answered.current) return;
+    answered.current = true;
+    close();
+    resolve(choice && { choice, remember });
+  };
+  // Closed another way (Esc is handled globally): cancelled.
+  useEffect(
+    () => () => {
+      if (!answered.current) {
+        answered.current = true;
+        resolve(null);
+      }
+    },
+    [resolve],
+  );
+  return (
+    <Modal
+      title={t("Load {what}", { what })}
+      onClose={() => done(null)}
+      footer={
+        <>
+          <button onClick={() => done(null)}>{t("Cancel")}</button>
+          <button onClick={() => done("keep")}>{t("Keep and load")}</button>
+          <button className="primary" autoFocus onClick={() => done("remove")}>
+            {t("Remove and load")}
+          </button>
+        </>
+      }
+    >
+      <p className="confirm-text">
+        {plural(total, "The list holds {n} session. Remove it, so that only the import is in the list?", "The list holds {n} sessions. Remove them, so that only the import is in the list?")}
+      </p>
+      <p className="muted small">{t("Capturing stops for the import.")}</p>
+      <label className="f-check">
+        <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> {t("Don't ask again (Settings → General)")}
+      </label>
+    </Modal>
+  );
+}
+
 function CommentDialog({ ids, initial }: { ids: number[]; initial: string }) {
   const [v, setV] = useState(initial);
   const ok = async () => {
@@ -554,6 +599,14 @@ function OptionsDialog() {
             <label className="f-check">
               <input type="checkbox" checked={s.offerRecovery !== false} onChange={(e) => up((x) => (x.offerRecovery = e.target.checked))} /> {t("Offer to recover sessions after a crash")}
             </label>
+            <div className="f-row">
+              <span>{t("Importing into a non-empty list")}</span>
+              <select value={s.importExisting ?? "ask"} onChange={(e) => up((x) => (x.importExisting = e.target.value as "ask" | "remove" | "keep"))}>
+                <option value="ask">{t("Ask")}</option>
+                <option value="remove">{t("Remove the sessions in the list")}</option>
+                <option value="keep">{t("Keep them and add the import")}</option>
+              </select>
+            </div>
           </>
         )}
         {tab === "connections" && (
@@ -849,6 +902,8 @@ function DialogBody({ d }: { d: Dialog }) {
   switch (d.kind) {
     case "confirm":
       return <ConfirmDialog key="confirm" title={d.title} message={d.message} confirm={d.confirm} resolve={d.resolve} />;
+    case "import-existing":
+      return <ImportExistingDialog key="import-existing" total={d.total} what={d.what} resolve={d.resolve} />;
     case "prompt":
       return <PromptDialog title={d.title} label={d.label} initial={d.initial} resolve={d.resolve} />;
     case "comment":

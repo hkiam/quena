@@ -6,6 +6,7 @@ import { buildCurl } from "./lib/http";
 import { snippetBody } from "./lib/bodytext";
 import { plural, t } from "./i18n";
 import { ARCHIVE_EXTENSIONS, CAPTURE_EXTENSIONS, baseName, keyLogFilters } from "./lib/importFormats";
+import { prepareImport } from "./lib/importPrep";
 
 const ARCHIVES = [
   { name: t("Session Archive"), extensions: ARCHIVE_EXTENSIONS },
@@ -39,6 +40,7 @@ async function loadArchive(captures = false) {
   const all = { name: t("Session Archive or Packet Capture"), extensions: [...ARCHIVE_EXTENSIONS, ...CAPTURE_EXTENSIONS] };
   const path = await open({ multiple: false, filters: captures ? [CAPTURES, all] : [all, ...ARCHIVES, CAPTURES] });
   if (typeof path !== "string") return;
+  if (!(await prepareImport(baseName(path)))) return;
   try {
     await api.importArchive(path);
     say(t("Loading {path}", { path }));

@@ -7,6 +7,14 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Changed
+- **Loading an archive or packet capture no longer mixes it with live traffic.** Capturing
+  stops, and when the list already holds sessions, Quena asks whether to remove them (only
+  the import is in the list afterwards) or keep them and add the import. *Don't ask again*
+  remembers the answer; *Settings → General → Importing into a non-empty list* changes it.
+  This applies to the File menu, *Load Archive…*, drag and drop and *Open With*; a sanitized
+  copy opened after the export is still added next to the original.
+
 ### Added
 - **Packet captures from Wireshark and tcpdump can be loaded** (`.pcap`, `.pcapng`):
   *File → Import Sessions → Packet Capture (pcap, pcapng)…*, *File → Load Archive…*, drag and

@@ -33,6 +33,13 @@ status bar shows its progress.
   not at all on Windows and Linux, so it never takes over another application's file
   association such as Wireshark's.)
 
+So that an archive is not mixed with live traffic by accident, loading **stops capturing**,
+and when the list already holds sessions, Quena asks: **Remove and load** (only the archive
+is in the list afterwards), **Keep and load** (the archive is added), or *Cancel*. *Don't ask
+again* remembers the answer; *Settings → General → Importing into a non-empty list* changes
+it back. Opening a sanitized copy after the [sanitized export](#sanitized-export-for-sharing)
+adds it without asking, to compare it with the original.
+
 ### Packet captures
 
 `.pcap` and `.pcapng` files from tcpdump, Wireshark or dumpcap load the same ways as archives

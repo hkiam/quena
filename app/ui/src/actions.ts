@@ -205,10 +205,15 @@ export const actions = {
     if (!n) return;
     const ok = await confirmRemove(plural(n, "Remove {n} session?", "Remove all {n} sessions?"));
     if (!ok) return;
+    await actions.clearSessions();
+    say(t("All sessions removed"));
+  },
+
+  /** Remove every session, without asking. */
+  async clearSessions() {
     set({ selection: new Set(), focusId: null, focusIndex: null });
     rowCache.clear();
     await api.removeAll();
-    say(t("All sessions removed"));
   },
 
   async mark(color: MarkColor | null) {
@@ -315,6 +320,7 @@ export const actions = {
       const on = await api.toggleCapture();
       set({ status: await api.status() });
       say(on ? t("Capturing") : t("Capture stopped"));
+      return on;
     } catch (e) {
       say(String(e), "error");
     } finally {

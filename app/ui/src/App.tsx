@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { api, isTauri, on, type CaptureImport, type JobInfo, type LogEntry, type Status } from "./api";
 import { captureImported } from "./fileActions";
+import { baseName } from "./lib/importFormats";
+import { prepareImport } from "./lib/importPrep";
 import { actions } from "./actions";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { Dialogs } from "./components/Dialogs";
@@ -15,10 +17,13 @@ import { get, restoreLayout, say, set, useStore, type Layout } from "./store";
 import { installGlobalKeys } from "./keys";
 import { installFileDrop } from "./lib/dropImport";
 import { forgetInspectorHeaders } from "./inspectors/views";
-import { t } from "./i18n";
+import { plural, t } from "./i18n";
 
 async function importOpenFiles() {
-  for (const path of await api.takeOpenFiles()) {
+  const paths = await api.takeOpenFiles();
+  if (!paths.length) return;
+  if (!(await prepareImport(paths.length === 1 ? baseName(paths[0]) : plural(paths.length, "{n} file", "{n} files")))) return;
+  for (const path of paths) {
     try {
       await api.importArchive(path);
       say(t("Loading {path}", { path }));

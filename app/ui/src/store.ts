@@ -214,7 +214,14 @@ export type Dialog =
   | { kind: "sanitize-result"; result: SanitizedExport }
   | { kind: "compare"; a: string; b: string; titleA: string; titleB: string }
   | { kind: "prompt"; title: string; label: string; initial: string; resolve: (v: string | null) => void }
-  | { kind: "confirm"; title: string; message: string; confirm: string; resolve: (ok: boolean) => void };
+  | { kind: "confirm"; title: string; message: string; confirm: string; resolve: (ok: boolean) => void }
+  | {
+      kind: "import-existing";
+      total: number;
+      /** What is imported (a file name, or a count of files). */
+      what: string;
+      resolve: (answer: { choice: "remove" | "keep"; remember: boolean } | null) => void;
+    };
 
 export interface AppState {
   status: Status | null;

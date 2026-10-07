@@ -418,6 +418,8 @@ export interface Settings {
   sanitize?: SanitizeExportSettings;
   /** MCP server for AI agents (crates/quena-mcp). */
   mcp: McpSettings;
+  /** Importing into a non-empty list: ask, or remove or keep its sessions. */
+  importExisting?: "ask" | "remove" | "keep";
   ui: unknown;
 }
 

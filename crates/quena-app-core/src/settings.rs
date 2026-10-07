@@ -101,6 +101,16 @@ impl Default for HttpsSettings {
     }
 }
 
+/// What happens to the sessions in the list when an archive or capture is imported.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ImportExisting {
+    #[default]
+    Ask,
+    Remove,
+    Keep,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -122,6 +132,9 @@ pub struct Settings {
     pub keep_captures: bool,
     /// Offer to restore captures after a crash.
     pub offer_recovery: bool,
+    /// Importing into a non-empty list: ask, or remove or keep its sessions.
+    #[serde(default)]
+    pub import_existing: ImportExisting,
     pub auth: AuthSettings,
     /// Enable the JavaScript rules script (M14).
     pub scripting_enabled: bool,
@@ -155,6 +168,7 @@ impl Default for Settings {
             lossless_recording: false,
             keep_captures: false,
             offer_recovery: true,
+            import_existing: ImportExisting::Ask,
             auth: AuthSettings::default(),
             scripting_enabled: false,
             throttle_kbps: 0,
