@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod correlation;
+pub mod wslog;
 mod headers;
 pub use headers::{Headers, latin1_to_string, string_to_latin1};
 

@@ -34,7 +34,7 @@ use std::sync::OnceLock;
 use crate::diagnostics::auth_facts::encode_component;
 use crate::diagnostics::{UrlRewrite, decode_param, has_scheme, redact_authenticate, rewrite_set_cookie, rewrite_url};
 use quena_body::Body;
-use quena_model::{Headers, SessionDetail, SessionId, SessionKind};
+use quena_model::{Headers, SessionDetail, SessionId, SessionKind, wslog};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -2015,7 +2015,7 @@ impl Sanitizer {
         Some(out)
     }
 
-    /// The WebSocket frame log (see `quena-proxy::wsframe`): text messages scrubbed,
+    /// The WebSocket frame log (format: `quena_model::wslog`): text messages scrubbed,
     /// binary ones per the binary option. Messages compressed with `permessage-deflate`
     /// (RSV1 in the record, or an invalid text frame of a session that negotiated it) are
     /// inflated with the per-direction context and written uncompressed; fragmented messages
@@ -2038,16 +2038,15 @@ impl Sanitizer {
         let mut joined = 0usize;
         let mut pos = 0;
         let mut n = 0usize;
-        while pos + 16 <= b.len() {
+        while let Some(mut head) = wslog::Head::parse(&b[pos..]) {
             n += 1;
             if n.is_multiple_of(256) && self.stopped() {
                 return b"<cancelled>".to_vec();
             }
-            let len = u32::from_le_bytes(b[pos + 12..pos + 16].try_into().unwrap()) as usize;
-            let Some(payload) = b.get(pos + 16..pos + 16 + len) else { break };
-            let mut head: [u8; 12] = b[pos..pos + 12].try_into().unwrap();
-            let (dir, opcode, fin) = (head[0] as usize & 1, head[1], head[2] != 0);
-            pos += 16 + len;
+            let len = head.len as usize;
+            let Some(payload) = b.get(pos + wslog::RECORD_HEAD..pos + wslog::RECORD_HEAD + len) else { break };
+            let (dir, opcode, fin) = (head.dir as usize & 1, head.opcode, head.fin);
+            pos += wslog::RECORD_HEAD + len;
             match opcode {
                 1 | 2 if !fin => {
                     if let Some(p) = pending[dir].take() {
@@ -2066,7 +2065,7 @@ impl Sanitizer {
                         }
                         None => {
                             // A continuation without its start (the log began mid-message).
-                            head[1] = 2;
+                            head.opcode = 2;
                             pending[dir] = Some((head, payload.to_vec(), 1));
                         }
                     }
@@ -2108,11 +2107,11 @@ impl Sanitizer {
     }
 
     /// One complete data message (record header of its first frame, payload as logged).
-    fn ws_message(&mut self, head: [u8; 12], payload: &[u8], deflate: bool, inflate: &mut Option<flate2::Decompress>) -> Vec<u8> {
-        let text = head[1] == 1;
-        let rsv1 = head[3] & 0x4 != 0;
+    fn ws_message(&mut self, head: wslog::Head, payload: &[u8], deflate: bool, inflate: &mut Option<flate2::Decompress>) -> Vec<u8> {
+        let text = head.opcode == 1;
+        let rsv1 = head.rsv & 0x4 != 0;
         // Old logs have no RSV bits: a text message that is no UTF-8 in a deflate session.
-        let compressed = deflate && !payload.is_empty() && (rsv1 || (head[3] == 0 && text && std::str::from_utf8(payload).is_err()));
+        let compressed = deflate && !payload.is_empty() && (rsv1 || (head.rsv == 0 && text && std::str::from_utf8(payload).is_err()));
         let data: Cow<[u8]> = if compressed {
             match inflate.as_mut().and_then(|d| ws_inflate(d, payload)) {
                 Some(d) => Cow::Owned(d),
@@ -2224,17 +2223,12 @@ impl Sanitizer {
 }
 
 /// A data message being assembled: record header of its first frame, payload, frames.
-type WsPending = ([u8; 12], Vec<u8>, usize);
+type WsPending = (wslog::Head, Vec<u8>, usize);
 
 /// One frame record (see `quena-proxy::wsframe`), written complete and uncompressed.
-fn ws_record(out: &mut Vec<u8>, head: [u8; 12], payload: &[u8]) {
-    out.push(head[0]);
-    out.push(head[1]);
-    out.push(1);
-    out.push(0);
-    out.extend_from_slice(&head[4..12]);
-    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    out.extend_from_slice(payload);
+/// Write one message as a single, final, uncompressed frame.
+fn ws_record(out: &mut Vec<u8>, head: wslog::Head, payload: &[u8]) {
+    wslog::Head { fin: true, rsv: 0, ..head }.write(payload, out);
 }
 
 /// Inflate one `permessage-deflate` message (RFC 7692: raw deflate, the trailing

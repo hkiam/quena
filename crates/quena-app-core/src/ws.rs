@@ -1,8 +1,9 @@
 //! WebSocket frame log reader (M15). The frame records live in the session's
-//! response body (see quena-proxy::wsframe).
+//! response body (format: `quena_model::wslog`).
 
 use crate::AppCore;
 use quena_model::SessionId;
+use quena_model::wslog::{self, RECORD_HEAD, opcode_name};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -48,18 +49,6 @@ fn cut_preview(t: String) -> String {
     format!("{}…", &t[..end])
 }
 
-fn opcode_name(op: u8) -> &'static str {
-    match op {
-        0x0 => "continuation",
-        0x1 => "text",
-        0x2 => "binary",
-        0x8 => "close",
-        0x9 => "ping",
-        0xa => "pong",
-        _ => "reserved",
-    }
-}
-
 impl AppCore {
     /// Parse WebSocket frames `[start, start+count)` from the log.
     pub fn ws_frames(&self, id: SessionId, start: u64, count: usize) -> WsMessages {
@@ -69,17 +58,13 @@ impl AppCore {
         let mut out = WsMessages { complete: body.is_complete(), ..Default::default() };
         let mut pos = 0u64;
         let mut seq = 0u64;
-        let mut header = [0u8; 16];
-        while pos + 16 <= total_len {
-            if body.read_at(pos, &mut header).unwrap_or(0) < 16 {
+        let mut header = [0u8; RECORD_HEAD];
+        while pos + RECORD_HEAD as u64 <= total_len {
+            if body.read_at(pos, &mut header).unwrap_or(0) < RECORD_HEAD {
                 break;
             }
-            let dir = header[0];
-            let opcode = header[1];
-            let fin = header[2] != 0;
-            let time = i64::from_le_bytes(header[4..12].try_into().unwrap());
-            let len = u32::from_le_bytes(header[12..16].try_into().unwrap());
-            let payload_off = pos + 16;
+            let Some(wslog::Head { dir, opcode, fin, ts_us: time, len, .. }) = wslog::Head::parse(&header) else { break };
+            let payload_off = pos + RECORD_HEAD as u64;
             if seq >= start && out.frames.len() < count {
                 let take = (len as usize).min(PREVIEW);
                 let data = body.read_range(payload_off, take).unwrap_or_default();

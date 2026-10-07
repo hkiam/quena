@@ -52,8 +52,8 @@ async fn pump_forwards_and_logs() {
 
 #[test]
 fn record_roundtrip() {
-    use quena_proxy::wsframe::Frame;
-    let f = Frame { fin: true, opcode: 0x2, payload: vec![1, 2, 3], raw: vec![] };
+    use quena_model::wslog::Frame;
+    let f = Frame { fin: true, rsv: 0, opcode: 0x2, payload: vec![1, 2, 3] };
     let r = record(DIR_SERVER, &f, 12345);
     assert_eq!(r[0], DIR_SERVER);
     assert_eq!(r[1], 0x2);
@@ -77,6 +77,6 @@ async fn reader_handles_split_reads() {
     let mut reader = FrameReader::default();
     let mut src = r;
     let got = reader.next(&mut src).await.unwrap().unwrap();
-    assert_eq!(got.payload.len(), 100);
-    assert_eq!(got.opcode, 1);
+    assert_eq!(got.frame.payload.len(), 100);
+    assert_eq!(got.frame.opcode, 1);
 }
