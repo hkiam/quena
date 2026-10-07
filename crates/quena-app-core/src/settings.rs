@@ -68,6 +68,9 @@ pub struct HttpsSettings {
     /// Client certificates (mTLS) presented to matching upstream hosts.
     #[serde(default)]
     pub client_certs: Vec<ClientCert>,
+    /// TLS key log (`SSLKEYLOGFILE`, NSS format) used to decrypt packet captures; empty: none.
+    #[serde(default)]
+    pub tls_key_log_file: String,
 }
 
 /// A client certificate (mTLS) for hosts matching `host` (glob).
@@ -93,6 +96,7 @@ impl Default for HttpsSettings {
             enable_http2: true,
             http2_downgrade_hosts: String::new(),
             client_certs: Vec::new(),
+            tls_key_log_file: String::new(),
         }
     }
 }

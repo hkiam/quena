@@ -76,6 +76,10 @@ struct Diagnose {
     /// Captures to analyse together (.har, .saz, .pcap, .pcapng).
     #[arg(required = true, value_name = "CAPTURE")]
     files: Vec<PathBuf>,
+    /// TLS key log (SSLKEYLOGFILE) to decrypt HTTPS in packet captures (repeatable); key
+    /// logs next to a capture and keys embedded in pcapng are used anyway.
+    #[arg(long = "tls-keylog", value_name = "PATH")]
+    tls_keylog: Vec<PathBuf>,
     /// Analysis profile: full, performance, troubleshooting, auth, resilience, modernization.
     #[arg(long)]
     profile: Option<String>,
@@ -109,6 +113,10 @@ struct SanitizeArgs {
     /// Captures to sanitize together (.har, .saz, .pcap, .pcapng).
     #[arg(required = true, value_name = "CAPTURE")]
     files: Vec<PathBuf>,
+    /// TLS key log (SSLKEYLOGFILE) to decrypt HTTPS in packet captures (repeatable); key
+    /// logs next to a capture and keys embedded in pcapng are used anyway.
+    #[arg(long = "tls-keylog", value_name = "PATH")]
+    tls_keylog: Vec<PathBuf>,
     /// The sanitized archive (.saz or .har).
     #[arg(short = 'o', long = "output", value_name = "PATH")]
     output: PathBuf,
@@ -166,6 +174,10 @@ struct HttpFromArgs {
     /// Captures (.har, .saz, .pcap, .pcapng).
     #[arg(required = true, value_name = "CAPTURE")]
     files: Vec<PathBuf>,
+    /// TLS key log (SSLKEYLOGFILE) to decrypt HTTPS in packet captures (repeatable); key
+    /// logs next to a capture and keys embedded in pcapng are used anyway.
+    #[arg(long = "tls-keylog", value_name = "PATH")]
+    tls_keylog: Vec<PathBuf>,
     /// The .http file to write.
     #[arg(short = 'o', long = "output", value_name = "PATH")]
     output: PathBuf,
@@ -179,6 +191,10 @@ struct MockArgs {
     /// Captures to turn into mocks (.har, .saz, .pcap, .pcapng).
     #[arg(required = true, value_name = "CAPTURE")]
     files: Vec<PathBuf>,
+    /// TLS key log (SSLKEYLOGFILE) to decrypt HTTPS in packet captures (repeatable); key
+    /// logs next to a capture and keys embedded in pcapng are used anyway.
+    #[arg(long = "tls-keylog", value_name = "PATH")]
+    tls_keylog: Vec<PathBuf>,
     /// WireMock mappings and __files: a folder (its old mappings and __files are replaced),
     /// or a `.zip`.
     #[arg(long, value_name = "PATH", required_unless_present = "package")]
@@ -556,7 +572,7 @@ fn diagnose(a: Diagnose) -> Result<bool> {
     let engine = Engine::start(a.plugins.plugins.as_deref())?;
     for f in &a.files {
         progress(a.out.quiet, &format!("importing {}", f.display()));
-        engine.import(f, &deadline)?;
+        engine.import(f, &a.tls_keylog, &deadline)?;
     }
     progress(a.out.quiet, "analysing");
     let text = engine.analyse(&Value::Object(options).to_string(), filter, &deadline)?;
@@ -590,11 +606,11 @@ fn check_captures(files: &[PathBuf]) -> Result<()> {
 }
 
 /// Import the captures into a store of their own; all sessions in recorded order.
-fn load_captures(files: &[PathBuf], quiet: bool, deadline: &Deadline) -> Result<(Engine, Vec<u64>)> {
+fn load_captures(files: &[PathBuf], keylogs: &[PathBuf], quiet: bool, deadline: &Deadline) -> Result<(Engine, Vec<u64>)> {
     let engine = Engine::bare()?;
     for f in files {
         progress(quiet, &format!("importing {}", f.display()));
-        engine.import(f, deadline)?;
+        engine.import(f, keylogs, deadline)?;
     }
     let ids = engine.core.capture().index.find(|_| true);
     if ids.is_empty() {
@@ -708,7 +724,7 @@ fn sanitize(a: SanitizeArgs) -> Result<()> {
     let mut outs = vec![("-o", &a.output)];
     outs.extend(a.log.iter().map(|p| ("--log", p)));
     check_outputs(&a.files, &outs, None)?;
-    let (engine, ids) = load_captures(&a.files, a.quiet, &deadline)?;
+    let (engine, ids) = load_captures(&a.files, &a.tls_keylog, a.quiet, &deadline)?;
     progress(a.quiet, "sanitizing");
     let tmp = engine._data.path().join("sanitize-tmp");
     let body_cfg = engine.core.settings().bodies.to_config();
@@ -790,7 +806,7 @@ fn http_from(a: HttpFromArgs) -> Result<()> {
     let engine = Engine::bare()?;
     let deadline = Deadline::after(600);
     for f in &a.files {
-        engine.import(f, &deadline)?;
+        engine.import(f, &a.tls_keylog, &deadline)?;
     }
     let mut ids = engine.core.capture().index.find_all(|_| true);
     ids.sort_unstable();
@@ -857,7 +873,7 @@ fn mock(a: MockArgs) -> Result<()> {
     outs.extend(a.wiremock.iter().map(|p| ("--wiremock", p)));
     outs.extend(a.package.iter().map(|p| ("--package", p)));
     check_outputs(&a.files, &outs, wiremock_dir)?;
-    let (engine, ids) = load_captures(&a.files, a.quiet, &deadline)?;
+    let (engine, ids) = load_captures(&a.files, &a.tls_keylog, a.quiet, &deadline)?;
     progress(a.quiet, "building mocks");
     let set = mockgen::generate(&engine.core.capture(), &ids, &opts, true, &DeadlineProgress(&deadline)).map_err(|e| deadline.explain(e, "building mocks"))?;
     if deadline.passed() {
@@ -1244,11 +1260,13 @@ impl Engine {
     }
 
     /// Unknown, unreadable or broken captures are input errors (2), a timeout is not (3).
-    fn import(&self, file: &Path, deadline: &Deadline) -> Result<()> {
-        let job = self
-            .core
-            .import_archive(file.to_path_buf())
-            .map_err(|e| usage(format!("{}: {e}", file.display())))?;
+    fn import(&self, file: &Path, keylogs: &[PathBuf], deadline: &Deadline) -> Result<()> {
+        let job = if keylogs.is_empty() || !quena_app_core::archive::is_capture(file) {
+            self.core.import_archive(file.to_path_buf())
+        } else {
+            self.core.import_capture(file.to_path_buf(), None, keylogs.to_vec(), Vec::new(), None)
+        }
+        .map_err(|e| usage(format!("{}: {e}", file.display())))?;
         match self.wait(job, deadline, &file.display().to_string()) {
             Ok(()) => {}
             Err(JobError::Failed(e)) => return Err(usage(e)),

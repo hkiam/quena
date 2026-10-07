@@ -37,6 +37,8 @@ conspicuous, why it matters and where to look next*, with the evidence one click
   (NTLM, Negotiate/Kerberos, Basic), client certificates, bandwidth simulation.
 - **Share**: save and load `.saz` and `.har` archives, copy requests as cURL, fetch,
   PowerShell or Python.
+- **Read packet captures**: `.pcap`/`.pcapng` from tcpdump or Wireshark become sessions,
+  HTTPS included when its TLS key log is at hand — see [Packet captures](packet-captures.md).
 
 ## Local and private
 
@@ -57,6 +59,7 @@ HTTPS decryption is opt-in, and saved passwords live in the operating system's s
 | find out what is wrong with the traffic | [Diagnostics](diagnostics.md) |
 | look at timing, volumes and structure | [Analyze](analyze.md) |
 | exchange captures with colleagues | [Archives and copying](archives.md) |
+| read a tcpdump or Wireshark recording, decrypt its HTTPS | [Packet captures](packet-captures.md) |
 | automate with scripts or plugins | [Rules scripts](scripting.md), [Plugins](plugins.md) |
 | look up a setting, shortcut or command | [Reference](settings.md) |
 

@@ -27,7 +27,7 @@ certificate, no settings of the desktop app are used or changed.
 
     | Input | Effect |
     |---|---|
-    | `files` | captures, separated by spaces or new lines; glob patterns (`captures/**/*.har`) are expanded. A pattern that matches nothing is a warning, nothing at all an error |
+    | `files` | captures (`.har`, `.saz`, `.pcap`, `.pcapng`), separated by spaces or new lines; glob patterns (`captures/**/*.har`) are expanded. A pattern that matches nothing is a warning, nothing at all an error |
     | `config` | settings file (see below) |
     | `profile`, `lang`, `fail-on` | override the settings file; empty (the default) leaves the file's value, else `full`, `en`, `critical` |
     | `baseline` | baseline report; leave it empty when there is none yet |
@@ -81,8 +81,8 @@ certificate, no settings of the desktop app are used or changed.
 
 Any HAR file works: Playwright, Cypress, browser developer tools, Quena itself (*File →
 Export Sessions → HTTP Archive (HAR)…*), and SAZ archives. Packet captures (`.pcap`,
-`.pcapng` from tcpdump or Wireshark) work for plain HTTP and h2c; HTTPS in them stays
-encrypted ([Packet captures](archives.md#packet-captures)).
+`.pcapng` from tcpdump or Wireshark) work too; for HTTPS in them pass the TLS key log with
+`--tls-keylog keys.log` ([Packet captures → Decrypting HTTPS](packet-captures.md#decrypting-https)).
 
 * **Playwright:** `recordHar` in the context options, one file per test — see the
   [example](https://github.com/hkiam/quena/tree/main/examples/ci-playwright).
@@ -197,6 +197,7 @@ first ten). `--quiet` suppresses all of it; errors are still printed.
 | `--host api.example.com`, `--process chrome` | analyse only part of the traffic |
 | `--plugins DIR` | use the plugins of this folder only (instead of the `plugins` folder next to the program and `QUENA_PLUGIN_DIR`) |
 | `--timeout 600` | give up when the whole run (import and analysis) takes longer than this many seconds |
+| `--tls-keylog keys.log` | decrypt HTTPS in packet captures with this TLS key log (repeatable); also for `sanitize`, `mock` and `http from-har` |
 
 ### Plugin cache
 

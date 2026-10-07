@@ -48,7 +48,9 @@ In *Capture → HTTPS Settings…* (and *Settings → HTTPS*):
 | *Enable HTTP/2* | Offer HTTP/2 to clients and servers. *Settings → HTTPS → Downgrade to HTTP/1.1 for* lists hosts that should stay on HTTP/1.1. |
 
 Applications that pin certificates, or that bring their own trust store, reject Quena's
-certificate. Put their hosts into *Skip decryption for*.
+certificate. Put their hosts into *Skip decryption for*. To see their HTTPS anyway, record
+it as a [packet capture](packet-captures.md) with a TLS key log (`SSLKEYLOGFILE`), if the
+application can write one.
 
 ## Phones, tablets and VMs
 

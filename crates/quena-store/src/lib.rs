@@ -23,6 +23,12 @@ use quena_model::{SessionDetail, SessionId, SessionKind, SessionState, SessionSu
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// A process-wide unique numbering token ([`Capture::numbering`]).
+fn new_numbering() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
 use std::sync::{Arc, Weak};
 
 pub use db::Db;
@@ -299,6 +305,9 @@ pub struct Capture {
     live: RwLock<HashMap<SessionId, Arc<LiveSession>>>,
     cache: Mutex<Lru>,
     next_id: AtomicU64,
+    /// Identifies the current numbering (unique in the process): it changes when numbering
+    /// restarts, so session ids remembered earlier can be told apart from reused ones.
+    numbering: AtomicU64,
     temporary: bool,
     /// Sessions waiting for their body recordings (see [`LiveSession::finish`]).
     deferred: Mutex<Option<std::sync::mpsc::Sender<(Arc<LiveSession>, std::time::Instant)>>>,
@@ -330,6 +339,7 @@ impl Capture {
             live: RwLock::new(HashMap::new()),
             cache: Mutex::new(Lru { map: HashMap::new(), order: VecDeque::new(), cap: 4096 }),
             next_id: AtomicU64::new(1),
+            numbering: AtomicU64::new(new_numbering()),
             temporary,
             deferred: Mutex::new(None),
         });
@@ -380,6 +390,12 @@ impl Capture {
     /// Reset numbering (restarts at 1 after clearing).
     pub fn reset_numbering(&self) {
         self.next_id.store(1, Ordering::Relaxed);
+        self.numbering.store(new_numbering(), Ordering::Relaxed);
+    }
+
+    /// The current numbering: equal values mean that the same ids name the same sessions.
+    pub fn numbering(&self) -> u64 {
+        self.numbering.load(Ordering::Relaxed)
     }
 
     /// Start a new session; it is visible in the list immediately.

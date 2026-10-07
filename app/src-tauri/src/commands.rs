@@ -463,6 +463,14 @@ async fn import_archive(core: State<'_, Core>, path: String) -> R<u64> {
     blocking(move || core.import_archive(path.into()).map_err(e)).await
 }
 
+/// A packet capture again, with a TLS key log; `replace`: the sessions of its first import,
+/// with the session numbering they belong to (event `pcap-import`).
+#[tauri::command]
+async fn import_capture(core: State<'_, Core>, path: String, name: Option<String>, keylog: String, replace: Vec<SessionId>, numbering: u64) -> R<u64> {
+    let core = core.inner().clone();
+    blocking(move || core.import_capture(path.into(), name, vec![keylog.into()], replace, Some(numbering)).map_err(e)).await
+}
+
 /// Sanitized export (SAZ/HAR by `format` or the extension); the event `export-sanitized`
 /// carries the redaction log when the job is done.
 #[tauri::command]
@@ -954,6 +962,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         parse_curl,
         export_archive,
         import_archive,
+        import_capture,
         export_sanitized,
         sanitize_presets,
         sanitize_validate,

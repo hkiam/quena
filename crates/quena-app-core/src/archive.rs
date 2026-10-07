@@ -1,4 +1,4 @@
-//! Load/Save archives (SAZ, HAR) as background jobs.
+//! Load/Save archives (SAZ, HAR) and load packet captures as background jobs.
 
 use crate::AppCore;
 use anyhow::{Result, anyhow};
@@ -33,6 +33,11 @@ pub enum ArchiveFormat {
 /// Can [`AppCore::import_archive`] load this file (by its extension)?
 pub fn importable(path: &std::path::Path) -> bool {
     matches!(format_of(path), Some(ArchiveFormat::Saz | ArchiveFormat::Har | ArchiveFormat::Pcap))
+}
+
+/// Is this a packet capture (by its extension)?
+pub fn is_capture(path: &std::path::Path) -> bool {
+    format_of(path) == Some(ArchiveFormat::Pcap)
 }
 
 fn format_of(path: &std::path::Path) -> Option<ArchiveFormat> {
@@ -114,23 +119,92 @@ impl AppCore {
     /// Import an archive into the current session list.
     pub fn import_archive(self: &Arc<Self>, path: PathBuf) -> Result<JobId> {
         let name = path.display().to_string();
-        self.import_file(path, name, false)
+        self.import_file(path, name, false, Vec::new(), Vec::new())
     }
 
-    fn import_file(self: &Arc<Self>, path: PathBuf, name: String, remove_after: bool) -> Result<JobId> {
+    /// Import a packet capture (again), with TLS key logs besides the usual ones (the
+    /// setting, files next to the capture). `replace`: sessions of an earlier import of it
+    /// (event `pcap-import`), removed once this one succeeded — only if session numbering is
+    /// still `numbering`, so the ids still name those sessions. A dropped file's temporary
+    /// copy goes once nothing is left to decrypt.
+    pub fn import_capture(self: &Arc<Self>, path: PathBuf, name: Option<String>, keylogs: Vec<PathBuf>, replace: Vec<SessionId>, numbering: Option<u64>) -> Result<JobId> {
+        if format_of(&path) != Some(ArchiveFormat::Pcap) {
+            return Err(anyhow!("{}: not a packet capture", path.display()));
+        }
+        // A temporary copy only if it really lies in the drop folder (no `..` detours).
+        let drop_dir = std::fs::canonicalize(self.paths.data.join("dropped")).ok();
+        let dropped = drop_dir.is_some() && std::fs::canonicalize(&path).ok().and_then(|p| p.parent().map(Path::to_path_buf)) == drop_dir;
+        let name = name.unwrap_or_else(|| path.display().to_string());
+        let replace = match numbering {
+            Some(n) if n == self.capture().numbering() => replace,
+            _ => Vec::new(),
+        };
+        self.import_file(path, name, dropped, keylogs, replace)
+    }
+
+    /// TLS key logs for a capture: the setting, then files next to the capture.
+    fn key_logs_for(&self, capture: &Path) -> Vec<PathBuf> {
+        let mut v = Vec::new();
+        let setting = self.settings().https.tls_key_log_file;
+        if !setting.trim().is_empty() {
+            v.push(PathBuf::from(setting.trim()));
+        }
+        if let (Some(dir), Some(stem), Some(name)) = (capture.parent(), capture.file_stem(), capture.file_name()) {
+            let (stem, name) = (stem.to_string_lossy(), name.to_string_lossy());
+            for n in [format!("{name}.keys"), format!("{stem}.keys"), format!("{stem}.keylog"), "sslkeylog.log".into(), "sslkeys.log".into()] {
+                let p = dir.join(n);
+                if p.is_file() && !v.contains(&p) {
+                    v.push(p);
+                }
+            }
+        }
+        v
+    }
+
+    fn import_file(self: &Arc<Self>, path: PathBuf, name: String, remove_after: bool, extra_keylogs: Vec<PathBuf>, replace: Vec<SessionId>) -> Result<JobId> {
         let format = format_of(&path).ok_or_else(|| anyhow!("unknown archive type (use .saz, .har, .pcap or .pcapng)"))?;
         let cap = self.capture();
         let title = format!("Loading {name}");
+        let mut keylogs = if format == ArchiveFormat::Pcap { self.key_logs_for(&path) } else { Vec::new() };
+        keylogs.extend(extra_keylogs);
+        let core = self.clone();
+        let numbering = cap.numbering();
         // A temporary copy goes away with the job: after the import, when it fails or panics,
         // and also when the job is cancelled before it starts (the closure is then dropped).
-        let remove = remove_after.then(|| RemoveOnDrop(path.clone()));
+        let remove = remove_after.then(|| RemoveOnDrop(Some(path.clone())));
         Ok(self.jobs.submit(format!("import:{}", path.display()), title, Priority::Background, true, move |ctx| {
-            let _remove = remove;
+            let mut remove = remove;
             let ids = match format {
                 ArchiveFormat::Saz => quena_formats::saz::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Har => quena_formats::har::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("cannot import cURL scripts".into())),
-                ArchiveFormat::Pcap => quena_formats::pcap::import(&cap, &path, &P(ctx)),
+                ArchiveFormat::Pcap => quena_formats::pcap::import_with(&cap, &path, &quena_formats::pcap::PcapOptions { keylogs }, &P(ctx)).map(|r| {
+                    // Still the capture and numbering the ids were taken from (checked when
+                    // the import was asked for; Remove All or another capture may have come since).
+                    if !replace.is_empty() && Arc::ptr_eq(&core.capture(), &cap) && cap.numbering() == numbering {
+                        core.remove(replace);
+                    }
+                    if r.no_keys > 0
+                        && let Some(kept) = remove.as_mut().and_then(|rm| rm.0.take())
+                    {
+                        // Kept for an import with a key log, for an hour.
+                        keep_for(kept, KEEP_DROPPED);
+                    }
+                    core.emit(
+                        "pcap-import",
+                        CaptureImport {
+                            path: path.display().to_string(),
+                            name: name.clone(),
+                            sessions: r.ids.len(),
+                            tls: r.tls,
+                            decrypted: r.decrypted,
+                            no_keys: r.no_keys,
+                            ids: r.ids.clone(),
+                            numbering: cap.numbering(),
+                        },
+                    );
+                    r.ids
+                }),
             };
             let ids = ids.map_err(|e| e.to_string())?;
             tracing::info!(target: "quena", "loaded {} session(s) from {name}", ids.len());
@@ -186,7 +260,39 @@ impl AppCore {
         if !last {
             return Ok(None);
         }
-        self.import_file(path, name.to_string(), true).map(Some)
+        self.import_file(path, name.to_string(), true, Vec::new(), Vec::new()).map(Some)
+    }
+}
+
+/// What a packet capture import found (event `pcap-import`).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureImport {
+    /// The file read (a temporary copy for dropped files) and its name for messages.
+    pub path: String,
+    pub name: String,
+    pub sessions: usize,
+    /// TLS connections, those decrypted, and those without secrets in the key logs.
+    pub tls: u64,
+    pub decrypted: u64,
+    pub no_keys: u64,
+    /// The new sessions (replaced when the capture is imported again with a key log), and the
+    /// session numbering they belong to.
+    pub ids: Vec<SessionId>,
+    pub numbering: u64,
+}
+
+/// How long a dropped capture with encrypted connections is kept for a key log.
+const KEEP_DROPPED: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Delete a temporary file after `after` (if it is still there).
+fn keep_for(path: PathBuf, after: std::time::Duration) {
+    let spawned = std::thread::Builder::new().name("quena-drop-expiry".into()).spawn(move || {
+        std::thread::sleep(after);
+        let _ = std::fs::remove_file(&path);
+    });
+    if let Err(e) = spawned {
+        tracing::warn!("dropped capture kept until the next start: {e}");
     }
 }
 
@@ -329,10 +435,13 @@ pub const MAX_DROP_BYTES: u64 = 8 << 30;
 const MIN_FREE_BYTES: u64 = 256 << 20;
 
 /// Removes a file when dropped.
-struct RemoveOnDrop(PathBuf);
+/// Deletes a temporary file when dropped, unless it was taken out (`None`).
+struct RemoveOnDrop(Option<PathBuf>);
 impl Drop for RemoveOnDrop {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        if let Some(p) = &self.0 {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }
 

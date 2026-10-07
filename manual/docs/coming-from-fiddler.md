@@ -19,6 +19,7 @@ features — this page maps them. The same overview is in the app under
 | Session archives (`.saz`) | *File → Import Sessions → SAZ Archive…*, or drop them onto the window; *File → Export Sessions → SAZ Archive…* to hand sessions back to colleagues |
 | AutoResponder rules (`.farx`) | **Mock Rules** tab → *Import…* / *Export…* |
 | HTTP archives (`.har`) | *File → Import / Export Sessions → HTTP Archive (HAR)…* |
+| Packet captures (`.pcap`, `.pcapng`, `.cap`) | *File → Import Sessions → Packet Capture (pcap, pcapng)…*; besides plain HTTP also HTTP/2, WebSocket and, with a TLS key log, HTTPS — see [Packet captures](packet-captures.md) |
 
 See [Archives and copying](archives.md) and [Mock Rules](change-replay.md#mock-rules).
 

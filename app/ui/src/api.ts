@@ -391,6 +391,8 @@ export interface Settings {
     enableHttp2: boolean;
     http2DowngradeHosts: string;
     clientCerts: { host: string; certPath: string; keyPath: string }[];
+    /** TLS key log (SSLKEYLOGFILE) for decrypting packet captures; "" = none. */
+    tlsKeyLogFile: string;
   };
   bodies: {
     inlineLimitKb: number;
@@ -518,6 +520,21 @@ export interface RedactionLog {
   numbersAsStrings: number;
   wsMessages: number;
   notes: string[];
+}
+
+/** Event `pcap-import`: what a packet capture import found. */
+export interface CaptureImport {
+  /** The file read (a temporary copy for dropped files) and its name for messages. */
+  path: string;
+  name: string;
+  sessions: number;
+  tls: number;
+  decrypted: number;
+  /** TLS connections without secrets in the key logs. */
+  noKeys: number;
+  /** The new sessions, and the session numbering they belong to. */
+  ids: SessionId[];
+  numbering: number;
 }
 
 /** Payload of the `export-sanitized` event. */
@@ -843,6 +860,10 @@ export const api = {
   caExport: (path: string, der: boolean) => invoke<void>("ca_export", { path, der }),
   exportArchive: (ids: SessionId[], path: string) => invoke<number>("export_archive", { ids, path }),
   importArchive: (path: string) => invoke<number>("import_archive", { path }),
+  /** A packet capture again with a TLS key log, replacing the sessions of its first import
+   *  (unless numbering restarted since, e.g. after Remove All). */
+  importCapture: (path: string, name: string, keylog: string, replace: SessionId[], numbering: number) =>
+    invoke<number>("import_capture", { path, name, keylog, replace, numbering }),
   /** Job id; the event `export-sanitized` follows when it is done. */
   exportSanitized: (ids: SessionId[], path: string, format: "saz" | "har", options: SanitizeOptions) =>
     invoke<number>("export_sanitized", { ids, path, format, options }),

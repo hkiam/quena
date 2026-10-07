@@ -6,6 +6,7 @@ import { say, set, useStore } from "../store";
 import { patchSettings } from "../settingsActions";
 import { osNames } from "../lib/format";
 import { t } from "../i18n";
+import { baseName, keyLogFilters } from "../lib/importFormats";
 
 export function HttpsPanel() {
   const settings = useStore((s) => s.settings);
@@ -91,6 +92,27 @@ export function HttpsPanel() {
         <button onClick={() => patchSettings((s) => (s.https.clientCerts = [...(s.https.clientCerts ?? []), { host: "", certPath: "", keyPath: "" }]))}>
           {t("Add client certificate")}
         </button>
+      </fieldset>
+      <fieldset className="f-section">
+        <legend>{t("Packet captures")}</legend>
+        <p className="muted small">{t("TLS key log (SSLKEYLOGFILE) used to decrypt HTTPS in imported pcap/pcapng files. Key logs next to a capture (name.keys, sslkeylog.log) and keys embedded in pcapng are used too.")}</p>
+        <div className="cc-row">
+          <button
+            className="cc-file"
+            title={h.tlsKeyLogFile || t("choose the TLS key log file")}
+            onClick={async () => {
+              const p = await open({ multiple: false, filters: keyLogFilters() });
+              if (typeof p === "string") patchSettings((s) => (s.https.tlsKeyLogFile = p));
+            }}
+          >
+            {h.tlsKeyLogFile ? baseName(h.tlsKeyLogFile) : t("Key log file…")}
+          </button>
+          {h.tlsKeyLogFile && (
+            <button className="cc-del" title={t("Remove")} onClick={() => patchSettings((s) => (s.https.tlsKeyLogFile = ""))}>
+              ✕
+            </button>
+          )}
+        </div>
       </fieldset>
       <fieldset className="f-section">
         <legend>{t("Root certificate")}</legend>

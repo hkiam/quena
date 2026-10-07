@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { api, isTauri, on, type JobInfo, type LogEntry, type Status } from "./api";
+import { api, isTauri, on, type CaptureImport, type JobInfo, type LogEntry, type Status } from "./api";
+import { captureImported } from "./fileActions";
 import { actions } from "./actions";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { Dialogs } from "./components/Dialogs";
@@ -70,6 +71,7 @@ function useBoot() {
     );
     // Archives opened from the file manager / "Open With" while running.
     unlisten.push(on("open-files", () => void importOpenFiles()));
+    unlisten.push(on<CaptureImport>("pcap-import", captureImported));
     unlisten.push(
       on<{ id: number; phase: string; url: string }>("breakpoint", (b) => {
         // Jump to the paused session.

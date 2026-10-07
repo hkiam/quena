@@ -118,6 +118,23 @@ The disk has less free space than *Settings → Bodies & Storage → Stop record
 space*. Free some space, remove sessions, or lower the limit. Traffic keeps flowing while
 recording is suspended.
 
+## A packet capture shows HTTPS only as tunnels
+
+The key log has no secrets for those connections — it was recorded at another time, by
+another program, or not at all. Choose the right key log with *Choose key log file…* in the
+status bar after the import, put it next to the capture as `<name>.keys`, or set it in
+*Settings → HTTPS → Packet captures*. Programs only write a key log when `SSLKEYLOGFILE` is
+set in the environment they were started from (start the browser from that shell). When
+*Properties* of a tunnel says its version or cipher suite cannot be decrypted (TLS 1.0/1.1,
+for example), no key log helps. See [Packet captures](packet-captures.md#decrypting-https).
+
+## A packet capture says "no HTTP traffic found"
+
+The summary in the message tells what the file holds instead: connections that are not
+HTTP, packets of an unsupported link type (Wi-Fi monitor mode, USB …), or missing packets
+everywhere. Record on the interface the traffic passes (`tcpdump -i any` on Linux,
+`-i all` on macOS), with whole packets. See [Packet captures](packet-captures.md).
+
 ## Where are my settings and captures?
 
 In the [data directory](settings.md#data-directory), or in `quena-data` next to the

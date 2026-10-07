@@ -15,6 +15,7 @@ keyboard shortcuts. Quena uses its own names for some features — this page map
 | Session archives (`.saz`) | **File → Import Sessions → SAZ Archive…**, and **File → Export Sessions → SAZ Archive…** to hand sessions back to colleagues |
 | AutoResponder rules (`.farx`) | **Mock Rules** tab → **Import…** / **Export…** |
 | HTTP archives (`.har`) | **File → Import / Export Sessions → HAR** |
+| Packet captures (`.pcap`, `.pcapng`, `.cap`) | **File → Import Sessions → Packet Capture (pcap, pcapng)** — plain HTTP, HTTP/2, WebSocket and, with a TLS key log (`SSLKEYLOGFILE`), HTTPS |
 
 ## Names
 

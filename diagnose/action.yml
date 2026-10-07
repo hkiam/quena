@@ -6,7 +6,7 @@ branding:
   color: blue
 inputs:
   files:
-    description: Captures to analyse (.har, .saz), separated by spaces or new lines; glob patterns (also **) are expanded. A pattern that matches nothing is a warning, nothing matching at all an error.
+    description: Captures to analyse (.har, .saz, .pcap, .pcapng — HTTPS in packet captures needs args "--tls-keylog keys.log" or a key log next to the capture), separated by spaces or new lines; glob patterns (also **) are expanded. A pattern that matches nothing is a warning, nothing matching at all an error.
     required: true
   profile:
     description: Analysis profile (full, performance, troubleshooting, auth, resilience, modernization). Overrides the settings file; empty = the file's profile, else full.

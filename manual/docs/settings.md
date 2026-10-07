@@ -50,6 +50,9 @@ arrangement.
 *Enable HTTP/2*, *Downgrade to HTTP/1.1 for*, and **Certificate management…** — see
 [HTTPS and devices](https.md).
 
+*Packet captures* holds a **TLS key log file** (`SSLKEYLOGFILE`) used to decrypt HTTPS in
+every imported `.pcap`/`.pcapng` — see [Packet captures](packet-captures.md#decrypting-https).
+
 ## Authentication
 
 See [Automatic authentication](authentication.md).

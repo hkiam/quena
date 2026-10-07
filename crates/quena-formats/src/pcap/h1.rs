@@ -308,7 +308,7 @@ impl H1 {
         } else {
             let host = headers.get("host").map(str::to_string).unwrap_or_else(|| cx.conn.server_host());
             let path = if target.starts_with('/') { target } else { format!("/{target}") };
-            format!("http://{host}{path}")
+            format!("{}://{host}{path}", cx.conn.scheme())
         };
         let upgrade = headers.get("upgrade").is_some() && headers.has_token("connection", "upgrade");
         let left = body_left(&headers);
@@ -374,7 +374,7 @@ impl H1 {
                 ex.discard = false;
                 let (method, url) = match to {
                     Switch::Tunnel => ("CONNECT", cx.conn.server.to_string()),
-                    _ => ("GET", format!("http://{}/", cx.conn.server_host())),
+                    _ => ("GET", format!("{}://{}/", cx.conn.scheme(), cx.conn.server_host())),
                 };
                 ex.req = RequestHead { method: method.into(), url, version: HttpVersion::Http11, headers: Default::default() };
                 ex.fail("the request is not in the capture".into());
@@ -474,6 +474,23 @@ impl H1 {
             // Client bytes cannot switch the protocol: nothing comes back from them.
             let _ = self.process(CLIENT, ts, cx);
         }
+    }
+
+    /// One side ends for another reason than its peer closing it (decryption stopped): what
+    /// it was sending, and what was still expected from it, ends with `why`.
+    pub fn cut(&mut self, side: usize, why: &str, ts: Micros, cx: &mut Cx) {
+        self.sides[side].st = St::Resync;
+        self.sides[side].buf.clear();
+        for ex in self.ex.iter_mut().filter(|e| e.end[side].is_none()) {
+            if side == SERVER && ex.resp.is_none() {
+                ex.fail(format!("no response: {why}"));
+            } else {
+                ex.fail(format!("the {} is incomplete: {why}", side_name(side)));
+            }
+            ex.end[side] = Some(ts);
+        }
+        self.emit_done(cx);
+        self.release_hold(ts, cx);
     }
 
     /// One side closed its half of the connection.

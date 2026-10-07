@@ -80,6 +80,7 @@ nav:
       - Diagnostics: diagnostics.md
       - Diagnostics in CI: ci.md
       - Archives and copying: archives.md
+      - Packet captures: packet-captures.md
   - Advanced:
       - Rules scripts: scripting.md
       - Automatic authentication: authentication.md

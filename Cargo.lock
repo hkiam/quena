@@ -3806,6 +3806,7 @@ dependencies = [
 name = "quena-formats"
 version = "0.1.6"
 dependencies = [
+ "aes",
  "base64 0.22.1",
  "etherparse",
  "flate2",
@@ -3816,6 +3817,9 @@ dependencies = [
  "quena-store",
  "quick-xml 0.38.4",
  "rand 0.9.5",
+ "rcgen",
+ "ring",
+ "rustls",
  "serde",
  "serde_json",
  "tempfile",

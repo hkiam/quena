@@ -13,11 +13,19 @@ contain breaking changes (settings, file formats, plugin API).
   drop, or `quena-cli`. Quena puts the TCP connections back together, including packets that
   arrive out of order or twice. Plain HTTP/1.x (keep-alive, pipelining, chunked bodies),
   WebSocket messages and cleartext HTTP/2 (h2c, gRPC) become sessions, with the client and
-  server address and timings from the packet times. HTTPS cannot be read without its keys:
-  each TLS connection shows up as a tunnel with its server name (SNI), ALPN, TLS version and
-  cipher, also behind a `CONNECT` to a proxy. Where packets are missing from the capture
+  server address and timings from the packet times. Where packets are missing from the capture
   (lost, or cut short by the snapshot length), the affected session says so in its error,
   and the requests and responses after it still pair up correctly.
+- **HTTPS in packet captures is decrypted with a TLS key log** (`SSLKEYLOGFILE`, as written by
+  browsers, curl and many apps): TLS 1.3 and TLS 1.2 with AES-GCM, ChaCha20-Poly1305 and
+  AES-CBC, with HTTP/1.x, WebSocket and HTTP/2 inside. The secrets come from pcapng files
+  that carry them (`editcap --inject-secrets`), a key log next to the capture (`name.keys`,
+  `sslkeylog.log`), *Settings → HTTPS → Packet captures*, or, after an import that left
+  connections encrypted, *Choose key log file…* in the status bar, which loads the capture
+  again in place of the first import. `quena-cli` takes `--tls-keylog`. Connections without
+  secrets show up as tunnels with their server name (SNI), ALPN, TLS version and cipher, also
+  behind a `CONNECT` to a proxy. The new manual page *Packet captures* describes recording,
+  loading, decryption and how missing packets are handled.
 
 ## [0.1.6] — 2026-10-07
 

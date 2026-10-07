@@ -1,11 +1,11 @@
 // File menu: archives (SAZ/HAR, packet captures to import), bodies, cURL scripts.
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { api } from "./api";
+import { api, type CaptureImport } from "./api";
 import { get, say, set } from "./store";
 import { buildCurl } from "./lib/http";
 import { snippetBody } from "./lib/bodytext";
 import { plural, t } from "./i18n";
-import { ARCHIVE_EXTENSIONS, CAPTURE_EXTENSIONS } from "./lib/importFormats";
+import { ARCHIVE_EXTENSIONS, CAPTURE_EXTENSIONS, baseName, keyLogFilters } from "./lib/importFormats";
 
 const ARCHIVES = [
   { name: t("Session Archive"), extensions: ARCHIVE_EXTENSIONS },
@@ -42,6 +42,31 @@ async function loadArchive(captures = false) {
   try {
     await api.importArchive(path);
     say(t("Loading {path}", { path }));
+  } catch (e) {
+    say(String(e), "error");
+  }
+}
+
+/** After a packet capture import: report decrypted TLS, and offer a key log for the rest. */
+export function captureImported(r: CaptureImport) {
+  const name = baseName(r.name);
+  if (r.noKeys > 0) {
+    say(
+      plural(r.noKeys, "{name}: {n} TLS connection could not be decrypted (no secrets in the key log)", "{name}: {n} TLS connections could not be decrypted (no secrets in the key log)", { name }),
+      "info",
+      { label: t("Choose key log file…"), run: () => void chooseKeyLog(r) },
+    );
+  } else if (r.decrypted > 0) {
+    say(plural(r.decrypted, "{name}: {n} TLS connection decrypted", "{name}: {n} TLS connections decrypted", { name }));
+  }
+}
+
+async function chooseKeyLog(r: CaptureImport) {
+  const keylog = await open({ multiple: false, filters: keyLogFilters() });
+  if (typeof keylog !== "string") return;
+  try {
+    await api.importCapture(r.path, r.name, keylog, r.ids, r.numbering);
+    say(t("Loading {path}", { path: baseName(r.name) }));
   } catch (e) {
     say(String(e), "error");
   }

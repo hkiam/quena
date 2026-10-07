@@ -55,6 +55,9 @@ Quena is an independent, open-source take on this kind of tool, with its own des
   than `main`. See [Diagnostics in CI](#diagnostics-in-ci).
 - **Easy to use.** Start Quena, and traffic appears. HTTPS decryption is one checkbox and one
   "Trust" click. No accounts, no cloud, no setup wizard marathon.
+- **Reads what others recorded.** A tcpdump or Wireshark capture from a server, a container
+  or an app that refuses proxies opens like an archive — HTTP/1.x, WebSocket and HTTP/2 as
+  sessions, and HTTPS too when its TLS key log (`SSLKEYLOGFILE`) is at hand.
 - **Intuitive.** A keyboard-driven workspace with a command field and palette, Mock Rules, a
   Composer and inspectors that pick the right view for the content. Coming from Fiddler
   Classic? Your `.saz` sessions and `.farx` rules import directly, and the filter syntax and
@@ -176,6 +179,8 @@ quena-cli: 1 critical, 4 warning, 9 info · vs. baseline: 2 new, 1 resolved, 0 c
   (`ghcr.io/hkiam/quena-cli`) for GitLab CI, Jenkins or Azure Pipelines, and a standalone
   program for Windows, macOS and Linux. Output as Markdown, JSON (the next baseline) and
   JUnit XML for the test report of your CI.
+- **Not only HAR:** SAZ archives and packet captures (`.pcap`, `.pcapng`) work as well — for
+  HTTPS in a capture pass its key log with `--tls-keylog`.
 - **Same engine, same privacy:** the analyzer and the redaction of the desktop app; nothing
   leaves the build machine.
 
@@ -192,6 +197,9 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 
 ### Capture
 - HTTP/1.1, **HTTP/2**, HTTPS (on-the-fly certificates), CONNECT tunnels
+- **Packet captures** from tcpdump and Wireshark (`.pcap`, `.pcapng`): TCP reassembled,
+  HTTP/1.x, WebSocket and HTTP/2 as sessions, **HTTPS decrypted with a TLS key log**
+  (`SSLKEYLOGFILE`, or embedded in pcapng) — TLS 1.3 and TLS 1.2 (GCM, ChaCha20, CBC)
 - **WebSocket** frames and **Server-Sent Events**, live
 - System proxy on macOS, Windows and Linux (GNOME, KDE) — restored on quit *and* after a crash
 - Upstream proxy chaining, bypass list, **PAC** (proxy auto-config)
@@ -240,9 +248,8 @@ in the [manual](https://hkiam.github.io/quena/ci/).
   single sign-on via Windows SSPI and Kerberos tickets on macOS and Linux
 - **Client certificates (mTLS)** per host
 - **Bandwidth & latency simulation**
-- Import/export **SAZ** (compatible with Fiddler Classic), **HAR 1.2**, copy as cURL
-- Import **packet captures** (Wireshark/tcpdump `.pcap`, `.pcapng`): HTTP/1.x, WebSocket and
-  cleartext HTTP/2 become sessions; TLS connections show up as tunnels
+- Import/export **SAZ** (compatible with Fiddler Classic), **HAR 1.2**, copy as cURL;
+  import **pcap/pcapng**
 
 </td>
 </tr>
@@ -488,7 +495,7 @@ Quena is a Rust core with a thin, fast UI:
 │ quena-auth       NTLMv2, Negotiate/Kerberos (GSS, SSPI)       │
 │ quena-script     QuickJS rules + PAC evaluation               │
 │ quena-plugin-host  Wasmtime component host (sandboxed)        │
-│ quena-formats    SAZ, HAR, pcap, cURL, raw HTTP               │
+│ quena-formats    SAZ, HAR, pcap + TLS key log, cURL, raw HTTP │
 │ quena-query · quena-model · quena-jobs · quena-platform       │
 └───────────────────────────────────────────────────────────────┘
 ```

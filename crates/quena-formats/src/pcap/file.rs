@@ -6,6 +6,13 @@
 use quena_model::Micros;
 use std::io::{self, Read};
 
+/// What a capture file holds, in order.
+pub enum Item {
+    Packet(Packet),
+    /// TLS secrets in the NSS key log format (pcapng Decryption Secrets Block).
+    Secrets(Vec<u8>),
+}
+
 /// One captured frame.
 pub struct Packet {
     pub ts: Micros,
@@ -43,10 +50,10 @@ impl<R: Read> Reader<R> {
         Ok(Reader::Pcap(Pcap { r, le, nanos, linktype, truncated: false }))
     }
 
-    /// The next packet; `None` at the end of the file.
-    pub fn next(&mut self) -> io::Result<Option<Packet>> {
+    /// The next packet or block of secrets; `None` at the end of the file.
+    pub fn next(&mut self) -> io::Result<Option<Item>> {
         match self {
-            Reader::Pcap(p) => p.next(),
+            Reader::Pcap(p) => Ok(p.next()?.map(Item::Packet)),
             Reader::Pcapng(p) => p.next(),
         }
     }
@@ -161,6 +168,9 @@ pub struct Pcapng<R> {
     truncated: bool,
 }
 
+/// Decryption Secrets Block type of TLS key logs ("TLSK").
+const SECRETS_TLS_KEY_LOG: u32 = 0x544c_534b;
+
 impl<R: Read> Pcapng<R> {
     fn new(r: R) -> io::Result<Self> {
         let mut p = Pcapng { r, le: true, ifaces: Vec::new(), last_ts: 0, truncated: false };
@@ -187,7 +197,7 @@ impl<R: Read> Pcapng<R> {
         Ok(())
     }
 
-    fn next(&mut self) -> io::Result<Option<Packet>> {
+    fn next(&mut self) -> io::Result<Option<Item>> {
         loop {
             let mut h = [0u8; 4];
             match fill(&mut self.r, &mut h)? {
@@ -228,9 +238,14 @@ impl<R: Read> Pcapng<R> {
         }
     }
 
-    fn block(&mut self, ty: u32, b: &[u8]) -> Option<Packet> {
+    fn block(&mut self, ty: u32, b: &[u8]) -> Option<Item> {
         let le = self.le;
         match ty {
+            // Decryption secrets
+            10 if b.len() >= 8 && rd32(le, &b[0..4]) == SECRETS_TLS_KEY_LOG => {
+                let len = rd32(le, &b[4..8]) as usize;
+                Some(Item::Secrets(b.get(8..8 + len)?.to_vec()))
+            }
             // Interface description
             1 if b.len() >= 8 => {
                 let mut iface = Iface { linktype: rd16(le, &b[0..2]) as u32, pow2: false, exp: 6, offset_s: 0 };
@@ -263,7 +278,7 @@ impl<R: Read> Pcapng<R> {
                 let caplen = rd32(le, &b[12..16]) as usize;
                 let data = b.get(20..20 + caplen)?.to_vec();
                 self.last_ts = iface.micros(ts);
-                Some(Packet { ts: self.last_ts, linktype: iface.linktype, data })
+                Some(Item::Packet(Packet { ts: self.last_ts, linktype: iface.linktype, data }))
             }
             // Obsolete packet block
             2 if b.len() >= 20 => {
@@ -272,13 +287,13 @@ impl<R: Read> Pcapng<R> {
                 let caplen = rd32(le, &b[12..16]) as usize;
                 let data = b.get(20..20 + caplen)?.to_vec();
                 self.last_ts = iface.micros(ts);
-                Some(Packet { ts: self.last_ts, linktype: iface.linktype, data })
+                Some(Item::Packet(Packet { ts: self.last_ts, linktype: iface.linktype, data }))
             }
             // Simple packet: no timestamp, interface 0.
             3 if b.len() >= 4 => {
                 let iface = *self.ifaces.first()?;
                 let len = (rd32(le, &b[0..4]) as usize).min(b.len() - 4);
-                Some(Packet { ts: self.last_ts, linktype: iface.linktype, data: b[4..4 + len].to_vec() })
+                Some(Item::Packet(Packet { ts: self.last_ts, linktype: iface.linktype, data: b[4..4 + len].to_vec() }))
             }
             _ => None,
         }
@@ -321,6 +336,11 @@ pub(crate) mod tests {
 
     /// A big-endian pcapng file with one interface at nanosecond resolution.
     pub fn pcapng(linktype: u16, frames: &[(Micros, Vec<u8>)]) -> Vec<u8> {
+        pcapng_with_secrets(linktype, frames, None)
+    }
+
+    /// The same, with a Decryption Secrets Block (TLS key log) before the packets.
+    pub fn pcapng_with_secrets(linktype: u16, frames: &[(Micros, Vec<u8>)], secrets: Option<&[u8]>) -> Vec<u8> {
         let mut shb = 0x1a2b_3c4du32.to_be_bytes().to_vec();
         shb.extend_from_slice(&[0, 1, 0, 0]);
         shb.extend_from_slice(&(-1i64).to_be_bytes());
@@ -330,6 +350,12 @@ pub(crate) mod tests {
         idb.extend_from_slice(&65535u32.to_be_bytes());
         idb.extend_from_slice(&[0, 9, 0, 1, 9, 0, 0, 0, 0, 0, 0, 0]); // if_tsresol = 9, end
         out.extend(block(1, &idb));
+        if let Some(sec) = secrets {
+            let mut dsb = SECRETS_TLS_KEY_LOG.to_be_bytes().to_vec();
+            dsb.extend_from_slice(&(sec.len() as u32).to_be_bytes());
+            dsb.extend_from_slice(sec);
+            out.extend(block(10, &dsb));
+        }
         for (ts, f) in frames {
             let ns = (*ts as u64) * 1000;
             let mut epb = 0u32.to_be_bytes().to_vec();
@@ -346,8 +372,10 @@ pub(crate) mod tests {
     fn all(data: &[u8]) -> (Vec<Packet>, bool) {
         let mut r = Reader::new(data).unwrap();
         let mut v = Vec::new();
-        while let Some(p) = r.next().unwrap() {
-            v.push(p);
+        while let Some(i) = r.next().unwrap() {
+            if let Item::Packet(p) = i {
+                v.push(p);
+            }
         }
         let t = r.truncated();
         (v, t)
@@ -369,5 +397,14 @@ pub(crate) mod tests {
             assert_eq!(p.len(), 1);
         }
         assert!(Reader::new(&b"GET / HTTP/1.1\r\n"[..]).is_err());
+    }
+
+    #[test]
+    fn decryption_secrets_block() {
+        let file = pcapng_with_secrets(1, &[(1_000_000, b"x".to_vec())], Some(b"CLIENT_RANDOM 00 11\n"));
+        let mut r = Reader::new(&file[..]).unwrap();
+        assert!(matches!(r.next().unwrap(), Some(Item::Secrets(s)) if s == b"CLIENT_RANDOM 00 11\n"));
+        assert!(matches!(r.next().unwrap(), Some(Item::Packet(p)) if p.data == b"x"));
+        assert!(r.next().unwrap().is_none());
     }
 }

@@ -8,7 +8,7 @@ Quena reads and writes two archive formats and reads packet captures:
 |---|---|
 | **SAZ** (`.saz`) | Session archive compatible with Fiddler Classic. Keeps marks, comments, the Custom column and process information. |
 | **HAR 1.2** (`.har`) | The HTTP Archive format that browsers' developer tools import and export. Comments are kept. |
-| **Packet capture** (`.pcap`, `.pcapng`) | Recordings of Wireshark, tcpdump or dumpcap; import only (see [Packet captures](#packet-captures)). |
+| **Packet capture** (`.pcap`, `.pcapng`) | Recordings of tcpdump, Wireshark or dumpcap; import only, HTTPS decrypted with a TLS key log (see [Packet captures](packet-captures.md)). |
 
 ### Saving
 
@@ -35,23 +35,11 @@ status bar shows its progress.
 
 ### Packet captures
 
-A packet capture shows traffic that did not pass Quena: recorded on a server with `tcpdump`,
-on a phone, or from an app that refuses proxies. Quena puts the TCP connections back
-together (packets out of order or sent twice are handled) and reads the HTTP in them:
-
-- **HTTP/1.x** with keep-alive, pipelining, chunked bodies and `100 Continue`; bodies keep
-  their `Content-Encoding` (gzip, brotli, zstd), so the inspectors decode them as usual.
-- **WebSocket** messages after an upgrade, in the WebSocket inspector.
-- **Cleartext HTTP/2** (h2c, also gRPC): one session per stream.
-- **HTTPS** cannot be read without its keys. Each TLS connection becomes a tunnel session
-  named after its server (SNI), with ALPN, TLS version and cipher under *Properties*. The
-  same holds for `CONNECT` tunnels through a proxy.
-
-Each session has the client and server address and connection number, and timings from the
-packet times (TCP connect, request, response). When packets are missing from the capture,
-the affected session ends there and says so in its error; the log names what was skipped
-(connections that are not HTTP, IP fragments, a file cut off in the middle). Captures from
-Ethernet, loopback, Linux "any" (SLL, SLL2), raw IP and the macOS packet tap are supported.
+`.pcap` and `.pcapng` files from tcpdump, Wireshark or dumpcap load the same ways as archives
+(menu, *Load Archive…*, drag and drop). Quena reassembles the TCP connections and turns the
+HTTP/1.x, WebSocket and HTTP/2 in them into sessions; HTTPS is decrypted with a TLS key log
+(`SSLKEYLOGFILE`). How to record, what you get and how decryption works:
+[Packet captures](packet-captures.md).
 
 ### Recovering a capture
 

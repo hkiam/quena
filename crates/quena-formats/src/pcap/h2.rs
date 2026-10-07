@@ -194,7 +194,7 @@ impl H2 {
             let url = if method.eq_ignore_ascii_case("CONNECT") && path.is_none() {
                 host
             } else {
-                format!("{}://{host}{}", scheme.clone().unwrap_or_else(|| "http".into()), path.clone().unwrap_or_else(|| "/".into()))
+                format!("{}://{host}{}", scheme.clone().unwrap_or_else(|| cx.conn.scheme().into()), path.clone().unwrap_or_else(|| "/".into()))
             };
             RequestHead { method, url, version: HttpVersion::Http2, headers }
         };
@@ -263,7 +263,8 @@ impl H2 {
         }
     }
 
-    fn give_up(&mut self, why: String, ts: Micros, cx: &mut Cx) {
+    /// The connection can no longer be followed: its open streams end with `why`.
+    pub fn give_up(&mut self, why: String, ts: Micros, cx: &mut Cx) {
         for (_, mut ex) in std::mem::take(&mut self.streams) {
             ex.fail(format!("{why}; the rest of the HTTP/2 connection could not be read"));
             ex.end[CLIENT].get_or_insert(ts);

@@ -1,59 +1,12 @@
-//! What a TLS connection shows without its keys: SNI and ALPN offered in the ClientHello,
-//! version, cipher suite and ALPN chosen in the ServerHello.
+//! The hellos of a TLS connection: what it shows without its keys (SNI and ALPN offered in
+//! the ClientHello; version, cipher suite and ALPN chosen in the ServerHello), and what
+//! decrypting it takes (both randoms, the suite, encrypt-then-MAC).
 
 use quena_model::TlsInfo;
-
-/// Handshake bytes kept while looking for the hello; hellos are a few KB.
-const MAX_HELLO: usize = 64 << 10;
 
 /// Does `b` start like a TLS handshake record (as a ClientHello does)?
 pub fn looks_like_tls(b: &[u8]) -> bool {
     b.len() >= 3 && b[0] == 0x16 && b[1] == 0x03 && b[2] <= 0x04
-}
-
-/// Collects one side's handshake messages from its records until the hello is found.
-#[derive(Default)]
-pub struct HelloReader {
-    raw: Vec<u8>,
-    /// Handshake payload of the records so far.
-    hs: Vec<u8>,
-    pub done: bool,
-}
-
-impl HelloReader {
-    /// Feed stream bytes; returns the hello body (type, body) once complete.
-    pub fn feed(&mut self, data: &[u8]) -> Option<(u8, Vec<u8>)> {
-        if self.done {
-            return None;
-        }
-        self.raw.extend_from_slice(data);
-        // Unwrap complete handshake records; another record type (ChangeCipherSpec after the
-        // hello, an alert) ends the handshake bytes in the clear.
-        let mut other = false;
-        while self.raw.len() >= 5 {
-            let len = u16::from_be_bytes([self.raw[3], self.raw[4]]) as usize;
-            if self.raw[0] != 0x16 {
-                other = true;
-                break;
-            }
-            if self.raw.len() < 5 + len {
-                break;
-            }
-            self.hs.extend_from_slice(&self.raw[5..5 + len]);
-            self.raw.drain(..5 + len);
-        }
-        if self.hs.len() >= 4 {
-            let len = u32::from_be_bytes([0, self.hs[1], self.hs[2], self.hs[3]]) as usize;
-            if self.hs.len() >= 4 + len {
-                self.done = true;
-                return Some((self.hs[0], self.hs[4..4 + len].to_vec()));
-            }
-        }
-        if other || self.raw.len() + self.hs.len() > MAX_HELLO {
-            self.done = true;
-        }
-        None
-    }
 }
 
 struct Cur<'a>(&'a [u8]);
@@ -105,19 +58,14 @@ fn alpn_list(d: &[u8]) -> Vec<String> {
     out
 }
 
-/// SNI and ALPN offers from a ClientHello body.
-pub fn client_hello(body: &[u8], info: &mut TlsInfo) {
+/// SNI and ALPN offers from a ClientHello body; returns the client random.
+pub fn client_hello(body: &[u8], info: &mut TlsInfo) -> Option<[u8; 32]> {
     let mut c = Cur(body);
-    let parsed = (|| {
-        c.take(2 + 32)?;
-        c.vec8()?; // session id
-        c.vec16()?; // cipher suites
-        c.vec8()?; // compression
-        Some(())
-    })();
-    if parsed.is_none() {
-        return;
-    }
+    c.take(2)?;
+    let random: [u8; 32] = c.take(32)?.try_into().ok()?;
+    c.vec8()?; // session id
+    c.vec16()?; // cipher suites
+    c.vec8()?; // compression
     for (t, d) in extensions(c) {
         match t {
             0 => {
@@ -141,20 +89,37 @@ pub fn client_hello(body: &[u8], info: &mut TlsInfo) {
             _ => {}
         }
     }
+    Some(random)
+}
+
+/// The random of a HelloRetryRequest (RFC 8446, 4.1.3): SHA-256 of "HelloRetryRequest".
+const HELLO_RETRY: [u8; 32] = [
+    0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91, 0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2,
+    0xc8, 0xa8, 0x33, 0x9c,
+];
+
+/// What the ServerHello chose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerHello {
+    pub random: [u8; 32],
+    pub suite: u16,
+    /// The negotiated version (supported_versions for TLS 1.3).
+    pub version: u16,
+    /// Encrypt-then-MAC (RFC 7366) for CBC suites.
+    pub etm: bool,
+    /// A HelloRetryRequest: another ClientHello and ServerHello follow.
+    pub retry: bool,
 }
 
 /// Version, cipher suite and chosen ALPN from a ServerHello body.
-pub fn server_hello(body: &[u8], info: &mut TlsInfo) {
+pub fn server_hello(body: &[u8], info: &mut TlsInfo) -> Option<ServerHello> {
     let mut c = Cur(body);
-    let Some(mut version) = c.u16() else { return };
-    let suite = (|| {
-        c.take(32)?;
-        c.vec8()?;
-        let s = c.u16()?;
-        c.u8()?;
-        Some(s)
-    })();
-    let Some(suite) = suite else { return };
+    let mut version = c.u16()?;
+    let random: [u8; 32] = c.take(32)?.try_into().ok()?;
+    c.vec8()?;
+    let suite = c.u16()?;
+    c.u8()?;
+    let mut etm = false;
     for (t, d) in extensions(c) {
         match t {
             43 if d.len() == 2 => version = u16::from_be_bytes([d[0], d[1]]),
@@ -163,6 +128,7 @@ pub fn server_hello(body: &[u8], info: &mut TlsInfo) {
                     info.alpn = Some(p);
                 }
             }
+            22 => etm = true,
             _ => {}
         }
     }
@@ -172,9 +138,11 @@ pub fn server_hello(body: &[u8], info: &mut TlsInfo) {
         0x0302 => "TLS 1.1".into(),
         0x0303 => "TLS 1.2".into(),
         0x0304 => "TLS 1.3".into(),
+        v if v >> 8 == 0x7f => format!("TLS 1.3 (draft {})", v & 0xff),
         v => format!("0x{v:04X}"),
     };
     info.cipher = cipher_name(suite);
+    Some(ServerHello { random, suite, version, etm, retry: random == HELLO_RETRY })
 }
 
 fn cipher_name(s: u16) -> String {
@@ -194,6 +162,25 @@ fn cipher_name(s: u16) -> String {
         0x009d => "TLS_RSA_WITH_AES_256_GCM_SHA384",
         0x002f => "TLS_RSA_WITH_AES_128_CBC_SHA",
         0x0035 => "TLS_RSA_WITH_AES_256_CBC_SHA",
+        0x003c => "TLS_RSA_WITH_AES_128_CBC_SHA256",
+        0x003d => "TLS_RSA_WITH_AES_256_CBC_SHA256",
+        0x0033 => "TLS_DHE_RSA_WITH_AES_128_CBC_SHA",
+        0x0039 => "TLS_DHE_RSA_WITH_AES_256_CBC_SHA",
+        0x0067 => "TLS_DHE_RSA_WITH_AES_128_CBC_SHA256",
+        0x006b => "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256",
+        0x009e => "TLS_DHE_RSA_WITH_AES_128_GCM_SHA256",
+        0x009f => "TLS_DHE_RSA_WITH_AES_256_GCM_SHA384",
+        0xc009 => "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA",
+        0xc00a => "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA",
+        0xc023 => "TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256",
+        0xc024 => "TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384",
+        0xc027 => "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256",
+        0xc028 => "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384",
+        0xccaa => "TLS_DHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+        0xccab => "TLS_PSK_WITH_CHACHA20_POLY1305_SHA256",
+        0xccac => "TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256",
+        0xccad => "TLS_DHE_PSK_WITH_CHACHA20_POLY1305_SHA256",
+        0xccae => "TLS_RSA_PSK_WITH_CHACHA20_POLY1305_SHA256",
         _ => return format!("0x{s:04X}"),
     }
     .into()
@@ -253,18 +240,13 @@ pub(crate) mod tests {
     fn hellos() {
         let ch = client_hello_record("example.org");
         assert!(looks_like_tls(&ch));
-        let mut r = HelloReader::default();
-        assert!(r.feed(&ch[..7]).is_none()); // split across segments
-        let (t, body) = r.feed(&ch[7..]).unwrap();
-        assert_eq!(t, 1);
         let mut info = TlsInfo::default();
-        client_hello(&body, &mut info);
+        // Record header (5) and handshake header (4) before the body.
+        assert_eq!(client_hello(&ch[9..], &mut info), Some([0; 32]));
         assert_eq!(info.sni.as_deref(), Some("example.org"));
         assert_eq!(info.alpn.as_deref(), Some("h2, http/1.1"));
-        let mut r = HelloReader::default();
-        let (t, body) = r.feed(&server_hello_record()).unwrap();
-        assert_eq!(t, 2);
-        server_hello(&body, &mut info);
+        let sh = server_hello(&server_hello_record()[9..], &mut info).unwrap();
+        assert_eq!((sh.suite, sh.version, sh.etm, sh.retry), (0x1302, 0x0304, false, false));
         assert_eq!(info.version, "TLS 1.3");
         assert_eq!(info.cipher, "TLS13_AES_256_GCM_SHA384");
         assert_eq!(info.alpn.as_deref(), Some("h2"));

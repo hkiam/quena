@@ -49,6 +49,14 @@ impl Ws {
         }
     }
 
+    /// The frames end here (decryption stopped).
+    pub fn cut(&mut self, why: &str) {
+        if !self.broken {
+            self.ex.fail(format!("{why}; later frames are not shown"));
+            self.broken = true;
+        }
+    }
+
     pub fn close(mut self, ts: Micros, cx: &mut Cx) {
         self.ex.end[super::SERVER] = Some(ts);
         cx.emit(self.ex);

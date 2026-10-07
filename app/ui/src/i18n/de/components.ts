@@ -285,6 +285,11 @@ export const components: Record<string, string> = {
   "non-browsers only": "nur Nicht-Browsern",
   "remote clients only": "nur entfernten Clients",
   "Client certificates (mTLS)": "Client-Zertifikate (mTLS)",
+  "Packet captures": "Paketmitschnitte",
+  "TLS key log (SSLKEYLOGFILE) used to decrypt HTTPS in imported pcap/pcapng files. Key logs next to a capture (name.keys, sslkeylog.log) and keys embedded in pcapng are used too.":
+    "TLS-Key-Log (SSLKEYLOGFILE) zum Entschlüsseln von HTTPS in importierten pcap-/pcapng-Dateien. Key-Logs neben einem Mitschnitt (name.keys, sslkeylog.log) und in pcapng eingebettete Schlüssel werden ebenfalls verwendet.",
+  "choose the TLS key log file": "TLS-Key-Log-Datei wählen",
+  "Key log file…": "Key-Log-Datei…",
   "Presented to matching upstream hosts. Cert and key are PEM files (may be the same file).": "Werden passenden Upstream-Hosts vorgelegt. Zertifikat und Schlüssel sind PEM-Dateien (auch dieselbe Datei).",
   "host pattern e.g. *.corp.example": "Host-Muster, z. B. *.corp.example",
   "choose certificate PEM": "Zertifikat-PEM wählen",

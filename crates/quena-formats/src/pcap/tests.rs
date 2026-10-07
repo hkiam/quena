@@ -486,3 +486,315 @@ fn macos_packet_tap() {
     let d = cap.detail(ids.unwrap()[0]).unwrap();
     assert_eq!(d.request.url, "http://localhost:8080/lo");
 }
+
+// ---- TLS decryption: real handshakes between a rustls client and server, in memory ----
+
+mod tls_e2e {
+    use super::*;
+    use rustls::crypto::{CryptoProvider, ring as rr};
+    use rustls::pki_types::{PrivatePkcs8KeyDer, ServerName};
+    use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection, SupportedCipherSuite, SupportedProtocolVersion};
+    use std::io::Write as _;
+    use std::sync::Mutex;
+
+    /// Collects the secrets rustls logs, as an NSS key log.
+    #[derive(Debug, Default)]
+    struct Log(Mutex<String>);
+
+    impl rustls::KeyLog for Log {
+        fn log(&self, label: &str, client_random: &[u8], secret: &[u8]) {
+            let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+            self.0.lock().unwrap().push_str(&format!("{label} {} {}\n", hex(client_random), hex(secret)));
+        }
+        fn will_log(&self, _: &str) -> bool {
+            true
+        }
+    }
+
+    struct Pair {
+        c: ClientConnection,
+        s: ServerConnection,
+        log: Arc<Log>,
+    }
+
+    fn pair(suite: SupportedCipherSuite, version: &'static SupportedProtocolVersion, alpn: &[&[u8]]) -> Pair {
+        let ck = rcgen::generate_simple_self_signed(vec!["example.test".into()]).unwrap();
+        let provider = Arc::new(CryptoProvider { cipher_suites: vec![suite], ..rr::default_provider() });
+        let mut server = ServerConfig::builder_with_provider(provider.clone())
+            .with_protocol_versions(&[version])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![ck.cert.der().clone()], PrivatePkcs8KeyDer::from(ck.signing_key.serialize_der()).into())
+            .unwrap();
+        server.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
+        let mut roots = RootCertStore::empty();
+        roots.add(ck.cert.der().clone()).unwrap();
+        let mut client = ClientConfig::builder_with_provider(provider).with_protocol_versions(&[version]).unwrap().with_root_certificates(roots).with_no_client_auth();
+        client.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
+        let log = Arc::new(Log::default());
+        client.key_log = log.clone();
+        let c = ClientConnection::new(Arc::new(client), ServerName::try_from("example.test").unwrap()).unwrap();
+        let s = ServerConnection::new(Arc::new(server)).unwrap();
+        Pair { c, s, log }
+    }
+
+    impl Pair {
+        /// Move TLS records both ways until both sides are quiet; each flight is a packet.
+        fn pump(&mut self, f: &mut Flow) {
+            loop {
+                let mut moved = false;
+                let mut buf = Vec::new();
+                while self.c.wants_write() {
+                    self.c.write_tls(&mut buf).unwrap();
+                }
+                if !buf.is_empty() {
+                    f.client(&buf);
+                    let mut rd = &buf[..];
+                    while !rd.is_empty() {
+                        self.s.read_tls(&mut rd).unwrap();
+                        self.s.process_new_packets().unwrap();
+                    }
+                    moved = true;
+                }
+                let mut buf = Vec::new();
+                while self.s.wants_write() {
+                    self.s.write_tls(&mut buf).unwrap();
+                }
+                if !buf.is_empty() {
+                    f.server(&buf);
+                    let mut rd = &buf[..];
+                    while !rd.is_empty() {
+                        self.c.read_tls(&mut rd).unwrap();
+                        self.c.process_new_packets().unwrap();
+                    }
+                    moved = true;
+                }
+                if !moved {
+                    return;
+                }
+            }
+        }
+
+        /// One HTTP exchange over the connection.
+        fn exchange(&mut self, f: &mut Flow, req: &[u8], resp: &[u8]) {
+            self.c.writer().write_all(req).unwrap();
+            self.pump(f);
+            let mut got = vec![0u8; req.len()];
+            self.s.reader().read_exact(&mut got).unwrap();
+            assert_eq!(got, req);
+            self.s.writer().write_all(resp).unwrap();
+            self.pump(f);
+            let mut got = vec![0u8; resp.len()];
+            self.c.reader().read_exact(&mut got).unwrap();
+        }
+
+        fn keylog(&self) -> String {
+            self.log.0.lock().unwrap().clone()
+        }
+    }
+
+    fn load_with(file: &[u8], keylog: Option<&str>) -> (tempfile::TempDir, Arc<Capture>, PcapReport) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.pcap");
+        std::fs::write(&path, file).unwrap();
+        let mut opts = PcapOptions::default();
+        if let Some(k) = keylog {
+            let kp = dir.path().join("keys.log");
+            std::fs::write(&kp, k).unwrap();
+            opts.keylogs.push(kp);
+        }
+        let cap = Capture::open(dir.path().join("cap"), BodyConfig::default(), true).unwrap();
+        let r = import_with(&cap, &path, &opts, &NoProgress).unwrap();
+        (dir, cap, r)
+    }
+
+    const REQ1: &[u8] = b"GET /one HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    const RESP1: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst";
+    const REQ2: &[u8] = b"POST /two HTTP/1.1\r\nHost: example.test\r\nContent-Length: 4\r\n\r\ndata";
+    const RESP2: &[u8] = b"HTTP/1.1 201 Created\r\nContent-Length: 6\r\n\r\nsecond";
+
+    /// A TLS connection with two HTTP/1.1 exchanges; `update`: a key update between them.
+    fn h1_capture(suite: SupportedCipherSuite, version: &'static SupportedProtocolVersion, update: bool) -> (Vec<u8>, String) {
+        let mut p = pair(suite, version, &[b"http/1.1"]);
+        let mut f = Flow::new(50100, 443);
+        f.handshake();
+        p.pump(&mut f);
+        p.exchange(&mut f, REQ1, RESP1);
+        if update {
+            p.c.refresh_traffic_keys().unwrap();
+            p.s.refresh_traffic_keys().unwrap();
+        }
+        p.exchange(&mut f, REQ2, RESP2);
+        f.close();
+        (pcap(1, &f.frames), p.keylog())
+    }
+
+    fn assert_decrypted(cap: &Arc<Capture>, ids: &[SessionId]) {
+        assert_eq!(ids.len(), 2, "two HTTPS sessions, no tunnel");
+        let a = cap.detail(ids[0]).unwrap();
+        assert_eq!(a.request.url, "https://example.test/one");
+        assert!(a.summary.has_flag(flags::DECRYPTED));
+        assert_eq!(a.connection.client_tls.as_ref().unwrap().sni.as_deref(), Some("example.test"));
+        assert!(a.timers.tls_handshake_ms.is_some());
+        assert_eq!(bodies(cap, ids[0]).1, b"first");
+        let b = cap.detail(ids[1]).unwrap();
+        assert_eq!((b.request.method.as_str(), b.response.unwrap().status), ("POST", 201));
+        assert_eq!(bodies(cap, ids[1]), (b"data".to_vec(), b"second".to_vec()));
+        assert!(b.error.is_none());
+    }
+
+    #[test]
+    fn tls13_with_key_update() {
+        let (file, keys) = h1_capture(rr::cipher_suite::TLS13_AES_256_GCM_SHA384, &rustls::version::TLS13, true);
+        let (_d, cap, r) = load_with(&file, Some(&keys));
+        assert_eq!((r.tls, r.decrypted, r.no_keys), (1, 1, 0));
+        assert_decrypted(&cap, &r.ids);
+        assert_eq!(cap.detail(r.ids[0]).unwrap().connection.client_tls.unwrap().version, "TLS 1.3");
+    }
+
+    #[test]
+    fn tls12_gcm_and_chacha() {
+        for suite in [rr::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, rr::cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256] {
+            let (file, keys) = h1_capture(suite, &rustls::version::TLS12, false);
+            let (_d, cap, r) = load_with(&file, Some(&keys));
+            assert_eq!(r.decrypted, 1, "{suite:?}");
+            assert_decrypted(&cap, &r.ids);
+        }
+    }
+
+    #[test]
+    fn without_keys_a_tunnel_with_embedded_keys_decrypted() {
+        let (file, keys) = h1_capture(rr::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256, &rustls::version::TLS13, false);
+        let (_d, cap, r) = load_with(&file, None);
+        assert_eq!((r.tls, r.decrypted, r.no_keys), (1, 0, 1));
+        let d = cap.detail(r.ids[0]).unwrap();
+        assert_eq!((d.summary.kind, d.request.url.as_str()), (SessionKind::Tunnel, "example.test:443"));
+        // The same packets as pcapng with the secrets embedded (Wireshark's "Inject secrets").
+        let mut frames = Vec::new();
+        let mut rd = file::Reader::new(&file[..]).unwrap();
+        while let Some(file::Item::Packet(p)) = rd.next().unwrap() {
+            frames.push((p.ts, p.data));
+        }
+        let ng = super::super::file::tests::pcapng_with_secrets(1, &frames, Some(keys.as_bytes()));
+        let (_d, cap, r) = load_with(&ng, None);
+        assert_eq!(r.decrypted, 1);
+        assert_decrypted(&cap, &r.ids);
+    }
+
+    #[test]
+    fn http2_inside_tls() {
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"h2"]);
+        let mut f = Flow::new(50101, 443);
+        f.handshake();
+        p.pump(&mut f);
+        let mut enc = fluke_hpack::Encoder::new();
+        let req = enc.encode(vec![(&b":method"[..], &b"GET"[..]), (b":scheme", b"https"), (b":authority", b"example.test"), (b":path", b"/h2")]);
+        let mut senc = fluke_hpack::Encoder::new();
+        let resp = senc.encode(vec![(&b":status"[..], &b"200"[..])]);
+        let client = [h2::PREFACE.to_vec(), h2_frame(4, 0, 0, &[]), h2_frame(1, 0x4 | 0x1, 1, &req)].concat();
+        let server = [h2_frame(4, 0, 0, &[]), h2_frame(1, 0x4, 1, &resp), h2_frame(0, 0x1, 1, b"over h2")].concat();
+        p.exchange(&mut f, &client, &server);
+        f.close();
+        let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
+        assert_eq!(r.ids.len(), 1);
+        let d = cap.detail(r.ids[0]).unwrap();
+        assert_eq!((d.request.url.as_str(), d.request.version), ("https://example.test/h2", HttpVersion::Http2));
+        assert_eq!(bodies(&cap, r.ids[0]).1, b"over h2");
+    }
+
+    #[test]
+    fn tls13_handshake_secrets_alone_are_not_enough() {
+        let (file, keys) = h1_capture(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, false);
+        let partial: String = keys.lines().filter(|l| l.contains("HANDSHAKE")).map(|l| format!("{l}\n")).collect();
+        let (_d, cap, r) = load_with(&file, Some(&partial));
+        assert_eq!((r.decrypted, r.no_keys), (0, 1));
+        assert_eq!(cap.detail(r.ids[0]).unwrap().summary.kind, SessionKind::Tunnel);
+    }
+
+    #[test]
+    fn a_gap_ends_decryption_and_says_so() {
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"http/1.1"]);
+        let mut f = Flow::new(50103, 443);
+        f.handshake();
+        p.pump(&mut f);
+        p.exchange(&mut f, REQ1, RESP1);
+        // The second response is sent but missing from the capture.
+        p.c.writer().write_all(REQ2).unwrap();
+        p.pump(&mut f);
+        p.s.writer().write_all(RESP2).unwrap();
+        let mut lost = Vec::new();
+        while p.s.wants_write() {
+            p.s.write_tls(&mut lost).unwrap();
+        }
+        f.lost(false, lost.len());
+        f.client(b""); // the client acknowledges it
+        f.close();
+        let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
+        let all: Vec<_> = r.ids.iter().map(|i| cap.detail(*i).unwrap()).collect();
+        let second = all.iter().find(|d| d.request.url.ends_with("/two")).unwrap();
+        assert!(second.error.as_deref().unwrap().contains("bytes of the encrypted connection are missing"), "{:?}", second.error);
+        // The tunnel stays, to say why decryption stopped.
+        let tunnel = all.iter().find(|d| d.summary.kind == SessionKind::Tunnel).unwrap();
+        assert!(tunnel.error.as_deref().unwrap().contains("could not be decrypted"));
+        assert!(all.iter().find(|d| d.request.url.ends_with("/one")).unwrap().error.is_none());
+    }
+
+    #[test]
+    fn requests_without_host_name_the_tls_server() {
+        let req = b"GET /nohost HTTP/1.1\r\n\r\n";
+        // Through a proxy: the CONNECT target, not the proxy's address.
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"http/1.1"]);
+        let mut f = Flow::new(50104, 3128);
+        f.handshake()
+            .client(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n")
+            .server(b"HTTP/1.1 200 Connection established\r\n\r\n");
+        p.pump(&mut f);
+        p.exchange(&mut f, req, RESP1);
+        f.close();
+        let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
+        assert_eq!(cap.detail(r.ids[1]).unwrap().request.url, "https://example.test/nohost");
+        // Direct: the server name from the ClientHello.
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"http/1.1"]);
+        let mut f = Flow::new(50105, 443);
+        f.handshake();
+        p.pump(&mut f);
+        p.exchange(&mut f, req, RESP1);
+        f.close();
+        let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
+        assert_eq!(cap.detail(r.ids[0]).unwrap().request.url, "https://example.test/nohost");
+    }
+
+    #[test]
+    fn connect_tunnel_through_a_proxy() {
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"http/1.1"]);
+        let mut f = Flow::new(50102, 3128);
+        f.handshake()
+            .client(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n")
+            .server(b"HTTP/1.1 200 Connection established\r\n\r\n");
+        p.pump(&mut f);
+        p.exchange(&mut f, REQ1, RESP1);
+        f.close();
+        let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
+        assert_eq!(r.ids.len(), 2);
+        let tunnel = cap.detail(r.ids[0]).unwrap();
+        assert_eq!((tunnel.summary.kind, tunnel.request.method.as_str()), (SessionKind::Tunnel, "CONNECT"));
+        let inner = cap.detail(r.ids[1]).unwrap();
+        assert_eq!(inner.request.url, "https://example.test/one");
+        assert!(inner.connection.server_conn_reused);
+    }
+}
+
+#[test]
+fn large_key_logs_keep_their_newest_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("keys.log");
+    let old = format!("CLIENT_RANDOM {} {}\n", "01".repeat(32), "aa".repeat(48));
+    let new = format!("CLIENT_RANDOM {} {}\n", "02".repeat(32), "bb".repeat(48));
+    std::fs::write(&p, [old.repeat(10), new.clone()].concat()).unwrap();
+    let (text, cut) = read_key_log(&p, (new.len() + 20) as u64).unwrap();
+    assert!(cut);
+    assert_eq!(text, new.as_bytes(), "a partial first line is dropped");
+    let k = KeyLog::parse(&text);
+    assert!(k.get(&[2; 32]).is_some() && k.get(&[1; 32]).is_none());
+    assert!(!read_key_log(&p, 1 << 20).unwrap().1);
+}
