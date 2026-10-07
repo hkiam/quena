@@ -7,6 +7,8 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-10-07
+
 ### Changed
 - **Loading an archive or packet capture no longer mixes it with live traffic.** Capturing
   stops, and when the list already holds sessions, Quena asks whether to remove them (only
@@ -540,7 +542,8 @@ Internal test build (not tagged) — an early preview for trying Quena on macOS 
 - Client certificates (mTLS) per host; bandwidth and latency simulation.
 - SAZ (compatible with Fiddler Classic) and HAR 1.2 import/export; copy as cURL.
 
-[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/hkiam/quena/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/hkiam/quena/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/hkiam/quena/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/hkiam/quena/compare/v0.1.3...v0.1.4

@@ -36,7 +36,7 @@ jobs:
           fi
 
       - id: quena
-        uses: hkiam/quena/diagnose@v0.1.6
+        uses: hkiam/quena/diagnose@v0.1.7
         with:
           files: captures/*.har
           config: quena-gate.json

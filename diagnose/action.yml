@@ -33,7 +33,7 @@ inputs:
     description: Further arguments for quena-cli diagnose (split at spaces, not glob-expanded).
     default: ""
   version:
-    description: quena-cli release to use (e.g. 0.1.6) or "latest" (the newest published release, prereleases included). Default is the release the action is used from (hkiam/quena/diagnose@v0.1.6); for other refs (@main) the latest.
+    description: quena-cli release to use (e.g. 0.1.7) or "latest" (the newest published release, prereleases included). Default is the release the action is used from (hkiam/quena/diagnose@v0.1.7); for other refs (@main) the latest.
     default: ""
   bin:
     description: Path to an existing quena-cli instead of downloading one.
