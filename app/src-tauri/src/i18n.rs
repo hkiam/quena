@@ -48,6 +48,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Request Body…" => "Request-Body…",
         "HTTP Archive (HAR)…" => "HTTP-Archiv (HAR)…",
         "SAZ Archive…" => "SAZ-Archiv…",
+        "Packet Capture (pcap, pcapng)…" => "Paketmitschnitt (pcap, pcapng)…",
         "cURL Script…" => "cURL-Skript…",
         "Sanitized for Sharing (SAZ/HAR)…" => "Bereinigt zum Weitergeben (SAZ/HAR)…",
         "Mocks…" => "Mocks…",

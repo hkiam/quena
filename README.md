@@ -241,6 +241,8 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Client certificates (mTLS)** per host
 - **Bandwidth & latency simulation**
 - Import/export **SAZ** (compatible with Fiddler Classic), **HAR 1.2**, copy as cURL
+- Import **packet captures** (Wireshark/tcpdump `.pcap`, `.pcapng`): HTTP/1.x, WebSocket and
+  cleartext HTTP/2 become sessions; TLS connections show up as tunnels
 
 </td>
 </tr>
@@ -486,7 +488,7 @@ Quena is a Rust core with a thin, fast UI:
 │ quena-auth       NTLMv2, Negotiate/Kerberos (GSS, SSPI)       │
 │ quena-script     QuickJS rules + PAC evaluation               │
 │ quena-plugin-host  Wasmtime component host (sandboxed)        │
-│ quena-formats    SAZ, HAR, cURL, raw HTTP                     │
+│ quena-formats    SAZ, HAR, pcap, cURL, raw HTTP               │
 │ quena-query · quena-model · quena-jobs · quena-platform       │
 └───────────────────────────────────────────────────────────────┘
 ```

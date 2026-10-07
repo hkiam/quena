@@ -4,6 +4,7 @@
 pub mod curl;
 pub mod har;
 pub mod http_file;
+pub mod pcap;
 pub mod raw;
 pub mod saz;
 mod time_fmt;

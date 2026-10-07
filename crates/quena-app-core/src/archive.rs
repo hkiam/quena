@@ -26,6 +26,13 @@ pub enum ArchiveFormat {
     Saz,
     Har,
     Curl,
+    /// Packet capture (pcap, pcapng): import only.
+    Pcap,
+}
+
+/// Can [`AppCore::import_archive`] load this file (by its extension)?
+pub fn importable(path: &std::path::Path) -> bool {
+    matches!(format_of(path), Some(ArchiveFormat::Saz | ArchiveFormat::Har | ArchiveFormat::Pcap))
 }
 
 fn format_of(path: &std::path::Path) -> Option<ArchiveFormat> {
@@ -33,6 +40,7 @@ fn format_of(path: &std::path::Path) -> Option<ArchiveFormat> {
         "saz" | "zip" => Some(ArchiveFormat::Saz),
         "har" | "json" => Some(ArchiveFormat::Har),
         "sh" | "txt" => Some(ArchiveFormat::Curl),
+        "pcap" | "pcapng" | "cap" => Some(ArchiveFormat::Pcap),
         _ => None,
     }
 }
@@ -49,6 +57,7 @@ impl AppCore {
                 ArchiveFormat::Saz => quena_formats::saz::export(&cap, &ids, &path, &P(ctx)),
                 ArchiveFormat::Har => quena_formats::har::export(&cap, &ids, &path, &HarOptions::default(), &P(ctx)),
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("use Copy → As cURL".into())),
+                ArchiveFormat::Pcap => Err(quena_formats::FormatError::Invalid("sessions cannot be saved as a packet capture".into())),
             }
             .map_err(|e| e.to_string())?;
             tracing::info!(target: "quena", "saved {n} session(s) to {}", path.display());
@@ -74,7 +83,7 @@ impl AppCore {
 
     fn export_sanitized_as(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>, opts: SanitizeOptions, ui: bool) -> Result<JobId> {
         let format = format.or_else(|| format_of(&path)).ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
-        if format == ArchiveFormat::Curl {
+        if matches!(format, ArchiveFormat::Curl | ArchiveFormat::Pcap) {
             return Err(anyhow!("a sanitized export is a .saz or .har file"));
         }
         opts.validate().map_err(|e| anyhow!(e))?;
@@ -109,7 +118,7 @@ impl AppCore {
     }
 
     fn import_file(self: &Arc<Self>, path: PathBuf, name: String, remove_after: bool) -> Result<JobId> {
-        let format = format_of(&path).ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
+        let format = format_of(&path).ok_or_else(|| anyhow!("unknown archive type (use .saz, .har, .pcap or .pcapng)"))?;
         let cap = self.capture();
         let title = format!("Loading {name}");
         // A temporary copy goes away with the job: after the import, when it fails or panics,
@@ -121,6 +130,7 @@ impl AppCore {
                 ArchiveFormat::Saz => quena_formats::saz::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Har => quena_formats::har::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("cannot import cURL scripts".into())),
+                ArchiveFormat::Pcap => quena_formats::pcap::import(&cap, &path, &P(ctx)),
             };
             let ids = ids.map_err(|e| e.to_string())?;
             tracing::info!(target: "quena", "loaded {} session(s) from {name}", ids.len());
@@ -139,7 +149,8 @@ impl AppCore {
         let ext = match format_of(std::path::Path::new(name)) {
             Some(ArchiveFormat::Saz) => "saz",
             Some(ArchiveFormat::Har) => "har",
-            _ => return Err(anyhow!("{name}: not an archive (use .saz or .har)")),
+            Some(ArchiveFormat::Pcap) => "pcapng",
+            _ => return Err(anyhow!("{name}: not an archive (use .saz, .har, .pcap or .pcapng)")),
         };
         let dir = self.paths.data.join("dropped");
         std::fs::create_dir_all(&dir)?;
@@ -296,7 +307,7 @@ pub fn sanitized_export(
             let o = HarOptions { comment: Some(log.summary_line()), extra: vec![("_quenaRedaction".into(), serde_json::to_value(&log)?)], ..HarOptions::default() };
             quena_formats::har::export(tmp.cap(), &copied, path, &o, &half)?;
         }
-        ArchiveFormat::Curl => return Err(anyhow!("a sanitized export is a .saz or .har file")),
+        ArchiveFormat::Curl | ArchiveFormat::Pcap => return Err(anyhow!("a sanitized export is a .saz or .har file")),
     }
     p.progress(total, total);
     Ok(log)

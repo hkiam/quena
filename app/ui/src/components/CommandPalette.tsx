@@ -32,6 +32,7 @@ const COMMANDS: Cmd[] = [
   { id: "file.save-selected", label: t("Save selected sessions"), group: t("File") },
   { id: "file.import-har", label: t("Import HAR"), group: t("File") },
   { id: "file.import-saz", label: t("Import SAZ archive"), group: t("File") },
+  { id: "file.import-pcap", label: t("Import packet capture (pcap, pcapng)"), group: t("File") },
   { id: "file.export-har", label: t("Export HAR"), group: t("File") },
   { id: "file.export-saz", label: t("Export SAZ archive"), group: t("File") },
   { id: "file.export-curl", label: t("Export as cURL script"), group: t("File") },

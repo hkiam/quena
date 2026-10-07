@@ -1,16 +1,18 @@
-// File menu: archives (SAZ/HAR), bodies, cURL scripts.
+// File menu: archives (SAZ/HAR, packet captures to import), bodies, cURL scripts.
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import { get, say, set } from "./store";
 import { buildCurl } from "./lib/http";
 import { snippetBody } from "./lib/bodytext";
 import { plural, t } from "./i18n";
+import { ARCHIVE_EXTENSIONS, CAPTURE_EXTENSIONS } from "./lib/importFormats";
 
 const ARCHIVES = [
-  { name: t("Session Archive"), extensions: ["saz", "har"] },
+  { name: t("Session Archive"), extensions: ARCHIVE_EXTENSIONS },
   { name: t("SAZ Session Archive"), extensions: ["saz"] },
   { name: t("HTTP Archive (HAR)"), extensions: ["har"] },
 ];
+const CAPTURES = { name: t("Packet Capture"), extensions: CAPTURE_EXTENSIONS };
 
 function stamp() {
   const d = new Date();
@@ -33,8 +35,9 @@ async function saveArchive(ids: number[], ext: "saz" | "har") {
   }
 }
 
-async function loadArchive() {
-  const path = await open({ multiple: false, filters: ARCHIVES });
+async function loadArchive(captures = false) {
+  const all = { name: t("Session Archive or Packet Capture"), extensions: [...ARCHIVE_EXTENSIONS, ...CAPTURE_EXTENSIONS] };
+  const path = await open({ multiple: false, filters: captures ? [CAPTURES, all] : [all, ...ARCHIVES, CAPTURES] });
   if (typeof path !== "string") return;
   try {
     await api.importArchive(path);
@@ -51,6 +54,9 @@ export async function handleFileMenu(id: string): Promise<boolean> {
     case "file.import-saz":
     case "file.import-har":
       await loadArchive();
+      return true;
+    case "file.import-pcap":
+      await loadArchive(true);
       return true;
     case "file.save-all":
     case "file.export-saz":

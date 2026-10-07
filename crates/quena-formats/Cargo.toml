@@ -19,6 +19,9 @@ time.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 rand.workspace = true
+etherparse = "0.21"
+fluke-hpack = "0.3"
+http = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

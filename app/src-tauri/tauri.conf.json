@@ -99,6 +99,16 @@
         "description": "HTTP Archive",
         "role": "Viewer",
         "rank": "Alternate"
+      },
+      {
+        "ext": [
+          "pcap",
+          "pcapng"
+        ],
+        "name": "Packet Capture",
+        "description": "Packet capture (pcap, pcapng)",
+        "role": "Viewer",
+        "rank": "Alternate"
       }
     ]
   }

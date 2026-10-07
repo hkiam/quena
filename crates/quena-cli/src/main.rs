@@ -35,7 +35,7 @@ static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 #[command(
     name = "quena-cli",
     version,
-    about = "Quena diagnostics for CI: analyse HAR/SAZ captures, compare with a baseline, fail the build on regressions."
+    about = "Quena diagnostics for CI: analyse HAR/SAZ/pcap captures, compare with a baseline, fail the build on regressions."
 )]
 #[command(
     after_help = "Exit codes: 0 gate passed, 1 gate failed, 2 usage or input error, 3 analysis error.\n\
@@ -73,7 +73,7 @@ enum Command {
 
 #[derive(Args)]
 struct Diagnose {
-    /// Captures to analyse together (.har, .saz).
+    /// Captures to analyse together (.har, .saz, .pcap, .pcapng).
     #[arg(required = true, value_name = "CAPTURE")]
     files: Vec<PathBuf>,
     /// Analysis profile: full, performance, troubleshooting, auth, resilience, modernization.
@@ -106,7 +106,7 @@ struct Diagnose {
 
 #[derive(Args)]
 struct SanitizeArgs {
-    /// Captures to sanitize together (.har, .saz).
+    /// Captures to sanitize together (.har, .saz, .pcap, .pcapng).
     #[arg(required = true, value_name = "CAPTURE")]
     files: Vec<PathBuf>,
     /// The sanitized archive (.saz or .har).
@@ -138,7 +138,7 @@ enum HttpCommand {
     /// Send the requests of a .http file one after the other and print status and time.
     /// Exit code 1 when a request fails or answers with a status of 400 or above.
     Run(HttpRunArgs),
-    /// Write the requests of captures (.har, .saz) as a .http file (with
+    /// Write the requests of captures (.har, .saz, .pcap, .pcapng) as a .http file (with
     /// http-client.env.json / http-client.private.env.json next to it).
     FromHar(HttpFromArgs),
 }
@@ -163,7 +163,7 @@ struct HttpRunArgs {
 
 #[derive(Args)]
 struct HttpFromArgs {
-    /// Captures (.har, .saz).
+    /// Captures (.har, .saz, .pcap, .pcapng).
     #[arg(required = true, value_name = "CAPTURE")]
     files: Vec<PathBuf>,
     /// The .http file to write.
@@ -176,7 +176,7 @@ struct HttpFromArgs {
 
 #[derive(Args)]
 struct MockArgs {
-    /// Captures to turn into mocks (.har, .saz).
+    /// Captures to turn into mocks (.har, .saz, .pcap, .pcapng).
     #[arg(required = true, value_name = "CAPTURE")]
     files: Vec<PathBuf>,
     /// WireMock mappings and __files: a folder (its old mappings and __files are replaced),

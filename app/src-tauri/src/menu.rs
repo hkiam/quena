@@ -64,7 +64,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 app,
                 tr("Import Sessions"),
                 true,
-                &[&item(app, "file.import-har", "HTTP Archive (HAR)…", None)?, &item(app, "file.import-saz", "SAZ Archive…", None)?],
+                &[
+                    &item(app, "file.import-har", "HTTP Archive (HAR)…", None)?,
+                    &item(app, "file.import-saz", "SAZ Archive…", None)?,
+                    &item(app, "file.import-pcap", "Packet Capture (pcap, pcapng)…", None)?,
+                ],
             )?,
             &Submenu::with_items(
                 app,

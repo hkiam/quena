@@ -188,6 +188,7 @@ export const components: Record<string, string> = {
   "Save selected sessions": "Ausgewählte Sessions speichern",
   "Import HAR": "HAR importieren",
   "Import SAZ archive": "SAZ-Archiv importieren",
+  "Import packet capture (pcap, pcapng)": "Paketmitschnitt importieren (pcap, pcapng)",
   "Export HAR": "HAR exportieren",
   "Export SAZ archive": "SAZ-Archiv exportieren",
   "Export as cURL script": "Als cURL-Skript exportieren",

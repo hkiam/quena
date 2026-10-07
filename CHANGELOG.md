@@ -7,6 +7,18 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Added
+- **Packet captures from Wireshark and tcpdump can be loaded** (`.pcap`, `.pcapng`):
+  *File → Import Sessions → Packet Capture (pcap, pcapng)…*, *File → Load Archive…*, drag and
+  drop, or `quena-cli`. Quena puts the TCP connections back together, including packets that
+  arrive out of order or twice. Plain HTTP/1.x (keep-alive, pipelining, chunked bodies),
+  WebSocket messages and cleartext HTTP/2 (h2c, gRPC) become sessions, with the client and
+  server address and timings from the packet times. HTTPS cannot be read without its keys:
+  each TLS connection shows up as a tunnel with its server name (SNI), ALPN, TLS version and
+  cipher, also behind a `CONNECT` to a proxy. Where packets are missing from the capture
+  (lost, or cut short by the snapshot length), the affected session says so in its error,
+  and the requests and responses after it still pair up correctly.
+
 ## [0.1.6] — 2026-10-07
 
 ### Fixed

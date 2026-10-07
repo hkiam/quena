@@ -265,10 +265,9 @@ fn watch_session_end(core: Core) {
     }
 }
 
-/// A session archive Quena can import (`.saz`, `.har`) as an absolute path string.
+/// A session archive or packet capture Quena can import, as an absolute path string.
 fn archive_path(p: &std::path::Path) -> Option<String> {
-    let ext = p.extension()?.to_string_lossy().to_ascii_lowercase();
-    if (ext == "saz" || ext == "har") && p.is_file() {
+    if quena_app_core::archive::importable(p) && p.is_file() {
         Some(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().into_owned())
     } else {
         None

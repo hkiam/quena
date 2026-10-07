@@ -1,8 +1,9 @@
-// Load .saz/.har files dropped onto the window. The webview only has the files' bytes (no
+// Load .saz/.har archives and .pcap/.pcapng captures dropped onto the window. The webview only has the files' bytes (no
 // paths), so they are sent to the backend in chunks and imported from a temporary copy.
 import { api, isTauri } from "../api";
 import { say } from "../store";
 import { plural, t } from "../i18n";
+import { isImportableName } from "./importFormats";
 
 const CHUNK = 4 << 20;
 
@@ -11,9 +12,6 @@ function trace(step: string, detail?: unknown) {
   const w = window as unknown as { __quenaDrop?: { step: string; detail?: string }[] };
   (w.__quenaDrop ??= []).push({ step, detail: detail === undefined ? undefined : String(detail) });
 }
-const ARCHIVE = /\.(saz|har|zip|json)$/i;
-
-export const isArchiveName = (name: string) => ARCHIVE.test(name);
 
 async function send(file: File) {
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -34,9 +32,9 @@ export async function importDropped(files: File[]) {
     await import("../panels/autoresponderActions").then((m) => m.importMockPackageFiles(packages));
     if (!files.length) return;
   }
-  const ok = files.filter((f) => isArchiveName(f.name));
+  const ok = files.filter((f) => isImportableName(f.name));
   const skipped = files.length - ok.length;
-  if (skipped) say(plural(skipped, "{n} file skipped: only .saz and .har archives can be dropped", "{n} files skipped: only .saz and .har archives can be dropped"), ok.length ? undefined : "error");
+  if (skipped) say(plural(skipped, "{n} file skipped: only session archives (.saz, .har) and packet captures (.pcap, .pcapng, .cap) can be dropped", "{n} files skipped: only session archives (.saz, .har) and packet captures (.pcap, .pcapng, .cap) can be dropped"), ok.length ? undefined : "error");
   for (const f of ok) {
     try {
       say(t("Loading {path}", { path: f.name }));

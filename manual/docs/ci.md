@@ -80,7 +80,9 @@ certificate, no settings of the desktop app are used or changed.
 ## Recording the captures
 
 Any HAR file works: Playwright, Cypress, browser developer tools, Quena itself (*File →
-Export Sessions → HTTP Archive (HAR)…*), and SAZ archives.
+Export Sessions → HTTP Archive (HAR)…*), and SAZ archives. Packet captures (`.pcap`,
+`.pcapng` from tcpdump or Wireshark) work for plain HTTP and h2c; HTTPS in them stays
+encrypted ([Packet captures](archives.md#packet-captures)).
 
 * **Playwright:** `recordHar` in the context options, one file per test — see the
   [example](https://github.com/hkiam/quena/tree/main/examples/ci-playwright).
