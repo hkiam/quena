@@ -109,7 +109,7 @@ fn parse_header_lines(s: &str) -> Headers {
 }
 
 impl AppCore {
-    fn proxy_engine(&self) -> Result<Arc<ProxyEngine>> {
+    pub(crate) fn proxy_engine(&self) -> Result<Arc<ProxyEngine>> {
         self.proxy_engine.read().clone().ok_or_else(|| anyhow!("capture engine not available"))
     }
 

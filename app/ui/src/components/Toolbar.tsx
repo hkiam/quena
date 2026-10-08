@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { AppWindow, ChevronDown, PanelLeft, FileArchive, History, MessageSquareText, Play, RotateCw, Save, Search, Settings, Trash2, Waves, WandSparkles } from "lucide-react";
+import { AppWindow, ChevronDown, Globe, PanelLeft, FileArchive, History, MessageSquareText, Play, RotateCw, Save, Search, Settings, Trash2, Waves, WandSparkles } from "lucide-react";
 import { api } from "../api";
 import { actions } from "../actions";
 import { set, useStore } from "../store";
@@ -45,6 +45,7 @@ export function Toolbar() {
     <div className="toolbar">
       <Btn icon={PanelLeft} active={navOpen} title={t("Navigator: narrow the list to a group or path")} onClick={() => actions.showNavigator(!navOpen)} />
       <CaptureSwitch />
+      <Btn icon={Globe} menu title={t("Start a browser or terminal that uses Quena")} onClick={(e) => void import("./LaunchDialog").then((m) => m.launchMenu(e.clientX, e.clientY + 8))} />
       <div className="tb-group">
         <Btn
           icon={RotateCw}

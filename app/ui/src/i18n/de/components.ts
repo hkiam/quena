@@ -476,4 +476,21 @@ export const components: Record<string, string> = {
   "Requests whose path starts with a prefix go to its target; the longest prefix wins, all others go to the target above.":
     "Requests, deren Pfad mit einem Präfix beginnt, gehen an dessen Ziel; der längste Präfix gewinnt, alle anderen gehen an das Ziel oben.",
   "Transparent": "Transparent",
+  // Capture → Start Browser… / Open Terminal
+  "Start a browser that uses Quena": "Browser starten, der Quena nutzt",
+  "Open a terminal that uses Quena": "Terminal öffnen, das Quena nutzt",
+  "Start Browser or Terminal": "Browser oder Terminal starten",
+  "{name} started with Quena as proxy": "{name} mit Quena als Proxy gestartet",
+  "Terminal opened: proxy and root certificate are set for its tools": "Terminal geöffnet: Proxy und Stammzertifikat sind für seine Tools gesetzt",
+  "Start {name}": "{name} starten",
+  "No supported browser found": "Kein unterstützter Browser gefunden",
+  "Open Terminal": "Terminal öffnen",
+  "Start with URL…": "Mit URL starten…",
+  "Starts a program whose traffic goes through Quena, without changing the system proxy. Capturing starts if it is off.":
+    "Startet ein Programm, dessen Traffic über Quena läuft, ohne den Systemproxy zu ändern. Die Aufzeichnung startet, falls sie aus ist.",
+  "Start URL": "Start-URL",
+  "Looking for browsers…": "Suche Browser…",
+  "Chrome, Edge, Brave and Vivaldi get their own profile and accept Quena's certificates in it. Firefox uses the system's trusted roots: trust the Quena root certificate first (Capture → HTTPS Settings…). The terminal sets HTTP_PROXY, HTTPS_PROXY and the root certificate for Node.js, Python, curl, Git and others.":
+    "Chrome, Edge, Brave und Vivaldi bekommen ein eigenes Profil und akzeptieren darin die Zertifikate von Quena. Firefox nutzt die vertrauenswürdigen Stammzertifikate des Systems: vorher dem Quena-Stammzertifikat vertrauen (Aufzeichnung → HTTPS-Einstellungen…). Das Terminal setzt HTTP_PROXY, HTTPS_PROXY und das Stammzertifikat für Node.js, Python, curl, Git und andere.",
+  "Start a browser or terminal that uses Quena": "Browser oder Terminal starten, das Quena nutzt",
 };

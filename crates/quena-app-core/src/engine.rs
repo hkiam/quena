@@ -195,7 +195,7 @@ impl ProxyEngine {
         Ok(e)
     }
 
-    fn ensure_ca(&self) -> Result<Arc<CertAuthority>> {
+    pub(crate) fn ensure_ca(&self) -> Result<Arc<CertAuthority>> {
         if let Some(c) = self.ca.read().clone() {
             return Ok(c);
         }

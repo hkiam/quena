@@ -3,10 +3,13 @@
 //! * system proxy: read the current configuration, point it to Quena,
 //!   restore it (also after a crash via a backup file);
 //! * root certificate trust: install/remove/check;
-//! * process lookup: map a client TCP port to the owning process.
+//! * process lookup: map a client TCP port to the owning process;
+//! * starting browsers and terminals that use Quena ([`launch`]).
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+pub mod launch;
 
 #[cfg(target_os = "macos")]
 mod macos;

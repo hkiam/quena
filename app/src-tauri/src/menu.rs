@@ -157,6 +157,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "tools.https", "HTTPS Settings…", None)?,
             &item(app, "tools.connect-device", "Connect Device…", None)?,
             &item(app, "tools.reverse-proxy", "Reverse Proxy…", None)?,
+            &item(app, "tools.launch-browser", "Start Browser…", None)?,
+            &item(app, "tools.open-terminal", "Open Terminal", None)?,
             &sep()?,
             &Submenu::with_items(
                 app,

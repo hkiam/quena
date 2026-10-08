@@ -13,6 +13,37 @@ server (or to the next proxy) and records both directions.
 - *Settings → General → Capture traffic on startup* (on by default) decides whether Quena
   captures right after it starts.
 
+## Start a browser or terminal with Quena
+
+Without changing the system proxy, Quena can start programs whose traffic goes through it:
+the **globe button** next to the capture switch, *Capture → Start Browser…* and
+*Capture → Open Terminal*. Capturing starts if it is off.
+
+- **Browsers.** Quena finds Chrome, Edge, Brave, Vivaldi, Chromium and Firefox and starts the
+  chosen one with **its own profile** (kept in Quena's data folder, so logins stay) and Quena as
+  proxy. Your normal browser windows are not affected.
+    - Chrome, Edge, Brave, Vivaldi and Chromium accept Quena's certificates in that profile
+      without the root certificate being trusted by the system
+      (`--ignore-certificate-errors-spki-list`). Chromium shows a notice about this
+      "unsupported command-line flag"; it applies to this profile only. Requests to
+      `localhost` go through Quena too.
+    - Firefox uses the system's trusted roots: trust the Quena root certificate first
+      ([HTTPS and devices](https.md)).
+    - *Start with URL…* opens the dialog to enter a start page.
+- **Terminal.** A new terminal window (Terminal.app, Windows Terminal or `cmd`, or the Linux
+  terminal found) whose shell has:
+    - `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (also in lower case) pointing to Quena;
+    - `NODE_EXTRA_CA_CERTS` with Quena's root certificate;
+    - on macOS and Linux also `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
+      `GIT_SSL_CAINFO`, `AWS_CA_BUNDLE`, `PIP_CERT` and `CARGO_HTTP_CAINFO` with a bundle of
+      the system's roots plus Quena's (`quena-ca-bundle.pem` in the data folder).
+
+    On Windows, curl, Git and Python use the system store: trust the Quena root certificate
+    there. Java has its own trust store; import the certificate with
+    `keytool -importcert -cacerts -alias quena -file quena-root-ca.pem`.
+
+Agents can do the same with the MCP tools `launch_browser` and `open_terminal`.
+
 ## Listen port
 
 Quena listens on **port 8866** by default (`127.0.0.1:8866`). Change it in

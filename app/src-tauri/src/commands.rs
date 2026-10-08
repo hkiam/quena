@@ -503,6 +503,27 @@ async fn reveal_path(path: String) -> R<()> {
     quena_platform::reveal(std::path::Path::new(&path)).map_err(e)
 }
 
+/// Browsers that can be started with Quena as proxy.
+#[tauri::command]
+async fn browsers_list(core: State<'_, Core>) -> R<Vec<quena_app_core::launch::BrowserInfo>> {
+    let c = core.inner().clone();
+    blocking(move || Ok(c.browsers())).await
+}
+
+/// Start a browser with its own profile and Quena as proxy (starts capturing if needed).
+#[tauri::command]
+async fn launch_browser(core: State<'_, Core>, kind: String, url: Option<String>) -> R<String> {
+    let c = core.inner().clone();
+    blocking(move || c.launch_browser(&kind, url.as_deref().filter(|u| !u.trim().is_empty())).map(|b| b.name).map_err(e)).await
+}
+
+/// Open a terminal whose tools use Quena (starts capturing if needed).
+#[tauri::command]
+async fn open_terminal(core: State<'_, Core>) -> R<()> {
+    let c = core.inner().clone();
+    blocking(move || c.open_terminal().map_err(e)).await
+}
+
 /// One chunk of a file dropped onto the window (raw body; name, offset etc. in headers).
 #[tauri::command]
 async fn drop_chunk(core: State<'_, Core>, request: tauri::ipc::Request<'_>) -> R<Option<u64>> {
@@ -967,6 +988,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         sanitize_presets,
         sanitize_validate,
         reveal_path,
+        browsers_list,
+        launch_browser,
+        open_terminal,
         timers,
         ui_language,
         set_language,

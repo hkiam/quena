@@ -206,6 +206,9 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 
 ### Capture
 - HTTP/1.1, **HTTP/2**, HTTPS (on-the-fly certificates), CONNECT tunnels
+- **Start a browser or terminal** that uses Quena, without the system proxy: Chrome, Edge,
+  Brave, Vivaldi, Chromium or Firefox with their own profile, or a shell with proxy and
+  root-certificate variables for Node.js, Python, curl and Git
 - **Reverse proxy** ports for clients without proxy support: fixed target or one per path,
   HTTPS and cleartext HTTP/2 (gRPC) from the client, redirects pointed back; headless with
   `quena-cli reverse`

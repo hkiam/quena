@@ -3426,3 +3426,18 @@ table.rp-list td {
 .opt-listener input[type="number"] {
   width: 80px;
 }
+/* Capture → Start Browser… */
+.launch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 460px;
+}
+.launch p {
+  margin: 0;
+}
+.launch-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

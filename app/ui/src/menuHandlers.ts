@@ -77,6 +77,10 @@ export async function handleMenu(id: string) {
       return set({ dialog: { kind: "connect-device" } });
     case "tools.reverse-proxy":
       return set({ dialog: { kind: "reverse-proxy" } });
+    case "tools.launch-browser":
+      return set({ dialog: { kind: "launch" } });
+    case "tools.open-terminal":
+      return import("./components/LaunchDialog").then((m) => m.openTerminal());
     case "tools.textwizard":
       return set({ dialog: { kind: "textwizard" } });
     case "tools.composer":

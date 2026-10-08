@@ -17,6 +17,7 @@ const SanitizeDialog = lazy(() => import("./SanitizeDialog").then((m) => ({ defa
 const SanitizeResult = lazy(() => import("./SanitizeDialog").then((m) => ({ default: m.SanitizeResult })));
 const MocksDialog = lazy(() => import("./MocksDialog").then((m) => ({ default: m.MocksDialog })));
 const ReverseProxyPanel = lazy(() => import("./ReverseProxyDialog").then((m) => ({ default: m.ReverseProxyPanel })));
+const LaunchPanel = lazy(() => import("./LaunchDialog").then((m) => ({ default: m.LaunchPanel })));
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { currentLang, plural, t } from "../i18n";
@@ -990,6 +991,12 @@ function DialogBody({ d }: { d: Dialog }) {
       return (
         <Modal title="HTTPS" onClose={close} wide>
           <HttpsPanel />
+        </Modal>
+      );
+    case "launch":
+      return (
+        <Modal title={t("Start Browser or Terminal")} onClose={close}>
+          <LaunchPanel />
         </Modal>
       );
     case "reverse-proxy":

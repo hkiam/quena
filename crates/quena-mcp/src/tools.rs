@@ -296,6 +296,22 @@ static TOOLS: &[Tool] = &[
         run: set_mock_options,
     },
     Tool {
+        name: "launch_browser",
+        description: "Start an installed browser (Chrome, Edge, Brave, Vivaldi, Chromium, Firefox) with its own profile and Quena as proxy, without the system proxy; capturing starts if it is off. Without `kind`, lists the browsers found instead. Chromium browsers accept Quena's certificates in that profile; Firefox needs the root certificate trusted.",
+        write: true,
+        destructive: false,
+        schema: || obj(json!({ "kind": { "type": "string", "description": "chrome, edge, brave, vivaldi, chromium or firefox; omit to list" }, "url": { "type": "string" } })),
+        run: launch_browser,
+    },
+    Tool {
+        name: "open_terminal",
+        description: "Open a terminal window on the user's desktop whose tools use Quena: HTTP_PROXY/HTTPS_PROXY and the root certificate (NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, REQUESTS_CA_BUNDLE …). Capturing starts if it is off.",
+        write: true,
+        destructive: false,
+        schema: || obj(json!({})),
+        run: open_terminal,
+    },
+    Tool {
         name: "list_reverse_proxies",
         description: "Reverse proxy entries (a local port that forwards every request to a target, optionally other targets per path prefix, for clients that cannot use a proxy), and the SOCKS and transparent ports. Shows the settings and, while capturing, whether each listens.",
         write: false,
@@ -1309,6 +1325,26 @@ fn set_mock_options(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     })?;
     let s = r.autoresponder();
     Ok(json!({ "enabled": s.enabled, "unmatchedPassthrough": s.unmatched_passthrough, "enableLatency": s.enable_latency }))
+}
+
+#[derive(Deserialize)]
+struct LaunchArgs {
+    kind: Option<String>,
+    url: Option<String>,
+}
+
+fn launch_browser(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: LaunchArgs = args(a)?;
+    let Some(kind) = a.kind else {
+        return Ok(json!({ "browsers": core.browsers().iter().map(|b| json!({ "kind": b.kind, "name": b.name })).collect::<Vec<_>>() }));
+    };
+    let b = core.launch_browser(&kind, a.url.as_deref())?;
+    Ok(json!({ "started": b.name }))
+}
+
+fn open_terminal(core: &Arc<AppCore>, _: Value) -> Result<Value> {
+    core.open_terminal()?;
+    Ok(json!({ "opened": true }))
 }
 
 fn reverse_json(core: &AppCore) -> Value {

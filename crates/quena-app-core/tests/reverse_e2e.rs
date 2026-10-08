@@ -33,6 +33,10 @@ fn echo_server() -> u16 {
     port
 }
 
+/// The tests check that ports close; run them one after the other, so one test does not
+/// pick a port the other just released.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
@@ -44,6 +48,7 @@ fn get(url: &str) -> String {
 
 #[test]
 fn reverse_proxy_entries() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("settings.json"),
@@ -121,6 +126,7 @@ fn reverse_proxy_entries() {
 
 #[test]
 fn path_routes_socks_and_transparent_settings() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     use quena_app_core::settings::ReversePathEntry;
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

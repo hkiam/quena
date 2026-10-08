@@ -207,6 +207,20 @@ impl CertAuthority {
         hex::encode_upper(d)
     }
 
+    /// The CA's public key (SubjectPublicKeyInfo, DER).
+    pub fn spki_der(&self) -> Vec<u8> {
+        rcgen::PublicKeyData::subject_public_key_info(self.issuer.key())
+    }
+
+    /// base64(SHA-256(SubjectPublicKeyInfo)) of the CA: Chromium's
+    /// `--ignore-certificate-errors-spki-list` accepts Quena's certificates with it, without
+    /// the CA being trusted by the system.
+    pub fn spki_sha256_base64(&self) -> String {
+        use base64::Engine;
+        use sha2::Digest;
+        base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(self.spki_der()))
+    }
+
     /// SHA-256 fingerprint for display.
     pub fn sha256_fingerprint(&self) -> String {
         use sha2::Digest;
@@ -568,6 +582,18 @@ mod tests {
             assert_eq!(mode & 0o777, 0o600);
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn spki_hash_is_stable_and_names_the_certificate_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let ca = CertAuthority::load_or_create(dir.path()).unwrap();
+        // The SubjectPublicKeyInfo is embedded unchanged in the certificate.
+        let spki = ca.spki_der();
+        assert!(ca.cert_der().windows(spki.len()).any(|w| w == spki.as_slice()));
+        let h = ca.spki_sha256_base64();
+        assert_eq!(h.len(), 44, "{h}");
+        assert_eq!(CertAuthority::load_or_create(dir.path()).unwrap().spki_sha256_base64(), h);
     }
 
     #[test]

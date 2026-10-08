@@ -75,6 +75,8 @@ fn de(en: &str) -> Option<&'static str> {
         "HTTPS Settings…" => "HTTPS-Einstellungen…",
         "Connect Device…" => "Gerät verbinden…",
         "Reverse Proxy…" => "Reverse Proxy…",
+        "Start Browser…" => "Browser starten…",
+        "Open Terminal" => "Terminal öffnen",
         "Before Requests" => "Vor Requests",
         "After Responses" => "Nach Responses",
         "Off" => "Aus",

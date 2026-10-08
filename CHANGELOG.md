@@ -8,6 +8,16 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Start a browser or a terminal that uses Quena**, without changing the system proxy: the
+  globe button next to the capture switch, *Capture → Start Browser…* and *Capture → Open
+  Terminal*.
+  - Chrome, Edge, Brave, Vivaldi and Chromium start with their own profile and accept
+    Quena's certificates in it without trusting the root certificate system-wide. Requests
+    to `localhost` are captured as well.
+  - Firefox starts with its own profile and the system's trusted roots.
+  - The terminal sets `HTTP(S)_PROXY` and the root certificate for Node.js, Python, curl,
+    Git, pip, Cargo and the AWS CLI.
+  - Capturing starts if it is off. Agents (MCP) have `launch_browser` and `open_terminal`.
 - **Reverse proxy ports for clients that cannot use a proxy** (*Capture → Reverse Proxy…*).
   Each entry listens on a local port while capturing and forwards every request to one target
   (`http(s)://host[:port][/base path]`). This suits backends with a fixed API URL, containers,

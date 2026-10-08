@@ -208,6 +208,8 @@ export type Dialog =
   | { kind: "connect-device" }
   | { kind: "textwizard"; text?: string }
   | { kind: "https" }
+  /** Capture → Start Browser…: installed browsers, a start URL and the terminal. */
+  | { kind: "launch" }
   /** Capture → Reverse Proxy…; `target` starts a new entry for it (from a session). */
   | { kind: "reverse-proxy"; target?: string }
   | { kind: "plugins" }

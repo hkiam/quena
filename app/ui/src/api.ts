@@ -243,6 +243,14 @@ export interface EngineStatus {
   listeners: ListenerStatus[];
 }
 
+/** A browser that can be started with Quena as proxy (crates/quena-platform/src/launch.rs). */
+export interface BrowserInfo {
+  kind: string;
+  name: string;
+  exe: string;
+  family: "chromium" | "firefox";
+}
+
 /** A listener while capturing (crates/quena-proxy/src/listener.rs). */
 export interface ListenerStatus {
   id: string;
@@ -897,6 +905,9 @@ export const api = {
   statistics: (ids: SessionId[]) => invoke<Statistics>("statistics", { ids }),
   jobs: () => invoke<JobInfo[]>("jobs"),
   cancelJob: (id: number) => invoke<boolean>("cancel_job", { id }),
+  browsersList: () => invoke<BrowserInfo[]>("browsers_list"),
+  launchBrowser: (kind: string, url?: string) => invoke<string>("launch_browser", { kind, url }),
+  openTerminal: () => invoke<void>("open_terminal"),
   settingsGet: () => invoke<Settings>("settings_get"),
   settingsSet: (settings: Settings) => invoke<void>("settings_set", { settings }),
   mcpStatus: () => invoke<McpStatus>("mcp_status"),
