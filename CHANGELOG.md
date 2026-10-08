@@ -7,6 +7,15 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Added
+- **Software bill of materials (SBOM) for every release.** Each build lists what the app and
+  `quena-cli` are made of as a CycloneDX SBOM (JSON) per platform: Rust crates, the npm
+  packages of the user interface and the bundled plugins, with versions, licenses and package
+  URLs. The SBOMs are release assets (`quena-<version>-<platform>.cdx.json`,
+  `quena-cli-<version>-<platform>.cdx.json`), and `sbom.cdx.json` comes with the app
+  (macOS app bundle, Windows installer and portable ZIP, Linux packages), the `quena-cli`
+  archive and the Docker image, which also carries an SBOM and provenance attestation.
+
 ## [0.1.7] — 2026-10-07
 
 ### Changed

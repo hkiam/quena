@@ -29,6 +29,13 @@ Especially relevant are issues in:
 - remote-connection handling (allow-list, landing page),
 - restoring the system proxy after exit or crash.
 
+## Software bill of materials
+
+Every release comes with CycloneDX SBOMs of the app and of `quena-cli` for each platform
+(release assets `*.cdx.json`, also inside the packages and the Docker image), to check a
+version against vulnerability advisories. See
+[Install → Software bill of materials](manual/docs/install.md#software-bill-of-materials-sbom).
+
 ## Supported versions
 
 Quena is in early preview. Security fixes are made on `main` and shipped in the next release.

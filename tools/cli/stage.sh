@@ -2,6 +2,7 @@
 # Stage the quena-cli archive folder: the program, the bundled plugins, license files.
 #   tools/cli/stage.sh <quena-cli binary> <platform> [out dir]
 # e.g. tools/cli/stage.sh target/release/quena-cli linux-x64 → target/cli/quena-cli-0.1.2-linux-x64/
+# SBOM=<file> adds that SBOM as sbom.cdx.json (CI: tools/sbom/generate.sh).
 # Prints the absolute path of the staged folder.
 set -eu
 bin="${1:?quena-cli binary}"
@@ -11,6 +12,7 @@ abs() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$(pwd)" "$1"
 bin=$(abs "$bin")
 [ -f "$bin" ] || { echo "$bin: no such file" >&2; exit 1; }
 if [ -n "${3:-}" ]; then out=$(abs "$3"); fi
+if [ -n "${SBOM:-}" ]; then SBOM=$(abs "$SBOM"); fi
 cd "$(dirname "$0")/../.."
 out="${out:-$(pwd)/target/cli}"
 version=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
@@ -26,6 +28,10 @@ for p in $(sed -n 's#.*"\.\./\.\./plugins/dist/\([a-z0-9-]*\)".*#\1#p' app/src-t
 done
 [ -f "$dir/plugins/webdiag/webdiag.wasm" ] || { echo "plugins/dist/webdiag missing: run plugins/build.sh" >&2; exit 1; }
 cp LICENSE NOTICE "$dir/"
+if [ -n "${SBOM:-}" ]; then
+  [ -f "$SBOM" ] || { echo "$SBOM: no such file" >&2; exit 1; }
+  cp "$SBOM" "$dir/sbom.cdx.json"
+fi
 cat > "$dir/README.txt" <<TXT
 quena-cli $version: Quena's diagnostics for CI pipelines.
 

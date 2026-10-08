@@ -4,6 +4,9 @@ name: Docker image (quena-cli)
 # Maintainers: a new GHCR package is private. Make it public once in the package settings
 # (github.com/users/hkiam/packages/container/quena-cli/settings → Change visibility), or
 # `docker pull` fails for everyone else.
+# The image carries an SBOM and a provenance attestation (BuildKit), besides the SBOM of
+# quena-cli in /opt/quena-cli/sbom.cdx.json:
+#   docker buildx imagetools inspect ghcr.io/hkiam/quena-cli:<version> --format '{{ json .SBOM }}'
 on:
   release:
     types: [published]
@@ -62,3 +65,5 @@ jobs:
           build-args: VERSION=${{ env.VERSION }}
           push: true
           tags: ${{ env.TAGS }}
+          sbom: true
+          provenance: mode=max

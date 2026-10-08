@@ -29,17 +29,23 @@ jobs:
         include:
           # One universal app for Apple Silicon and Intel Macs.
           - os: macos-latest
+            platform: macos-universal
             rust-targets: wasm32-wasip2,aarch64-apple-darwin,x86_64-apple-darwin
+            # The SBOM covers both halves of the universal app (empty: the host target).
+            sbom-targets: aarch64-apple-darwin x86_64-apple-darwin
             tauri-target: universal-apple-darwin
             out: target/universal-apple-darwin
           - os: windows-latest
+            platform: windows-x64
             rust-targets: wasm32-wasip2
             out: target
           # Linux builds on the oldest supported Ubuntu so the .deb/AppImage run on older glibc.
           - os: ubuntu-22.04
+            platform: linux-x64
             rust-targets: wasm32-wasip2
             out: target
           - os: ubuntu-22.04-arm
+            platform: linux-arm64
             rust-targets: wasm32-wasip2
             out: target
     runs-on: ${{ matrix.os }}
@@ -103,17 +109,30 @@ jobs:
         shell: bash
         run: |
           for p in auth-tokens jwt graphql webdiag; do cargo test --manifest-path plugins/$p/Cargo.toml; done
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx@0.5.9
+      # CycloneDX SBOMs of the app and of quena-cli for this platform (target/sbom/), shipped
+      # in the bundles, the quena-cli archive and as release assets.
+      - name: SBOM
+        shell: bash
+        run: tools/sbom/generate.sh "${{ matrix.platform }}" ${{ matrix.sbom-targets }}
+      - name: SBOM schema check
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/cyclonedx" \
+            https://github.com/CycloneDX/cyclonedx-cli/releases/download/v0.33.1/cyclonedx-linux-x64
+          echo "bfc8b2538da86fe239bc53658bbb63c1c8c510a293c1e6891aa5bea5d3c58746  $RUNNER_TEMP/cyclonedx" | sha256sum -c
+          chmod +x "$RUNNER_TEMP/cyclonedx"
+          for f in target/sbom/*.cdx.json; do
+            "$RUNNER_TEMP/cyclonedx" validate --input-file "$f" --input-format json --input-version v1_5 --fail-on-errors
+          done
       - name: Rust tests
         run: cargo test --workspace --exclude quena-app --no-fail-fast
       - name: Command line (quena-cli archive)
         shell: bash
         run: |
-          case "${{ runner.os }}-${{ runner.arch }}" in
-            macOS-*) platform=macos-universal ;;
-            Windows-*) platform=windows-x64 ;;
-            Linux-X64) platform=linux-x64 ;;
-            Linux-ARM64) platform=linux-arm64 ;;
-          esac
+          platform="${{ matrix.platform }}"
           if [ "${{ runner.os }}" = macOS ]; then
             for t in aarch64-apple-darwin x86_64-apple-darwin; do cargo build -p quena-cli --profile "$BUILD_PROFILE" --target $t; done
             mkdir -p target/cli
@@ -123,7 +142,7 @@ jobs:
             cargo build -p quena-cli --profile "$BUILD_PROFILE"
             bin=target/$BUILD_PROFILE/quena-cli; [ "${{ runner.os }}" = Windows ] && bin=$bin.exe
           fi
-          dir=$(tools/cli/stage.sh "$bin" "$platform")
+          dir=$(SBOM="$(ls target/sbom/quena-cli-*-"$platform".cdx.json)" tools/cli/stage.sh "$bin" "$platform")
           # Smoke test of the packaged program, copied out of the checkout so that it can only
           # use its own plugins folder: --help/--version, a report, the exit codes of the gate.
           smoke="$(cd "$RUNNER_TEMP" && pwd)/cli-smoke"; rm -rf "$smoke"; mkdir -p "$smoke"
@@ -182,11 +201,21 @@ jobs:
         run: |
           args=()
           [ -n "${{ matrix.tauri-target }}" ] && args+=(--target "${{ matrix.tauri-target }}")
+          # The SBOM goes into the bundle's resources only here: tauri.conf.json cannot name a
+          # file that local builds (tauri dev) do not have. --config is merged into it.
+          sbom=$(ls target/sbom/quena-[0-9]*-"${{ matrix.platform }}".cdx.json)
+          echo "{\"bundle\":{\"resources\":{\"../../$sbom\":\"sbom.cdx.json\"}}}" > "$RUNNER_TEMP/sbom.conf.json"
+          args+=(--config "$RUNNER_TEMP/sbom.conf.json")
           if [ "$BUILD_PROFILE" = release ]; then
             npm exec --prefix app/ui -- tauri build "${args[@]}"
           else
             npm exec --prefix app/ui -- tauri build "${args[@]}" -- --profile "$BUILD_PROFILE"
           fi
+          bundle="${{ matrix.out }}/$BUILD_PROFILE/bundle"
+          case "${{ runner.os }}" in
+            macOS) test -s "$bundle/macos/Quena.app/Contents/Resources/sbom.cdx.json" ;;
+            Linux) dpkg-deb -c "$bundle"/deb/*.deb | grep '/sbom\.cdx\.json$' ;;
+          esac || { echo "the SBOM is missing from the bundle" >&2; exit 1; }
       - name: UI end-to-end tests (real app via WebDriver)
         if: matrix.os == 'ubuntu-22.04'
         run: |
@@ -225,6 +254,7 @@ jobs:
           New-Item -ItemType File "$dir/portable" | Out-Null
           Copy-Item app/src-tauri/windows/PORTABLE.txt "$dir/README-portable.txt"
           Copy-Item LICENSE, NOTICE $dir
+          Copy-Item (Get-Item "target/sbom/quena-[0-9]*-windows-x64.cdx.json") "$dir/sbom.cdx.json"
           Compress-Archive -Path $dir -DestinationPath "$out/Quena_$($conf.version)_x64-portable.zip" -Force
           Get-ChildItem -Recurse $dir | Select-Object FullName, Length
       - name: Upload installers
@@ -242,6 +272,7 @@ jobs:
             ${{ matrix.out }}/${{ env.BUILD_PROFILE }}/bundle/appimage/*.AppImage
             target/cli/quena-cli-*.tar.gz
             target/cli/quena-cli-*.zip
+            target/sbom/*.cdx.json
 
   e2e-windows:
     name: UI end-to-end tests (Windows, WebView2)

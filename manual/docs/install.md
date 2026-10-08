@@ -58,6 +58,25 @@ recommend them):
 Without a keyring, saved passwords last until Quena quits. Without the Kerberos library,
 automatic authentication falls back to NTLM.
 
+### Software bill of materials (SBOM)
+
+Every release lists what Quena is built from as a [CycloneDX](https://cyclonedx.org) SBOM
+(JSON): the Rust crates, the npm packages of the user interface and the bundled plugins,
+with versions, licenses and package URLs. Import it into Dependency-Track, or scan it with
+Grype or Trivy, to check a version against known vulnerabilities.
+
+| Where | File |
+|---|---|
+| Releases page | `quena-<version>-<platform>.cdx.json` (app), `quena-cli-<version>-<platform>.cdx.json` |
+| macOS | `Quena.app/Contents/Resources/sbom.cdx.json` |
+| Windows | `sbom.cdx.json` next to `Quena.exe` (installed and portable) |
+| Linux | `/usr/lib/Quena/sbom.cdx.json` (`.deb`, `.rpm`), inside the AppImage |
+| quena-cli | `sbom.cdx.json` in the archive, `/opt/quena-cli/sbom.cdx.json` in the Docker image |
+
+Each SBOM describes one platform: only the crates built for it are listed. The Docker image
+also carries an SBOM attestation of the whole image, Debian packages included:
+`docker buildx imagetools inspect ghcr.io/hkiam/quena-cli:<version> --format '{{ json .SBOM }}'`.
+
 ## First start
 
 1. **Start Quena.** It opens in the **Quena** layout: session list on the left, request

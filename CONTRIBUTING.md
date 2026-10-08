@@ -81,6 +81,14 @@ npm run build --prefix app/ui          # TypeScript typecheck + production build
 npm test --prefix app/ui               # UI unit tests (Vitest)
 ```
 
+CI also generates the SBOMs of every build (`target/sbom/`). Locally, after
+`cargo install cargo-cyclonedx --locked`:
+
+```bash
+tools/sbom/generate.sh macos-universal aarch64-apple-darwin x86_64-apple-darwin
+tools/sbom/generate.sh linux-x64       # no target: the host's
+```
+
 ## Design principles
 
 Changes are reviewed against the two core principles described in the README:

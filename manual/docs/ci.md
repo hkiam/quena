@@ -51,6 +51,9 @@ certificate, no settings of the desktop app are used or changed.
     inside the container, so a new container compiles them again (a few seconds). To keep
     them, mount a volume: `-v quena-cache:/tmp/quena-cache`.
 
+    The image has an SBOM attestation, and quena-cli's own SBOM is in
+    `/opt/quena-cli/sbom.cdx.json` (see [SBOM](install.md#software-bill-of-materials-sbom)).
+
     GitLab CI:
 
     ```yaml
