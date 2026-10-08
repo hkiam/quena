@@ -293,6 +293,19 @@ export interface ReversePathEntry {
   stripPrefix: boolean;
 }
 
+/** Host remapping entry (Capture → Host Remapping…). */
+export interface HostRemapEntry {
+  id: string;
+  enabled: boolean;
+  /** `api.example.com`, `*.example.com` */
+  host: string;
+  /** `host`, `ip`, `host:port` */
+  target: string;
+  /** Keep Host and TLS name of the original (only the connection moves). */
+  keepHost: boolean;
+  comment: string;
+}
+
 /** SOCKS or transparent port (listening while capturing). */
 export interface ListenerSettings {
   enabled: boolean;
@@ -446,6 +459,8 @@ export interface Settings {
   };
   /** Reverse proxy ports: each forwards everything to one target (while capturing). */
   reverseProxy: { enabled: boolean; entries: ReverseProxyEntry[] };
+  /** Host remapping: connections to a host go elsewhere. */
+  hostRemap: { enabled: boolean; entries: HostRemapEntry[] };
   /** SOCKS5/4 port. */
   socks: ListenerSettings;
   /** Port for transparently redirected traffic. */
@@ -906,6 +921,7 @@ export const api = {
   jobs: () => invoke<JobInfo[]>("jobs"),
   cancelJob: (id: number) => invoke<boolean>("cancel_job", { id }),
   browsersList: () => invoke<BrowserInfo[]>("browsers_list"),
+  hostsFileImport: () => invoke<HostRemapEntry[]>("hosts_file_import"),
   launchBrowser: (kind: string, url?: string) => invoke<string>("launch_browser", { kind, url }),
   openTerminal: () => invoke<void>("open_terminal"),
   settingsGet: () => invoke<Settings>("settings_get"),

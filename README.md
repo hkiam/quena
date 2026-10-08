@@ -212,6 +212,8 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Reverse proxy** ports for clients without proxy support: fixed target or one per path,
   HTTPS and cleartext HTTP/2 (gRPC) from the client, redirects pointed back; headless with
   `quena-cli reverse`
+- **Host remapping**: a host (or `*.domain`) to another host, IP or port, keeping Host and TLS
+  name — like the hosts file, only for traffic through Quena; imports the hosts file
 - **SOCKS5/4** port, and a **transparent** port for firewall-redirected traffic
   (iptables, pf)
 - **Packet captures** from tcpdump and Wireshark (`.pcap`, `.pcapng`): TCP reassembled,

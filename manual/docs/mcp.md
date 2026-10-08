@@ -100,6 +100,8 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `run_http_file` | ✓ | send a `.http` collection (or some of its requests) through Quena |
 | `sessions_to_http_file` | ✓ | write captured sessions as a `.http` file with environment files |
 | `export_archive` | ✓ | save sessions as `.har` or `.saz` in the agents' folder (existing files only with `overwrite`) |
+| `list_host_remaps` | | [host remapping](host-remapping.md) entries |
+| `set_host_remap`, `remove_host_remap` | ✓ | add, change or delete host remapping entries |
 | `launch_browser`, `open_terminal` | ✓ | start a browser with its own profile, or a terminal, that uses Quena ([Start a browser or terminal](capture.md#start-a-browser-or-terminal-with-quena)); `launch_browser` without `kind` lists the browsers |
 | `list_reverse_proxies` | | [reverse proxy](reverse-proxy.md) entries and whether they listen |
 | `set_reverse_proxy`, `remove_reverse_proxy` | ✓ | add, change or delete reverse proxy entries and their path routes (agents cannot open one to remote computers) |

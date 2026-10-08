@@ -146,6 +146,7 @@ can go straight into [`quena-cli diagnose`](ci.md) or into
 | `--path PORT/PREFIX=URL` | a [path route](#path-routes) on the `--route` of `PORT` (repeatable) |
 | `--strip-prefix` | remove the prefix of the `--path` routes from the forwarded path |
 | `--socks PORT`, `--transparent PORT` | also open the [SOCKS and transparent ports](socks-transparent.md) (then `--route` is optional; `quena-cli serve` is the same command) |
+| `--remap HOST=TARGET` | [host remapping](host-remapping.md): connections to `HOST` go to `TARGET` (repeatable) |
 | `--decrypt` | decrypt HTTPS inside SOCKS and transparent connections (clients must trust the root certificate) |
 | `--protocol auto\|http\|https` | what clients speak (default `auto`) |
 | `--preserve-host`, `--forwarded-headers`, `--rewrite-cookie-domain`, `--no-rewrite-location` | as the options above |

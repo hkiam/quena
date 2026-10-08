@@ -255,6 +255,9 @@ impl AppCore {
         {
             // Checked when the entries or the ports they must not take change.
             let cur = self.settings.read();
+            if s.host_remap != cur.host_remap {
+                s.host_remap.validate().map_err(|e| anyhow!("{e}"))?;
+            }
             if s.reverse_proxy != cur.reverse_proxy
                 || s.socks != cur.socks
                 || s.transparent != cur.transparent
@@ -275,6 +278,7 @@ impl AppCore {
             || old.reverse_proxy != s.reverse_proxy
             || old.socks != s.socks
             || old.transparent != s.transparent
+            || old.host_remap != s.host_remap
             || old.https != s.https
             || old.throttle_kbps != s.throttle_kbps
             || old.throttle_latency_ms != s.throttle_latency_ms

@@ -76,6 +76,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Connect Device…" => "Gerät verbinden…",
         "Reverse Proxy…" => "Reverse Proxy…",
         "Start Browser…" => "Browser starten…",
+        "Host Remapping…" => "Host-Umleitung…",
         "Open Terminal" => "Terminal öffnen",
         "Before Requests" => "Vor Requests",
         "After Responses" => "Nach Responses",

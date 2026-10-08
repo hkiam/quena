@@ -94,6 +94,19 @@ pub fn is_root_ca_trusted(cert_pem_path: &Path) -> bool {
     imp::is_root_ca_trusted(cert_pem_path)
 }
 
+/// The system's hosts file.
+pub fn hosts_file_path() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        std::path::PathBuf::from(root).join(r"System32\drivers\etc\hosts")
+    }
+    #[cfg(not(windows))]
+    {
+        std::path::PathBuf::from("/etc/hosts")
+    }
+}
+
 /// Open a file or URL with the default handler.
 pub fn open(target: &str) -> Result<()> {
     imp::open(target)

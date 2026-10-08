@@ -208,6 +208,9 @@ prefix:https://prod.example.com/api/   →   https://staging.example.com/api/
 The rest of the path and the query are kept: `…/api/users?id=1` goes to
 `https://staging.example.com/api/users?id=1`. The `Host` header follows the target.
 
+To send a whole host elsewhere while keeping its name (`Host`, TLS name and certificate),
+use [host remapping](host-remapping.md) instead.
+
 A prefix that is only an origin (`https://prod.example.com`) matches that origin exactly —
 not `https://prod.example.com.other.net` or another port.
 

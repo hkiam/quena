@@ -192,6 +192,10 @@ struct ReverseArgs {
     /// Drop the prefix of --path routes from the forwarded path.
     #[arg(long)]
     strip_prefix: bool,
+    /// `HOST=TARGET`: connections to HOST (or `*.domain`) go to TARGET (host, IP or
+    /// host:port), keeping Host and TLS name (repeatable).
+    #[arg(long = "remap", value_name = "HOST=TARGET")]
+    remaps: Vec<String>,
     /// Also accept SOCKS5/4 clients on this port.
     #[arg(long, value_name = "PORT")]
     socks: Option<u16>,
@@ -924,6 +928,12 @@ fn reverse(a: ReverseArgs) -> Result<()> {
     s.reverse_proxy.enabled = !entries.is_empty();
     s.reverse_proxy.entries = entries;
     let listener = |p: Option<u16>| ListenerSettings { enabled: p.is_some(), port: p.unwrap_or(0), allow_remote: a.bind_all };
+    s.host_remap.enabled = !a.remaps.is_empty();
+    for (i, spec) in a.remaps.iter().enumerate() {
+        let (host, target) = spec.split_once('=').ok_or_else(|| usage(format!("--remap {spec}: expected HOST=TARGET, e.g. api.example.com=10.0.0.5:8443")))?;
+        s.host_remap.entries.push(quena_app_core::settings::HostRemapEntry { id: format!("m{i}"), host: host.trim().into(), target: target.trim().into(), ..Default::default() });
+    }
+    s.host_remap.validate().map_err(usage)?;
     s.socks = listener(a.socks);
     s.transparent = listener(a.transparent);
     // Port 0 for the forward listener: validate against the ports actually requested.

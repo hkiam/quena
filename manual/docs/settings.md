@@ -42,6 +42,7 @@ arrangement.
 | *Bypass upstream for* | `localhost;127.0.0.1;::1;*.local` | Hosts that go direct; also networks (`10.0.0.0/8`) and `<local>` (names without a dot). The previous system proxy's exceptions apply as well. |
 | *Use the system proxy auto-config (PAC) script* | on | |
 | *PAC URL or file* | empty | Overrides the system PAC. |
+| *Host remapping* | none | *Host Remapping…* opens the [host remapping](host-remapping.md) entries (also *Capture → Host Remapping…*). |
 | *Reverse proxy ports* | none | *Reverse Proxy…* opens the [reverse proxy](reverse-proxy.md) entries (also *Capture → Reverse Proxy…*). |
 | *SOCKS5/4 port* | off, 8868 | A [SOCKS port](socks-transparent.md#socks); *from other computers too* listens on all interfaces. |
 | *Transparent port* | off, 8869 | A port for [transparently redirected](socks-transparent.md#transparent) connections. |

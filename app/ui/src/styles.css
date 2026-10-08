@@ -3441,3 +3441,26 @@ table.rp-list td {
   flex-wrap: wrap;
   gap: 6px;
 }
+/* Capture → Host Remapping */
+.host-remap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.host-remap p {
+  margin: 0;
+}
+table.hr-table th {
+  text-align: left;
+  font-weight: 600;
+  padding: 2px 6px;
+}
+table.hr-table input:not([type="checkbox"]) {
+  width: 100%;
+}
+.hr-center {
+  text-align: center;
+}
+.hr-spacer {
+  flex: 1;
+}

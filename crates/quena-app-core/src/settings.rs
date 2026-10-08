@@ -106,6 +106,77 @@ impl ListenerSettings {
     }
 }
 
+/// Host remapping (Capture → Host Remapping…): connections to a host go elsewhere.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HostRemapSettings {
+    pub enabled: bool,
+    pub entries: Vec<HostRemapEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HostRemapEntry {
+    pub id: String,
+    pub enabled: bool,
+    /// `api.example.com`, `*.example.com`
+    pub host: String,
+    /// `host`, `ip`, `host:port`
+    pub target: String,
+    /// Keep Host and TLS server name of the original host (only the connection moves).
+    pub keep_host: bool,
+    pub comment: String,
+}
+
+impl Default for HostRemapEntry {
+    fn default() -> Self {
+        HostRemapEntry { id: String::new(), enabled: true, host: String::new(), target: String::new(), keep_host: true, comment: String::new() }
+    }
+}
+
+impl HostRemapSettings {
+    /// The rules that apply (switched on, valid).
+    pub fn rules(&self) -> Vec<quena_proxy::remap::HostRemap> {
+        if !self.enabled {
+            return vec![];
+        }
+        self.entries
+            .iter()
+            .filter(|e| e.enabled)
+            .filter_map(|e| quena_proxy::remap::HostRemap::parse(&e.host, &e.target, e.keep_host).map_err(|err| tracing::warn!(target: "quena", "host remap {err}")).ok())
+            .collect()
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for e in &self.entries {
+            quena_proxy::remap::HostRemap::parse(&e.host, &e.target, e.keep_host).map_err(|err| format!("host remapping: {err}"))?;
+        }
+        Ok(())
+    }
+}
+
+/// Entries of a hosts file (`ip name …`), without localhost and comments.
+pub fn parse_hosts_file(text: &str) -> Vec<HostRemapEntry> {
+    let mut out: Vec<HostRemapEntry> = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        let mut parts = line.split_whitespace();
+        let Some(ip) = parts.next() else { continue };
+        if ip.parse::<std::net::IpAddr>().is_err() {
+            continue;
+        }
+        for name in parts {
+            let name = name.to_ascii_lowercase();
+            let local = name == "localhost" || name.ends_with(".localhost") || name == "broadcasthost" || name.starts_with("ip6-");
+            if local || out.iter().any(|e| e.host == name) {
+                continue;
+            }
+            out.push(HostRemapEntry { host: name, target: ip.to_string(), comment: "hosts file".into(), ..Default::default() });
+        }
+    }
+    out
+}
+
 /// Default SOCKS port.
 pub const SOCKS_PORT: u16 = 8868;
 /// Default port for transparently redirected traffic.
@@ -275,6 +346,9 @@ pub struct Settings {
     /// Port for transparently redirected traffic (Settings → Connections).
     #[serde(default = "default_transparent")]
     pub transparent: ListenerSettings,
+    /// Host remapping (Capture → Host Remapping…).
+    #[serde(default)]
+    pub host_remap: HostRemapSettings,
     pub https: HttpsSettings,
     pub bodies: BodyConfigDto,
     /// "Keep: N sessions" (0 = all).
@@ -321,6 +395,7 @@ impl Default for Settings {
             reverse_proxy: ReverseProxySettings::default(),
             socks: default_socks(),
             transparent: default_transparent(),
+            host_remap: HostRemapSettings::default(),
             https: HttpsSettings::default(),
             bodies: BodyConfigDto::default(),
             keep_sessions: 0,

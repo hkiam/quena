@@ -171,3 +171,19 @@ fn path_needs_a_route_on_its_port() {
     assert_eq!(out.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&out.stderr).contains("no --route on port 9090"));
 }
+
+#[test]
+fn remap_sends_a_name_to_another_address() {
+    let t = target();
+    let port = free_port();
+    let child = bin()
+        .args(["reverse", "-q", "--route", &format!("{port}=http://app.remap.invalid:{t}"), "--remap", "app.remap.invalid=127.0.0.1", "--max-sessions", "1"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    assert!(get(port, "/r").ends_with("hello /r"));
+    assert!(child.wait_with_output().unwrap().status.success());
+    let bad = bin().args(["reverse", "--route", "8080=http://x", "--remap", "nonsense"]).output().unwrap();
+    assert_eq!(bad.status.code(), Some(2));
+}

@@ -257,14 +257,18 @@ impl tower_service::Service<Uri> for Connector {
             let host = uri.host().ok_or("URI without host")?.trim_matches(['[', ']']).to_string();
             let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
             let connect_start = quena_model::now_us();
-            let upstream = crate::resolve_upstream(&cfg, format!("{host}:{port}")).await;
+            // Host remapping: the connection goes to the target, like a hosts-file entry
+            // (so not through the upstream proxy); name checks stay with the original host.
+            let remapped = cfg.remap(&host, port);
+            let (conn_host, conn_port) = remapped.as_ref().map(|r| (r.host.clone(), r.port)).unwrap_or_else(|| (host.clone(), port));
+            let upstream = if remapped.is_some() { None } else { crate::resolve_upstream(&cfg, format!("{host}:{port}")).await };
             let (mut tcp, dns_ms, tcp_ms, server_addr, gateway) = match &upstream {
                 Some((ph, pp)) => {
                     let (s, d, t, a) = tcp_connect(ph, *pp).await.map_err(|e| format!("upstream proxy {ph}:{pp}: {e}"))?;
                     (s, d, t, a, Some(format!("{ph}:{pp}")))
                 }
                 None => {
-                    let (s, d, t, a) = tcp_connect(&host, port).await?;
+                    let (s, d, t, a) = tcp_connect(&conn_host, conn_port).await?;
                     (s, d, t, a, None)
                 }
             };

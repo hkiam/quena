@@ -8,6 +8,16 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Host remapping** (*Capture → Host Remapping…*): connections to a host or `*.domain` go
+  to another host, IP address or port, like a hosts-file entry but only for traffic through
+  Quena.
+  - By default the request keeps its `Host` and TLS name, and only the connection moves,
+    e.g. to test the production URL against a staging server. Without *keep host* it is
+    sent to the target as if addressed there.
+  - Applies to proxied, SOCKS, transparent and reverse proxy traffic and to HTTPS tunnels
+    that are not decrypted. Remapped hosts bypass the upstream proxy.
+  - Entries can be imported from the hosts file. Sessions are marked (`x-quena-remap`).
+  - Also available as `quena-cli reverse --remap` and through MCP tools.
 - **Start a browser or a terminal that uses Quena**, without changing the system proxy: the
   globe button next to the capture switch, *Capture → Start Browser…* and *Capture → Open
   Terminal*.

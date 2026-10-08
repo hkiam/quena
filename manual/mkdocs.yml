@@ -73,6 +73,7 @@ nav:
       - HTTPS and devices: https.md
       - Reverse proxy: reverse-proxy.md
       - SOCKS and transparent: socks-transparent.md
+      - Host remapping: host-remapping.md
   - Work with sessions:
       - Session list: sessions.md
       - Inspect: inspect.md

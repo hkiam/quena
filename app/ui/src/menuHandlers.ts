@@ -77,6 +77,8 @@ export async function handleMenu(id: string) {
       return set({ dialog: { kind: "connect-device" } });
     case "tools.reverse-proxy":
       return set({ dialog: { kind: "reverse-proxy" } });
+    case "tools.host-remap":
+      return set({ dialog: { kind: "host-remap" } });
     case "tools.launch-browser":
       return set({ dialog: { kind: "launch" } });
     case "tools.open-terminal":

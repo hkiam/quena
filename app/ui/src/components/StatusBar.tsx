@@ -34,6 +34,7 @@ export function StatusBar() {
   const eng = status?.engine;
   const reverse = eng?.listeners?.filter((l) => l.kind === "reverse") ?? [];
   const others = eng?.listeners?.filter((l) => l.kind !== "reverse") ?? [];
+  const remaps = useStore((s) => (s.settings?.hostRemap?.enabled ? s.settings.hostRemap.entries.filter((e) => e.enabled).length : 0));
   const procMode = filters?.enabled ? filters.processMode : "all";
   const procLabel = PROC_LABELS[procMode];
 
@@ -87,6 +88,11 @@ export function StatusBar() {
         >
           ⇄ {plural(reverse.filter((r) => !r.error).length, "{n} reverse proxy", "{n} reverse proxies")}
           {reverse.some((r) => r.error) && ` · ${t("error")}`}
+        </div>
+      )}
+      {remaps > 0 && (
+        <div className="sb-cell sb-click" onClick={() => set({ dialog: { kind: "host-remap" } })} title={t("Host remapping is on")}>
+          ↪ {plural(remaps, "{n} remap", "{n} remaps")}
         </div>
       )}
       {others.map((l) => (

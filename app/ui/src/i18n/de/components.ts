@@ -493,4 +493,26 @@ export const components: Record<string, string> = {
   "Chrome, Edge, Brave and Vivaldi get their own profile and accept Quena's certificates in it. Firefox uses the system's trusted roots: trust the Quena root certificate first (Capture → HTTPS Settings…). The terminal sets HTTP_PROXY, HTTPS_PROXY and the root certificate for Node.js, Python, curl, Git and others.":
     "Chrome, Edge, Brave und Vivaldi bekommen ein eigenes Profil und akzeptieren darin die Zertifikate von Quena. Firefox nutzt die vertrauenswürdigen Stammzertifikate des Systems: vorher dem Quena-Stammzertifikat vertrauen (Aufzeichnung → HTTPS-Einstellungen…). Das Terminal setzt HTTP_PROXY, HTTPS_PROXY und das Stammzertifikat für Node.js, Python, curl, Git und andere.",
   "Start a browser or terminal that uses Quena": "Browser oder Terminal starten, das Quena nutzt",
+  // Capture → Host Remapping
+  "Host remapping (host → other address)": "Host-Umleitung (Host → andere Adresse)",
+  "Host remapping": "Host-Umleitung",
+  "Host Remapping…": "Host-Umleitung…",
+  "Host Remapping": "Host-Umleitung",
+  "Host remapping saved": "Host-Umleitung gespeichert",
+  "{n} entries imported from the hosts file": "{n} Einträge aus der hosts-Datei übernommen",
+  "The hosts file has no new entries": "Die hosts-Datei enthält keine neuen Einträge",
+  "Enable host remapping": "Host-Umleitung aktivieren",
+  "Connections to a host go to another host, IP address or port — like an entry in the hosts file, but only for traffic through Quena. With \"keep host\", the request keeps its Host header and TLS name (a staging server with the real certificate); without it, it is sent to the target as if addressed there.":
+    "Verbindungen zu einem Host gehen an einen anderen Host, eine IP-Adresse oder einen Port – wie ein Eintrag in der hosts-Datei, aber nur für Traffic über Quena. Mit „Host behalten“ behält der Request Host-Header und TLS-Namen (ein Staging-Server mit dem echten Zertifikat); ohne geht er an das Ziel, als wäre er dorthin adressiert.",
+  "Host or *.domain": "Host oder *.domain",
+  "Target (host, IP, host:port)": "Ziel (Host, IP, Host:Port)",
+  "keep host": "Host behalten",
+  "Keep Host header and TLS name of the original host": "Host-Header und TLS-Namen des ursprünglichen Hosts behalten",
+  "Add entry": "Eintrag hinzufügen",
+  "Import hosts file…": "hosts-Datei übernehmen…",
+  "Remapped hosts bypass the upstream proxy. Sessions show the remap in their flags (x-quena-remap) and the address used.":
+    "Umgeleitete Hosts umgehen den Upstream-Proxy. Sessions zeigen die Umleitung in ihren Flags (x-quena-remap) und die verwendete Adresse.",
+  "Host remapping is on": "Host-Umleitung ist aktiv",
+  "{n} remap": "{n} Umleitung",
+  "{n} remaps": "{n} Umleitungen",
 };

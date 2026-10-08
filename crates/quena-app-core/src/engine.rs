@@ -135,6 +135,7 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, system_bypass
             .collect(),
         socks: s.socks.to_port(),
         transparent: s.transparent.to_port(),
+        host_remap: s.host_remap.rules(),
     }
 }
 

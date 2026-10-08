@@ -77,13 +77,20 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     let cfg = shared.cfg();
-    let upstream = crate::resolve_upstream(&cfg, format!("{host}:{port}")).await;
-    let connected = match &upstream {
-        Some((ph, pp)) => match tcp_connect(ph, *pp).await {
+    // Host remapping applies to tunnels that are passed through as well.
+    let remapped = cfg.remap(host, port);
+    if let Some(r) = &remapped {
+        let note = r.note.clone();
+        live.update(move |d| d.extra_flags.push((crate::remap::FLAG.into(), note)));
+    }
+    let upstream = if remapped.is_some() { None } else { crate::resolve_upstream(&cfg, format!("{host}:{port}")).await };
+    let connected = match (&upstream, &remapped) {
+        (Some((ph, pp)), _) => match tcp_connect(ph, *pp).await {
             Ok((mut s, ..)) => connect_via_proxy(&mut s, host, port).await.map(|_| s),
             Err(e) => Err(e),
         },
-        None => tcp_connect(host, port).await.map(|(s, ..)| s),
+        (None, Some(r)) => tcp_connect(&r.host, r.port).await.map(|(s, ..)| s),
+        (None, None) => tcp_connect(host, port).await.map(|(s, ..)| s),
     };
     let mut server = match connected {
         Ok(s) => s,

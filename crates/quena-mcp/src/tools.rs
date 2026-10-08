@@ -296,6 +296,40 @@ static TOOLS: &[Tool] = &[
         run: set_mock_options,
     },
     Tool {
+        name: "list_host_remaps",
+        description: "Host remapping entries: connections to a host (or `*.domain`) go to another host, IP or port instead, like a hosts-file entry for traffic through Quena. `keepHost`: Host and TLS name stay the original's, only the connection moves.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({})),
+        run: list_host_remaps,
+    },
+    Tool {
+        name: "set_host_remap",
+        description: "Add a host remapping entry, or change one by `id` (only the fields given). `host`: name or `*.domain`; `target`: host, IP or host:port. `enabled_all` switches host remapping on or off as a whole.",
+        write: true,
+        destructive: false,
+        schema: || {
+            obj(json!({
+                "id": { "type": "string" },
+                "host": { "type": "string" },
+                "target": { "type": "string" },
+                "keep_host": { "type": "boolean", "description": "Keep Host and TLS name of the original (default true)" },
+                "enabled": { "type": "boolean" },
+                "comment": { "type": "string" },
+                "enabled_all": { "type": "boolean" }
+            }))
+        },
+        run: set_host_remap,
+    },
+    Tool {
+        name: "remove_host_remap",
+        description: "Delete a host remapping entry by id.",
+        write: true,
+        destructive: true,
+        schema: || req(json!({ "id": { "type": "string" } }), &["id"]),
+        run: remove_host_remap,
+    },
+    Tool {
         name: "launch_browser",
         description: "Start an installed browser (Chrome, Edge, Brave, Vivaldi, Chromium, Firefox) with its own profile and Quena as proxy, without the system proxy; capturing starts if it is off. Without `kind`, lists the browsers found instead. Chromium browsers accept Quena's certificates in that profile; Firefox needs the root certificate trusted.",
         write: true,
@@ -1325,6 +1359,81 @@ fn set_mock_options(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     })?;
     let s = r.autoresponder();
     Ok(json!({ "enabled": s.enabled, "unmatchedPassthrough": s.unmatched_passthrough, "enableLatency": s.enable_latency }))
+}
+
+fn remap_json(core: &AppCore) -> Value {
+    let s = core.settings().host_remap;
+    json!({
+        "enabled": s.enabled,
+        "entries": s.entries.iter().map(|e| json!({ "id": e.id, "enabled": e.enabled, "host": e.host, "target": e.target, "keepHost": e.keep_host, "comment": e.comment })).collect::<Vec<_>>(),
+    })
+}
+
+fn list_host_remaps(core: &Arc<AppCore>, _: Value) -> Result<Value> {
+    Ok(remap_json(core))
+}
+
+#[derive(Deserialize)]
+struct RemapArgs {
+    id: Option<String>,
+    host: Option<String>,
+    target: Option<String>,
+    keep_host: Option<bool>,
+    enabled: Option<bool>,
+    comment: Option<String>,
+    enabled_all: Option<bool>,
+}
+
+fn set_host_remap(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: RemapArgs = args(a)?;
+    let mut s = core.settings();
+    let rm = &mut s.host_remap;
+    if let Some(v) = a.enabled_all {
+        rm.enabled = v;
+    }
+    if a.id.is_some() || a.host.is_some() || a.target.is_some() {
+        let i = match &a.id {
+            Some(id) => rm.entries.iter().position(|e| &e.id == id).ok_or_else(|| anyhow!("no host remapping entry {id}"))?,
+            None => {
+                let (Some(_), Some(_)) = (&a.host, &a.target) else { bail!("a new entry needs `host` and `target`") };
+                rm.entries.push(quena_app_core::settings::HostRemapEntry { id: format!("mcp-{}", quena_model::now_us()), ..Default::default() });
+                if a.enabled_all.is_none() {
+                    rm.enabled = true;
+                }
+                rm.entries.len() - 1
+            }
+        };
+        let e = &mut rm.entries[i];
+        if let Some(v) = a.host {
+            e.host = v;
+        }
+        if let Some(v) = a.target {
+            e.target = v;
+        }
+        if let Some(v) = a.keep_host {
+            e.keep_host = v;
+        }
+        if let Some(v) = a.enabled {
+            e.enabled = v;
+        }
+        if let Some(v) = a.comment {
+            e.comment = v;
+        }
+    }
+    core.update_settings(s)?;
+    Ok(remap_json(core))
+}
+
+fn remove_host_remap(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: ReverseIdArgs = args(a)?;
+    let mut s = core.settings();
+    let before = s.host_remap.entries.len();
+    s.host_remap.entries.retain(|e| e.id != a.id);
+    if s.host_remap.entries.len() == before {
+        bail!("no host remapping entry {}", a.id);
+    }
+    core.update_settings(s)?;
+    Ok(remap_json(core))
 }
 
 #[derive(Deserialize)]

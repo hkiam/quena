@@ -287,6 +287,16 @@ fn mcp_over_http() {
     assert!(st["listeners"].as_array().unwrap().iter().any(|l| l["kind"] == "socks"), "{st}");
     let (_, err) = tool(addr, "set_listeners", json!({ "socks": false }));
     assert!(!err);
+    // Host remapping: add, use, remove.
+    let (r, err) = tool(addr, "set_host_remap", json!({ "host": "mcp.remap.invalid", "target": format!("127.0.0.1:{port}") }));
+    assert!(!err, "{r}");
+    assert_eq!(r["entries"][0]["keepHost"], true);
+    let (s2, err) = tool(addr, "send_request", json!({ "method": "GET", "url": "http://mcp.remap.invalid/remapped" }));
+    assert!(!err, "{s2}");
+    assert_eq!(s2["response"]["status"], 200, "{s2}");
+    let rid = r["entries"][0]["id"].clone();
+    let (r, err) = tool(addr, "remove_host_remap", json!({ "id": rid }));
+    assert!(!err && r["entries"].as_array().unwrap().is_empty(), "{r}");
     let (r, err) = tool(addr, "remove_reverse_proxy", json!({ "id": entry["id"] }));
     assert!(!err && r["entries"].as_array().unwrap().is_empty(), "{r}");
 

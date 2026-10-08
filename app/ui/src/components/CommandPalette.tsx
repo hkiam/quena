@@ -27,6 +27,7 @@ const COMMANDS: Cmd[] = [
   { id: "tools.connect-device", label: t("Connect a device"), group: t("Capture") },
   { id: "tools.reverse-proxy", label: t("Reverse proxy (fixed port → target)"), group: t("Capture") },
   { id: "tools.launch-browser", label: t("Start a browser that uses Quena"), group: t("Capture") },
+  { id: "tools.host-remap", label: t("Host remapping (host → other address)"), group: t("Capture") },
   { id: "tools.open-terminal", label: t("Open a terminal that uses Quena"), group: t("Capture") },
   { id: "rules.auto-auth", label: t("Toggle automatic authentication"), group: t("Capture") },
   { id: "rules.customize", label: t("Edit rules script"), group: t("Capture") },

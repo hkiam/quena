@@ -18,6 +18,7 @@ pub mod hooks;
 mod landing;
 pub mod listener;
 mod recorder;
+pub mod remap;
 pub mod reverse;
 mod socks;
 mod transparent;
@@ -107,6 +108,8 @@ pub struct ProxyConfig {
     pub socks: Option<listener::ExtraPort>,
     /// Port for transparently redirected traffic (listening while the proxy runs).
     pub transparent: Option<listener::ExtraPort>,
+    /// Host remapping: connections to these hosts go elsewhere.
+    pub host_remap: Vec<remap::HostRemap>,
 }
 
 impl Default for ProxyConfig {
@@ -138,6 +141,7 @@ impl Default for ProxyConfig {
             reverse: vec![],
             socks: None,
             transparent: None,
+            host_remap: vec![],
         }
     }
 }
@@ -205,6 +209,14 @@ impl ProxyConfig {
     /// Whether auto-auth applies to `host` (server 401 case).
     pub fn auth_applies(&self, host: &str) -> bool {
         self.auto_auth && (self.auto_auth_hosts.is_empty() || host_matches(&self.auto_auth_hosts, host))
+    }
+
+    /// Where a connection to `host:port` goes instead (host remapping).
+    pub fn remap(&self, host: &str, port: u16) -> Option<remap::Remapped> {
+        if self.host_remap.is_empty() {
+            return None;
+        }
+        remap::lookup(&self.host_remap, host, port)
     }
 
     /// The extra listeners this configuration asks for.

@@ -503,6 +503,17 @@ async fn reveal_path(path: String) -> R<()> {
     quena_platform::reveal(std::path::Path::new(&path)).map_err(e)
 }
 
+/// The entries of the system's hosts file, as host remapping entries (not saved).
+#[tauri::command]
+async fn hosts_file_import() -> R<Vec<quena_app_core::settings::HostRemapEntry>> {
+    blocking(|| {
+        let path = quena_platform::hosts_file_path();
+        let text = std::fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+        Ok(quena_app_core::settings::parse_hosts_file(&text))
+    })
+    .await
+}
+
 /// Browsers that can be started with Quena as proxy.
 #[tauri::command]
 async fn browsers_list(core: State<'_, Core>) -> R<Vec<quena_app_core::launch::BrowserInfo>> {
@@ -989,6 +1000,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         sanitize_validate,
         reveal_path,
         browsers_list,
+        hosts_file_import,
         launch_browser,
         open_terminal,
         timers,

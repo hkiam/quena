@@ -343,12 +343,26 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
         }
     };
     let cfg = shared.cfg();
+    // Host remapping: without "keep host" the request is addressed to the target.
+    let remapped = url.parse::<http::Uri>().ok().and_then(|u| {
+        let https = matches!(u.scheme_str(), Some("https" | "wss"));
+        cfg.remap(u.host()?, u.port_u16().unwrap_or(if https { 443 } else { 80 }))
+    });
+    let url = match &remapped {
+        Some(r) if !r.keep_host => crate::remap::rewrite_url(&url, r).unwrap_or(url),
+        _ => url,
+    };
     let capture = shared.capture();
     let now = now_us();
     let h1 = is_h1(req.version());
     let mut head = RequestHead { method: req.method().to_string(), url: url.clone(), version: version_of(req.version()), headers: record_headers(req.headers(), h1) };
     if let Some(r) = &reverse {
         r.prepare_request(&mut head, &ctx, &req);
+    }
+    if let Some(r) = remapped.as_ref().filter(|r| !r.keep_host) {
+        if head.headers.get("host").is_some() {
+            head.headers.set("host", r.authority(url.starts_with("https://") || url.starts_with("wss://")));
+        }
     }
     let process = ctx.process().await;
     let client_ip = ctx.client_addr.ip().to_canonical().to_string();
@@ -371,6 +385,9 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
         }
         if let Some(v) = &ctx.via {
             d.extra_flags.push((crate::reverse::FLAG.into(), v.clone()));
+        }
+        if let Some(r) = &remapped {
+            d.extra_flags.push((crate::remap::FLAG.into(), r.note.clone()));
         }
     });
     // Client gone (hyper drops this future), panic, or a forgotten path: end the session.

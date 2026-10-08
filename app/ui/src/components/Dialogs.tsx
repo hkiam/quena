@@ -18,6 +18,7 @@ const SanitizeResult = lazy(() => import("./SanitizeDialog").then((m) => ({ defa
 const MocksDialog = lazy(() => import("./MocksDialog").then((m) => ({ default: m.MocksDialog })));
 const ReverseProxyPanel = lazy(() => import("./ReverseProxyDialog").then((m) => ({ default: m.ReverseProxyPanel })));
 const LaunchPanel = lazy(() => import("./LaunchDialog").then((m) => ({ default: m.LaunchPanel })));
+const HostRemapPanel = lazy(() => import("./HostRemapDialog").then((m) => ({ default: m.HostRemapPanel })));
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { currentLang, plural, t } from "../i18n";
@@ -646,6 +647,24 @@ function OptionsDialog() {
               <input placeholder={t("empty = use system PAC; or http://…/proxy.pac, file path")} value={s.proxy.pacUrl} onChange={(e) => up((x) => (x.proxy.pacUrl = e.target.value))} />
             </div>
             <div className="f-row">
+              <span>{t("Host remapping")}</span>
+              <span>
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.settingsSet(s);
+                      set({ settings: s, dialog: { kind: "host-remap" } });
+                    } catch (e) {
+                      say(String(e), "error");
+                    }
+                  }}
+                >
+                  {t("Host Remapping…")}
+                </button>{" "}
+                <span className="muted small">{plural(s.hostRemap?.entries.length ?? 0, "{n} entry", "{n} entries")}</span>
+              </span>
+            </div>
+            <div className="f-row">
               <span>{t("Reverse proxy ports")}</span>
               <span>
                 <button
@@ -991,6 +1010,12 @@ function DialogBody({ d }: { d: Dialog }) {
       return (
         <Modal title="HTTPS" onClose={close} wide>
           <HttpsPanel />
+        </Modal>
+      );
+    case "host-remap":
+      return (
+        <Modal title={t("Host Remapping")} onClose={close} wide>
+          <HostRemapPanel />
         </Modal>
       );
     case "launch":
