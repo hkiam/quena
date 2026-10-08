@@ -99,14 +99,7 @@ impl<'de> Deserialize<'de> for Variant {
 
 /// Decoder plugins (implemented by the plugin host, installed by the app).
 pub trait PluginDecoders: Send + Sync {
-    fn decode(
-        &self,
-        index: u16,
-        content_type: Option<&str>,
-        input: &mut dyn std::io::Read,
-        output: &mut dyn std::io::Write,
-        cancelled: &dyn Fn() -> bool,
-    ) -> std::io::Result<u64>;
+    fn decode(&self, index: u16, content_type: Option<&str>, input: &mut dyn std::io::Read, output: &mut dyn std::io::Write, cancelled: &dyn Fn() -> bool) -> std::io::Result<u64>;
     fn pretty_kind(&self, index: u16) -> Option<crate::pretty::PrettyKind>;
 }
 
@@ -170,15 +163,11 @@ impl BodyStore {
 
     /// Ensure future ids are above `id` (after loading persisted sessions).
     pub fn bump_id(&self, id: u64) {
-        self.next_id
-            .fetch_max(id.saturating_add(1), Ordering::Relaxed);
+        self.next_id.fetch_max(id.saturating_add(1), Ordering::Relaxed);
     }
 
     fn blob_path(&self, id: u64) -> PathBuf {
-        self.root
-            .join("blobs")
-            .join(format!("{:02x}", id & 0xff))
-            .join(format!("{id}.bin"))
+        self.root.join("blobs").join(format!("{:02x}", id & 0xff)).join(format!("{id}.bin"))
     }
 
     fn cache_path(&self, id: u64, v: Variant) -> PathBuf {
@@ -189,40 +178,21 @@ impl BodyStore {
     pub fn writer(self: &Arc<Self>) -> BodyWriter {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let cfg = self.cfg.read();
-        let max = if self.suspended.load(Ordering::Relaxed) {
-            0
-        } else {
-            cfg.max_recorded_body
-        };
-        BodyWriter::new(
-            Body::new(id, self.blob_path(id)),
-            self.clone(),
-            cfg.inline_limit,
-            max,
-        )
+        let max = if self.suspended.load(Ordering::Relaxed) { 0 } else { cfg.max_recorded_body };
+        BodyWriter::new(Body::new(id, self.blob_path(id)), self.clone(), cfg.inline_limit, max)
     }
 
     /// Writer for a body with an explicit recording limit (e.g. "headers only" = 0).
     pub fn writer_with_limit(self: &Arc<Self>, max: u64) -> BodyWriter {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let cfg = self.cfg.read();
-        BodyWriter::new(
-            Body::new(id, self.blob_path(id)),
-            self.clone(),
-            cfg.inline_limit,
-            max,
-        )
+        BodyWriter::new(Body::new(id, self.blob_path(id)), self.clone(), cfg.inline_limit, max)
     }
 
     /// Writer for a derived cache file (no inline, no recording limit, derived limit applies).
     pub(crate) fn derived_writer(self: &Arc<Self>, source: &Body, v: Variant) -> BodyWriter {
         let max = self.cfg.read().max_derived;
-        BodyWriter::new(
-            Body::new(source.id(), self.cache_path(source.id(), v)),
-            self.clone(),
-            0,
-            max,
-        )
+        BodyWriter::new(Body::new(source.id(), self.cache_path(source.id(), v)), self.clone(), 0, max)
     }
 
     /// Store a complete body from memory.
@@ -247,13 +217,7 @@ impl BodyStore {
             f.set_len(len.max(header.len() as u64))?;
         }
         Ok(Body::from_ref(
-            &BodyRef::Blob {
-                id,
-                len: len.max(header.len() as u64),
-                wire_len: len.max(header.len() as u64),
-                truncated: false,
-                complete: true,
-            },
+            &BodyRef::Blob { id, len: len.max(header.len() as u64), wire_len: len.max(header.len() as u64), truncated: false, complete: true },
             path,
         ))
     }
@@ -313,11 +277,7 @@ impl BodyStore {
 
     /// Get or create a derived body. Returns (body, created). If `created`, the
     /// caller must fill it using the returned writer.
-    pub(crate) fn derived_or_create(
-        self: &Arc<Self>,
-        source: &Body,
-        v: Variant,
-    ) -> (Body, Option<BodyWriter>) {
+    pub(crate) fn derived_or_create(self: &Arc<Self>, source: &Body, v: Variant) -> (Body, Option<BodyWriter>) {
         let mut map = self.derived.lock();
         if let Some(b) = map.get(&(source.id(), v)) {
             return (b.clone(), None);
@@ -353,17 +313,8 @@ impl BodyStore {
     pub fn delete(&self, body: &Body) {
         let len = body.path().map(|_| body.len()).unwrap_or(0);
         body.delete_file();
-        self.used.fetch_sub(
-            len.min(self.used.load(Ordering::Relaxed)),
-            Ordering::Relaxed,
-        );
-        let keys: Vec<Variant> = self
-            .derived
-            .lock()
-            .keys()
-            .filter(|(id, _)| *id == body.id())
-            .map(|(_, v)| *v)
-            .collect();
+        self.used.fetch_sub(len.min(self.used.load(Ordering::Relaxed)), Ordering::Relaxed);
+        let keys: Vec<Variant> = self.derived.lock().keys().filter(|(id, _)| *id == body.id()).map(|(_, v)| *v).collect();
         for v in keys {
             self.forget_derived(body.id(), v);
         }

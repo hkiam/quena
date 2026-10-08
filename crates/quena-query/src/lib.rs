@@ -54,19 +54,11 @@ impl Filter {
             "" => None,
             e => Some(expr::parse(e)?),
         };
-        Ok(Filter {
-            settings: Some(settings::Compiled::new(settings)),
-            expr,
-            scope: None,
-        })
+        Ok(Filter { settings: Some(settings::Compiled::new(settings)), expr, scope: None })
     }
 
     pub fn from_expr(e: Expr) -> Filter {
-        Filter {
-            settings: None,
-            expr: Some(e),
-            scope: None,
-        }
+        Filter { settings: None, expr: Some(e), scope: None }
     }
 
     /// This filter, narrowed to `scope` as well.
@@ -167,35 +159,14 @@ pub fn parse_duration_ms(s: &str) -> Option<u64> {
 }
 
 pub const BROWSERS: &[&str] = &[
-    "chrome",
-    "google chrome",
-    "google chrome helper",
-    "safari",
-    "com.apple.webkit.networking",
-    "firefox",
-    "msedge",
-    "microsoft edge",
-    "microsoft edge helper",
-    "opera",
-    "brave",
-    "brave browser",
-    "brave browser helper",
-    "arc",
-    "vivaldi",
-    "chromium",
-    "iexplore",
-    "orion",
+    "chrome", "google chrome", "google chrome helper", "safari", "com.apple.webkit.networking", "firefox",
+    "msedge", "microsoft edge", "microsoft edge helper", "opera", "brave", "brave browser", "brave browser helper",
+    "arc", "vivaldi", "chromium", "iexplore", "orion",
 ];
 
 pub fn is_browser(process: &str) -> bool {
-    let name = process
-        .rsplit_once(':')
-        .map(|(n, _)| n)
-        .unwrap_or(process)
-        .to_ascii_lowercase();
-    BROWSERS
-        .iter()
-        .any(|b| name == *b || name.starts_with(&format!("{b} helper")))
+    let name = process.rsplit_once(':').map(|(n, _)| n).unwrap_or(process).to_ascii_lowercase();
+    BROWSERS.iter().any(|b| name == *b || name.starts_with(&format!("{b} helper")))
 }
 
 #[cfg(test)]

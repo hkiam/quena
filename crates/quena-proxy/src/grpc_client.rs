@@ -32,18 +32,10 @@ impl std::fmt::Display for GrpcError {
 
 /// Send one request message to `url` (`scheme://host[:port]/pkg.Service/Method`) and return
 /// the response messages (unframed).
-pub async fn call(
-    shared: &Arc<Shared>,
-    url: &str,
-    message: &[u8],
-) -> Result<Vec<Vec<u8>>, GrpcError> {
+pub async fn call(shared: &Arc<Shared>, url: &str, message: &[u8]) -> Result<Vec<Vec<u8>>, GrpcError> {
     let other = |e: &dyn std::fmt::Display| GrpcError::Other(e.to_string());
-    let client: Client<Connector, crate::ProxyBody> = Client::builder(TokioExecutor::new())
-        .http2_only(true)
-        .build(Connector {
-            cfg: shared.cfg(),
-            tls: shared.tls_clients.clone(),
-        });
+    let client: Client<Connector, crate::ProxyBody> =
+        Client::builder(TokioExecutor::new()).http2_only(true).build(Connector { cfg: shared.cfg(), tls: shared.tls_clients.clone() });
     let mut framed = Vec::with_capacity(message.len() + 5);
     framed.push(0);
     framed.extend_from_slice(&(message.len() as u32).to_be_bytes());
@@ -54,18 +46,15 @@ pub async fn call(
         .header("user-agent", concat!("quena/", env!("CARGO_PKG_VERSION")))
         .body(crate::body::full(Bytes::from(framed)))
         .map_err(|e| other(&e))?;
-    let resp = tokio::time::timeout(Duration::from_secs(20), client.request(req))
-        .await
-        .map_err(|_| GrpcError::Other("no answer within 20 s".into()))?
-        .map_err(|e| {
-            let mut msg = e.to_string();
-            let mut src = std::error::Error::source(&e);
-            while let Some(s) = src {
-                msg.push_str(&format!(": {s}"));
-                src = s.source();
-            }
-            GrpcError::Other(msg)
-        })?;
+    let resp = tokio::time::timeout(Duration::from_secs(20), client.request(req)).await.map_err(|_| GrpcError::Other("no answer within 20 s".into()))?.map_err(|e| {
+        let mut msg = e.to_string();
+        let mut src = std::error::Error::source(&e);
+        while let Some(s) = src {
+            msg.push_str(&format!(": {s}"));
+            src = s.source();
+        }
+        GrpcError::Other(msg)
+    })?;
     let status = resp.status();
     let head_status = grpc_status(resp.headers());
     let collected = tokio::time::timeout(Duration::from_secs(20), resp.into_body().collect())
@@ -101,10 +90,6 @@ pub async fn call(
 
 fn grpc_status(h: &http::HeaderMap) -> Option<(u32, String)> {
     let code = h.get("grpc-status")?.to_str().ok()?.trim().parse().ok()?;
-    let msg = h
-        .get("grpc-message")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+    let msg = h.get("grpc-message").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     Some((code, msg))
 }

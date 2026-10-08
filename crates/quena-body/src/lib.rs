@@ -51,18 +51,9 @@ pub fn free_space(path: &std::path::Path) -> Option<u64> {
     {
         use std::os::windows::ffi::OsStrExt;
         unsafe extern "system" {
-            fn GetDiskFreeSpaceExW(
-                dir: *const u16,
-                avail: *mut u64,
-                total: *mut u64,
-                free: *mut u64,
-            ) -> i32;
+            fn GetDiskFreeSpaceExW(dir: *const u16, avail: *mut u64, total: *mut u64, free: *mut u64) -> i32;
         }
-        let wide: Vec<u16> = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
         let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
         if unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut avail, &mut total, &mut free) } != 0 {
             return Some(avail);
@@ -103,14 +94,7 @@ mod tests {
     #[test]
     fn spill_and_range_read() {
         let dir = tempfile::tempdir().unwrap();
-        let store = BodyStore::open(
-            dir.path(),
-            BodyConfig {
-                inline_limit: 10,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig { inline_limit: 10, ..Default::default() }).unwrap();
         let mut w = store.writer();
         w.write(b"hello").unwrap();
         assert!(w.body().path().is_none());
@@ -127,15 +111,7 @@ mod tests {
     #[test]
     fn truncation() {
         let dir = tempfile::tempdir().unwrap();
-        let store = BodyStore::open(
-            dir.path(),
-            BodyConfig {
-                inline_limit: 4,
-                max_recorded_body: 8,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig { inline_limit: 4, max_recorded_body: 8, ..Default::default() }).unwrap();
         let mut w = store.writer();
         w.write(b"0123456789abcdef").unwrap();
         let b = w.finish();
@@ -153,11 +129,7 @@ mod tests {
         enc.write_all(json).unwrap();
         let gz = enc.finish().unwrap();
         let body = store.store_bytes(&gz);
-        let spec = DeriveSpec {
-            content_encoding: Some("gzip".into()),
-            content_type: Some("application/json".into()),
-            charset: None,
-        };
+        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: Some("application/json".into()), charset: None };
         let d = derive(&store, &body, Variant::Decoded, &spec).unwrap();
         (d.work.unwrap())(&NoProgress).unwrap();
         assert_eq!(d.body.read_range(0, 1000).unwrap(), json);
@@ -166,12 +138,7 @@ mod tests {
         let text = String::from_utf8(p.body.read_range(0, 1000).unwrap()).unwrap();
         assert!(text.starts_with("{\n  \"a\": [\n    1,"), "{text}");
         // Second request hits the cache.
-        assert!(
-            derive(&store, &body, Variant::Pretty, &spec)
-                .unwrap()
-                .work
-                .is_none()
-        );
+        assert!(derive(&store, &body, Variant::Pretty, &spec).unwrap().work.is_none());
     }
 
     #[test]
@@ -182,11 +149,7 @@ mod tests {
         let mut utf16: Vec<u8> = vec![0xFF, 0xFE];
         utf16.extend(json.encode_utf16().flat_map(|u| u.to_le_bytes()));
         let body = store.store_bytes(&utf16);
-        let mut spec = DeriveSpec {
-            content_encoding: None,
-            content_type: Some("application/json".into()),
-            charset: None,
-        };
+        let mut spec = DeriveSpec { content_encoding: None, content_type: Some("application/json".into()), charset: None };
         spec.charset = Some(text::detect_body(&body, &spec).encoding);
         assert_eq!(spec.charset, Some(encoding_rs::UTF_16LE));
         // Pretty: transcoded, then formatted; the output is UTF-8.
@@ -194,56 +157,32 @@ mod tests {
         (p.work.unwrap())(&NoProgress).unwrap();
         let out = String::from_utf8(p.body.read_range(0, 1000).unwrap()).unwrap();
         assert_eq!(out, "{\n  \"gruß\": [\n    \"Grüße 😀\",\n    2\n  ]\n}\n");
-        assert_eq!(
-            decode::output_charset(&spec, Variant::Pretty),
-            Some(encoding_rs::UTF_8)
-        );
+        assert_eq!(decode::output_charset(&spec, Variant::Pretty), Some(encoding_rs::UTF_8));
         // Text: transcoded as it is (BOM dropped).
         let t = derive(&store, &body, Variant::Text(encoding_rs::UTF_16LE), &spec).unwrap();
         (t.work.unwrap())(&NoProgress).unwrap();
         assert_eq!(t.body.read_range(0, 1000).unwrap(), json.as_bytes());
-        assert_eq!(
-            Variant::parse("text:utf-16le"),
-            Some(Variant::Text(encoding_rs::UTF_16LE))
-        );
+        assert_eq!(Variant::parse("text:utf-16le"), Some(Variant::Text(encoding_rs::UTF_16LE)));
         assert_eq!(Variant::Text(encoding_rs::UTF_16LE).name(), "text:UTF-16LE");
         // ASCII-compatible charsets keep their bytes: formatted windows-1252 stays windows-1252.
         let latin = store.store_bytes(b"{\"a\":\"Gr\xfc\xdfe\"}");
-        let spec = DeriveSpec {
-            content_encoding: None,
-            content_type: Some("application/json; charset=windows-1252".into()),
-            charset: Some(encoding_rs::WINDOWS_1252),
-        };
+        let spec = DeriveSpec { content_encoding: None, content_type: Some("application/json; charset=windows-1252".into()), charset: Some(encoding_rs::WINDOWS_1252) };
         let p = derive(&store, &latin, Variant::Pretty, &spec).unwrap();
         (p.work.unwrap())(&NoProgress).unwrap();
-        assert_eq!(
-            p.body.read_range(0, 1000).unwrap(),
-            b"{\n  \"a\": \"Gr\xfc\xdfe\"\n}\n"
-        );
+        assert_eq!(p.body.read_range(0, 1000).unwrap(), b"{\n  \"a\": \"Gr\xfc\xdfe\"\n}\n");
         assert_eq!(decode::output_charset(&spec, Variant::Pretty), None);
     }
 
     #[test]
     fn bomb_protection() {
         let dir = tempfile::tempdir().unwrap();
-        let store = BodyStore::open(
-            dir.path(),
-            BodyConfig {
-                max_ratio: 100,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig { max_ratio: 100, ..Default::default() }).unwrap();
         let zeros = vec![0u8; 64 << 20];
         let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
         enc.write_all(&zeros).unwrap();
         let gz = enc.finish().unwrap();
         let body = store.store_bytes(&gz);
-        let spec = DeriveSpec {
-            content_encoding: Some("gzip".into()),
-            content_type: None,
-            charset: None,
-        };
+        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: None, charset: None };
         let d = derive(&store, &body, Variant::Decoded, &spec).unwrap();
         let r = (d.work.unwrap())(&NoProgress);
         assert!(r.is_err());
@@ -270,56 +209,29 @@ mod tests {
     #[test]
     fn stacked_encodings_capped() {
         use decode::{Encoding, parse_encodings};
-        assert_eq!(
-            parse_encodings("gzip, identity, br").unwrap(),
-            vec![Encoding::Gzip, Encoding::Brotli]
-        );
-        assert_eq!(
-            parse_encodings(&vec!["gzip"; 4].join(",")).unwrap().len(),
-            4
-        );
+        assert_eq!(parse_encodings("gzip, identity, br").unwrap(), vec![Encoding::Gzip, Encoding::Brotli]);
+        assert_eq!(parse_encodings(&vec!["gzip"; 4].join(",")).unwrap().len(), 4);
         assert!(parse_encodings(&vec!["gzip"; 5].join(",")).is_err());
         assert!(parse_encodings(&vec!["gzip"; 100_000].join(",")).is_err());
         // Identity layers don't count.
-        assert_eq!(
-            parse_encodings(&format!("{}gzip", "identity,".repeat(1000))).unwrap(),
-            vec![Encoding::Gzip]
-        );
+        assert_eq!(parse_encodings(&format!("{}gzip", "identity,".repeat(1000))).unwrap(), vec![Encoding::Gzip]);
         let dir = tempfile::tempdir().unwrap();
         let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
         let body = store.store_bytes(b"x");
-        let spec = DeriveSpec {
-            content_encoding: Some(vec!["gzip"; 50].join(",")),
-            content_type: None,
-            charset: None,
-        };
+        let spec = DeriveSpec { content_encoding: Some(vec!["gzip"; 50].join(",")), content_type: None, charset: None };
         assert!(!decode::variant_applies(&spec, Variant::Decoded));
-        assert!(matches!(
-            derive(&store, &body, Variant::Decoded, &spec),
-            Err(BodyError::Unsupported(_))
-        ));
+        assert!(matches!(derive(&store, &body, Variant::Decoded, &spec), Err(BodyError::Unsupported(_))));
     }
 
     #[test]
     fn derived_output_cap_stops_decoding() {
         let dir = tempfile::tempdir().unwrap();
-        let store = BodyStore::open(
-            dir.path(),
-            BodyConfig {
-                max_derived: 100_000,
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let store = BodyStore::open(dir.path(), BodyConfig { max_derived: 100_000, ..Default::default() }).unwrap();
         let data: Vec<u8> = (0..4_000_000u32).map(|i| (i % 7) as u8 + b'a').collect();
         let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         enc.write_all(&data).unwrap();
         let body = store.store_bytes(&enc.finish().unwrap());
-        let spec = DeriveSpec {
-            content_encoding: Some("gzip".into()),
-            content_type: None,
-            charset: None,
-        };
+        let spec = DeriveSpec { content_encoding: Some("gzip".into()), content_type: None, charset: None };
         let d = derive(&store, &body, Variant::Decoded, &spec).unwrap();
         (d.work.unwrap())(&NoProgress).unwrap();
         assert!(d.body.is_truncated());
@@ -336,12 +248,7 @@ mod tests {
         enc.write_all(&data).unwrap();
         let gz = enc.finish().unwrap();
         let body = store.store_bytes(&gz);
-        assert_eq!(
-            decode::decode_prefix(&body, "gzip", 1000, &NoProgress)
-                .unwrap()
-                .len(),
-            1000
-        );
+        assert_eq!(decode::decode_prefix(&body, "gzip", 1000, &NoProgress).unwrap().len(), 1000);
         // Truncated stream: returns what could be decoded.
         let cut = store.store_bytes(&gz[..gz.len() / 2]);
         let out = decode::decode_prefix(&cut, "gzip", usize::MAX, &NoProgress).unwrap();

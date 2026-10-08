@@ -49,9 +49,7 @@ fn extensions(mut c: Cur<'_>) -> Vec<(u16, &[u8])> {
 
 fn alpn_list(d: &[u8]) -> Vec<String> {
     let mut c = Cur(d);
-    let Some(list) = c.vec16() else {
-        return Vec::new();
-    };
+    let Some(list) = c.vec16() else { return Vec::new() };
     let mut c = Cur(list);
     let mut out = Vec::new();
     while let Some(p) = c.vec8() {
@@ -96,8 +94,8 @@ pub fn client_hello(body: &[u8], info: &mut TlsInfo) -> Option<[u8; 32]> {
 
 /// The random of a HelloRetryRequest (RFC 8446, 4.1.3): SHA-256 of "HelloRetryRequest".
 const HELLO_RETRY: [u8; 32] = [
-    0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
-    0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c,
+    0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91, 0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07, 0x9e, 0x09, 0xe2,
+    0xc8, 0xa8, 0x33, 0x9c,
 ];
 
 /// What the ServerHello chose.
@@ -144,13 +142,7 @@ pub fn server_hello(body: &[u8], info: &mut TlsInfo) -> Option<ServerHello> {
         v => format!("0x{v:04X}"),
     };
     info.cipher = cipher_name(suite);
-    Some(ServerHello {
-        random,
-        suite,
-        version,
-        etm,
-        retry: random == HELLO_RETRY,
-    })
+    Some(ServerHello { random, suite, version, etm, retry: random == HELLO_RETRY })
 }
 
 fn cipher_name(s: u16) -> String {
@@ -206,10 +198,7 @@ pub(crate) mod tests {
     }
 
     fn alpn(protos: &[&str]) -> Vec<u8> {
-        let list: Vec<u8> = protos
-            .iter()
-            .flat_map(|p| [&[p.len() as u8][..], p.as_bytes()].concat())
-            .collect();
+        let list: Vec<u8> = protos.iter().flat_map(|p| [&[p.len() as u8][..], p.as_bytes()].concat()).collect();
         [(list.len() as u16).to_be_bytes().to_vec(), list].concat()
     }
 
@@ -257,10 +246,7 @@ pub(crate) mod tests {
         assert_eq!(info.sni.as_deref(), Some("example.org"));
         assert_eq!(info.alpn.as_deref(), Some("h2, http/1.1"));
         let sh = server_hello(&server_hello_record()[9..], &mut info).unwrap();
-        assert_eq!(
-            (sh.suite, sh.version, sh.etm, sh.retry),
-            (0x1302, 0x0304, false, false)
-        );
+        assert_eq!((sh.suite, sh.version, sh.etm, sh.retry), (0x1302, 0x0304, false, false));
         assert_eq!(info.version, "TLS 1.3");
         assert_eq!(info.cipher, "TLS13_AES_256_GCM_SHA384");
         assert_eq!(info.alpn.as_deref(), Some("h2"));

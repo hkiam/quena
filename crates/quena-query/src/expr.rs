@@ -81,15 +81,7 @@ impl Field {
         })
     }
     fn numeric(self) -> bool {
-        matches!(
-            self,
-            Field::Id
-                | Field::Status
-                | Field::Size
-                | Field::ReqSize
-                | Field::Duration
-                | Field::Conn
-        )
+        matches!(self, Field::Id | Field::Status | Field::Size | Field::ReqSize | Field::Duration | Field::Conn)
     }
 }
 
@@ -139,12 +131,7 @@ impl Expr {
 
 fn text_of(f: Field, s: &SessionSummary) -> String {
     match f {
-        Field::Host => host_without_port(if s.kind == SessionKind::Tunnel {
-            &s.url
-        } else {
-            &s.host
-        })
-        .to_string(),
+        Field::Host => host_without_port(if s.kind == SessionKind::Tunnel { &s.url } else { &s.host }).to_string(),
         Field::Url => s.full_url(),
         Field::Path => s.url.clone(),
         Field::Method => s.method.clone(),
@@ -249,10 +236,7 @@ fn lex(src: &str) -> Result<Vec<(Tok, usize)>, ParseError> {
                 i += 1;
             }
             if i >= b.len() {
-                return Err(ParseError {
-                    msg: "unterminated string".into(),
-                    pos: start,
-                });
+                return Err(ParseError { msg: "unterminated string".into(), pos: start });
             }
             i += 1;
             out.push((Tok::Str(s), start));
@@ -330,10 +314,7 @@ impl Parser {
         self.toks.get(self.i).map(|t| t.1).unwrap_or(self.len)
     }
     fn err<T>(&self, msg: &str) -> Result<T, ParseError> {
-        Err(ParseError {
-            msg: msg.into(),
-            pos: self.pos(),
-        })
+        Err(ParseError { msg: msg.into(), pos: self.pos() })
     }
     fn is_kw(&self, kw: &str) -> bool {
         match self.peek() {
@@ -355,10 +336,7 @@ impl Parser {
         loop {
             if self.is_kw("and") {
                 self.i += 1;
-            } else if self.peek().is_none()
-                || matches!(self.peek(), Some(Tok::RParen))
-                || self.is_kw("or")
-            {
+            } else if self.peek().is_none() || matches!(self.peek(), Some(Tok::RParen)) || self.is_kw("or") {
                 break;
             }
             // Implicit AND between adjacent terms.
@@ -442,10 +420,7 @@ impl Parser {
             _ => return self.err("unknown operator"),
         };
         let value = if op == Op::Regex {
-            Value::Re(Regex::new(&format!("(?i){raw}")).map_err(|e| ParseError {
-                msg: format!("regex: {e}"),
-                pos: self.pos(),
-            })?)
+            Value::Re(Regex::new(&format!("(?i){raw}")).map_err(|e| ParseError { msg: format!("regex: {e}"), pos: self.pos() })?)
         } else if field.numeric() {
             let n = match field {
                 Field::Size | Field::ReqSize => parse_size(&raw),
@@ -456,10 +431,7 @@ impl Parser {
                 Some(n) => Value::Num(n),
                 None if field == Field::Status && raw.to_ascii_lowercase().ends_with("xx") => {
                     // status == 4xx
-                    let d: u64 = raw.get(..1).unwrap_or("").parse().map_err(|_| ParseError {
-                        msg: "bad status class".into(),
-                        pos: self.pos(),
-                    })?;
+                    let d: u64 = raw.get(..1).unwrap_or("").parse().map_err(|_| ParseError { msg: "bad status class".into(), pos: self.pos() })?;
                     let lo = Expr::Cmp(Field::Status, Op::Ge, Value::Num(d * 100));
                     let hi = Expr::Cmp(Field::Status, Op::Lt, Value::Num(d * 100 + 100));
                     let both = Expr::And(Box::new(lo), Box::new(hi));
@@ -471,11 +443,7 @@ impl Parser {
                 None => return self.err("expected number"),
             }
         } else {
-            Value::Text(if matches!(op, Op::Contains | Op::NotContains) {
-                raw.to_lowercase()
-            } else {
-                raw
-            })
+            Value::Text(if matches!(op, Op::Contains | Op::NotContains) { raw.to_lowercase() } else { raw })
         };
         Ok(Expr::Cmp(field, op, value))
     }
@@ -486,13 +454,7 @@ pub fn parse(src: &str) -> Result<Expr, ParseError> {
     if toks.is_empty() {
         return Ok(Expr::True);
     }
-    let mut p = Parser {
-        toks,
-        i: 0,
-        len: src.len(),
-        depth: 0,
-        terms: 0,
-    };
+    let mut p = Parser { toks, i: 0, len: src.len(), depth: 0, terms: 0 };
     let e = p.or()?;
     if p.i != p.toks.len() {
         return p.err("unexpected token");
@@ -568,20 +530,10 @@ mod tests {
         assert!(parse(&"not ".repeat(100_000)).is_err());
         let ok = format!("{}login{}", "(".repeat(MAX_DEPTH), ")".repeat(MAX_DEPTH));
         assert!(parse(&ok).unwrap().eval(&s()));
-        assert!(
-            parse(&"a ".repeat(MAX_TERMS + 1))
-                .unwrap_err()
-                .msg
-                .contains("terms")
-        );
+        assert!(parse(&"a ".repeat(MAX_TERMS + 1)).unwrap_err().msg.contains("terms"));
         // A long chain parses into a shallow tree: evaluating and dropping it is cheap on the stack.
         let long = vec!["status == 502"; MAX_TERMS].join(" and ");
-        let e = std::thread::Builder::new()
-            .stack_size(256 * 1024)
-            .spawn(move || parse(&long).unwrap().eval(&s()))
-            .unwrap()
-            .join()
-            .unwrap();
+        let e = std::thread::Builder::new().stack_size(256 * 1024).spawn(move || parse(&long).unwrap().eval(&s())).unwrap().join().unwrap();
         assert!(e);
         let long = format!("{} or login", vec!["process ~ x"; 5000].join(" or "));
         assert!(parse(&long).unwrap().eval(&s()));

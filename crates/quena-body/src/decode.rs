@@ -38,9 +38,7 @@ pub fn parse_encodings(value: &str) -> std::result::Result<Vec<Encoding>, String
             other => return Err(other.chars().take(64).collect()),
         };
         if out.len() >= MAX_STACKED_ENCODINGS {
-            return Err(format!(
-                "with more than {MAX_STACKED_ENCODINGS} stacked codings"
-            ));
+            return Err(format!("with more than {MAX_STACKED_ENCODINGS} stacked codings"));
         }
         out.push(e);
     }
@@ -86,10 +84,7 @@ impl<R: Read> Read for Counting<'_, R> {
 }
 
 /// Wrap `r` with decoders for `encodings` (applied in header order).
-pub fn decoding_reader<'a>(
-    mut r: Box<dyn Read + 'a>,
-    encodings: &[Encoding],
-) -> Box<dyn Read + 'a> {
+pub fn decoding_reader<'a>(mut r: Box<dyn Read + 'a>, encodings: &[Encoding]) -> Box<dyn Read + 'a> {
     for e in encodings.iter().rev() {
         r = wrap_decoder(r, *e);
     }
@@ -112,10 +107,7 @@ fn wrap_decoder<'a>(r: Box<dyn Read + 'a>, e: Encoding) -> Box<dyn Read + 'a> {
 struct ErrReader(Option<io::Error>);
 impl Read for ErrReader {
     fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-        Err(self
-            .0
-            .take()
-            .unwrap_or_else(|| io::Error::other("decoder error")))
+        Err(self.0.take().unwrap_or_else(|| io::Error::other("decoder error")))
     }
 }
 
@@ -127,10 +119,7 @@ struct DeflateAuto<'a> {
 
 impl<'a> DeflateAuto<'a> {
     fn new(r: Box<dyn Read + 'a>) -> Self {
-        DeflateAuto {
-            inner: Some(r),
-            dec: None,
-        }
+        DeflateAuto { inner: Some(r), dec: None }
     }
 }
 
@@ -138,9 +127,7 @@ impl Read for DeflateAuto<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.dec.is_none() {
             // `inner` is gone if sniffing the header failed before; don't panic on a retry.
-            let Some(mut inner) = self.inner.take() else {
-                return Err(io::Error::other("deflate stream failed"));
-            };
+            let Some(mut inner) = self.inner.take() else { return Err(io::Error::other("deflate stream failed")) };
             let mut head = [0u8; 2];
             let mut got = 0;
             while got < 2 {
@@ -150,11 +137,8 @@ impl Read for DeflateAuto<'_> {
                 }
                 got += n;
             }
-            let chained: Box<dyn Read> =
-                Box::new(io::Cursor::new(head[..got].to_vec()).chain(inner));
-            let zlib = got == 2
-                && (head[0] & 0x0f) == 8
-                && ((head[0] as u16) << 8 | head[1] as u16) % 31 == 0;
+            let chained: Box<dyn Read> = Box::new(io::Cursor::new(head[..got].to_vec()).chain(inner));
+            let zlib = got == 2 && (head[0] & 0x0f) == 8 && ((head[0] as u16) << 8 | head[1] as u16) % 31 == 0;
             self.dec = Some(if zlib {
                 Box::new(flate2::read::ZlibDecoder::new(chained))
             } else {
@@ -190,10 +174,7 @@ impl Write for RatioGuard<'_> {
         if room == 0 || self.inner.body().is_truncated() {
             self.inner.add_dropped(buf.len() as u64);
             self.stopped.store(true, Ordering::Relaxed);
-            return Err(io::Error::other(format!(
-                "output truncated at {} bytes",
-                self.written
-            )));
+            return Err(io::Error::other(format!("output truncated at {} bytes", self.written)));
         }
         let n = (buf.len() as u64).min(room) as usize;
         self.written += n as u64;
@@ -229,12 +210,7 @@ pub struct DeriveSpec {
 pub fn output_charset(spec: &DeriveSpec, v: Variant) -> Option<&'static encoding_rs::Encoding> {
     match v {
         Variant::Text(_) | Variant::Plugin(_) => Some(encoding_rs::UTF_8),
-        Variant::Pretty
-            if variant_applies(spec, Variant::Pretty)
-                && spec.charset.is_some_and(crate::text::needs_transcoding) =>
-        {
-            Some(encoding_rs::UTF_8)
-        }
+        Variant::Pretty if variant_applies(spec, Variant::Pretty) && spec.charset.is_some_and(crate::text::needs_transcoding) => Some(encoding_rs::UTF_8),
         _ => None,
     }
 }
@@ -261,31 +237,18 @@ pub fn variant_applies(spec: &DeriveSpec, v: Variant) -> bool {
 }
 
 /// Get (or start producing) a variant of `source`.
-pub fn derive(
-    store: &Arc<BodyStore>,
-    source: &Body,
-    v: Variant,
-    spec: &DeriveSpec,
-) -> Result<Derivation> {
+pub fn derive(store: &Arc<BodyStore>, source: &Body, v: Variant, spec: &DeriveSpec) -> Result<Derivation> {
     if v == Variant::Raw {
-        return Ok(Derivation {
-            body: source.clone(),
-            work: None,
-        });
+        return Ok(Derivation { body: source.clone(), work: None });
     }
     let encodings = match spec.content_encoding.as_deref() {
-        Some(ce) => parse_encodings(ce)
-            .map_err(|e| BodyError::Unsupported(format!("content-encoding {e}")))?,
+        Some(ce) => parse_encodings(ce).map_err(|e| BodyError::Unsupported(format!("content-encoding {e}")))?,
         None => vec![],
     };
     if let Variant::Plugin(n) = v {
-        let Some(plugins) = store.plugins() else {
-            return Err(BodyError::Unsupported("plugins are not available".into()));
-        };
+        let Some(plugins) = store.plugins() else { return Err(BodyError::Unsupported("plugins are not available".into())) };
         let (body, writer) = store.derived_or_create(source, v);
-        let Some(writer) = writer else {
-            return Ok(Derivation { body, work: None });
-        };
+        let Some(writer) = writer else { return Ok(Derivation { body, work: None }) };
         let source = source.clone();
         let store2 = store.clone();
         let ct = spec.content_type.clone();
@@ -293,44 +256,24 @@ pub fn derive(
         let work = move |p: &dyn Progress| -> Result<()> {
             let total = source.len();
             let src = source.stream(0, true);
-            let counted = Counting {
-                inner: src,
-                count: 0,
-                total,
-                last_report: 0,
-                progress: p,
-            };
+            let counted = Counting { inner: src, count: 0, total, last_report: 0, progress: p };
             let consumed = Arc::new(AtomicU64::new(0));
-            let tracker = TrackRead {
-                inner: counted,
-                consumed: consumed.clone(),
-            };
+            let tracker = TrackRead { inner: counted, consumed: consumed.clone() };
             let mut reader = decoding_reader(Box::new(tracker), &encodings);
             let input = move || consumed.load(Ordering::Relaxed);
             let stopped = Arc::new(AtomicBool::new(false));
-            let guard = RatioGuard {
-                inner: writer,
-                written: 0,
-                input: &input,
-                max_ratio: cfg.max_ratio,
-                max_output: output_cap(&cfg, total),
-                stopped: stopped.clone(),
-            };
+            let guard = RatioGuard { inner: writer, written: 0, input: &input, max_ratio: cfg.max_ratio, max_output: output_cap(&cfg, total), stopped: stopped.clone() };
             let buffered = BufWriter::with_capacity(256 * 1024, guard);
             let kind = plugins.pretty_kind(n);
             let cancelled = || p.cancelled();
             let r = match kind {
                 Some(k) => {
                     let mut f = pretty::Formatter::new(k, buffered);
-                    plugins
-                        .decode(n, ct.as_deref(), &mut reader, &mut f, &cancelled)
-                        .and_then(|_| f.finish())
+                    plugins.decode(n, ct.as_deref(), &mut reader, &mut f, &cancelled).and_then(|_| f.finish())
                 }
                 None => {
                     let mut w = buffered;
-                    plugins
-                        .decode(n, ct.as_deref(), &mut reader, &mut w, &cancelled)
-                        .and_then(|_| w.flush())
+                    plugins.decode(n, ct.as_deref(), &mut reader, &mut w, &cancelled).and_then(|_| w.flush())
                 }
             };
             p.progress(total, total);
@@ -346,17 +289,11 @@ pub fn derive(
                 Err(e) => Err(BodyError::Io(e)),
             }
         };
-        return Ok(Derivation {
-            body,
-            work: Some(Box::new(work)),
-        });
+        return Ok(Derivation { body, work: Some(Box::new(work)) });
     }
     let pretty_kind = pretty::kind_for(spec.content_type.as_deref());
     if v == Variant::Decoded && encodings.is_empty() {
-        return Ok(Derivation {
-            body: source.clone(),
-            work: None,
-        });
+        return Ok(Derivation { body: source.clone(), work: None });
     }
     if v == Variant::Pretty && pretty_kind.is_none() {
         return derive(store, source, Variant::Decoded, spec);
@@ -377,19 +314,7 @@ pub fn derive(
             Variant::Pretty => charset.filter(|e| crate::text::needs_transcoding(e)),
             _ => None,
         };
-        let r = run_derivation(
-            &source,
-            writer,
-            &encodings,
-            if v == Variant::Pretty {
-                pretty_kind
-            } else {
-                None
-            },
-            transcode,
-            limits,
-            p,
-        );
+        let r = run_derivation(&source, writer, &encodings, if v == Variant::Pretty { pretty_kind } else { None }, transcode, limits, p);
         if let Err(e) = &r {
             // Keep the partial output for errors (useful for inspection) but drop it when cancelled.
             if matches!(e, BodyError::Cancelled) {
@@ -398,17 +323,12 @@ pub fn derive(
         }
         r
     };
-    Ok(Derivation {
-        body,
-        work: Some(Box::new(work)),
-    })
+    Ok(Derivation { body, work: Some(Box::new(work)) })
 }
 
 /// Absolute cap on derived output for a source of `source_len` bytes.
 fn output_cap(cfg: &crate::BodyConfig, source_len: u64) -> u64 {
-    MAX_DECODED_OUTPUT
-        .max(source_len.saturating_mul(4))
-        .min(cfg.max_derived)
+    MAX_DECODED_OUTPUT.max(source_len.saturating_mul(4)).min(cfg.max_derived)
 }
 
 fn run_derivation(
@@ -423,17 +343,8 @@ fn run_derivation(
     let consumed = Arc::new(AtomicU64::new(0));
     let total = source.len();
     let src = source.stream(0, true);
-    let counted = Counting {
-        inner: src,
-        count: 0,
-        total,
-        last_report: 0,
-        progress: p,
-    };
-    let tracker = TrackRead {
-        inner: counted,
-        consumed: consumed.clone(),
-    };
+    let counted = Counting { inner: src, count: 0, total, last_report: 0, progress: p };
+    let tracker = TrackRead { inner: counted, consumed: consumed.clone() };
     let mut reader: Box<dyn Read> = Box::new(tracker);
     for e in encodings.iter().rev() {
         reader = wrap_decoder(reader, *e);
@@ -444,14 +355,7 @@ fn run_derivation(
     let consumed2 = consumed.clone();
     let input = move || consumed2.load(Ordering::Relaxed);
     let stopped = Arc::new(AtomicBool::new(false));
-    let guard = RatioGuard {
-        inner: writer,
-        written: 0,
-        input: &input,
-        max_ratio,
-        max_output,
-        stopped: stopped.clone(),
-    };
+    let guard = RatioGuard { inner: writer, written: 0, input: &input, max_ratio, max_output, stopped: stopped.clone() };
     let buffered = BufWriter::with_capacity(256 * 1024, guard);
     let res = match pretty_kind {
         Some(k) => {
@@ -513,21 +417,10 @@ pub fn decode_bytes(data: &[u8], content_encoding: &str, limit: usize) -> io::Re
 /// Decode (at most `limit` bytes of) a stored body in memory without creating a
 /// cached variant – for searching. A decoder error after some output returns the
 /// part decoded so far (truncated/corrupt streams are common); cancellation errors.
-pub fn decode_prefix(
-    source: &Body,
-    content_encoding: &str,
-    limit: usize,
-    p: &dyn Progress,
-) -> io::Result<Vec<u8>> {
+pub fn decode_prefix(source: &Body, content_encoding: &str, limit: usize, p: &dyn Progress) -> io::Result<Vec<u8>> {
     let encodings = parse_encodings(content_encoding).map_err(io::Error::other)?;
     let total = source.len();
-    let counted = Counting {
-        inner: source.stream(0, false),
-        count: 0,
-        total,
-        last_report: 0,
-        progress: p,
-    };
+    let counted = Counting { inner: source.stream(0, false), count: 0, total, last_report: 0, progress: p };
     let mut reader = decoding_reader(Box::new(counted), &encodings);
     let mut out = Vec::new();
     let mut buf = vec![0u8; 64 * 1024];

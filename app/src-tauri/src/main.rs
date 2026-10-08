@@ -38,26 +38,18 @@ fn main() {
         None => {
             tracing::warn!(target: "quena", "Quena is already running with data in {}; exiting", paths.data.display());
             let text = if german() {
-                format!(
-                    "Quena läuft bereits (Datenordner {}).",
-                    paths.data.display()
-                )
+                format!("Quena läuft bereits (Datenordner {}).", paths.data.display())
             } else {
-                format!(
-                    "Quena is already running (data folder {}).",
-                    paths.data.display()
-                )
+                format!("Quena is already running (data folder {}).", paths.data.display())
             };
             eprintln!("{text}");
             show_message(&text, false);
             return;
         }
     };
-    let core =
-        AppCore::new(paths, log).unwrap_or_else(|e| fatal(&start_failed_text(&format!("{e:#}"))));
+    let core = AppCore::new(paths, log).unwrap_or_else(|e| fatal(&start_failed_text(&format!("{e:#}"))));
     quena_app_core::engine::install_panic_hook(&core.paths.data);
-    let engine = quena_app_core::engine::ProxyEngine::new(&core)
-        .unwrap_or_else(|e| fatal(&start_failed_text(&format!("{e:#}"))));
+    let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap_or_else(|e| fatal(&start_failed_text(&format!("{e:#}"))));
     core.set_proxy_engine(engine.clone());
     tracing::info!(target: "quena", "Quena {} started, data in {}", env!("CARGO_PKG_VERSION"), core.paths.data.display());
 
@@ -65,10 +57,7 @@ fn main() {
     #[cfg(windows)]
     watch_session_end(core.clone());
     // Archives given on the command line (Windows/Linux file associations use argv).
-    let initial_files: Vec<String> = std::env::args_os()
-        .skip(1)
-        .filter_map(|a| archive_path(std::path::Path::new(&a)))
-        .collect();
+    let initial_files: Vec<String> = std::env::args_os().skip(1).filter_map(|a| archive_path(std::path::Path::new(&a))).collect();
     let mcp = quena_mcp::McpService::new();
     let exit_core = core.clone();
     let exit_mcp = mcp.clone();
@@ -109,14 +98,7 @@ fn main() {
             // The main window is created here (not from the config) so that a portable
             // installation keeps the web view's own data (cache, local storage) beside the
             // app as well, instead of in the user profile.
-            let cfg = app
-                .config()
-                .app
-                .windows
-                .iter()
-                .find(|w| w.label == "main")
-                .cloned()
-                .ok_or("no main window in tauri.conf.json")?;
+            let cfg = app.config().app.windows.iter().find(|w| w.label == "main").cloned().ok_or("no main window in tauri.conf.json")?;
             let mut builder = tauri::WebviewWindowBuilder::from_config(&handle, &cfg)?;
             if core.paths.is_portable() {
                 builder = builder.data_directory(core.paths.data.join("webview"));
@@ -126,9 +108,7 @@ fn main() {
             disable_browser_accelerators(&_w);
             // Bundled plugins live in the app resources, or next to the executable in a
             // portable folder; dev builds use plugins/dist.
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|e| e.parent().map(|p| p.to_path_buf()));
+            let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
             let bundled = app
                 .path()
                 .resource_dir()
@@ -136,13 +116,7 @@ fn main() {
                 .map(|d| d.join("plugins"))
                 .filter(|d| d.exists())
                 .or_else(|| exe_dir.map(|d| d.join("plugins")).filter(|d| d.exists()))
-                .or_else(|| {
-                    Some(
-                        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                            .join("../../plugins/dist"),
-                    )
-                    .filter(|d| d.exists())
-                });
+                .or_else(|| Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist")).filter(|d| d.exists()));
             // Start capturing once the window is up: setting the system proxy (dozens of
             // `networksetup` calls on a Mac with many network services) and loading a PAC
             // file can take seconds, and the UI shows the progress through status events.
@@ -189,11 +163,7 @@ fn main() {
             // macOS delivers "Open With" / double-clicked archives as an event.
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Opened { urls } => {
-                let files: Vec<String> = urls
-                    .iter()
-                    .filter_map(|u| u.to_file_path().ok())
-                    .filter_map(|p| archive_path(&p))
-                    .collect();
+                let files: Vec<String> = urls.iter().filter_map(|u| u.to_file_path().ok()).filter_map(|p| archive_path(&p)).collect();
                 if !files.is_empty() {
                     app.state::<commands::OpenFiles>().0.lock().extend(files);
                     let _ = app.emit("open-files", ());
@@ -244,17 +214,11 @@ fn watch_session_end(core: Core) {
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, MSG, RegisterClassW,
-        TranslateMessage, WM_ENDSESSION, WM_QUERYENDSESSION, WNDCLASSW, WS_OVERLAPPED,
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage, MSG, WM_ENDSESSION, WM_QUERYENDSESSION, WNDCLASSW, WS_OVERLAPPED,
     };
     static CORE: std::sync::OnceLock<Core> = std::sync::OnceLock::new();
     let _ = CORE.set(core);
-    unsafe extern "system" fn wndproc(
-        hwnd: HWND,
-        msg: u32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> LRESULT {
+    unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_QUERYENDSESSION => 1,
             WM_ENDSESSION => {
@@ -270,47 +234,32 @@ fn watch_session_end(core: Core) {
             _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
         }
     }
-    let spawned = std::thread::Builder::new()
-        .name("quena-session-end".into())
-        .spawn(|| {
-            // SAFETY: plain Win32 window creation and message loop on this thread; the class
-            // name buffer outlives the window, and the window procedure only reads a static.
-            unsafe {
-                let class: Vec<u16> = "QuenaSessionEnd\0".encode_utf16().collect();
-                let instance = GetModuleHandleW(std::ptr::null());
-                let mut wc: WNDCLASSW = std::mem::zeroed();
-                wc.lpfnWndProc = Some(wndproc);
-                wc.hInstance = instance;
-                wc.lpszClassName = class.as_ptr();
-                if RegisterClassW(&wc) == 0 {
-                    return;
-                }
-                // Never shown: hidden top-level windows still receive the session messages
-                // (message-only windows would not).
-                let hwnd = CreateWindowExW(
-                    0,
-                    class.as_ptr(),
-                    class.as_ptr(),
-                    WS_OVERLAPPED,
-                    0,
-                    0,
-                    0,
-                    0,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    instance,
-                    std::ptr::null(),
-                );
-                if hwnd.is_null() {
-                    return;
-                }
-                let mut msg: MSG = std::mem::zeroed();
-                while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
-                    TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
-                }
+    let spawned = std::thread::Builder::new().name("quena-session-end".into()).spawn(|| {
+        // SAFETY: plain Win32 window creation and message loop on this thread; the class
+        // name buffer outlives the window, and the window procedure only reads a static.
+        unsafe {
+            let class: Vec<u16> = "QuenaSessionEnd\0".encode_utf16().collect();
+            let instance = GetModuleHandleW(std::ptr::null());
+            let mut wc: WNDCLASSW = std::mem::zeroed();
+            wc.lpfnWndProc = Some(wndproc);
+            wc.hInstance = instance;
+            wc.lpszClassName = class.as_ptr();
+            if RegisterClassW(&wc) == 0 {
+                return;
             }
-        });
+            // Never shown: hidden top-level windows still receive the session messages
+            // (message-only windows would not).
+            let hwnd = CreateWindowExW(0, class.as_ptr(), class.as_ptr(), WS_OVERLAPPED, 0, 0, 0, 0, std::ptr::null_mut(), std::ptr::null_mut(), instance, std::ptr::null());
+            if hwnd.is_null() {
+                return;
+            }
+            let mut msg: MSG = std::mem::zeroed();
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    });
     if let Err(e) = spawned {
         tracing::warn!(target: "quena", "session-end watcher not started: {e}");
     }
@@ -319,12 +268,7 @@ fn watch_session_end(core: Core) {
 /// A session archive or packet capture Quena can import, as an absolute path string.
 fn archive_path(p: &std::path::Path) -> Option<String> {
     if quena_app_core::archive::importable(p) && p.is_file() {
-        Some(
-            std::fs::canonicalize(p)
-                .unwrap_or_else(|_| p.to_path_buf())
-                .to_string_lossy()
-                .into_owned(),
-        )
+        Some(std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().into_owned())
     } else {
         None
     }
@@ -353,19 +297,13 @@ fn cannot_write_text(paths: &Paths, e: &std::io::Error) -> String {
         (true, false) => format!(
             "Quena is running as a portable copy and keeps all its data (settings, captures, certificate) in the folder beside the application:\n\n{dir}\n\nQuena cannot write there ({e}). The drive is probably read-only.\n\nCopy the Quena folder to a writable place, such as the hard disk, and start Quena there. Alternatively, the environment variable QUENA_DATA_DIR sets another, writable data folder."
         ),
-        (false, true) => format!(
-            "Quena kann seinen Datenordner nicht anlegen oder nicht darin schreiben:\n\n{dir}\n\n{e}"
-        ),
+        (false, true) => format!("Quena kann seinen Datenordner nicht anlegen oder nicht darin schreiben:\n\n{dir}\n\n{e}"),
         (false, false) => format!("Quena cannot create or write its data folder:\n\n{dir}\n\n{e}"),
     }
 }
 
 fn start_failed_text(e: &str) -> String {
-    if german() {
-        format!("Quena konnte nicht starten:\n\n{e}")
-    } else {
-        format!("Quena could not start:\n\n{e}")
-    }
+    if german() { format!("Quena konnte nicht starten:\n\n{e}") } else { format!("Quena could not start:\n\n{e}") }
 }
 
 /// Startup failed before there is a window: log it, show it in a system dialog and quit.
@@ -379,60 +317,27 @@ fn fatal(text: &str) -> ! {
 /// A message in a system dialog, for when Quena has no window (yet).
 #[cfg(windows)]
 fn show_message(text: &str, error: bool) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW,
-    };
-    let wide = |s: &str| {
-        s.encode_utf16()
-            .chain(std::iter::once(0))
-            .collect::<Vec<u16>>()
-    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_ICONINFORMATION, MB_OK};
+    let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
     let (text, title) = (wide(text), wide("Quena"));
     // SAFETY: both buffers are NUL-terminated and outlive the (modal) call.
-    unsafe {
-        MessageBoxW(
-            std::ptr::null_mut(),
-            text.as_ptr(),
-            title.as_ptr(),
-            MB_OK
-                | if error {
-                    MB_ICONERROR
-                } else {
-                    MB_ICONINFORMATION
-                },
-        )
-    };
+    unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), MB_OK | if error { MB_ICONERROR } else { MB_ICONINFORMATION }) };
 }
 
 #[cfg(target_os = "macos")]
 fn show_message(text: &str, error: bool) {
-    let script = format!(
-        "display alert \"Quena\" message \"{}\"{}",
-        text.replace('\\', "\\\\").replace('"', "\\\""),
-        if error { " as critical" } else { "" }
-    );
-    let _ = std::process::Command::new("/usr/bin/osascript")
-        .args(["-e", &script])
-        .status();
+    let script = format!("display alert \"Quena\" message \"{}\"{}", text.replace('\\', "\\\\").replace('"', "\\\""), if error { " as critical" } else { "" });
+    let _ = std::process::Command::new("/usr/bin/osascript").args(["-e", &script]).status();
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn show_message(text: &str, error: bool) {
     // Whichever dialog tool the desktop has; the text is on stderr and in the log anyway.
     let kind = if error { "error" } else { "info" };
-    let tried = std::process::Command::new("zenity")
-        .args([
-            &format!("--{kind}"),
-            "--title=Quena",
-            "--no-markup",
-            &format!("--text={text}"),
-        ])
-        .status();
+    let tried = std::process::Command::new("zenity").args([&format!("--{kind}"), "--title=Quena", "--no-markup", &format!("--text={text}")]).status();
     if tried.is_err() {
         let kind = if error { "--error" } else { "--msgbox" };
-        let _ = std::process::Command::new("kdialog")
-            .args(["--title", "Quena", kind, text])
-            .status();
+        let _ = std::process::Command::new("kdialog").args(["--title", "Quena", kind, text]).status();
     }
 }
 
@@ -440,12 +345,7 @@ fn show_message(text: &str, error: bool) {
 /// releases it on exit or crash). `None` if another process holds it.
 fn lock_instance(data: &std::path::Path) -> Option<Option<std::fs::File>> {
     let _ = std::fs::create_dir_all(data);
-    let f = match std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(data.join("instance.lock"))
-    {
+    let f = match std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(data.join("instance.lock")) {
         Ok(f) => f,
         // Can't create the lock file (read-only location…): don't block startup.
         Err(_) => return Some(None),
@@ -462,9 +362,7 @@ fn lock_instance(data: &std::path::Path) -> Option<Option<std::fs::File>> {
 #[cfg(unix)]
 fn install_signal_handlers(core: Core) {
     use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
-    let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP]) else {
-        return;
-    };
+    let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP]) else { return };
     std::thread::Builder::new()
         .name("quena-signals".into())
         .spawn(move || {

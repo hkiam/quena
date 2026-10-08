@@ -25,19 +25,13 @@ pub struct FrameReader {
 
 impl Default for FrameReader {
     fn default() -> Self {
-        FrameReader {
-            buf: BytesMut::with_capacity(16 * 1024),
-            eof: false,
-        }
+        FrameReader { buf: BytesMut::with_capacity(16 * 1024), eof: false }
     }
 }
 
 impl FrameReader {
     /// Read the next frame from `src`, returning None at clean EOF.
-    pub async fn next<R: AsyncRead + Unpin>(
-        &mut self,
-        src: &mut R,
-    ) -> Result<Option<Frame>, BoxError> {
+    pub async fn next<R: AsyncRead + Unpin>(&mut self, src: &mut R) -> Result<Option<Frame>, BoxError> {
         loop {
             if let Some(frame) = self.try_parse()? {
                 return Ok(Some(frame));
@@ -59,9 +53,7 @@ impl FrameReader {
     }
 
     fn try_parse(&mut self) -> Result<Option<Frame>, BoxError> {
-        let Some((frame, n)) = wslog::parse_frame(&self.buf)? else {
-            return Ok(None);
-        };
+        let Some((frame, n)) = wslog::parse_frame(&self.buf)? else { return Ok(None) };
         let raw = self.buf[..n].to_vec();
         self.buf.advance(n);
         Ok(Some(Frame { frame, raw }))
@@ -80,12 +72,7 @@ pub struct FrameLog<'a> {
 /// Forward frames from `src` to `dst`, sending each parsed frame to `log`.
 /// Returns bytes forwarded and, if the direction ended abnormally, why.
 /// Stops at EOF or a close frame passing through.
-pub async fn pump<R, W>(
-    mut src: R,
-    mut dst: W,
-    dir: u8,
-    log: &FrameLog<'_>,
-) -> (u64, Option<String>)
+pub async fn pump<R, W>(mut src: R, mut dst: W, dir: u8, log: &FrameLog<'_>) -> (u64, Option<String>)
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -108,9 +95,7 @@ where
                 // Log the frame unless the store is too far behind (memory bound).
                 let rec = record(dir, &frame.frame, quena_model::now_us());
                 let n = rec.len();
-                if log.queued.load(Ordering::Relaxed) + n <= log.budget
-                    && log.tx.try_send(rec).is_ok()
-                {
+                if log.queued.load(Ordering::Relaxed) + n <= log.budget && log.tx.try_send(rec).is_ok() {
                     log.queued.fetch_add(n, Ordering::Relaxed);
                 } else {
                     dropped += 1;
@@ -129,9 +114,7 @@ where
     }
     let _ = dst.shutdown().await;
     if dropped > 0 && error.is_none() {
-        error = Some(format!(
-            "{dropped} frames were forwarded but not logged (recording could not keep up)"
-        ));
+        error = Some(format!("{dropped} frames were forwarded but not logged (recording could not keep up)"));
     }
     (total, error)
 }
@@ -146,11 +129,7 @@ mod tests {
         // Client text frame "Hi" masked with key 0x01020304
         let key = [1u8, 2, 3, 4];
         let payload = b"Hi";
-        let masked: Vec<u8> = payload
-            .iter()
-            .enumerate()
-            .map(|(i, b)| b ^ key[i & 3])
-            .collect();
+        let masked: Vec<u8> = payload.iter().enumerate().map(|(i, b)| b ^ key[i & 3]).collect();
         let mut frame = vec![0x81, 0x82];
         frame.extend_from_slice(&key);
         frame.extend_from_slice(&masked);

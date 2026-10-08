@@ -30,11 +30,7 @@ struct Activity<S> {
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for Activity<S> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
         let r = Pin::new(&mut self.inner).poll_read(cx, buf);
         if let Poll::Ready(Ok(())) = &r {
             self.last.store(now_us(), Ordering::Relaxed);
@@ -44,11 +40,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for Activity<S> {
 }
 
 impl<S: AsyncWrite + Unpin> AsyncWrite for Activity<S> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
         let r = Pin::new(&mut self.inner).poll_write(cx, buf);
         if let Poll::Ready(Ok(_)) = &r {
             self.last.store(now_us(), Ordering::Relaxed);
@@ -80,13 +72,8 @@ fn byte_body(shared: &Shared, n: u64) -> quena_body::Body {
     w.finish()
 }
 
-pub async fn raw<S>(
-    shared: &Arc<Shared>,
-    live: &Arc<LiveSession>,
-    mut client: S,
-    host: &str,
-    port: u16,
-) where
+pub async fn raw<S>(shared: &Arc<Shared>, live: &Arc<LiveSession>, mut client: S, host: &str, port: u16)
+where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
     let cfg = shared.cfg();
@@ -96,11 +83,7 @@ pub async fn raw<S>(
         let note = r.note.clone();
         live.update(move |d| d.extra_flags.push((crate::remap::FLAG.into(), note)));
     }
-    let upstream = if remapped.is_some() {
-        None
-    } else {
-        crate::resolve_upstream(&cfg, format!("{host}:{port}")).await
-    };
+    let upstream = if remapped.is_some() { None } else { crate::resolve_upstream(&cfg, format!("{host}:{port}")).await };
     let connected = match (&upstream, &remapped) {
         (Some((ph, pp)), _) => match tcp_connect(ph, *pp).await {
             Ok((mut s, ..)) => connect_via_proxy(&mut s, host, port).await.map(|_| s),
@@ -124,14 +107,8 @@ pub async fn raw<S>(
         live.update(|d| d.connection.server_addr = Some(a.to_string()));
     }
     let last = Arc::new(AtomicI64::new(now_us()));
-    let mut client = Activity {
-        inner: &mut client,
-        last: last.clone(),
-    };
-    let mut server = Activity {
-        inner: &mut server,
-        last: last.clone(),
-    };
+    let mut client = Activity { inner: &mut client, last: last.clone() };
+    let mut server = Activity { inner: &mut server, last: last.clone() };
     let mut idle = false;
     let mut closing = shared.closing.subscribe();
     let r = tokio::select! {
@@ -146,26 +123,17 @@ pub async fn raw<S>(
     live.set_request_body(byte_body(shared, up));
     live.update(|d| {
         if idle {
-            d.error = Some(format!(
-                "closed after {} minutes without traffic",
-                IDLE_TIMEOUT.as_secs() / 60
-            ));
+            d.error = Some(format!("closed after {} minutes without traffic", IDLE_TIMEOUT.as_secs() / 60));
         }
         d.summary.state = SessionState::Done;
         d.timers.client_done_response = Some(now_us());
-        d.extra_flags
-            .push(("x-tunnel-bytes".into(), format!("{up} up / {down} down")));
+        d.extra_flags.push(("x-tunnel-bytes".into(), format!("{up} up / {down} down")));
         d.summary.custom = format!("↑{up} ↓{down}");
     });
     live.finish();
 }
 
-pub fn websocket(
-    shared: &Arc<Shared>,
-    live: &Arc<LiveSession>,
-    mut resp: Response<Incoming>,
-    client: hyper::upgrade::OnUpgrade,
-) -> Response<ProxyBody> {
+pub fn websocket(shared: &Arc<Shared>, live: &Arc<LiveSession>, mut resp: Response<Incoming>, client: hyper::upgrade::OnUpgrade) -> Response<ProxyBody> {
     let server = hyper::upgrade::on(&mut resp);
     live.update(|d| {
         d.summary.kind = SessionKind::WebSocket;
@@ -207,12 +175,7 @@ pub fn websocket(
                 let last = Arc::new(AtomicI64::new(now_us()));
                 // The pump futures borrow the log; scope them so they are gone before `tx` drops.
                 let (up, down, note) = {
-                    let log = crate::wsframe::FrameLog {
-                        tx: &tx,
-                        queued: &queued,
-                        budget: WS_LOG_BUDGET,
-                        last: &last,
-                    };
+                    let log = crate::wsframe::FrameLog { tx: &tx, queued: &queued, budget: WS_LOG_BUDGET, last: &last };
                     let up = crate::wsframe::pump(cr, sw, crate::wsframe::DIR_CLIENT, &log);
                     let down = crate::wsframe::pump(sr, cw, crate::wsframe::DIR_SERVER, &log);
                     tokio::pin!(up, down);
@@ -235,9 +198,7 @@ pub fn websocket(
                 let frames = log_task.await.unwrap_or(0);
                 let (up, up_err) = up;
                 let (down, down_err) = down;
-                let error = note
-                    .or(up_err.map(|e| format!("client → server: {e}")))
-                    .or(down_err.map(|e| format!("server → client: {e}")));
+                let error = note.or(up_err.map(|e| format!("client → server: {e}"))).or(down_err.map(|e| format!("server → client: {e}")));
                 live.update(move |d| {
                     if error.is_some() {
                         d.error = error;
@@ -251,11 +212,7 @@ pub fn websocket(
             (c, s) => {
                 live.update(|d| {
                     d.summary.state = SessionState::Aborted;
-                    d.error = Some(format!(
-                        "websocket upgrade failed: client {:?} server {:?}",
-                        c.err(),
-                        s.err()
-                    ));
+                    d.error = Some(format!("websocket upgrade failed: client {:?} server {:?}", c.err(), s.err()));
                 });
             }
         }

@@ -42,11 +42,7 @@ fn add(n: &mut TreeNode, s: &SessionSummary) {
 
 /// Children of a node. `host: None` lists the hosts; otherwise the entries directly below
 /// `prefix` (a path ending in `/`, starting with `/`).
-pub fn children<'a>(
-    rows: impl IntoIterator<Item = &'a SessionSummary>,
-    host: Option<&str>,
-    prefix: &str,
-) -> (Vec<TreeNode>, bool) {
+pub fn children<'a>(rows: impl IntoIterator<Item = &'a SessionSummary>, host: Option<&str>, prefix: &str) -> (Vec<TreeNode>, bool) {
     let mut level = Level::new(host, prefix);
     rows.into_iter().for_each(|s| level.visit(s));
     level.finish()
@@ -62,12 +58,7 @@ struct Level<'q> {
 
 impl<'q> Level<'q> {
     fn new(host: Option<&'q str>, prefix: &'q str) -> Self {
-        Level {
-            host,
-            prefix,
-            map: BTreeMap::new(),
-            more: false,
-        }
+        Level { host, prefix, map: BTreeMap::new(), more: false }
     }
 
     fn visit(&mut self, s: &SessionSummary) {
@@ -75,9 +66,7 @@ impl<'q> Level<'q> {
             None => (s.host.as_str(), !path_of(s).is_empty()),
             Some(h) if s.host != h => return,
             Some(_) => {
-                let Some(rest) = path_of(s).strip_prefix(self.prefix) else {
-                    return;
-                };
+                let Some(rest) = path_of(s).strip_prefix(self.prefix) else { return };
                 match rest.find('/') {
                     Some(i) => (&rest[..=i], true),
                     None => (rest, false),
@@ -148,14 +137,8 @@ pub struct LevelQuery {
 }
 
 /// Several levels in one pass over `rows`; each row is only offered to the levels of its host.
-pub fn levels<'a>(
-    rows: impl FnOnce(&mut dyn FnMut(&SessionSummary)),
-    queries: &'a [LevelQuery],
-) -> Vec<TreeLevel> {
-    let mut levels: Vec<Level<'a>> = queries
-        .iter()
-        .map(|q| Level::new(q.host.as_deref(), &q.prefix))
-        .collect();
+pub fn levels<'a>(rows: impl FnOnce(&mut dyn FnMut(&SessionSummary)), queries: &'a [LevelQuery]) -> Vec<TreeLevel> {
+    let mut levels: Vec<Level<'a>> = queries.iter().map(|q| Level::new(q.host.as_deref(), &q.prefix)).collect();
     let mut roots = Vec::new();
     let mut by_host: HashMap<&'a str, Vec<usize>> = HashMap::new();
     for (i, q) in queries.iter().enumerate() {
@@ -185,14 +168,8 @@ pub fn levels<'a>(
 
 impl AppCore {
     pub fn structure(&self, host: Option<&str>, prefix: &str) -> TreeLevel {
-        let q = [LevelQuery {
-            host: host.map(str::to_string),
-            prefix: prefix.to_string(),
-        }];
-        self.structure_levels(&q).pop().unwrap_or(TreeLevel {
-            nodes: vec![],
-            truncated: false,
-        })
+        let q = [LevelQuery { host: host.map(str::to_string), prefix: prefix.to_string() }];
+        self.structure_levels(&q).pop().unwrap_or(TreeLevel { nodes: vec![], truncated: false })
     }
 
     /// Several levels (the hosts and every open node) in one pass over the view.
@@ -218,13 +195,7 @@ mod tests {
     use super::*;
 
     fn s(host: &str, url: &str, status: u16) -> SessionSummary {
-        SessionSummary {
-            host: host.into(),
-            url: url.into(),
-            status,
-            response_body_len: 10,
-            ..Default::default()
-        }
+        SessionSummary { host: host.into(), url: url.into(), status, response_body_len: 10, ..Default::default() }
     }
 
     #[test]
@@ -237,32 +208,13 @@ mod tests {
             s("b.test:443", "b.test:443", 200),
         ];
         let (hosts, _) = children(&rows, None, "");
-        assert_eq!(
-            hosts
-                .iter()
-                .map(|n| (n.name.as_str(), n.count, n.has_children))
-                .collect::<Vec<_>>(),
-            [("a.test", 4, true), ("b.test:443", 1, false)]
-        );
+        assert_eq!(hosts.iter().map(|n| (n.name.as_str(), n.count, n.has_children)).collect::<Vec<_>>(), [("a.test", 4, true), ("b.test:443", 1, false)]);
         let (root, _) = children(&rows, Some("a.test"), "/");
-        assert_eq!(
-            root.iter()
-                .map(|n| (n.name.as_str(), n.count, n.has_children))
-                .collect::<Vec<_>>(),
-            [("", 1, false), ("api/", 3, true)]
-        );
+        assert_eq!(root.iter().map(|n| (n.name.as_str(), n.count, n.has_children)).collect::<Vec<_>>(), [("", 1, false), ("api/", 3, true)]);
         let (api, _) = children(&rows, Some("a.test"), "/api/");
-        assert_eq!(
-            api.iter()
-                .map(|n| (n.name.as_str(), n.count))
-                .collect::<Vec<_>>(),
-            [("health", 1), ("v1/", 2)]
-        );
+        assert_eq!(api.iter().map(|n| (n.name.as_str(), n.count)).collect::<Vec<_>>(), [("health", 1), ("v1/", 2)]);
         let (v1, _) = children(&rows, Some("a.test"), "/api/v1/");
-        assert_eq!(
-            (v1[0].name.as_str(), v1[0].count, v1[0].errors, v1[0].bytes),
-            ("users", 2, 1, 20)
-        );
+        assert_eq!((v1[0].name.as_str(), v1[0].count, v1[0].errors, v1[0].bytes), ("users", 2, 1, 20));
     }
 
     #[test]
@@ -280,57 +232,25 @@ mod tests {
     /// counts, not everything below the folder.
     #[test]
     fn this_path_node_is_exact() {
-        let rows = vec![
-            s("a.test", "/api/", 200),
-            s("a.test", "/api/?x", 200),
-            s("a.test", "/api/users", 200),
-            s("a.test", "/", 200),
-            s("a.test", "/x", 200),
-        ];
+        let rows = vec![s("a.test", "/api/", 200), s("a.test", "/api/?x", 200), s("a.test", "/api/users", 200), s("a.test", "/", 200), s("a.test", "/x", 200)];
         let (api, _) = children(&rows, Some("a.test"), "/api/");
         let this = api.iter().find(|n| n.name.is_empty()).unwrap();
         assert_eq!(this.count, 2);
-        assert_eq!(
-            rows.iter()
-                .filter(|r| matches(r, "a.test", "/api/", true))
-                .count(),
-            2
-        );
-        assert_eq!(
-            rows.iter()
-                .filter(|r| matches(r, "a.test", "/api/", false))
-                .count(),
-            3
-        );
+        assert_eq!(rows.iter().filter(|r| matches(r, "a.test", "/api/", true)).count(), 2);
+        assert_eq!(rows.iter().filter(|r| matches(r, "a.test", "/api/", false)).count(), 3);
         let (root, _) = children(&rows, Some("a.test"), "/");
         assert_eq!(root.iter().find(|n| n.name.is_empty()).unwrap().count, 1);
-        assert_eq!(
-            rows.iter()
-                .filter(|r| matches(r, "a.test", "/", true))
-                .count(),
-            1
-        );
+        assert_eq!(rows.iter().filter(|r| matches(r, "a.test", "/", true)).count(), 1);
     }
 
     #[test]
     fn several_levels_in_one_pass_and_capped() {
-        let mut rows: Vec<SessionSummary> = (0..MAX_CHILDREN + 50)
-            .map(|i| s("big.test", &format!("/f/{i:06}"), 200))
-            .collect();
+        let mut rows: Vec<SessionSummary> = (0..MAX_CHILDREN + 50).map(|i| s("big.test", &format!("/f/{i:06}"), 200)).collect();
         rows.push(s("a.test", "/api/x", 200));
         let q = [
-            LevelQuery {
-                host: None,
-                prefix: String::new(),
-            },
-            LevelQuery {
-                host: Some("a.test".into()),
-                prefix: "/".into(),
-            },
-            LevelQuery {
-                host: Some("big.test".into()),
-                prefix: "/f/".into(),
-            },
+            LevelQuery { host: None, prefix: String::new() },
+            LevelQuery { host: Some("a.test".into()), prefix: "/".into() },
+            LevelQuery { host: Some("big.test".into()), prefix: "/f/".into() },
         ];
         let mut passes = 0;
         let out = levels(
@@ -342,14 +262,7 @@ mod tests {
         );
         assert_eq!(passes, 1);
         assert_eq!(out[0].nodes.len(), 2);
-        assert_eq!(
-            out[1]
-                .nodes
-                .iter()
-                .map(|n| n.name.as_str())
-                .collect::<Vec<_>>(),
-            ["api/"]
-        );
+        assert_eq!(out[1].nodes.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(), ["api/"]);
         assert_eq!(out[2].nodes.len(), MAX_CHILDREN);
         assert!(out[2].truncated && !out[0].truncated && !out[1].truncated);
         // The same as one level at a time.

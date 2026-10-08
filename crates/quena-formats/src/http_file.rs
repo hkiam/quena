@@ -28,25 +28,7 @@ use std::path::{Path, PathBuf};
 pub const ENV_FILE: &str = "http-client.env.json";
 pub const PRIVATE_ENV_FILE: &str = "http-client.private.env.json";
 
-const METHODS: &[&str] = &[
-    "GET",
-    "POST",
-    "PUT",
-    "DELETE",
-    "PATCH",
-    "HEAD",
-    "OPTIONS",
-    "TRACE",
-    "CONNECT",
-    "PROPFIND",
-    "PROPPATCH",
-    "MKCOL",
-    "COPY",
-    "MOVE",
-    "LOCK",
-    "UNLOCK",
-    "QUERY",
-];
+const METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT", "PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK", "QUERY"];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BodySource {
@@ -116,10 +98,7 @@ fn is_comment(l: &str) -> bool {
 /// `# @name x` / `// @name x`
 fn name_tag(l: &str) -> Option<String> {
     let t = l.trim_start();
-    let t = t
-        .strip_prefix('#')
-        .or_else(|| t.strip_prefix("//"))?
-        .trim_start();
+    let t = t.strip_prefix('#').or_else(|| t.strip_prefix("//"))?.trim_start();
     let n = t.strip_prefix("@name")?;
     let n = n.trim_start_matches([' ', '\t', '=']).trim();
     (!n.is_empty()).then(|| n.to_string())
@@ -130,10 +109,7 @@ fn file_variable(l: &str) -> Option<(String, String)> {
     let t = l.trim().strip_prefix('@')?;
     let (n, v) = t.split_once('=')?;
     let n = n.trim();
-    (!n.is_empty()
-        && n.chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.'))
-    .then(|| (n.to_string(), v.trim().to_string()))
+    (!n.is_empty() && n.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')).then(|| (n.to_string(), v.trim().to_string()))
 }
 
 /// `METHOD URL [HTTP/x]` or a bare URL (GET). The URL is everything up to an HTTP version,
@@ -143,10 +119,7 @@ fn request_line(l: &str) -> Option<(String, String)> {
     let first = t.split_whitespace().next()?;
     let (method, rest) = if METHODS.contains(&first.to_ascii_uppercase().as_str()) {
         (first.to_ascii_uppercase(), t[first.len()..].trim())
-    } else if first.starts_with("http://")
-        || first.starts_with("https://")
-        || first.starts_with("{{")
-    {
+    } else if first.starts_with("http://") || first.starts_with("https://") || first.starts_with("{{") {
         ("GET".to_string(), t)
     } else {
         return None;
@@ -204,11 +177,7 @@ fn parse_block(lines: &[&str], offset: usize, title: Option<String>, out: &mut H
         match request_line(l) {
             Some((m, u)) => break (m, u, offset + i),
             None => {
-                out.warnings.push(format!(
-                    "line {}: not a request line: {}",
-                    offset + i,
-                    l.trim()
-                ));
+                out.warnings.push(format!("line {}: not a request line: {}", offset + i, l.trim()));
                 return;
             }
         }
@@ -233,12 +202,8 @@ fn parse_block(lines: &[&str], offset: usize, title: Option<String>, out: &mut H
             continue;
         }
         match l.split_once(':') {
-            Some((n, v)) if !n.trim().is_empty() && !n.contains(' ') => {
-                headers.push((n.trim().to_string(), v.trim().to_string()))
-            }
-            _ => out
-                .warnings
-                .push(format!("line {}: not a header: {}", offset + i, l.trim())),
+            Some((n, v)) if !n.trim().is_empty() && !n.contains(' ') => headers.push((n.trim().to_string(), v.trim().to_string())),
+            _ => out.warnings.push(format!("line {}: not a header: {}", offset + i, l.trim())),
         }
     }
     // Body: up to the end of the block, without response handlers and references.
@@ -251,16 +216,12 @@ fn parse_block(lines: &[&str], offset: usize, title: Option<String>, out: &mut H
             continue;
         }
         if t.starts_with("> {%") {
-            out.warnings.push(format!(
-                "line {}: response handler scripts are not run",
-                offset + i + k + 1
-            ));
+            out.warnings.push(format!("line {}: response handler scripts are not run", offset + i + k + 1));
             in_script = !t.contains("%}");
             continue;
         }
         if t.starts_with("> ") || t.starts_with(">> ") || t.starts_with("<> ") {
-            out.warnings
-                .push(format!("line {}: ignored: {}", offset + i + k + 1, t));
+            out.warnings.push(format!("line {}: ignored: {}", offset + i + k + 1, t));
             continue;
         }
         body_lines.push(l);
@@ -270,36 +231,20 @@ fn parse_block(lines: &[&str], offset: usize, title: Option<String>, out: &mut H
     }
     let body = match body_lines.as_slice() {
         [] => BodySource::None,
-        [one] if one.trim_start().starts_with("<@") => {
-            BodySource::FileWithVariables(one.trim_start()[2..].trim().to_string())
-        }
-        [one] if one.trim_start().starts_with("< ") => {
-            BodySource::File(one.trim_start()[2..].trim().to_string())
-        }
+        [one] if one.trim_start().starts_with("<@") => BodySource::FileWithVariables(one.trim_start()[2..].trim().to_string()),
+        [one] if one.trim_start().starts_with("< ") => BodySource::File(one.trim_start()[2..].trim().to_string()),
         all => BodySource::Text(all.join("\n")),
     };
-    out.requests.push(RawRequest {
-        name,
-        line,
-        method,
-        url,
-        headers,
-        body,
-    });
+    out.requests.push(RawRequest { name, line, method, url, headers, body });
 }
 
 // ------------------------------------------------------------- environments
 
-fn read_env_file(
-    path: &Path,
-) -> Result<Option<serde_json::Map<String, serde_json::Value>>, String> {
+fn read_env_file(path: &Path) -> Result<Option<serde_json::Map<String, serde_json::Value>>, String> {
     match std::fs::read(path) {
         Ok(b) => match serde_json::from_slice::<serde_json::Value>(&b) {
             Ok(serde_json::Value::Object(m)) => Ok(Some(m)),
-            Ok(_) => Err(format!(
-                "{}: expected an object of environments",
-                path.display()
-            )),
+            Ok(_) => Err(format!("{}: expected an object of environments", path.display())),
             Err(e) => Err(format!("{}: {e}", path.display())),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -332,9 +277,7 @@ pub fn load_environment(dir: &Path, name: Option<&str>) -> Result<HashMap<String
     let mut vars = HashMap::new();
     let mut found = name.is_none();
     for f in [ENV_FILE, PRIVATE_ENV_FILE] {
-        let Some(m) = read_env_file(&dir.join(f))? else {
-            continue;
-        };
+        let Some(m) = read_env_file(&dir.join(f))? else { continue };
         for env in std::iter::once("$shared").chain(name) {
             if let Some(serde_json::Value::Object(o)) = m.get(env) {
                 found |= Some(env) == name;
@@ -348,15 +291,7 @@ pub fn load_environment(dir: &Path, name: Option<&str>) -> Result<HashMap<String
     }
     if !found {
         let known = environments(dir).unwrap_or_default();
-        return Err(format!(
-            "no environment '{}' in {ENV_FILE} or {PRIVATE_ENV_FILE} (known: {})",
-            name.unwrap_or(""),
-            if known.is_empty() {
-                "none".into()
-            } else {
-                known.join(", ")
-            }
-        ));
+        return Err(format!("no environment '{}' in {ENV_FILE} or {PRIVATE_ENV_FILE} (known: {})", name.unwrap_or(""), if known.is_empty() { "none".into() } else { known.join(", ") }));
     }
     Ok(vars)
 }
@@ -372,16 +307,12 @@ struct Resolver<'a> {
 impl Resolver<'_> {
     fn dynamic(&self, expr: &str) -> Result<Option<String>, String> {
         let mut parts = expr.split_whitespace();
-        let Some(head) = parts.next() else {
-            return Ok(None);
-        };
+        let Some(head) = parts.next() else { return Ok(None) };
         let now = time::OffsetDateTime::now_utc();
         Ok(Some(match head {
             "$uuid" | "$random.uuid" | "$guid" => uuid_v4(),
             "$timestamp" => now.unix_timestamp().to_string(),
-            "$isoTimestamp" => now
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap_or_default(),
+            "$isoTimestamp" => now.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
             "$randomInt" | "$random.integer" => {
                 let a: i64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
                 let b: i64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(1000);
@@ -390,13 +321,9 @@ impl Resolver<'_> {
                 }
                 rand::random_range(a..b).to_string()
             }
-            "$processEnv" if !self.process_env => {
-                return Err("{{$processEnv}} is not allowed here".into());
-            }
+            "$processEnv" if !self.process_env => return Err("{{$processEnv}} is not allowed here".into()),
             "$processEnv" => {
-                let n = parts
-                    .next()
-                    .ok_or_else(|| "{{$processEnv}} needs a variable name".to_string())?;
+                let n = parts.next().ok_or_else(|| "{{$processEnv}} needs a variable name".to_string())?;
                 let optional = n.starts_with('%');
                 let n = n.trim_start_matches('%');
                 match std::env::var(n) {
@@ -405,9 +332,7 @@ impl Resolver<'_> {
                     Err(_) => return Err(format!("environment variable {n} is not set")),
                 }
             }
-            h if h.starts_with('$') => {
-                return Err(format!("unsupported dynamic variable {{{{{expr}}}}}"));
-            }
+            h if h.starts_with('$') => return Err(format!("unsupported dynamic variable {{{{{expr}}}}}")),
             _ => return Ok(None),
         }))
     }
@@ -426,9 +351,7 @@ impl Resolver<'_> {
             return self.subst(v, depth + 1);
         }
         if expr.contains(".response.") || expr.starts_with("client.") {
-            return Err(format!(
-                "{{{{{expr}}}}}: values from earlier responses are not supported"
-            ));
+            return Err(format!("{{{{{expr}}}}}: values from earlier responses are not supported"));
         }
         Err(format!("unknown variable {{{{{expr}}}}}"))
     }
@@ -456,41 +379,18 @@ fn uuid_v4() -> String {
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
     let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..]
-    )
+    format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
 }
 
 /// Substitute the variables of one request. `dir` resolves `< file` bodies.
-pub fn resolve(
-    file: &HttpFile,
-    req: &RawRequest,
-    env: &HashMap<String, String>,
-    dir: &Path,
-    access: &Access,
-) -> Result<Request, String> {
+pub fn resolve(file: &HttpFile, req: &RawRequest, env: &HashMap<String, String>, dir: &Path, access: &Access) -> Result<Request, String> {
     // Later definitions win, as in both clients.
-    let file_vars: HashMap<&str, &str> = file
-        .variables
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let r = Resolver {
-        file_vars,
-        env,
-        process_env: access.process_env,
-    };
+    let file_vars: HashMap<&str, &str> = file.variables.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let r = Resolver { file_vars, env, process_env: access.process_env };
     let at = |e: String| format!("line {}: {e}", req.line);
     let url = r.subst(&req.url, 0).map_err(at)?;
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(at(format!(
-            "URL must start with http:// or https:// (got {url})"
-        )));
+        return Err(at(format!("URL must start with http:// or https:// (got {url})")));
     }
     let mut headers = Vec::new();
     for (n, v) in &req.headers {
@@ -506,44 +406,24 @@ pub fn resolve(
                 return Err(at(format!("body file {} not found", path.display())));
             }
             if let Some(root) = access.root {
-                let inside = path
-                    .canonicalize()
-                    .ok()
-                    .zip(root.canonicalize().ok())
-                    .is_some_and(|(p, r)| p.starts_with(r));
+                let inside = path.canonicalize().ok().zip(root.canonicalize().ok()).is_some_and(|(p, r)| p.starts_with(r));
                 if !inside {
-                    return Err(at(format!(
-                        "body file {} is outside {}",
-                        path.display(),
-                        root.display()
-                    )));
+                    return Err(at(format!("body file {} is outside {}", path.display(), root.display())));
                 }
             }
             if matches!(req.body, BodySource::FileWithVariables(_)) {
                 let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 if len > MAX_TEMPLATE_FILE {
-                    return Err(at(format!(
-                        "{} is larger than {} MiB (use `< file` without variables)",
-                        path.display(),
-                        MAX_TEMPLATE_FILE >> 20
-                    )));
+                    return Err(at(format!("{} is larger than {} MiB (use `< file` without variables)", path.display(), MAX_TEMPLATE_FILE >> 20)));
                 }
-                let text =
-                    std::fs::read(&path).map_err(|e| at(format!("{}: {e}", path.display())))?;
+                let text = std::fs::read(&path).map_err(|e| at(format!("{}: {e}", path.display())))?;
                 Body::Text(r.subst(&String::from_utf8_lossy(&text), 0).map_err(at)?)
             } else {
                 Body::File(path)
             }
         }
     };
-    Ok(Request {
-        name: req.name.clone(),
-        line: req.line,
-        method: req.method.clone(),
-        url,
-        headers,
-        body,
-    })
+    Ok(Request { name: req.name.clone(), line: req.line, method: req.method.clone(), url, headers, body })
 }
 
 // ------------------------------------------------------------------ writing
@@ -561,17 +441,7 @@ pub struct Captured {
 }
 
 /// Headers that belong to the connection, not the request.
-const SKIP_HEADERS: &[&str] = &[
-    "host",
-    "content-length",
-    "connection",
-    "proxy-connection",
-    "proxy-authorization",
-    "keep-alive",
-    "transfer-encoding",
-    "te",
-    "upgrade",
-];
+const SKIP_HEADERS: &[&str] = &["host", "content-length", "connection", "proxy-connection", "proxy-authorization", "keep-alive", "transfer-encoding", "te", "upgrade"];
 
 /// Write captured requests as a `.http` file. A scheme and host shared by all requests
 /// becomes `{{host}}`; bearer tokens and cookies become `{{token}}` / `{{cookie}}`. Returns
@@ -583,10 +453,7 @@ pub fn write(reqs: &[Captured]) -> (String, BTreeMap<String, String>, BTreeMap<S
         let auth = rest.split(['/', '?', '#']).next()?;
         Some(format!("{scheme}://{auth}"))
     };
-    let shared = reqs.first().and_then(|r| origin(&r.url)).filter(|o| {
-        reqs.iter()
-            .all(|r| origin(&r.url).as_deref() == Some(o.as_str()))
-    });
+    let shared = reqs.first().and_then(|r| origin(&r.url)).filter(|o| reqs.iter().all(|r| origin(&r.url).as_deref() == Some(o.as_str())));
     let mut public = BTreeMap::new();
     let mut private = BTreeMap::new();
     if let Some(o) = &shared {
@@ -606,23 +473,11 @@ pub fn write(reqs: &[Captured]) -> (String, BTreeMap<String, String>, BTreeMap<S
                 continue;
             }
             let v = if lower == "authorization" && v.to_ascii_lowercase().starts_with("bearer ") {
-                private
-                    .entry("token".to_string())
-                    .or_insert_with(|| v[7..].trim().to_string());
-                if private.get("token").map(String::as_str) == Some(v[7..].trim()) {
-                    "Bearer {{token}}".to_string()
-                } else {
-                    v.clone()
-                }
+                private.entry("token".to_string()).or_insert_with(|| v[7..].trim().to_string());
+                if private.get("token").map(String::as_str) == Some(v[7..].trim()) { "Bearer {{token}}".to_string() } else { v.clone() }
             } else if lower == "cookie" {
-                private
-                    .entry("cookie".to_string())
-                    .or_insert_with(|| v.clone());
-                if private.get("cookie") == Some(v) {
-                    "{{cookie}}".to_string()
-                } else {
-                    v.clone()
-                }
+                private.entry("cookie".to_string()).or_insert_with(|| v.clone());
+                if private.get("cookie") == Some(v) { "{{cookie}}".to_string() } else { v.clone() }
             } else {
                 v.clone()
             };
@@ -645,10 +500,7 @@ mod tests {
     use super::*;
 
     fn all() -> Access<'static> {
-        Access {
-            process_env: true,
-            root: None,
-        }
+        Access { process_env: true, root: None }
     }
 
     const FILE: &str = r#"@host = https://api.example.com
@@ -687,36 +539,16 @@ Content-Type: application/json
     #[test]
     fn parses_both_dialects() {
         let f = parse(FILE);
-        assert_eq!(
-            f.variables,
-            vec![
-                ("host".into(), "https://api.example.com".into()),
-                ("base".into(), "{{host}}/v1".into())
-            ]
-        );
+        assert_eq!(f.variables, vec![("host".into(), "https://api.example.com".into()), ("base".into(), "{{host}}/v1".into())]);
         assert_eq!(f.requests.len(), 3);
         let r = &f.requests[0];
-        assert_eq!(
-            (r.name.as_deref(), r.method.as_str(), r.url.as_str()),
-            (
-                Some("List users"),
-                "GET",
-                "{{base}}/users?page=1&size={{size}}"
-            )
-        );
+        assert_eq!((r.name.as_deref(), r.method.as_str(), r.url.as_str()), (Some("List users"), "GET", "{{base}}/users?page=1&size={{size}}"));
         assert_eq!(r.headers.len(), 2);
         assert_eq!(r.body, BodySource::None);
         let r = &f.requests[1];
         assert_eq!(r.name.as_deref(), Some("create"));
-        assert_eq!(
-            r.body,
-            BodySource::Text("{\n  \"id\": \"{{$uuid}}\",\n  \"name\": \"x\"\n}".into())
-        );
-        assert!(
-            f.warnings.iter().any(|w| w.contains("not run")),
-            "{:?}",
-            f.warnings
-        );
+        assert_eq!(r.body, BodySource::Text("{\n  \"id\": \"{{$uuid}}\",\n  \"name\": \"x\"\n}".into()));
+        assert!(f.warnings.iter().any(|w| w.contains("not run")), "{:?}", f.warnings);
         assert_eq!(f.requests[2].name.as_deref(), Some("upload"));
         assert_eq!(f.requests[2].body, BodySource::File("./body.json".into()));
     }
@@ -724,54 +556,25 @@ Content-Type: application/json
     #[test]
     fn environments_and_variables() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join(ENV_FILE),
-            r#"{"$shared":{"size":10},"dev":{"size":20,"token":"public"},"prod":{}}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join(PRIVATE_ENV_FILE),
-            r#"{"dev":{"token":"secret"}}"#,
-        )
-        .unwrap();
+        std::fs::write(dir.path().join(ENV_FILE), r#"{"$shared":{"size":10},"dev":{"size":20,"token":"public"},"prod":{}}"#).unwrap();
+        std::fs::write(dir.path().join(PRIVATE_ENV_FILE), r#"{"dev":{"token":"secret"}}"#).unwrap();
         std::fs::write(dir.path().join("body.json"), "{}").unwrap();
         assert_eq!(environments(dir.path()).unwrap(), vec!["dev", "prod"]);
         let env = load_environment(dir.path(), Some("dev")).unwrap();
-        assert_eq!(
-            (env["size"].as_str(), env["token"].as_str()),
-            ("20", "secret")
-        );
-        assert!(
-            load_environment(dir.path(), Some("qa"))
-                .unwrap_err()
-                .contains("known: dev, prod")
-        );
+        assert_eq!((env["size"].as_str(), env["token"].as_str()), ("20", "secret"));
+        assert!(load_environment(dir.path(), Some("qa")).unwrap_err().contains("known: dev, prod"));
         let f = parse(FILE);
         let r = resolve(&f, &f.requests[0], &env, dir.path(), &all()).unwrap();
         assert_eq!(r.url, "https://api.example.com/v1/users?page=1&size=20");
-        assert_eq!(
-            r.headers[1],
-            ("Authorization".into(), "Bearer secret".into())
-        );
+        assert_eq!(r.headers[1], ("Authorization".into(), "Bearer secret".into()));
         let r = resolve(&f, &f.requests[1], &env, dir.path(), &all()).unwrap();
         let Body::Text(t) = r.body else { panic!() };
-        let id = serde_json::from_str::<serde_json::Value>(&t).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        let id = serde_json::from_str::<serde_json::Value>(&t).unwrap()["id"].as_str().unwrap().to_string();
         assert_eq!((id.len(), &id[14..15]), (36, "4"));
-        assert_eq!(
-            resolve(&f, &f.requests[2], &env, dir.path(), &all())
-                .unwrap()
-                .body,
-            Body::File(dir.path().join("./body.json"))
-        );
+        assert_eq!(resolve(&f, &f.requests[2], &env, dir.path(), &all()).unwrap().body, Body::File(dir.path().join("./body.json")));
         // Without the environment the token is unknown.
         let e = resolve(&f, &f.requests[0], &HashMap::new(), dir.path(), &all()).unwrap_err();
-        assert!(
-            e.contains("unknown variable {{size}}") && e.starts_with("line 5"),
-            "{e}"
-        );
+        assert!(e.contains("unknown variable {{size}}") && e.starts_with("line 5"), "{e}");
     }
 
     #[test]
@@ -783,44 +586,21 @@ Content-Type: application/json
         assert_eq!(r.body, Body::Text(r#"{"user":"ann"}"#.into()));
         // Body files outside the allowed folder, and the process environment, can be refused.
         let other = tempfile::tempdir().unwrap();
-        let no = Access {
-            process_env: false,
-            root: Some(other.path()),
-        };
-        assert!(
-            resolve(&f, &f.requests[0], &HashMap::new(), dir.path(), &no)
-                .unwrap_err()
-                .contains("outside")
-        );
+        let no = Access { process_env: false, root: Some(other.path()) };
+        assert!(resolve(&f, &f.requests[0], &HashMap::new(), dir.path(), &no).unwrap_err().contains("outside"));
         let f = parse("GET http://x/{{$processEnv HOME}} HTTP/1.1\n");
         assert_eq!(f.requests[0].url, "http://x/{{$processEnv HOME}}");
-        assert!(
-            resolve(&f, &f.requests[0], &HashMap::new(), dir.path(), &no)
-                .unwrap_err()
-                .contains("not allowed")
-        );
+        assert!(resolve(&f, &f.requests[0], &HashMap::new(), dir.path(), &no).unwrap_err().contains("not allowed"));
     }
 
     #[test]
     fn errors() {
         let f = parse("@a = {{b}}\n@b = {{a}}\nGET {{a}}/x\n");
-        assert!(
-            resolve(&f, &f.requests[0], &HashMap::new(), Path::new("."), &all())
-                .unwrap_err()
-                .contains("refers to itself")
-        );
+        assert!(resolve(&f, &f.requests[0], &HashMap::new(), Path::new("."), &all()).unwrap_err().contains("refers to itself"));
         let f = parse("GET {{login.response.body.token}}\n");
-        assert!(
-            resolve(&f, &f.requests[0], &HashMap::new(), Path::new("."), &all())
-                .unwrap_err()
-                .contains("earlier responses")
-        );
+        assert!(resolve(&f, &f.requests[0], &HashMap::new(), Path::new("."), &all()).unwrap_err().contains("earlier responses"));
         let f = parse("GET /relative\n");
-        assert!(
-            resolve(&f, &f.requests[0], &HashMap::new(), Path::new("."), &all())
-                .unwrap_err()
-                .contains("http://")
-        );
+        assert!(resolve(&f, &f.requests[0], &HashMap::new(), Path::new("."), &all()).unwrap_err().contains("http://"));
         let f = parse("hello world\n");
         assert!(f.requests.is_empty() && f.warnings[0].contains("not a request line"));
     }
@@ -832,11 +612,7 @@ Content-Type: application/json
                 comment: "#1".into(),
                 method: "GET".into(),
                 url: "https://api.example.com/a?x=1".into(),
-                headers: vec![
-                    ("Host".into(), "api.example.com".into()),
-                    ("Authorization".into(), "Bearer abc".into()),
-                    ("Accept".into(), "*/*".into()),
-                ],
+                headers: vec![("Host".into(), "api.example.com".into()), ("Authorization".into(), "Bearer abc".into()), ("Accept".into(), "*/*".into())],
                 body: None,
                 omitted: None,
             },
@@ -844,10 +620,7 @@ Content-Type: application/json
                 comment: "#2".into(),
                 method: "POST".into(),
                 url: "https://api.example.com/b".into(),
-                headers: vec![
-                    ("Content-Type".into(), "application/json".into()),
-                    ("Content-Length".into(), "2".into()),
-                ],
+                headers: vec![("Content-Type".into(), "application/json".into()), ("Content-Length".into(), "2".into())],
                 body: Some("{}".into()),
                 omitted: None,
             },
@@ -855,21 +628,13 @@ Content-Type: application/json
         let (text, public, private) = write(&reqs);
         assert_eq!(public["host"], "https://api.example.com");
         assert_eq!(private["token"], "abc");
-        assert!(
-            !text.contains("Content-Length")
-                && !text.contains("Host:")
-                && text.contains("Bearer {{token}}"),
-            "{text}"
-        );
+        assert!(!text.contains("Content-Length") && !text.contains("Host:") && text.contains("Bearer {{token}}"), "{text}");
         let f = parse(&text);
         let env: HashMap<String, String> = public.into_iter().chain(private).collect();
         let r = resolve(&f, &f.requests[0], &env, Path::new("."), &all()).unwrap();
         assert_eq!(r.url, "https://api.example.com/a?x=1");
         assert_eq!(r.headers[0], ("Authorization".into(), "Bearer abc".into()));
         let r = resolve(&f, &f.requests[1], &env, Path::new("."), &all()).unwrap();
-        assert_eq!(
-            (r.method.as_str(), r.body),
-            ("POST", Body::Text("{}".into()))
-        );
+        assert_eq!((r.method.as_str(), r.body), ("POST", Body::Text("{}".into())));
     }
 }

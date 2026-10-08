@@ -7,8 +7,8 @@
 
 use parking_lot::Mutex;
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    Issuer, KeyPair, KeyUsagePurpose, SanType, SerialNumber,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+    KeyUsagePurpose, SanType, SerialNumber,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use rustls::server::{ClientHello, ResolvesServerCert};
@@ -69,12 +69,7 @@ fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)?;
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
         f.write_all(data)?;
     }
     #[cfg(not(unix))]
@@ -89,14 +84,8 @@ fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
 }
 
 fn move_aside(path: &Path) {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let mut name = path
-        .file_name()
-        .map(|n| n.to_os_string())
-        .unwrap_or_default();
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
     name.push(format!(".corrupt-{ts}"));
     if let Err(e) = std::fs::rename(path, path.with_file_name(name)) {
         tracing::warn!(target: "quena::tls", "could not move {} aside: {e}", path.display());
@@ -105,10 +94,7 @@ fn move_aside(path: &Path) {
 
 fn random_serial() -> SerialNumber {
     let mut b = [0u8; 16];
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
     let r = rustls::crypto::ring::default_provider().secure_random;
     if r.fill(&mut b).is_err() {
         b[..16].copy_from_slice(&t.to_be_bytes());
@@ -123,23 +109,11 @@ fn ca_params() -> CertificateParams {
     dn.push(DnType::CommonName, CA_COMMON_NAME);
     dn.push(DnType::OrganizationName, "Quena HTTP(S) Workbench");
     let user = std::env::var("USER").unwrap_or_default();
-    let host = std::env::var("HOSTNAME")
-        .ok()
-        .or_else(|| std::env::var("HOST").ok())
-        .unwrap_or_default();
-    dn.push(
-        DnType::OrganizationalUnitName,
-        format!("Generated locally for {user}@{host}")
-            .trim_end_matches('@')
-            .to_string(),
-    );
+    let host = std::env::var("HOSTNAME").ok().or_else(|| std::env::var("HOST").ok()).unwrap_or_default();
+    dn.push(DnType::OrganizationalUnitName, format!("Generated locally for {user}@{host}").trim_end_matches('@').to_string());
     p.distinguished_name = dn;
     p.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
-    p.key_usages = vec![
-        KeyUsagePurpose::KeyCertSign,
-        KeyUsagePurpose::CrlSign,
-        KeyUsagePurpose::DigitalSignature,
-    ];
+    p.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign, KeyUsagePurpose::DigitalSignature];
     let now = time::OffsetDateTime::now_utc();
     p.not_before = now - time::Duration::days(1);
     p.not_after = now + time::Duration::days(3650);
@@ -251,10 +225,7 @@ impl CertAuthority {
     pub fn sha256_fingerprint(&self) -> String {
         use sha2::Digest;
         let d = sha2::Sha256::digest(self.cert_der());
-        d.iter()
-            .map(|b| format!("{b:02X}"))
-            .collect::<Vec<_>>()
-            .join(":")
+        d.iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
     }
 
     /// Leaf certificate (chain + key) for `host`, cached.
@@ -274,10 +245,7 @@ impl CertAuthority {
         }];
         // A wildcard SAN for the parent domain improves cache hits for sibling hosts.
         p.is_ca = IsCa::ExplicitNoCa;
-        p.key_usages = vec![
-            KeyUsagePurpose::DigitalSignature,
-            KeyUsagePurpose::KeyEncipherment,
-        ];
+        p.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
         p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
         p.use_authority_key_identifier_extension = true;
         let now = time::OffsetDateTime::now_utc();
@@ -286,10 +254,7 @@ impl CertAuthority {
         p.not_after = now + time::Duration::days(390);
         p.serial_number = Some(random_serial());
         let cert = p.signed_by(&self.leaf_key, &self.issuer)?;
-        let ck = Arc::new(CertifiedKey::new(
-            vec![cert.der().clone(), self.cert_der.clone()],
-            self.leaf_signing.clone(),
-        ));
+        let ck = Arc::new(CertifiedKey::new(vec![cert.der().clone(), self.cert_der.clone()], self.leaf_signing.clone()));
         self.leaves.lock().put(host, ck.clone());
         Ok(ck)
     }
@@ -305,11 +270,7 @@ impl CertAuthority {
             .with_safe_default_protocol_versions()?
             .with_no_client_auth()
             .with_cert_resolver(Arc::new(Fixed(ck)));
-        cfg.alpn_protocols = if allow_h2 {
-            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
-        } else {
-            vec![b"http/1.1".to_vec()]
-        };
+        cfg.alpn_protocols = if allow_h2 { vec![b"h2".to_vec(), b"http/1.1".to_vec()] } else { vec![b"http/1.1".to_vec()] };
         let cfg = Arc::new(cfg);
         self.configs.lock().put(key, cfg.clone());
         Ok(cfg)
@@ -357,14 +318,7 @@ fn uuid_like(hexs: &str, salt: u8) -> String {
     use sha2::Digest;
     let d = sha2::Sha256::digest([hexs.as_bytes(), &[salt]].concat());
     let h = hex::encode_upper(&d[..16]);
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }
 
 fn ring_sha1(data: &[u8]) -> Vec<u8> {
@@ -380,12 +334,7 @@ fn ring_sha1(data: &[u8]) -> Vec<u8> {
     for chunk in msg.chunks(64) {
         let mut w = [0u32; 80];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes([
-                chunk[4 * i],
-                chunk[4 * i + 1],
-                chunk[4 * i + 2],
-                chunk[4 * i + 3],
-            ]);
+            w[i] = u32::from_be_bytes([chunk[4 * i], chunk[4 * i + 1], chunk[4 * i + 2], chunk[4 * i + 3]]);
         }
         for i in 16..80 {
             w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
@@ -398,12 +347,7 @@ fn ring_sha1(data: &[u8]) -> Vec<u8> {
                 40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1BBCDC),
                 _ => (b ^ c ^ d, 0xCA62C1D6),
             };
-            let t = a
-                .rotate_left(5)
-                .wrapping_add(f)
-                .wrapping_add(e)
-                .wrapping_add(k)
-                .wrapping_add(*wi);
+            let t = a.rotate_left(5).wrapping_add(f).wrapping_add(e).wrapping_add(k).wrapping_add(*wi);
             e = d;
             d = c;
             c = b.rotate_left(30);
@@ -456,11 +400,7 @@ impl Verified {
                 .with_no_client_auth();
             with_alpn(c, h2)
         };
-        Verified {
-            h2: mk(true),
-            h1: mk(false),
-            roots,
-        }
+        Verified { h2: mk(true), h1: mk(false), roots }
     }
 }
 
@@ -480,11 +420,7 @@ fn root_store() -> rustls::RootCertStore {
 }
 
 fn with_alpn(mut c: ClientConfig, h2: bool) -> Arc<ClientConfig> {
-    c.alpn_protocols = if h2 {
-        vec![b"h2".to_vec(), b"http/1.1".to_vec()]
-    } else {
-        vec![b"http/1.1".to_vec()]
-    };
+    c.alpn_protocols = if h2 { vec![b"h2".to_vec(), b"http/1.1".to_vec()] } else { vec![b"http/1.1".to_vec()] };
     Arc::new(c)
 }
 
@@ -502,11 +438,7 @@ impl ClientConfigs {
         let insecure = || {
             ClientConfig::builder_with_provider(provider())
                 .with_safe_default_protocol_versions()
-                .map(|b| {
-                    b.dangerous()
-                        .with_custom_certificate_verifier(Arc::new(NoVerify(provider())))
-                        .with_no_client_auth()
-                })
+                .map(|b| b.dangerous().with_custom_certificate_verifier(Arc::new(NoVerify(provider()))).with_no_client_auth())
         };
         Ok(ClientConfigs {
             verified,
@@ -522,10 +454,8 @@ impl ClientConfigs {
 
     /// Configure a client certificate (PEM chain + PEM key) for hosts matching `pattern`.
     pub fn add_client_cert(&self, pattern: &str, chain_pem: &str, key_pem: &str) -> Result<()> {
-        let chain: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut chain_pem.as_bytes())
-            .collect::<std::result::Result<_, _>>()?;
-        let key = rustls_pemfile::private_key(&mut key_pem.as_bytes())?
-            .ok_or_else(|| TlsError::Other("no private key in PEM".into()))?;
+        let chain: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut chain_pem.as_bytes()).collect::<std::result::Result<_, _>>()?;
+        let key = rustls_pemfile::private_key(&mut key_pem.as_bytes())?.ok_or_else(|| TlsError::Other("no private key in PEM".into()))?;
         let mk = |h2| -> Result<Arc<ClientConfig>> {
             let c = ClientConfig::builder_with_provider(provider())
                 .with_safe_default_protocol_versions()?
@@ -534,9 +464,7 @@ impl ClientConfigs {
             Ok(with_alpn(c, h2))
         };
         let (a, b) = (mk(true)?, mk(false)?);
-        self.client_certs
-            .lock()
-            .push((pattern.to_ascii_lowercase(), a, b));
+        self.client_certs.lock().push((pattern.to_ascii_lowercase(), a, b));
         Ok(())
     }
 
@@ -545,20 +473,9 @@ impl ClientConfigs {
     }
 
     /// Pick a configuration for `host`.
-    pub fn for_host(
-        &self,
-        host: &str,
-        insecure: bool,
-        h2: bool,
-        glob: impl Fn(&str, &str) -> bool,
-    ) -> Arc<ClientConfig> {
+    pub fn for_host(&self, host: &str, insecure: bool, h2: bool, glob: impl Fn(&str, &str) -> bool) -> Arc<ClientConfig> {
         let host = host.to_ascii_lowercase();
-        if let Some((_, a, b)) = self
-            .client_certs
-            .lock()
-            .iter()
-            .find(|(p, _, _)| glob(p, &host))
-        {
+        if let Some((_, a, b)) = self.client_certs.lock().iter().find(|(p, _, _)| glob(p, &host)) {
             return if h2 { a.clone() } else { b.clone() };
         }
         match (insecure, h2) {
@@ -575,8 +492,7 @@ pub fn server_name(host: &str) -> Result<ServerName<'static>> {
     if let Ok(ip) = h.parse::<IpAddr>() {
         return Ok(ServerName::IpAddress(ip.into()));
     }
-    ServerName::try_from(h.to_string())
-        .map_err(|e| TlsError::Other(format!("invalid server name {host}: {e}")))
+    ServerName::try_from(h.to_string()).map_err(|e| TlsError::Other(format!("invalid server name {host}: {e}")))
 }
 
 /// Encode a DER certificate as PEM.
@@ -612,12 +528,7 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
         cert: &CertificateDer<'_>,
         dss: &rustls::DigitallySignedStruct,
     ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
     }
     fn verify_tls13_signature(
         &self,
@@ -625,12 +536,7 @@ impl rustls::client::danger::ServerCertVerifier for NoVerify {
         cert: &CertificateDer<'_>,
         dss: &rustls::DigitallySignedStruct,
     ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
     }
     fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
         self.0.signature_verification_algorithms.supported_schemes()
@@ -645,18 +551,10 @@ mod tests {
     fn corrupt_ca_is_replaced_instead_of_failing() {
         let dir = tempfile::tempdir().unwrap();
         let first = CertAuthority::load_or_create(dir.path()).unwrap();
-        std::fs::write(
-            dir.path().join(CA_KEY_FILE),
-            b"-----BEGIN PRIVATE KEY-----\ntruncated",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join(CA_KEY_FILE), b"-----BEGIN PRIVATE KEY-----\ntruncated").unwrap();
         let second = CertAuthority::load_or_create(dir.path()).unwrap();
         assert_ne!(first.sha256_fingerprint(), second.sha256_fingerprint());
-        let aside = std::fs::read_dir(dir.path())
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
-            .count();
+        let aside = std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().contains(".corrupt-")).count();
         assert_eq!(aside, 2, "both halves of the damaged CA are kept");
         // A half-written CA (key only) is recreated as well.
         std::fs::remove_file(dir.path().join(CA_CERT_FILE)).unwrap();
@@ -680,10 +578,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(dir.join(CA_KEY_FILE))
-                .unwrap()
-                .permissions()
-                .mode();
+            let mode = std::fs::metadata(dir.join(CA_KEY_FILE)).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
         std::fs::remove_dir_all(dir).unwrap();
@@ -695,38 +590,19 @@ mod tests {
         let ca = CertAuthority::load_or_create(dir.path()).unwrap();
         // The SubjectPublicKeyInfo is embedded unchanged in the certificate.
         let spki = ca.spki_der();
-        assert!(
-            ca.cert_der()
-                .windows(spki.len())
-                .any(|w| w == spki.as_slice())
-        );
+        assert!(ca.cert_der().windows(spki.len()).any(|w| w == spki.as_slice()));
         let h = ca.spki_sha256_base64();
         assert_eq!(h.len(), 44, "{h}");
-        assert_eq!(
-            CertAuthority::load_or_create(dir.path())
-                .unwrap()
-                .spki_sha256_base64(),
-            h
-        );
+        assert_eq!(CertAuthority::load_or_create(dir.path()).unwrap().spki_sha256_base64(), h);
     }
 
     #[test]
     fn sha1_known() {
-        assert_eq!(
-            hex::encode(ring_sha1(b"abc")),
-            "a9993e364706816aba3e25717850c26c9cd0d89d"
-        );
+        assert_eq!(hex::encode(ring_sha1(b"abc")), "a9993e364706816aba3e25717850c26c9cd0d89d");
     }
 
     fn tempfile_dir() -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "quena-tls-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let d = std::env::temp_dir().join(format!("quena-tls-test-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir_all(&d).unwrap();
         d
     }

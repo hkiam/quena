@@ -27,11 +27,7 @@ pub enum ProxyEntry {
 }
 
 enum Cmd {
-    Eval {
-        url: String,
-        host: String,
-        reply: Sender<Result<String, String>>,
-    },
+    Eval { url: String, host: String, reply: Sender<Result<String, String>> },
     Shutdown,
 }
 
@@ -74,16 +70,10 @@ impl PacEngine {
         let source_error = match ready_rx.recv_timeout(JS_LOAD_BUDGET + Duration::from_secs(5)) {
             Ok(Ok(())) => None,
             Ok(Err(e)) => Some(e),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                Some("PAC script did not finish loading in time".into())
-            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Some("PAC script did not finish loading in time".into()),
             Err(_) => Some("pac worker did not start".into()),
         };
-        PacEngine {
-            tx,
-            cache: Mutex::new(HashMap::new()),
-            source_error,
-        }
+        PacEngine { tx, cache: Mutex::new(HashMap::new()), source_error }
     }
 
     /// The compile error, if the PAC script failed to load.
@@ -107,11 +97,7 @@ impl PacEngine {
             return vec![ProxyEntry::Direct];
         }
         let (reply, rx) = std::sync::mpsc::channel();
-        match self.tx.try_send(Cmd::Eval {
-            url: url.to_string(),
-            host: host.to_string(),
-            reply,
-        }) {
+        match self.tx.try_send(Cmd::Eval { url: url.to_string(), host: host.to_string(), reply }) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
                 tracing::warn!(target: "quena", "PAC evaluation queue full; using DIRECT for {host} (not cached)");
@@ -251,16 +237,9 @@ fn worker(rx: Receiver<Cmd>, source: &str, ready: Sender<Result<(), String>>) {
     let deadline = Arc::new(AtomicU64::new(u64::MAX));
     {
         let deadline = deadline.clone();
-        rt.set_interrupt_handler(Some(Box::new(move || {
-            base.elapsed().as_micros() as u64 > deadline.load(Ordering::Relaxed)
-        })));
+        rt.set_interrupt_handler(Some(Box::new(move || base.elapsed().as_micros() as u64 > deadline.load(Ordering::Relaxed))));
     }
-    let arm = |budget: Duration| {
-        deadline.store(
-            (base.elapsed() + budget).as_micros() as u64,
-            Ordering::Relaxed,
-        )
-    };
+    let arm = |budget: Duration| deadline.store((base.elapsed() + budget).as_micros() as u64, Ordering::Relaxed);
     let ctx = match Context::full(&rt) {
         Ok(c) => c,
         Err(e) => {
@@ -273,8 +252,7 @@ fn worker(rx: Receiver<Cmd>, source: &str, ready: Sender<Result<(), String>>) {
     let init = ctx.with(|cx| -> Result<(), String> {
         install_dns(&cx)?;
         cx.eval::<(), _>(PAC_PRELUDE).map_err(|e| e.to_string())?;
-        cx.eval::<(), _>(source.as_bytes())
-            .map_err(|e| exc(&cx, e))?;
+        cx.eval::<(), _>(source.as_bytes()).map_err(|e| exc(&cx, e))?;
         let f: Result<rquickjs::Function, _> = cx.globals().get("FindProxyForURL");
         if f.is_err() {
             return Err("PAC script defines no FindProxyForURL(url, host)".into());
@@ -292,10 +270,7 @@ fn worker(rx: Receiver<Cmd>, source: &str, ready: Sender<Result<(), String>>) {
             Cmd::Eval { url, host, reply } => {
                 arm(JS_EVAL_BUDGET);
                 let out = ctx.with(|cx| -> Result<String, String> {
-                    let f: rquickjs::Function = cx
-                        .globals()
-                        .get("FindProxyForURL")
-                        .map_err(|e| e.to_string())?;
+                    let f: rquickjs::Function = cx.globals().get("FindProxyForURL").map_err(|e| e.to_string())?;
                     let s: String = f.call((url, host)).map_err(|e| exc(&cx, e))?;
                     Ok(s)
                 });
@@ -307,22 +282,15 @@ fn worker(rx: Receiver<Cmd>, source: &str, ready: Sender<Result<(), String>>) {
 }
 
 fn install_dns(cx: &rquickjs::Ctx) -> Result<(), String> {
-    let resolve = rquickjs::Function::new(
-        cx.clone(),
-        |host: String| -> rquickjs::Result<Option<String>> { Ok(dns_resolve(&host)) },
-    )
-    .map_err(|e| e.to_string())?;
-    cx.globals()
-        .set("__dnsResolve", resolve)
-        .map_err(|e| e.to_string())?;
-
-    let myip = rquickjs::Function::new(cx.clone(), || -> rquickjs::Result<String> {
-        Ok(my_ip_address())
+    let resolve = rquickjs::Function::new(cx.clone(), |host: String| -> rquickjs::Result<Option<String>> {
+        Ok(dns_resolve(&host))
     })
     .map_err(|e| e.to_string())?;
-    cx.globals()
-        .set("__myIpAddress", myip)
+    cx.globals().set("__dnsResolve", resolve).map_err(|e| e.to_string())?;
+
+    let myip = rquickjs::Function::new(cx.clone(), || -> rquickjs::Result<String> { Ok(my_ip_address()) })
         .map_err(|e| e.to_string())?;
+    cx.globals().set("__myIpAddress", myip).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -339,27 +307,18 @@ fn dns_resolve(host: &str) -> Option<String> {
     }
     let host = host.to_string();
     let (tx, rx) = std::sync::mpsc::channel();
-    let spawned = std::thread::Builder::new()
-        .name("quena-pac-dns".into())
-        .spawn(move || {
-            let addrs = (host.as_str(), 0u16)
-                .to_socket_addrs()
-                .ok()
-                .map(|it| it.map(|s| s.ip()).collect::<Vec<IpAddr>>());
-            DNS_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
-            let _ = tx.send(addrs);
-        });
+    let spawned = std::thread::Builder::new().name("quena-pac-dns".into()).spawn(move || {
+        let addrs = (host.as_str(), 0u16).to_socket_addrs().ok().map(|it| it.map(|s| s.ip()).collect::<Vec<IpAddr>>());
+        DNS_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+        let _ = tx.send(addrs);
+    });
     if spawned.is_err() {
         DNS_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
         return None;
     }
     let addrs = rx.recv_timeout(Duration::from_secs(3)).ok().flatten()?;
     // Prefer IPv4 to match classic PAC helpers (isInNet is IPv4).
-    addrs
-        .iter()
-        .find(|a| a.is_ipv4())
-        .or_else(|| addrs.first())
-        .map(|a| a.to_string())
+    addrs.iter().find(|a| a.is_ipv4()).or_else(|| addrs.first()).map(|a| a.to_string())
 }
 
 fn my_ip_address() -> String {
@@ -394,18 +353,13 @@ mod tests {
         let e = PacEngine::new("while (true) {}");
         assert!(e.error().is_some(), "top-level loop must fail to load");
         assert!(t.elapsed() < Duration::from_secs(8));
-        let e = PacEngine::new(
-            "function FindProxyForURL(u, h) { if (h == 'loop') { while (true) {} } return 'PROXY p:1'; }",
-        );
+        let e = PacEngine::new("function FindProxyForURL(u, h) { if (h == 'loop') { while (true) {} } return 'PROXY p:1'; }");
         assert!(e.error().is_none());
         let t = Instant::now();
         assert_eq!(e.find("http://loop/", "loop"), vec![ProxyEntry::Direct]);
         assert!(t.elapsed() < EVAL_TIMEOUT, "loop not interrupted");
         // The worker is still usable afterwards.
-        assert_eq!(
-            e.find("http://ok/", "ok"),
-            vec![ProxyEntry::Proxy("p".into(), 1)]
-        );
+        assert_eq!(e.find("http://ok/", "ok"), vec![ProxyEntry::Proxy("p".into(), 1)]);
     }
 
     #[test]
@@ -421,34 +375,19 @@ mod tests {
             "#,
         );
         assert!(pac.error().is_none());
-        assert_eq!(
-            pac.find("http://intranet/", "intranet"),
-            vec![ProxyEntry::Direct]
-        );
-        assert_eq!(
-            pac.find("http://a.internal.example/", "a.internal.example"),
-            vec![ProxyEntry::Direct]
-        );
+        assert_eq!(pac.find("http://intranet/", "intranet"), vec![ProxyEntry::Direct]);
+        assert_eq!(pac.find("http://a.internal.example/", "a.internal.example"), vec![ProxyEntry::Direct]);
         assert_eq!(
             pac.find("http://a.corp.example/", "a.corp.example"),
-            vec![
-                ProxyEntry::Proxy("proxy1.example".into(), 8080),
-                ProxyEntry::Proxy("proxy2.example".into(), 8080)
-            ]
+            vec![ProxyEntry::Proxy("proxy1.example".into(), 8080), ProxyEntry::Proxy("proxy2.example".into(), 8080)]
         );
         assert_eq!(
             pac.find("http://x.example/", "x.example"),
-            vec![
-                ProxyEntry::Proxy("gw.example".into(), 3128),
-                ProxyEntry::Direct
-            ]
+            vec![ProxyEntry::Proxy("gw.example".into(), 3128), ProxyEntry::Direct]
         );
         // upstream_for picks the first PROXY, or None for DIRECT.
         assert_eq!(pac.upstream_for("intranet:80"), None);
-        assert_eq!(
-            pac.upstream_for("x.example:443"),
-            Some(("gw.example".into(), 3128))
-        );
+        assert_eq!(pac.upstream_for("x.example:443"), Some(("gw.example".into(), 3128)));
     }
 
     #[test]
@@ -474,18 +413,9 @@ mod tests {
     #[test]
     fn parse_variants() {
         assert_eq!(parse_pac_result("DIRECT"), vec![ProxyEntry::Direct]);
-        assert_eq!(
-            parse_pac_result("PROXY p:8080"),
-            vec![ProxyEntry::Proxy("p".into(), 8080)]
-        );
-        assert_eq!(
-            parse_pac_result("  PROXY a:1 ; DIRECT "),
-            vec![ProxyEntry::Proxy("a".into(), 1), ProxyEntry::Direct]
-        );
+        assert_eq!(parse_pac_result("PROXY p:8080"), vec![ProxyEntry::Proxy("p".into(), 8080)]);
+        assert_eq!(parse_pac_result("  PROXY a:1 ; DIRECT "), vec![ProxyEntry::Proxy("a".into(), 1), ProxyEntry::Direct]);
         assert_eq!(parse_pac_result(""), vec![ProxyEntry::Direct]);
-        assert_eq!(
-            parse_pac_result("SOCKS5 s:1080"),
-            vec![ProxyEntry::Socks("s".into(), 1080)]
-        );
+        assert_eq!(parse_pac_result("SOCKS5 s:1080"), vec![ProxyEntry::Socks("s".into(), 1080)]);
     }
 }

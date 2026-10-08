@@ -14,19 +14,11 @@ use std::time::{Duration, Instant};
 fn wait(core: &AppCore, job: u64) {
     let job = core.jobs.get(job).unwrap();
     let t0 = Instant::now();
-    while !matches!(
-        format!("{:?}", job.status()).as_str(),
-        "Done" | "Failed" | "Cancelled"
-    ) {
+    while !matches!(format!("{:?}", job.status()).as_str(), "Done" | "Failed" | "Cancelled") {
         assert!(t0.elapsed() < Duration::from_secs(60), "job did not finish");
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(
-        format!("{:?}", job.status()),
-        "Done",
-        "{:?}",
-        job.snapshot().error
-    );
+    assert_eq!(format!("{:?}", job.status()), "Done", "{:?}", job.snapshot().error);
 }
 
 /// Secret and personal values of the fixture; none may leave the host.
@@ -52,9 +44,7 @@ fn b64url(data: &[u8]) -> String {
     const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::new();
     for c in data.chunks(3) {
-        let n = (c[0] as u32) << 16
-            | (*c.get(1).unwrap_or(&0) as u32) << 8
-            | *c.get(2).unwrap_or(&0) as u32;
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
         for k in 0..=c.len() {
             out.push(A[(n >> (18 - 6 * k) & 63) as usize] as char);
         }
@@ -71,17 +61,12 @@ fn test_jwt(exp: u64) -> String {
         "sub": "SECRET-SUB", "oid": "SECRET-OID", "email": "secret.person@example.com", "upn": "secret.person@example.com",
         "name": "Secret Person", "preferred_username": "secret.person@example.com", "nonce": "SECRET-NONCE", "jti": "SECRET-JTI",
     });
-    format!(
-        "{}.{}.SECRET-SIG",
-        b64url(header.to_string().as_bytes()),
-        b64url(payload.to_string().as_bytes())
-    )
+    format!("{}.{}.SECRET-SIG", b64url(header.to_string().as_bytes()), b64url(payload.to_string().as_bytes()))
 }
 
 fn time_iso(ms: i64) -> String {
     let t = time::OffsetDateTime::from_unix_timestamp_nanos(ms as i128 * 1_000_000).unwrap();
-    t.format(&time::format_description::well_known::Rfc3339)
-        .unwrap()
+    t.format(&time::format_description::well_known::Rfc3339).unwrap()
 }
 
 struct Req<'a> {
@@ -91,28 +76,14 @@ struct Req<'a> {
     body: Option<(&'a str, String)>,
 }
 
-fn entry(
-    ms: i64,
-    r: Req,
-    status: u16,
-    resp_headers: Vec<(&str, String)>,
-    resp_body: (&str, String),
-) -> Value {
+fn entry(ms: i64, r: Req, status: u16, resp_headers: Vec<(&str, String)>, resp_body: (&str, String)) -> Value {
     let t0 = 1_790_000_000_000i64;
-    let h = |l: &[(&str, String)]| {
-        l.iter()
-            .map(|(n, v)| json!({"name": n, "value": v}))
-            .collect::<Vec<_>>()
-    };
+    let h = |l: &[(&str, String)]| l.iter().map(|(n, v)| json!({"name": n, "value": v})).collect::<Vec<_>>();
     let mut req = json!({"method": r.method, "url": r.url, "httpVersion": "HTTP/1.1", "cookies": [], "headers": h(&r.headers), "queryString": [], "headersSize": -1, "bodySize": -1});
     if let Some((mime, text)) = r.body {
         req["postData"] = json!({"mimeType": mime, "text": text});
     }
-    let location = resp_headers
-        .iter()
-        .find(|(n, _)| *n == "Location")
-        .map(|(_, v)| v.clone())
-        .unwrap_or_default();
+    let location = resp_headers.iter().find(|(n, _)| *n == "Location").map(|(_, v)| v.clone()).unwrap_or_default();
     let mut rh = resp_headers.clone();
     rh.push(("Content-Type", resp_body.0.to_string()));
     json!({
@@ -135,12 +106,7 @@ fn oidc_har() -> Value {
     let jwt = test_jwt(EXPIRED);
     let id_token = test_jwt(EXPIRED + 7200);
     let login = "https://login.example.test/tenant-1";
-    let get = |url: &'static str| Req {
-        method: "GET",
-        url,
-        headers: vec![],
-        body: None,
-    };
+    let get = |url: &'static str| Req { method: "GET", url, headers: vec![], body: None };
     let e = vec![
         entry(
             0,
@@ -224,26 +190,15 @@ fn assert_clean(what: &str, text: &str) {
 #[test]
 fn authentication_facts_from_a_har_import() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-        dir.path().join("settings.json"),
-        r#"{"proxy":{"actAsSystemProxy":false,"captureOnStartup":false}}"#,
-    )
-    .unwrap();
-    let core = AppCore::new(
-        Paths::at(dir.path().to_path_buf()),
-        quena_app_core::logbuf::LogBuffer::new(100),
-    )
-    .unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"actAsSystemProxy":false,"captureOnStartup":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
     let har = dir.path().join("oidc.har");
     std::fs::write(&har, serde_json::to_vec(&oidc_har()).unwrap()).unwrap();
     wait(&core, core.import_archive(har).unwrap());
     let cap = core.capture();
     cap.index.tick();
     let (ids, _) = scope_ids(&cap, None, &DiagFilter::default());
-    let records: Vec<AnalyzerSession> = ids
-        .iter()
-        .filter_map(|id| record_of(&cap, *id, &|| false))
-        .collect();
+    let records: Vec<AnalyzerSession> = ids.iter().filter_map(|id| record_of(&cap, *id, &|| false)).collect();
     assert_eq!(records.len(), 6, "{records:#?}");
     let all = format!("{records:?}");
     assert_clean("records", &all);
@@ -251,24 +206,10 @@ fn authentication_facts_from_a_har_import() {
     assert!(!all.contains(&jwt[..40]), "token in records");
 
     // Discovery.
-    let d = records[0]
-        .auth
-        .as_ref()
-        .and_then(|a| a.discovery.as_ref())
-        .expect("discovery");
-    assert_eq!(
-        d.issuer.as_deref(),
-        Some("https://login.example.test/tenant-1/v2.0")
-    );
-    assert_eq!(
-        d.token_endpoint.as_deref(),
-        Some("https://login.example.test/tenant-1/oauth2/v2.0/token")
-    );
-    assert!(
-        d.authorization_endpoint.is_some()
-            && d.jwks_uri.is_some()
-            && d.end_session_endpoint.is_some()
-    );
+    let d = records[0].auth.as_ref().and_then(|a| a.discovery.as_ref()).expect("discovery");
+    assert_eq!(d.issuer.as_deref(), Some("https://login.example.test/tenant-1/v2.0"));
+    assert_eq!(d.token_endpoint.as_deref(), Some("https://login.example.test/tenant-1/oauth2/v2.0/token"));
+    assert!(d.authorization_endpoint.is_some() && d.jwks_uri.is_some() && d.end_session_endpoint.is_some());
 
     // Authorize: OAuth parameters kept (long scope too), state/nonce/challenge/hint not.
     let a = &records[1];
@@ -286,144 +227,41 @@ fn authentication_facts_from_a_har_import() {
         assert!(a.url.contains(kept), "{kept} not in {}", a.url);
     }
     assert!(a.auth.is_none(), "{:?}", a.auth);
-    let loc = a
-        .response_headers
-        .iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case("location"))
-        .map(|(_, v)| v.as_str())
-        .unwrap_or_default();
-    assert!(
-        loc.contains("code=%3C15%20bytes%3E") && loc.contains("state=%3C12%20bytes%3E"),
-        "{loc}"
-    );
+    let loc = a.response_headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("location")).map(|(_, v)| v.as_str()).unwrap_or_default();
+    assert!(loc.contains("code=%3C15%20bytes%3E") && loc.contains("state=%3C12%20bytes%3E"), "{loc}");
     // Callback.
-    assert!(
-        records[2].url.ends_with(
-            "?code=%3C15%20bytes%3E&state=%3C12%20bytes%3E&session_state=%3C3%20bytes%3E"
-        ),
-        "{}",
-        records[2].url
-    );
+    assert!(records[2].url.ends_with("?code=%3C15%20bytes%3E&state=%3C12%20bytes%3E&session_state=%3C3%20bytes%3E"), "{}", records[2].url);
 
     // Token request and response.
     let t = records[3].auth.as_ref().expect("token facts");
     let q = t.oauth_request.as_ref().expect("oauth request");
-    assert_eq!(
-        (
-            q.grant_type.as_deref(),
-            q.client_id.as_deref(),
-            q.scope.as_deref()
-        ),
-        (
-            Some("authorization_code"),
-            Some("web-client"),
-            Some("openid offline_access")
-        )
-    );
-    assert_eq!(
-        q.redirect_uri.as_deref(),
-        Some("https://app.example.test/cb")
-    );
-    assert!(
-        q.has_code
-            && q.has_code_verifier
-            && q.has_client_secret
-            && q.basic_client_auth
-            && !q.has_refresh_token
-            && !q.has_client_assertion
-    );
+    assert_eq!((q.grant_type.as_deref(), q.client_id.as_deref(), q.scope.as_deref()), (Some("authorization_code"), Some("web-client"), Some("openid offline_access")));
+    assert_eq!(q.redirect_uri.as_deref(), Some("https://app.example.test/cb"));
+    assert!(q.has_code && q.has_code_verifier && q.has_client_secret && q.basic_client_auth && !q.has_refresh_token && !q.has_client_assertion);
     let p = t.oauth_response.as_ref().expect("oauth response");
-    assert_eq!(
-        (p.token_type.as_deref(), p.expires_in, p.scope.as_deref()),
-        (Some("Bearer"), Some(3599), Some("Orders.Read openid"))
-    );
+    assert_eq!((p.token_type.as_deref(), p.expires_in, p.scope.as_deref()), (Some("Bearer"), Some(3599), Some("Orders.Read openid")));
     assert!(p.has_access_token && p.has_refresh_token && p.has_id_token && p.error.is_none());
     let at = p.access_token.as_ref().expect("access token claims");
-    assert_eq!(
-        (
-            at.alg.as_str(),
-            at.iss.as_deref(),
-            at.exp,
-            at.client.as_deref(),
-            at.tenant.as_deref()
-        ),
-        (
-            "RS256",
-            Some("https://login.example.test/tenant-1/v2.0"),
-            Some(EXPIRED),
-            Some("web-client"),
-            Some("tenant-1")
-        )
-    );
-    assert_eq!(
-        (at.aud.clone(), at.scopes.clone(), at.roles.clone()),
-        (
-            vec!["api://orders".to_string()],
-            vec!["Orders.Read".to_string(), "openid".into()],
-            vec!["Reader".to_string()]
-        )
-    );
+    assert_eq!((at.alg.as_str(), at.iss.as_deref(), at.exp, at.client.as_deref(), at.tenant.as_deref()), ("RS256", Some("https://login.example.test/tenant-1/v2.0"), Some(EXPIRED), Some("web-client"), Some("tenant-1")));
+    assert_eq!((at.aud.clone(), at.scopes.clone(), at.roles.clone()), (vec!["api://orders".to_string()], vec!["Orders.Read".to_string(), "openid".into()], vec!["Reader".to_string()]));
     assert_eq!(p.id_token.as_ref().unwrap().exp, Some(EXPIRED + 7200));
-    assert!(
-        t.bearer.is_none() && t.opaque_bearer.is_none(),
-        "Basic client auth is no bearer"
-    );
+    assert!(t.bearer.is_none() && t.opaque_bearer.is_none(), "Basic client auth is no bearer");
 
     // API call with the expired JWT, answered by 401 + WWW-Authenticate.
     let api = &records[4];
-    let b = api
-        .auth
-        .as_ref()
-        .and_then(|a| a.bearer.as_ref())
-        .expect("bearer claims");
+    let b = api.auth.as_ref().and_then(|a| a.bearer.as_ref()).expect("bearer claims");
     assert_eq!((b.exp, b.size as usize), (Some(EXPIRED), jwt.len()));
-    let wa = api
-        .response_headers
-        .iter()
-        .find(|(n, _)| n == "WWW-Authenticate")
-        .map(|(_, v)| v.as_str())
-        .unwrap();
-    assert_eq!(
-        wa,
-        r#"Bearer realm="api", error="invalid_token", error_description="The token expired at '09/21/2026 10:00:00'""#
-    );
-    assert!(
-        api.request_headers
-            .iter()
-            .any(|(n, v)| n == "Authorization" && v == &format!("Bearer <{} bytes>", jwt.len()))
-    );
+    let wa = api.response_headers.iter().find(|(n, _)| n == "WWW-Authenticate").map(|(_, v)| v.as_str()).unwrap();
+    assert_eq!(wa, r#"Bearer realm="api", error="invalid_token", error_description="The token expired at '09/21/2026 10:00:00'""#);
+    assert!(api.request_headers.iter().any(|(n, v)| n == "Authorization" && v == &format!("Bearer <{} bytes>", jwt.len())));
 
     // Entra ID error response: codes, support ids, e-mail masked.
-    let e = records[5]
-        .auth
-        .as_ref()
-        .and_then(|a| a.oauth_response.as_ref())
-        .expect("error response");
-    assert_eq!(
-        (e.error.as_deref(), e.error_codes.clone()),
-        (Some("invalid_grant"), vec![70008])
-    );
-    assert_eq!(
-        (e.trace_id.as_deref(), e.correlation_id.as_deref()),
-        (Some("0a1b-trace"), Some("2c3d-corr"))
-    );
+    let e = records[5].auth.as_ref().and_then(|a| a.oauth_response.as_ref()).expect("error response");
+    assert_eq!((e.error.as_deref(), e.error_codes.clone()), (Some("invalid_grant"), vec![70008]));
+    assert_eq!((e.trace_id.as_deref(), e.correlation_id.as_deref()), (Some("0a1b-trace"), Some("2c3d-corr")));
     let desc = e.error_description.as_deref().unwrap();
-    assert!(
-        desc.starts_with("AADSTS70008: The provided authorization code")
-            && desc.contains("User <email> must sign in again"),
-        "{desc}"
-    );
-    assert!(
-        records[5]
-            .auth
-            .as_ref()
-            .unwrap()
-            .oauth_request
-            .as_ref()
-            .is_some_and(
-                |q| q.has_refresh_token && q.grant_type.as_deref() == Some("refresh_token")
-            )
-    );
+    assert!(desc.starts_with("AADSTS70008: The provided authorization code") && desc.contains("User <email> must sign in again"), "{desc}");
+    assert!(records[5].auth.as_ref().unwrap().oauth_request.as_ref().is_some_and(|q| q.has_refresh_token && q.grant_type.as_deref() == Some("refresh_token")));
 
     // Through the plugin: the records cross the WIT boundary; the report carries no secret.
     let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist");
@@ -432,21 +270,8 @@ fn authentication_facts_from_a_har_import() {
         return;
     }
     core.init_plugins(Some(dist)).unwrap();
-    let wd = core
-        .diag_analyzers()
-        .into_iter()
-        .find(|a| a.id == "io.github.hkiam.webdiag")
-        .expect("webdiag");
-    wait(
-        &core,
-        core.diag_run(
-            wd.index,
-            r#"{"profile":"full","lang":"en"}"#.into(),
-            None,
-            Default::default(),
-        )
-        .unwrap(),
-    );
+    let wd = core.diag_analyzers().into_iter().find(|a| a.id == "io.github.hkiam.webdiag").expect("webdiag");
+    wait(&core, core.diag_run(wd.index, r#"{"profile":"full","lang":"en"}"#.into(), None, Default::default()).unwrap());
     let report = core.diag_report().expect("report");
     assert_clean("report", &report);
     assert!(!report.contains(&jwt[..40]), "token in report");

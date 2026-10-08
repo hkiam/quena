@@ -23,11 +23,7 @@ use std::time::Duration;
 const NULL_DEVICE: &str = if cfg!(windows) { "NUL" } else { "/dev/null" };
 
 fn curl_supports_http2() -> bool {
-    Command::new("curl")
-        .arg("-V")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("HTTP2"))
-        .unwrap_or(false)
+    Command::new("curl").arg("-V").output().map(|o| String::from_utf8_lossy(&o.stdout).contains("HTTP2")).unwrap_or(false)
 }
 
 fn curl_cmd() -> Command {
@@ -43,24 +39,14 @@ type TBody = http_body_util::combinators::BoxBody<Bytes, Infallible>;
 async fn app(req: Request<hyper::body::Incoming>) -> Result<Response<TBody>, Infallible> {
     let path = req.uri().path().to_string();
     let r = match path.as_str() {
-        "/hello" => Response::builder()
-            .header("Content-Type", "text/plain")
-            .body(Full::new(Bytes::from("hello world")).boxed()),
+        "/hello" => Response::builder().header("Content-Type", "text/plain").body(Full::new(Bytes::from("hello world")).boxed()),
         "/echo" => {
-            let b = req
-                .into_body()
-                .collect()
-                .await
-                .map(|c| c.to_bytes())
-                .unwrap_or_default();
-            Response::builder()
-                .header("Content-Type", "application/octet-stream")
-                .body(Full::new(b).boxed())
+            let b = req.into_body().collect().await.map(|c| c.to_bytes()).unwrap_or_default();
+            Response::builder().header("Content-Type", "application/octet-stream").body(Full::new(b).boxed())
         }
         "/gzip" => {
             let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-            e.write_all(br#"{"compressed":true,"items":[1,2,3]}"#)
-                .unwrap();
+            e.write_all(br#"{"compressed":true,"items":[1,2,3]}"#).unwrap();
             Response::builder()
                 .header("Content-Type", "application/json")
                 .header("Content-Encoding", "gzip")
@@ -77,26 +63,19 @@ async fn app(req: Request<hyper::body::Incoming>) -> Result<Response<TBody>, Inf
                     }
                 }
             });
-            Response::builder()
-                .header("Content-Type", "application/octet-stream")
-                .body(body.boxed())
+            Response::builder().header("Content-Type", "application/octet-stream").body(body.boxed())
         }
         "/hang" => {
             tokio::time::sleep(Duration::from_secs(60)).await;
             Response::builder().body(Full::new(Bytes::from("late")).boxed())
         }
-        "/status/404" => Response::builder()
-            .status(404)
-            .body(Full::new(Bytes::from("nope")).boxed()),
-        "/version" => {
-            Response::builder().body(Full::new(Bytes::from(format!("{:?}", req.version()))).boxed())
-        }
-        _ => Response::builder()
-            .status(404)
-            .body(Full::new(Bytes::new()).boxed()),
+        "/status/404" => Response::builder().status(404).body(Full::new(Bytes::from("nope")).boxed()),
+        "/version" => Response::builder().body(Full::new(Bytes::from(format!("{:?}", req.version()))).boxed()),
+        _ => Response::builder().status(404).body(Full::new(Bytes::new()).boxed()),
     };
     Ok(r.unwrap())
 }
+
 
 struct Env {
     _rt: tokio::runtime::Runtime,
@@ -111,10 +90,7 @@ struct Env {
 
 fn setup() -> Env {
     let dir = tempfile::tempdir().unwrap();
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
     // Upstream test servers.
     let server_ca = quena_tls::CertAuthority::load_or_create(dir.path().join("server-ca")).unwrap();
     let tls_cfg = server_ca.server_config("localhost", true).unwrap();
@@ -125,9 +101,7 @@ fn setup() -> Env {
             loop {
                 let (s, _) = l.accept().await.unwrap();
                 tokio::spawn(async move {
-                    let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                        .serve_connection(TokioIo::new(s), service_fn(app))
-                        .await;
+                    let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new()).serve_connection(TokioIo::new(s), service_fn(app)).await;
                 });
             }
         });
@@ -140,9 +114,7 @@ fn setup() -> Env {
                 let acc = acceptor.clone();
                 tokio::spawn(async move {
                     if let Ok(t) = acc.accept(s).await {
-                        let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
-                            .serve_connection(TokioIo::new(t), service_fn(app))
-                            .await;
+                        let _ = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new()).serve_connection(TokioIo::new(t), service_fn(app)).await;
                     }
                 });
             }
@@ -150,76 +122,38 @@ fn setup() -> Env {
         (http, https)
     });
     let capture = Capture::open(dir.path().join("cap"), BodyConfig::default(), true).unwrap();
-    let ca =
-        Arc::new(quena_tls::CertAuthority::load_or_create(dir.path().join("quena-ca")).unwrap());
+    let ca = Arc::new(quena_tls::CertAuthority::load_or_create(dir.path().join("quena-ca")).unwrap());
     let quena_ca = ca.cert_path();
-    let cfg = ProxyConfig {
-        port: 0,
-        decrypt: true,
-        ignore_cert_errors: true,
-        ..Default::default()
-    };
+    let cfg = ProxyConfig { port: 0, decrypt: true, ignore_cert_errors: true, ..Default::default() };
     let proxy = Proxy::new(capture.clone(), cfg, Some(ca)).unwrap();
     let addrs = proxy.start().unwrap();
     let proxy_addr = *addrs.iter().find(|a| a.is_ipv4()).unwrap();
-    Env {
-        _rt: rt,
-        proxy,
-        capture,
-        proxy_addr,
-        http,
-        https,
-        quena_ca,
-        _dir: dir,
-    }
+    Env { _rt: rt, proxy, capture, proxy_addr, http, https, quena_ca, _dir: dir }
 }
 
 fn curl(env: &Env, args: &[&str]) -> (String, String) {
     let out = curl_cmd()
-        .args([
-            "-sS",
-            "--max-time",
-            "30",
-            "-x",
-            &format!("http://{}", env.proxy_addr),
-            "--cacert",
-            env.quena_ca.to_str().unwrap(),
-        ])
+        .args(["-sS", "--max-time", "30", "-x", &format!("http://{}", env.proxy_addr), "--cacert", env.quena_ca.to_str().unwrap()])
         .args(args)
         .output()
         .expect("curl");
-    (
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
+    (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
 }
 
-fn wait_done(
-    env: &Env,
-    pred: impl Fn(&quena_model::SessionSummary) -> bool,
-) -> quena_model::SessionSummary {
+fn wait_done(env: &Env, pred: impl Fn(&quena_model::SessionSummary) -> bool) -> quena_model::SessionSummary {
     // Recording finishes after forwarding: for the 64 MiB body the client has everything
     // while the body is still being written to the store, which on a busy CI disk (Windows,
     // virus scanner) can take several seconds. Only waits as long as needed.
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
         env.capture.index.tick();
-        let ids = env
-            .capture
-            .index
-            .find_all(|s| pred(s) && s.state.is_final());
+        let ids = env.capture.index.find_all(|s| pred(s) && s.state.is_final());
         if let Some(id) = ids.last() {
             return env.capture.index.get(*id).unwrap();
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    let all: Vec<_> = env
-        .capture
-        .index
-        .find_all(|_| true)
-        .into_iter()
-        .filter_map(|id| env.capture.index.get(id))
-        .collect();
+    let all: Vec<_> = env.capture.index.find_all(|_| true).into_iter().filter_map(|id| env.capture.index.get(id)).collect();
     panic!("session not found; have: {all:#?}");
 }
 
@@ -239,14 +173,7 @@ fn http_https_h2_and_big_bodies() {
     assert!(s.process.starts_with("curl"), "process = {}", s.process);
 
     // --- POST body echo
-    let (out, _) = curl(
-        &env,
-        &[
-            "--data-binary",
-            "quena-post-body",
-            &format!("http://{}/echo", env.http),
-        ],
-    );
+    let (out, _) = curl(&env, &["--data-binary", "quena-post-body", &format!("http://{}/echo", env.http)]);
     assert_eq!(out, "quena-post-body");
     let s = wait_done(&env, |s| s.url == "/echo");
     let (req, _) = env.capture.bodies_of(s.id).unwrap();
@@ -270,50 +197,25 @@ fn http_https_h2_and_big_bodies() {
         let s = wait_done(&env, |s| s.url == "/version" && s.protocol == "HTTP/2");
         let d = env.capture.detail(s.id).unwrap();
         assert_eq!(d.request.version, quena_model::HttpVersion::Http2);
-        assert_eq!(
-            d.connection
-                .client_tls
-                .as_ref()
-                .and_then(|t| t.alpn.clone())
-                .as_deref(),
-            Some("h2")
-        );
+        assert_eq!(d.connection.client_tls.as_ref().and_then(|t| t.alpn.clone()).as_deref(), Some("h2"));
     } else {
         eprintln!("curl has no HTTP/2 support - skipping the h2 leg");
     }
 
     // --- gzip recorded raw
-    let (out, _) = curl(
-        &env,
-        &["--compressed", &format!("http://{}/gzip", env.http)],
-    );
+    let (out, _) = curl(&env, &["--compressed", &format!("http://{}/gzip", env.http)]);
     assert!(out.contains("compressed"));
     let s = wait_done(&env, |s| s.url == "/gzip");
     let d = env.capture.detail(s.id).unwrap();
-    assert_eq!(
-        d.response.unwrap().headers.get("content-encoding"),
-        Some("gzip")
-    );
+    assert_eq!(d.response.unwrap().headers.get("content-encoding"), Some("gzip"));
 
     // --- 64 MiB streamed through the proxy
     let t = std::time::Instant::now();
     let out = curl_cmd()
-        .args([
-            "-sS",
-            "-o",
-            NULL_DEVICE,
-            "-w",
-            "%{size_download}",
-            "-x",
-            &format!("http://{}", env.proxy_addr),
-            &format!("http://{}/big", env.http),
-        ])
+        .args(["-sS", "-o", NULL_DEVICE, "-w", "%{size_download}", "-x", &format!("http://{}", env.proxy_addr), &format!("http://{}/big", env.http)])
         .output()
         .unwrap();
-    assert_eq!(
-        String::from_utf8_lossy(&out.stdout),
-        (64u64 << 20).to_string()
-    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), (64u64 << 20).to_string());
     let s = wait_done(&env, |s| s.url == "/big");
     assert_eq!(s.response_body_len, 64 << 20);
     let (_, resp) = env.capture.bodies_of(s.id).unwrap();
@@ -335,6 +237,7 @@ fn http_https_h2_and_big_bodies() {
     env.proxy.stop();
 }
 
+
 /// A client that disconnects while the server has not answered yet must not leave the
 /// session "in flight" forever; garbage on the proxy port must not disturb other clients.
 #[test]
@@ -342,21 +245,11 @@ fn client_disconnect_and_garbage_input() {
     use std::io::{Read, Write};
     let env = setup();
     let mut c = std::net::TcpStream::connect(env.proxy_addr).unwrap();
-    write!(
-        c,
-        "GET http://{}/hang HTTP/1.1\r\nHost: {}\r\n\r\n",
-        env.http, env.http
-    )
-    .unwrap();
+    write!(c, "GET http://{}/hang HTTP/1.1\r\nHost: {}\r\n\r\n", env.http, env.http).unwrap();
     // Wait until the proxy forwarded it and waits for the server.
     for _ in 0..200 {
         env.capture.index.tick();
-        if !env
-            .capture
-            .index
-            .find_all(|s| s.url == "/hang" && s.state == SessionState::AwaitingResponse)
-            .is_empty()
-        {
+        if !env.capture.index.find_all(|s| s.url == "/hang" && s.state == SessionState::AwaitingResponse).is_empty() {
             break;
         }
         std::thread::sleep(Duration::from_millis(25));
@@ -365,11 +258,7 @@ fn client_disconnect_and_garbage_input() {
     let s = wait_done(&env, |s| s.url == "/hang");
     assert_eq!(s.state, SessionState::Aborted);
     let d = env.capture.detail(s.id).unwrap();
-    assert!(
-        d.error.as_deref().unwrap_or("").contains("client closed"),
-        "error: {:?}",
-        d.error
-    );
+    assert!(d.error.as_deref().unwrap_or("").contains("client closed"), "error: {:?}", d.error);
 
     // Garbage and malformed requests: each connection fails on its own.
     let junk: Vec<Vec<u8>> = vec![
@@ -389,23 +278,13 @@ fn client_disconnect_and_garbage_input() {
         let _ = c.read(&mut buf);
     }
     let (out, err) = curl(&env, &[&format!("http://{}/hello", env.http)]);
-    assert_eq!(
-        out, "hello world",
-        "proxy unusable after garbage input: {err}"
-    );
+    assert_eq!(out, "hello world", "proxy unusable after garbage input: {err}");
     // Requests the parser rejected show up as aborted sessions with the raw bytes.
     env.capture.index.tick();
-    let bad = env
-        .capture
-        .index
-        .find_all(|s| s.state == SessionState::Aborted && s.status >= 400);
+    let bad = env.capture.index.find_all(|s| s.state == SessionState::Aborted && s.status >= 400);
     assert!(!bad.is_empty(), "malformed requests are not visible");
     let d = env.capture.detail(*bad.last().unwrap()).unwrap();
-    assert!(
-        d.error.as_deref().unwrap_or("").contains("malformed"),
-        "{:?}",
-        d.error
-    );
+    assert!(d.error.as_deref().unwrap_or("").contains("malformed"), "{:?}", d.error);
 }
 
 /// Stopping the capture closes open keep-alive connections, so nothing more is recorded.
@@ -415,12 +294,7 @@ fn stop_closes_open_connections() {
     let env = setup();
     let mut c = std::net::TcpStream::connect(env.proxy_addr).unwrap();
     c.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
-    write!(
-        c,
-        "GET http://{}/hello HTTP/1.1\r\nHost: {}\r\n\r\n",
-        env.http, env.http
-    )
-    .unwrap();
+    write!(c, "GET http://{}/hello HTTP/1.1\r\nHost: {}\r\n\r\n", env.http, env.http).unwrap();
     let mut buf = [0u8; 4096];
     let n = c.read(&mut buf).unwrap();
     assert!(String::from_utf8_lossy(&buf[..n]).contains("hello world"));

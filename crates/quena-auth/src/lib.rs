@@ -5,9 +5,9 @@
 //! No network or proxy dependency – the proxy drives the loop (see quena-proxy).
 
 pub mod crypto;
+mod ntlm;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod negotiate_gss;
-mod ntlm;
 #[cfg(windows)]
 mod sspi_windows;
 
@@ -17,8 +17,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 /// Server tokens arrive with or without `=` padding (and occasionally wrapped).
 const B64_LENIENT: base64::engine::GeneralPurpose = base64::engine::GeneralPurpose::new(
     &base64::alphabet::STANDARD,
-    base64::engine::GeneralPurposeConfig::new()
-        .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
+    base64::engine::GeneralPurposeConfig::new().with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
 );
 
 /// Split on `sep` outside double quotes (`realm="a, b"` stays one parameter).
@@ -108,22 +107,14 @@ pub fn parse_challenges(values: &[String]) -> Vec<Offer> {
                 Some((s, r)) => (s, r.trim()),
                 None => (part, ""),
             };
-            let Some(scheme) = Scheme::parse(scheme_str) else {
-                continue;
-            };
+            let Some(scheme) = Scheme::parse(scheme_str) else { continue };
             let mut token = None;
             let mut params = Vec::new();
             if !rest.is_empty() {
-                if rest.contains('=') && rest.contains(char::is_whitespace)
-                    || rest.contains(',')
-                    || looks_like_params(rest)
-                {
+                if rest.contains('=') && rest.contains(char::is_whitespace) || rest.contains(',') || looks_like_params(rest) {
                     for kv in split_unquoted(rest, ',') {
                         if let Some((k, val)) = kv.split_once('=') {
-                            params.push((
-                                k.trim().to_string(),
-                                val.trim().trim_matches('"').to_string(),
-                            ));
+                            params.push((k.trim().to_string(), val.trim().trim_matches('"').to_string()));
                         }
                     }
                 } else {
@@ -132,11 +123,7 @@ pub fn parse_challenges(values: &[String]) -> Vec<Offer> {
                     token = B64_LENIENT.decode(compact.as_bytes()).ok();
                 }
             }
-            out.push(Offer {
-                scheme,
-                token,
-                params,
-            });
+            out.push(Offer { scheme, token, params });
         }
     }
     out
@@ -144,9 +131,7 @@ pub fn parse_challenges(values: &[String]) -> Vec<Offer> {
 
 fn looks_like_params(rest: &str) -> bool {
     // "realm=..." style vs. a base64 token
-    rest.split_once('=')
-        .map(|(k, _)| k.chars().all(|c| c.is_ascii_alphabetic() || c == '-') && k.len() <= 16)
-        .unwrap_or(false)
+    rest.split_once('=').map(|(k, _)| k.chars().all(|c| c.is_ascii_alphabetic() || c == '-') && k.len() <= 16).unwrap_or(false)
 }
 
 /// Split a header value into separate `scheme ...` challenges. Basic/simple split on
@@ -182,22 +167,12 @@ pub struct Credentials {
 
 /// A running handshake for one scheme.
 pub enum Handshake {
-    Basic {
-        header: String,
-        done: bool,
-    },
-    Ntlm {
-        creds: Credentials,
-        stage: NtlmStage,
-    },
+    Basic { header: String, done: bool },
+    Ntlm { creds: Credentials, stage: NtlmStage },
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     Negotiate(negotiate_gss::NegotiateCtx),
     #[cfg(windows)]
-    Sspi {
-        ctx: sspi_windows::SspiCtx,
-        scheme: Scheme,
-        started: bool,
-    },
+    Sspi { ctx: sspi_windows::SspiCtx, scheme: Scheme, started: bool },
 }
 
 pub enum NtlmStage {
@@ -211,13 +186,8 @@ pub enum NtlmStage {
 /// quality, only on uniqueness within the handshake).
 fn client_challenge() -> [u8; 8] {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let n = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let a = (n as u64)
-        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-        .rotate_left(31);
+    let n = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let a = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(31);
     let b = (n >> 64) as u64 ^ std::process::id() as u64;
     (a ^ b.rotate_left(17)).to_le_bytes()
 }
@@ -225,69 +195,40 @@ fn client_challenge() -> [u8; 8] {
 fn windows_filetime_now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     // 100-ns ticks since 1601-01-01.
-    let unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
+    let unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     (unix / 100) as u64 + 116_444_736_000_000_000
 }
 
 impl Handshake {
     /// Start a handshake for `scheme`. Basic and NTLM need `creds`; Negotiate uses SSO.
-    pub fn start(
-        scheme: Scheme,
-        creds: Option<&Credentials>,
-        host: &str,
-    ) -> Result<Handshake, AuthError> {
+    pub fn start(scheme: Scheme, creds: Option<&Credentials>, host: &str) -> Result<Handshake, AuthError> {
         match scheme {
             Scheme::Basic => {
                 let c = creds.ok_or(AuthError::NoCredentials)?;
-                let up = if c.domain.is_empty() {
-                    format!("{}:{}", c.user, c.password)
-                } else {
-                    format!("{}\\{}:{}", c.domain, c.user, c.password)
-                };
-                Ok(Handshake::Basic {
-                    header: format!("Basic {}", B64.encode(up)),
-                    done: false,
-                })
+                let up = if c.domain.is_empty() { format!("{}:{}", c.user, c.password) } else { format!("{}\\{}:{}", c.domain, c.user, c.password) };
+                Ok(Handshake::Basic { header: format!("Basic {}", B64.encode(up)), done: false })
             }
             Scheme::Ntlm => {
                 #[cfg(windows)]
                 {
                     // SSPI: SSO with the current user (no creds) or explicit creds.
                     let c = creds.cloned().unwrap_or_default();
-                    let ctx =
-                        sspi_windows::SspiCtx::new("NTLM", host, &c.user, &c.domain, &c.password)?;
-                    return Ok(Handshake::Sspi {
-                        ctx,
-                        scheme: Scheme::Ntlm,
-                        started: false,
-                    });
+                    let ctx = sspi_windows::SspiCtx::new("NTLM", host, &c.user, &c.domain, &c.password)?;
+                    return Ok(Handshake::Sspi { ctx, scheme: Scheme::Ntlm, started: false });
                 }
                 #[cfg(not(windows))]
                 {
                     let c = creds.ok_or(AuthError::NoCredentials)?;
-                    Ok(Handshake::Ntlm {
-                        creds: c.clone(),
-                        stage: NtlmStage::Type1,
-                    })
+                    Ok(Handshake::Ntlm { creds: c.clone(), stage: NtlmStage::Type1 })
                 }
             }
             #[cfg(any(target_os = "macos", target_os = "linux"))]
-            Scheme::Negotiate => Ok(Handshake::Negotiate(negotiate_gss::NegotiateCtx::new(
-                host,
-            )?)),
+            Scheme::Negotiate => Ok(Handshake::Negotiate(negotiate_gss::NegotiateCtx::new(host)?)),
             #[cfg(windows)]
             Scheme::Negotiate => {
                 let c = creds.cloned().unwrap_or_default();
-                let ctx =
-                    sspi_windows::SspiCtx::new("Negotiate", host, &c.user, &c.domain, &c.password)?;
-                Ok(Handshake::Sspi {
-                    ctx,
-                    scheme: Scheme::Negotiate,
-                    started: false,
-                })
+                let ctx = sspi_windows::SspiCtx::new("Negotiate", host, &c.user, &c.domain, &c.password)?;
+                Ok(Handshake::Sspi { ctx, scheme: Scheme::Negotiate, started: false })
             }
             #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
             Scheme::Negotiate => {
@@ -325,23 +266,13 @@ impl Handshake {
                     Ok(format!("NTLM {}", B64.encode(ntlm::type1())))
                 }
                 NtlmStage::Type3 => {
-                    let token = challenge_token
-                        .ok_or_else(|| AuthError::Protocol("missing NTLM Type 2".into()))?;
+                    let token = challenge_token.ok_or_else(|| AuthError::Protocol("missing NTLM Type 2".into()))?;
                     let ch = ntlm::parse_type2(token)?;
-                    let msg = ntlm::type3(
-                        &creds.user,
-                        &creds.domain,
-                        &creds.password,
-                        &ch,
-                        windows_filetime_now(),
-                        client_challenge(),
-                    );
+                    let msg = ntlm::type3(&creds.user, &creds.domain, &creds.password, &ch, windows_filetime_now(), client_challenge());
                     *stage = NtlmStage::Done;
                     Ok(format!("NTLM {}", B64.encode(msg)))
                 }
-                NtlmStage::Done => Err(AuthError::Protocol(
-                    "NTLM handshake already complete".into(),
-                )),
+                NtlmStage::Done => Err(AuthError::Protocol("NTLM handshake already complete".into())),
             },
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             Handshake::Negotiate(ctx) => {
@@ -349,11 +280,7 @@ impl Handshake {
                 Ok(format!("Negotiate {}", B64.encode(out)))
             }
             #[cfg(windows)]
-            Handshake::Sspi {
-                ctx,
-                scheme,
-                started,
-            } => {
+            Handshake::Sspi { ctx, scheme, started } => {
                 let token = ctx.step(if *started { challenge_token } else { None })?;
                 *started = true;
                 Ok(format!("{} {}", scheme.header_name(), B64.encode(token)))
@@ -378,31 +305,17 @@ impl Handshake {
 pub fn choose<'a>(offers: &'a [Offer], prefer: &[Scheme], have_creds: bool) -> Option<&'a Offer> {
     let supported = |s: Scheme| match s {
         Scheme::Basic | Scheme::Ntlm => have_creds,
-        Scheme::Negotiate => {
-            cfg!(target_os = "macos") || cfg!(target_os = "linux") || cfg!(windows)
-        }
+        Scheme::Negotiate => cfg!(target_os = "macos") || cfg!(target_os = "linux") || cfg!(windows),
     };
     offers
         .iter()
         .filter(|o| supported(o.scheme))
-        .max_by_key(|o| {
-            (
-                prefer
-                    .iter()
-                    .rev()
-                    .position(|p| *p == o.scheme)
-                    .map(|i| i as i32)
-                    .unwrap_or(-1),
-                o.scheme.rank() as i32,
-            )
-        })
+        .max_by_key(|o| (prefer.iter().rev().position(|p| *p == o.scheme).map(|i| i as i32).unwrap_or(-1), o.scheme.rank() as i32))
 }
 
 /// Redact Authorization/Proxy-Authorization values for logs.
 pub fn redact(name: &str, value: &str) -> String {
-    if name.eq_ignore_ascii_case("authorization")
-        || name.eq_ignore_ascii_case("proxy-authorization")
-    {
+    if name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("proxy-authorization") {
         let scheme = value.split_whitespace().next().unwrap_or("");
         format!("{scheme} <redacted>")
     } else {
@@ -417,23 +330,13 @@ mod tests {
     #[test]
     fn lenient_challenges() {
         // Unpadded token (len % 4 == 2) and a quoted realm with a comma.
-        let offers = parse_challenges(&[
-            "NTLM TlRMTVNTUAACAA".into(),
-            "Basic realm=\"Sales, EMEA\", charset=\"UTF-8\"".into(),
-        ]);
+        let offers = parse_challenges(&["NTLM TlRMTVNTUAACAA".into(), "Basic realm=\"Sales, EMEA\", charset=\"UTF-8\"".into()]);
         assert_eq!(offers.len(), 2);
         assert!(offers[0].token.is_some(), "unpadded base64 must decode");
         assert_eq!(offers[1].params[0], ("realm".into(), "Sales, EMEA".into()));
         assert_eq!(offers[1].params[1].1, "UTF-8");
         // Garbage never panics.
-        for v in [
-            "",
-            ",,,",
-            "NTLM ===",
-            "Negotiate \u{0}",
-            "Basic realm=\"unterminated",
-            "\"\"\"",
-        ] {
+        for v in ["", ",,,", "NTLM ===", "Negotiate \u{0}", "Basic realm=\"unterminated", "\"\"\""] {
             let _ = parse_challenges(&[v.to_string()]);
         }
     }
@@ -443,15 +346,7 @@ mod tests {
         let offers = parse_challenges(&["Basic realm=\"corp\", charset=\"UTF-8\"".into()]);
         assert_eq!(offers.len(), 1);
         assert_eq!(offers[0].scheme, Scheme::Basic);
-        assert_eq!(
-            offers[0]
-                .params
-                .iter()
-                .find(|(k, _)| k == "realm")
-                .unwrap()
-                .1,
-            "corp"
-        );
+        assert_eq!(offers[0].params.iter().find(|(k, _)| k == "realm").unwrap().1, "corp");
 
         let offers = parse_challenges(&["Negotiate".into(), "NTLM".into()]);
         assert_eq!(offers.len(), 2);
@@ -469,10 +364,7 @@ mod tests {
         assert!(matches!(c.scheme, Scheme::Negotiate | Scheme::Ntlm));
         // NTLM before Basic
         let offers2 = parse_challenges(&["NTLM".into(), "Basic realm=x".into()]);
-        assert_eq!(
-            choose(&offers2, &prefer, true).unwrap().scheme,
-            Scheme::Ntlm
-        );
+        assert_eq!(choose(&offers2, &prefer, true).unwrap().scheme, Scheme::Ntlm);
     }
 
     /// Linux without a Kerberos ticket (or without libgssapi): Negotiate must fail at
@@ -482,52 +374,28 @@ mod tests {
     fn negotiate_without_ticket_fails() {
         // SAFETY: tests touching KRB5CCNAME all set this same value.
         unsafe { std::env::set_var("KRB5CCNAME", "FILE:/nonexistent/quena-test-no-ccache") };
-        let r = Handshake::start(Scheme::Negotiate, None, "example.com")
-            .and_then(|mut h| h.next_header(None));
-        assert!(
-            matches!(r, Err(AuthError::NoCredentials | AuthError::Unsupported)),
-            "{:?}",
-            r.err()
-        );
+        let r = Handshake::start(Scheme::Negotiate, None, "example.com").and_then(|mut h| h.next_header(None));
+        assert!(matches!(r, Err(AuthError::NoCredentials | AuthError::Unsupported)), "{:?}", r.err());
     }
 
     #[test]
     fn basic_header() {
-        let mut h = Handshake::start(
-            Scheme::Basic,
-            Some(&Credentials {
-                user: "aladdin".into(),
-                password: "opensesame".into(),
-                domain: String::new(),
-            }),
-            "x",
-        )
-        .unwrap();
-        assert_eq!(
-            h.next_header(None).unwrap(),
-            "Basic YWxhZGRpbjpvcGVuc2VzYW1l"
-        );
+        let mut h = Handshake::start(Scheme::Basic, Some(&Credentials { user: "aladdin".into(), password: "opensesame".into(), domain: String::new() }), "x").unwrap();
+        assert_eq!(h.next_header(None).unwrap(), "Basic YWxhZGRpbjpvcGVuc2VzYW1l");
     }
 
     /// First leg on every platform: the pure-Rust Type 1 on macOS/Linux, SSPI on Windows.
     #[test]
     fn ntlm_first_leg() {
-        let creds = Credentials {
-            user: "User".into(),
-            domain: "Domain".into(),
-            password: "Password".into(),
-        };
+        let creds = Credentials { user: "User".into(), domain: "Domain".into(), password: "Password".into() };
         let mut h = Handshake::start(Scheme::Ntlm, Some(&creds), "server").unwrap();
         let t1 = h.next_header(None).unwrap();
         let raw = B64.decode(t1.trim_start_matches("NTLM ")).unwrap();
         assert!(t1.starts_with("NTLM "));
         assert_eq!(&raw[..8], b"NTLMSSP\0");
-        assert_eq!(
-            u32::from_le_bytes(raw[8..12].try_into().unwrap()),
-            1,
-            "Type 1 message"
-        );
+        assert_eq!(u32::from_le_bytes(raw[8..12].try_into().unwrap()), 1, "Type 1 message");
     }
+
 
     /// A well-formed NTLM CHALLENGE_MESSAGE (MS-NLMP 2.2.1.2): flags, target name,
     /// version and AV pairs — accepted by SSPI on Windows as well as by the
@@ -574,11 +442,7 @@ mod tests {
     /// Both legs on every platform (SSPI on Windows, pure Rust elsewhere).
     #[test]
     fn ntlm_two_legs() {
-        let creds = Credentials {
-            user: "User".into(),
-            domain: "Domain".into(),
-            password: "Password".into(),
-        };
+        let creds = Credentials { user: "User".into(), domain: "Domain".into(), password: "Password".into() };
         let mut h = Handshake::start(Scheme::Ntlm, Some(&creds), "server").unwrap();
         let t1 = h.next_header(None).unwrap();
         assert!(t1.starts_with("NTLM "));

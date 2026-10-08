@@ -24,9 +24,7 @@ enum Version {
 
 /// Serve one client connection on the SOCKS port.
 pub(crate) async fn serve(ctx: Arc<ConnCtx>, mut s: TcpStream) {
-    let (host, port, version) = match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(&mut s))
-        .await
-    {
+    let (host, port, version) = match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(&mut s)).await {
         Ok(Ok(Some(t))) => t,
         Ok(Ok(None)) => return,
         Ok(Err(e)) => {
@@ -40,10 +38,7 @@ pub(crate) async fn serve(ctx: Arc<ConnCtx>, mut s: TcpStream) {
     };
     let target = join_host_port(&host, port);
     let mut headers = Headers::new();
-    headers.push(
-        "Quena-Socks-Version",
-        if version == Version::V5 { "5" } else { "4" },
-    );
+    headers.push("Quena-Socks-Version", if version == Version::V5 { "5" } else { "4" });
     let (live, process) = begin_tunnel(&ctx, &target, headers).await;
     // Success right away; the target is connected when the client speaks (like CONNECT).
     let reply: &[u8] = match version {
@@ -62,21 +57,15 @@ pub(crate) async fn serve(ctx: Arc<ConnCtx>, mut s: TcpStream) {
 }
 
 /// Negotiate and read the request. `Ok(None)`: refused (the client got the reason).
-async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(
-    s: &mut S,
-) -> std::io::Result<Option<(String, u16, Version)>> {
+async fn handshake<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S) -> std::io::Result<Option<(String, u16, Version)>> {
     match s.read_u8().await? {
         5 => socks5(s).await,
         4 => socks4(s).await,
-        v => Err(std::io::Error::other(format!(
-            "not a SOCKS client (first byte {v:#04x})"
-        ))),
+        v => Err(std::io::Error::other(format!("not a SOCKS client (first byte {v:#04x})"))),
     }
 }
 
-async fn socks5<S: AsyncRead + AsyncWrite + Unpin>(
-    s: &mut S,
-) -> std::io::Result<Option<(String, u16, Version)>> {
+async fn socks5<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S) -> std::io::Result<Option<(String, u16, Version)>> {
     let n = s.read_u8().await? as usize;
     let mut methods = vec![0u8; n];
     s.read_exact(&mut methods).await?;
@@ -102,9 +91,7 @@ async fn socks5<S: AsyncRead + AsyncWrite + Unpin>(
     s.read_exact(&mut head).await?;
     let [ver, cmd, _, atyp] = head;
     if ver != 5 {
-        return Err(std::io::Error::other(format!(
-            "bad SOCKS5 request version {ver}"
-        )));
+        return Err(std::io::Error::other(format!("bad SOCKS5 request version {ver}")));
     }
     let host = match atyp {
         1 => {
@@ -116,8 +103,7 @@ async fn socks5<S: AsyncRead + AsyncWrite + Unpin>(
             let len = s.read_u8().await? as usize;
             let mut name = vec![0u8; len];
             s.read_exact(&mut name).await?;
-            String::from_utf8(name)
-                .map_err(|_| std::io::Error::other("SOCKS5 host name is not UTF-8"))?
+            String::from_utf8(name).map_err(|_| std::io::Error::other("SOCKS5 host name is not UTF-8"))?
         }
         4 => {
             let mut a = [0u8; 16];
@@ -139,20 +125,14 @@ async fn socks5<S: AsyncRead + AsyncWrite + Unpin>(
     Ok(Some((host, port, Version::V5)))
 }
 
-async fn socks4<S: AsyncRead + AsyncWrite + Unpin>(
-    s: &mut S,
-) -> std::io::Result<Option<(String, u16, Version)>> {
+async fn socks4<S: AsyncRead + AsyncWrite + Unpin>(s: &mut S) -> std::io::Result<Option<(String, u16, Version)>> {
     let cmd = s.read_u8().await?;
     let port = s.read_u16().await?;
     let mut ip = [0u8; 4];
     s.read_exact(&mut ip).await?;
     let _user = read_cstr(s).await?;
     // SOCKS4a: 0.0.0.x (x ≠ 0) means "the host name follows".
-    let host = if ip[..3] == [0, 0, 0] && ip[3] != 0 {
-        read_cstr(s).await?
-    } else {
-        Ipv4Addr::from(ip).to_string()
-    };
+    let host = if ip[..3] == [0, 0, 0] && ip[3] != 0 { read_cstr(s).await? } else { Ipv4Addr::from(ip).to_string() };
     if cmd != 1 {
         s.write_all(&[0, 0x5b, 0, 0, 0, 0, 0, 0]).await?;
         return Ok(None);
@@ -200,18 +180,12 @@ mod tests {
         let mut v6 = vec![5, 1, 0, 5, 1, 0, 4];
         v6.extend_from_slice(&Ipv6Addr::LOCALHOST.octets());
         v6.extend_from_slice(&[0x1f, 0x90]);
-        assert_eq!(
-            run(&v6).await.0.unwrap(),
-            Some(("::1".into(), 8080, Version::V5))
-        );
+        assert_eq!(run(&v6).await.0.unwrap(), Some(("::1".into(), 8080, Version::V5)));
     }
 
     #[tokio::test]
     async fn socks5_password_is_accepted() {
-        let (r, out) = run(&[
-            5, 1, 2, 1, 1, b'u', 1, b'p', 5, 1, 0, 1, 127, 0, 0, 1, 0, 80,
-        ])
-        .await;
+        let (r, out) = run(&[5, 1, 2, 1, 1, b'u', 1, b'p', 5, 1, 0, 1, 127, 0, 0, 1, 0, 80]).await;
         assert_eq!(r.unwrap(), Some(("127.0.0.1".into(), 80, Version::V5)));
         assert_eq!(out, [5, 2, 1, 0]);
     }
@@ -236,9 +210,6 @@ mod tests {
         assert_eq!(r.unwrap(), Some(("93.184.216.34".into(), 80, Version::V4)));
         let mut a = vec![4, 1, 1, 187, 0, 0, 0, 1, 0];
         a.extend_from_slice(b"example.org\0");
-        assert_eq!(
-            run(&a).await.0.unwrap(),
-            Some(("example.org".into(), 443, Version::V4))
-        );
+        assert_eq!(run(&a).await.0.unwrap(), Some(("example.org".into(), 443, Version::V4)));
     }
 }

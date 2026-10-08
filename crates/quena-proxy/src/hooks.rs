@@ -31,37 +31,22 @@ pub enum Mode {
 
 pub enum RequestAction {
     /// Forward (optionally modified head/body, optionally to another URL, after a delay).
-    Forward {
-        head: Option<RequestHead>,
-        body: Option<Body>,
-        delay_ms: u64,
-    },
+    Forward { head: Option<RequestHead>, body: Option<Body>, delay_ms: u64 },
     /// Answer locally without contacting the server.
-    Respond {
-        head: ResponseHead,
-        body: Body,
-        delay_ms: u64,
-    },
+    Respond { head: ResponseHead, body: Body, delay_ms: u64 },
     /// Close the client connection without a response.
     Abort,
 }
 
 impl RequestAction {
     pub fn forward() -> Self {
-        RequestAction::Forward {
-            head: None,
-            body: None,
-            delay_ms: 0,
-        }
+        RequestAction::Forward { head: None, body: None, delay_ms: 0 }
     }
 }
 
 pub enum ResponseAction {
     Continue,
-    Replace {
-        head: ResponseHead,
-        body: Option<Body>,
-    },
+    Replace { head: ResponseHead, body: Option<Body> },
     Abort,
 }
 
@@ -86,12 +71,7 @@ pub trait Interceptor: Send + Sync {
         None
     }
     /// Called before forwarding. `body` is `Some` only in buffer mode.
-    fn on_request(
-        &self,
-        _s: SessionView,
-        _head: RequestHead,
-        _body: Option<Body>,
-    ) -> BoxFuture<RequestAction> {
+    fn on_request(&self, _s: SessionView, _head: RequestHead, _body: Option<Body>) -> BoxFuture<RequestAction> {
         Box::pin(async { RequestAction::forward() })
     }
     /// Cheap sync check: does [`Interceptor::on_response_head`] need to run for
@@ -103,11 +83,7 @@ pub trait Interceptor: Send + Sync {
     /// Head-only response hook, called when [`Interceptor::wants_response_head`]
     /// is true (streaming and buffering). Lets a script rewrite response headers
     /// or abort without buffering the body.
-    fn on_response_head(
-        &self,
-        _s: SessionView,
-        _resp: ResponseHead,
-    ) -> BoxFuture<ResponseHeadAction> {
+    fn on_response_head(&self, _s: SessionView, _resp: ResponseHead) -> BoxFuture<ResponseHeadAction> {
         Box::pin(async { ResponseHeadAction::Continue })
     }
     /// Does the response hook need the complete response body?
@@ -117,21 +93,11 @@ pub trait Interceptor: Send + Sync {
     /// With [`Mode::Buffer`]: hold back at most this many bytes of the response body; a
     /// larger (or slower) body streams unchanged and [`Interceptor::on_response`] is not
     /// called. `None`: hold back completely (breakpoints).
-    fn response_hold_limit(
-        &self,
-        _s: &SessionView,
-        _req: &RequestHead,
-        _resp: &ResponseHead,
-    ) -> Option<u64> {
+    fn response_hold_limit(&self, _s: &SessionView, _req: &RequestHead, _resp: &ResponseHead) -> Option<u64> {
         None
     }
     /// Called with the buffered response (buffer mode only).
-    fn on_response(
-        &self,
-        _s: SessionView,
-        _resp: ResponseHead,
-        _body: Body,
-    ) -> BoxFuture<ResponseAction> {
+    fn on_response(&self, _s: SessionView, _resp: ResponseHead, _body: Body) -> BoxFuture<ResponseAction> {
         Box::pin(async { ResponseAction::Continue })
     }
     /// Informational: session finished.

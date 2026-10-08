@@ -50,8 +50,7 @@ pub fn parse(input: &str) -> Result<CurlRequest, FormatError> {
                     }
                 }
             }
-            "-d" | "--data" | "--data-raw" | "--data-binary" | "--data-ascii"
-            | "--data-urlencode" => {
+            "-d" | "--data" | "--data-raw" | "--data-binary" | "--data-ascii" | "--data-urlencode" => {
                 if let Some(v) = value() {
                     data.push(v);
                 }
@@ -81,12 +80,11 @@ pub fn parse(input: &str) -> Result<CurlRequest, FormatError> {
             "--url" => url = value(),
             "--compressed" => headers.push(("Accept-Encoding".into(), "gzip, deflate, br".into())),
             // Flags we accept and ignore (they don't shape the request line).
-            "-s" | "--silent" | "-k" | "--insecure" | "-L" | "--location" | "-i" | "--include"
-            | "-v" | "--verbose" | "-#" | "--progress-bar" | "--http1.1" | "--http2" => {}
+            "-s" | "--silent" | "-k" | "--insecure" | "-L" | "--location" | "-i" | "--include" | "-v"
+            | "--verbose" | "-#" | "--progress-bar" | "--http1.1" | "--http2" => {}
             // Flags that take an argument we don't use.
-            "-o" | "--output" | "-w" | "--write-out" | "--connect-timeout" | "-m"
-            | "--max-time" | "--retry" | "-x" | "--proxy" | "--cacert" | "--cert" | "--key"
-            | "-E" => {
+            "-o" | "--output" | "-w" | "--write-out" | "--connect-timeout" | "-m" | "--max-time"
+            | "--retry" | "-x" | "--proxy" | "--cacert" | "--cert" | "--key" | "-E" => {
                 let _ = value();
             }
             other if other.starts_with('-') => {
@@ -116,31 +114,13 @@ pub fn parse(input: &str) -> Result<CurlRequest, FormatError> {
         });
     }
 
-    let method = method.unwrap_or_else(|| {
-        if body.is_empty() {
-            "GET".into()
-        } else {
-            "POST".into()
-        }
-    });
+    let method = method.unwrap_or_else(|| if body.is_empty() { "GET".into() } else { "POST".into() });
     // A body with a default content type gets form-urlencoded, matching curl.
-    if !body.is_empty()
-        && !headers
-            .iter()
-            .any(|(n, _)| n.eq_ignore_ascii_case("content-type"))
-    {
-        headers.push((
-            "Content-Type".into(),
-            "application/x-www-form-urlencoded".into(),
-        ));
+    if !body.is_empty() && !headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("content-type")) {
+        headers.push(("Content-Type".into(), "application/x-www-form-urlencoded".into()));
     }
 
-    Ok(CurlRequest {
-        method,
-        url,
-        headers,
-        body,
-    })
+    Ok(CurlRequest { method, url, headers, body })
 }
 
 /// `--flag=value` → ("--flag", Some("value")); otherwise (tok, None).
@@ -250,11 +230,7 @@ mod tests {
         assert_eq!(r.method, "POST");
         assert_eq!(r.url, "https://api.example.com/login");
         assert_eq!(r.body, r#"{"user":"a","pass":"b"}"#);
-        assert!(
-            r.headers
-                .iter()
-                .any(|(n, v)| n == "Content-Type" && v == "application/json")
-        );
+        assert!(r.headers.iter().any(|(n, v)| n == "Content-Type" && v == "application/json"));
         assert!(r.headers.iter().any(|(n, _)| n == "Accept-Encoding"));
     }
 
@@ -262,11 +238,7 @@ mod tests {
     fn explicit_method_and_basic_auth() {
         let r = parse("curl -X PUT -u alice:secret https://example.com/x -H 'X-Foo: bar'").unwrap();
         assert_eq!(r.method, "PUT");
-        let auth = r
-            .headers
-            .iter()
-            .find(|(n, _)| n == "Authorization")
-            .unwrap();
+        let auth = r.headers.iter().find(|(n, _)| n == "Authorization").unwrap();
         // base64("alice:secret")
         assert_eq!(auth.1, "Basic YWxpY2U6c2VjcmV0");
         assert!(r.headers.iter().any(|(n, v)| n == "X-Foo" && v == "bar"));
@@ -277,11 +249,7 @@ mod tests {
         let r = parse("curl https://x/y -d 'a=1' -d 'b=2'").unwrap();
         assert_eq!(r.method, "POST");
         assert_eq!(r.body, "a=1&b=2");
-        assert!(
-            r.headers
-                .iter()
-                .any(|(n, v)| n == "Content-Type" && v.contains("x-www-form-urlencoded"))
-        );
+        assert!(r.headers.iter().any(|(n, v)| n == "Content-Type" && v.contains("x-www-form-urlencoded")));
     }
 
     #[test]

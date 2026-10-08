@@ -36,15 +36,7 @@ impl Half {
     /// `len`: the payload length on the wire; bytes beyond the captured `payload` (cut by the
     /// snapshot length) are reported as a gap.
     #[allow(clippy::too_many_arguments)]
-    pub fn segment(
-        &mut self,
-        seq: u32,
-        syn: bool,
-        fin: bool,
-        payload: &[u8],
-        len: u32,
-        out: &mut Vec<Ev>,
-    ) {
+    pub fn segment(&mut self, seq: u32, syn: bool, fin: bool, payload: &[u8], len: u32, out: &mut Vec<Ev>) {
         if self.closed {
             return;
         }
@@ -89,10 +81,7 @@ impl Half {
 
     /// The peer acknowledged up to `ack` (exclusive).
     pub fn peer_acked(&mut self, ack: u32, out: &mut Vec<Ev>) {
-        if self
-            .peer_ack
-            .is_none_or(|p| (ack.wrapping_sub(p) as i32) > 0)
-        {
+        if self.peer_ack.is_none_or(|p| (ack.wrapping_sub(p) as i32) > 0) {
             self.peer_ack = Some(ack);
         }
         self.skip_acked(out);
@@ -191,15 +180,7 @@ mod tests {
     use super::*;
 
     fn data(ev: &[Ev]) -> Vec<u8> {
-        ev.iter()
-            .flat_map(|e| {
-                if let Ev::Data(d) = e {
-                    d.clone()
-                } else {
-                    Vec::new()
-                }
-            })
-            .collect()
+        ev.iter().flat_map(|e| if let Ev::Data(d) = e { d.clone() } else { Vec::new() }).collect()
     }
 
     #[test]
@@ -224,15 +205,7 @@ mod tests {
         h.segment(9, true, false, b"", 0, &mut out);
         h.segment(16, false, false, b"xy", 5, &mut out); // early and cut: 3 bytes not captured
         h.segment(10, false, false, b"abcd", 6, &mut out);
-        assert_eq!(
-            out,
-            [
-                Ev::Data(b"abcd".to_vec()),
-                Ev::Gap(2),
-                Ev::Data(b"xy".to_vec()),
-                Ev::Gap(3)
-            ]
-        );
+        assert_eq!(out, [Ev::Data(b"abcd".to_vec()), Ev::Gap(2), Ev::Data(b"xy".to_vec()), Ev::Gap(3)]);
     }
 
     #[test]
@@ -243,14 +216,7 @@ mod tests {
         h.segment(10, false, false, b"ab", 2, &mut out);
         h.peer_acked(15, &mut out); // the peer got bytes up to 14
         h.segment(15, false, false, b"fg", 2, &mut out); // later bytes: the hole is lost
-        assert_eq!(
-            out,
-            [
-                Ev::Data(b"ab".to_vec()),
-                Ev::Gap(3),
-                Ev::Data(b"fg".to_vec())
-            ]
-        );
+        assert_eq!(out, [Ev::Data(b"ab".to_vec()), Ev::Gap(3), Ev::Data(b"fg".to_vec())]);
         // Without an acknowledgment, the hole waits (reordered packets).
         let mut h = Half::default();
         let mut out = Vec::new();

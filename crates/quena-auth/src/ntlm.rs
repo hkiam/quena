@@ -1,7 +1,7 @@
 //! NTLMv2 (MS-NLMP). Type 1 → send, parse Type 2 challenge, build Type 3.
 
-use crate::AuthError;
 use crate::crypto::{hmac_md5, md4, utf16le};
+use crate::AuthError;
 
 const SIGNATURE: &[u8; 8] = b"NTLMSSP\0";
 
@@ -16,14 +16,7 @@ const NEG_128: u32 = 0x2000_0000;
 const NEG_56: u32 = 0x8000_0000;
 
 pub fn type1() -> Vec<u8> {
-    let flags = NEG_UNICODE
-        | NEG_REQUEST_TARGET
-        | NEG_NTLM
-        | NEG_ALWAYS_SIGN
-        | NEG_EXTENDED_SESSIONSECURITY
-        | NEG_TARGET_INFO
-        | NEG_128
-        | NEG_56;
+    let flags = NEG_UNICODE | NEG_REQUEST_TARGET | NEG_NTLM | NEG_ALWAYS_SIGN | NEG_EXTENDED_SESSIONSECURITY | NEG_TARGET_INFO | NEG_128 | NEG_56;
     let mut m = Vec::with_capacity(40);
     m.extend_from_slice(SIGNATURE);
     m.extend_from_slice(&1u32.to_le_bytes()); // MessageType = 1
@@ -40,10 +33,7 @@ pub struct Challenge {
 }
 
 pub fn parse_type2(data: &[u8]) -> Result<Challenge, AuthError> {
-    if data.len() < 48
-        || &data[..8] != SIGNATURE
-        || u32::from_le_bytes(data[8..12].try_into().unwrap()) != 2
-    {
+    if data.len() < 48 || &data[..8] != SIGNATURE || u32::from_le_bytes(data[8..12].try_into().unwrap()) != 2 {
         return Err(AuthError::Protocol("invalid NTLM Type 2 message".into()));
     }
     let flags = u32::from_le_bytes(data[20..24].try_into().unwrap());
@@ -54,21 +44,11 @@ pub fn parse_type2(data: &[u8]) -> Result<Challenge, AuthError> {
     // The Type 3 message carries target info in u16-length fields together with ~50 more
     // bytes; a larger block cannot be answered correctly.
     if ti_len > 60_000 {
-        return Err(AuthError::Protocol(
-            "NTLM Type 2 target info too large".into(),
-        ));
+        return Err(AuthError::Protocol("NTLM Type 2 target info too large".into()));
     }
     let ti_off = u32::from_le_bytes(data[44..48].try_into().unwrap()) as usize;
-    let target_info = if ti_len > 0 && ti_off + ti_len <= data.len() {
-        data[ti_off..ti_off + ti_len].to_vec()
-    } else {
-        Vec::new()
-    };
-    Ok(Challenge {
-        server_challenge,
-        target_info,
-        flags,
-    })
+    let target_info = if ti_len > 0 && ti_off + ti_len <= data.len() { data[ti_off..ti_off + ti_len].to_vec() } else { Vec::new() };
+    Ok(Challenge { server_challenge, target_info, flags })
 }
 
 /// NTOWFv2 = HMAC_MD5(MD4(UTF16LE(pass)), UTF16LE(UPPER(user) + domain)).
@@ -81,14 +61,7 @@ fn ntowf_v2(user: &str, domain: &str, password: &str) -> [u8; 16] {
 
 /// Build the Type 3 message. `time`/`client_challenge` are parameters for testing;
 /// in production pass the real time and 8 random bytes.
-pub fn type3(
-    user: &str,
-    domain: &str,
-    password: &str,
-    ch: &Challenge,
-    time: u64,
-    client_challenge: [u8; 8],
-) -> Vec<u8> {
+pub fn type3(user: &str, domain: &str, password: &str, ch: &Challenge, time: u64, client_challenge: [u8; 8]) -> Vec<u8> {
     let ntowf = ntowf_v2(user, domain, password);
     // temp = Responserversion(1) HiResp(1) Z(6) Time(8) ClientChallenge(8) Z(4) TargetInfo Z(4)
     let mut temp = Vec::with_capacity(28 + ch.target_info.len() + 4);
@@ -141,14 +114,7 @@ pub fn type3(
     let f_ws = field(&mut off, &ws_b, &mut payload);
     let f_key = field(&mut off, &session_key, &mut payload);
 
-    let flags = NEG_UNICODE
-        | NEG_NTLM
-        | NEG_ALWAYS_SIGN
-        | NEG_EXTENDED_SESSIONSECURITY
-        | NEG_TARGET_INFO
-        | NEG_128
-        | NEG_56
-        | (ch.flags & NEG_REQUEST_TARGET);
+    let flags = NEG_UNICODE | NEG_NTLM | NEG_ALWAYS_SIGN | NEG_EXTENDED_SESSIONSECURITY | NEG_TARGET_INFO | NEG_128 | NEG_56 | (ch.flags & NEG_REQUEST_TARGET);
     let mut m = Vec::with_capacity(88 + payload.len());
     m.extend_from_slice(SIGNATURE);
     m.extend_from_slice(&3u32.to_le_bytes());
@@ -186,29 +152,18 @@ mod tests {
 
     #[test]
     fn ntowfv2_vector() {
-        assert_eq!(
-            hex(&ntowf_v2("User", "Domain", "Password")),
-            "0c868a403bfd7a93a3001ef22ef02e3f"
-        );
+        assert_eq!(hex(&ntowf_v2("User", "Domain", "Password")), "0c868a403bfd7a93a3001ef22ef02e3f");
     }
 
     #[test]
     fn nt_proof_vector() {
-        let ch = Challenge {
-            server_challenge: [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef],
-            target_info: target_info(),
-            flags: 0,
-        };
+        let ch = Challenge { server_challenge: [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef], target_info: target_info(), flags: 0 };
         let m = type3("User", "Domain", "Password", &ch, 0, [0xaa; 8]);
         // NtChallengeResponse begins with NTProofStr; locate via the field pointer.
         let nt_off = u32::from_le_bytes(m[24..28].try_into().unwrap()) as usize;
         let nt_len = u16::from_le_bytes(m[20..22].try_into().unwrap()) as usize;
         let nt = &m[nt_off..nt_off + nt_len];
-        assert_eq!(
-            hex(&nt[..16]),
-            "68cd0ab851e51c96aabc927bebef6a1c",
-            "NTProofStr"
-        );
+        assert_eq!(hex(&nt[..16]), "68cd0ab851e51c96aabc927bebef6a1c", "NTProofStr");
         // temp starts right after the proof; must match the documented Responserversion header
         assert_eq!(&nt[16..18], &[0x01, 0x01]);
     }

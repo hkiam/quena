@@ -12,11 +12,7 @@ pub enum PrettyKind {
 /// Map a content type to a pretty printer.
 pub fn kind_for(content_type: Option<&str>) -> Option<PrettyKind> {
     let ct = content_type?.split(';').next()?.trim().to_ascii_lowercase();
-    if ct.ends_with("json")
-        || ct.ends_with("+json")
-        || ct == "text/json"
-        || ct.contains("javascript-json")
-    {
+    if ct.ends_with("json") || ct.ends_with("+json") || ct == "text/json" || ct.contains("javascript-json") {
         Some(PrettyKind::Json)
     } else if ct.ends_with("xml") || ct.ends_with("+xml") || ct == "application/soap+xml" {
         Some(PrettyKind::Xml)
@@ -42,12 +38,7 @@ pub struct Formatter<W: Write> {
 
 impl<W: Write> Formatter<W> {
     pub fn new(kind: PrettyKind, out: W) -> Self {
-        Formatter {
-            kind,
-            out,
-            json: JsonState::default(),
-            xml: XmlState::default(),
-        }
+        Formatter { kind, out, json: JsonState::default(), xml: XmlState::default() }
     }
     pub fn finish(mut self) -> io::Result<()> {
         if self.kind == PrettyKind::Xml {
@@ -138,10 +129,7 @@ impl JsonState {
                 _ => {
                     // Literal run (numbers, true/false/null, garbage).
                     let start = i - 1;
-                    while i < buf.len()
-                        && !matches!(buf[i], b'{' | b'}' | b'[' | b']' | b',' | b':' | b'"')
-                        && !buf[i].is_ascii_whitespace()
-                    {
+                    while i < buf.len() && !matches!(buf[i], b'{' | b'}' | b'[' | b']' | b',' | b':' | b'"') && !buf[i].is_ascii_whitespace() {
                         i += 1;
                     }
                     out.write_all(&buf[start..i])?;
@@ -320,11 +308,7 @@ impl XmlState {
                 }
                 XmlMode::Comment | XmlMode::Cdata => {
                     out.write_all(&[b])?;
-                    let end = if self.mode == XmlMode::Comment {
-                        b'-'
-                    } else {
-                        b']'
-                    };
+                    let end = if self.mode == XmlMode::Comment { b'-' } else { b']' };
                     if b == b'>' && self.prev == end && self.prev2 == end {
                         if self.mode == XmlMode::Comment {
                             self.last = Last::Other;
@@ -376,10 +360,7 @@ mod tests {
 
     #[test]
     fn json_basic() {
-        assert_eq!(
-            pj(r#"{"a":1,"b":[true,null],"c":{}}"#),
-            "{\n  \"a\": 1,\n  \"b\": [\n    true,\n    null\n  ],\n  \"c\": {}\n}\n"
-        );
+        assert_eq!(pj(r#"{"a":1,"b":[true,null],"c":{}}"#), "{\n  \"a\": 1,\n  \"b\": [\n    true,\n    null\n  ],\n  \"c\": {}\n}\n");
     }
 
     #[test]
@@ -405,17 +386,14 @@ mod tests {
     #[test]
     fn xml_basic() {
         assert_eq!(
-            px(
-                r#"<?xml version="1.0"?><a x="1>2"><b>text</b><c/><d></d><!-- c --><e><![CDATA[<x>]]></e></a>"#
-            ),
+            px(r#"<?xml version="1.0"?><a x="1>2"><b>text</b><c/><d></d><!-- c --><e><![CDATA[<x>]]></e></a>"#),
             "<?xml version=\"1.0\"?>\n<a x=\"1>2\">\n  <b>text</b>\n  <c/>\n  <d></d>\n  <!-- c -->\n  <e><![CDATA[<x>]]></e>\n</a>\n"
         );
     }
 
     #[test]
     fn xml_chunked_equals_whole() {
-        let src =
-            r#"<s:Envelope xmlns:s="u"><s:Body><m:x a='q'>hello world</m:x></s:Body></s:Envelope>"#;
+        let src = r#"<s:Envelope xmlns:s="u"><s:Body><m:x a='q'>hello world</m:x></s:Body></s:Envelope>"#;
         let whole = pretty_bytes(PrettyKind::Xml, src.as_bytes());
         let mut out = Vec::new();
         {
@@ -425,9 +403,6 @@ mod tests {
             }
             f.finish().unwrap();
         }
-        assert_eq!(
-            String::from_utf8(whole).unwrap(),
-            String::from_utf8(out).unwrap()
-        );
+        assert_eq!(String::from_utf8(whole).unwrap(), String::from_utf8(out).unwrap());
     }
 }

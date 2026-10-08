@@ -39,9 +39,7 @@ pub enum Cipher {
     AesGcm,
     ChaCha,
     /// AES-CBC with an HMAC of `mac_len` bytes.
-    AesCbc {
-        mac_len: usize,
-    },
+    AesCbc { mac_len: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,14 +55,7 @@ pub struct Suite {
 pub fn suite(id: u16) -> Option<Suite> {
     use Cipher::*;
     use Hash::*;
-    let s = |tls13, cipher, key_len, hash| {
-        Some(Suite {
-            tls13,
-            cipher,
-            key_len,
-            hash,
-        })
-    };
+    let s = |tls13, cipher, key_len, hash| Some(Suite { tls13, cipher, key_len, hash });
     let cbc = |mac_len| AesCbc { mac_len };
     match id {
         0x1301 => s(true, AesGcm, 16, Sha256),
@@ -110,12 +101,7 @@ impl hkdf::KeyType for Len {
 /// TLS 1.3 HKDF-Expand-Label (RFC 8446, 7.1) with an empty context.
 pub fn expand_label(hash: Hash, secret: &[u8], label: &str, len: usize) -> Vec<u8> {
     let full = format!("tls13 {label}");
-    let info = [
-        &(len as u16).to_be_bytes()[..],
-        &[full.len() as u8],
-        full.as_bytes(),
-        &[0u8],
-    ];
+    let info = [&(len as u16).to_be_bytes()[..], &[full.len() as u8], full.as_bytes(), &[0u8]];
     let mut out = vec![0u8; len];
     hkdf::Prk::new_less_safe(hash.hkdf(), secret)
         .expand(&info, Len(len))
@@ -143,13 +129,7 @@ pub struct Protection {
 }
 
 /// The key block of a TLS 1.2 connection, split per direction (client, server).
-pub fn tls12_keys(
-    suite: Suite,
-    master: &[u8],
-    client_random: &[u8; 32],
-    server_random: &[u8; 32],
-    etm: bool,
-) -> Option<[Protection; 2]> {
+pub fn tls12_keys(suite: Suite, master: &[u8], client_random: &[u8; 32], server_random: &[u8; 32], etm: bool) -> Option<[Protection; 2]> {
     let mac_len = match suite.cipher {
         Cipher::AesCbc { mac_len } => mac_len,
         _ => 0,
@@ -160,24 +140,12 @@ pub fn tls12_keys(
         Cipher::AesCbc { .. } => 0,
     };
     let seed = [&server_random[..], &client_random[..]].concat();
-    let block = prf(
-        suite.hash,
-        master,
-        b"key expansion",
-        &seed,
-        2 * (mac_len + suite.key_len + iv_len),
-    );
+    let block = prf(suite.hash, master, b"key expansion", &seed, 2 * (mac_len + suite.key_len + iv_len));
     let keys = &block[2 * mac_len..];
-    let (ck, sk) = (
-        &keys[..suite.key_len],
-        &keys[suite.key_len..2 * suite.key_len],
-    );
+    let (ck, sk) = (&keys[..suite.key_len], &keys[suite.key_len..2 * suite.key_len]);
     let ivs = &keys[2 * suite.key_len..];
     let (civ, siv) = (&ivs[..iv_len], &ivs[iv_len..2 * iv_len]);
-    Some([
-        Protection::new(suite, ck, civ, etm, Vec::new())?,
-        Protection::new(suite, sk, siv, etm, Vec::new())?,
-    ])
+    Some([Protection::new(suite, ck, civ, etm, Vec::new())?, Protection::new(suite, sk, siv, etm, Vec::new())?])
 }
 
 impl Protection {
@@ -190,23 +158,12 @@ impl Protection {
                     (_, 16) => &aead::AES_128_GCM,
                     _ => &aead::AES_256_GCM,
                 };
-                Key::Aead(Box::new(aead::LessSafeKey::new(
-                    aead::UnboundKey::new(alg, key).ok()?,
-                )))
+                Key::Aead(Box::new(aead::LessSafeKey::new(aead::UnboundKey::new(alg, key).ok()?)))
             }
-            Cipher::AesCbc { .. } if suite.key_len == 16 => {
-                Key::Aes128(Box::new(aes::Aes128::new_from_slice(key).ok()?))
-            }
+            Cipher::AesCbc { .. } if suite.key_len == 16 => Key::Aes128(Box::new(aes::Aes128::new_from_slice(key).ok()?)),
             Cipher::AesCbc { .. } => Key::Aes256(Box::new(aes::Aes256::new_from_slice(key).ok()?)),
         };
-        Some(Protection {
-            suite,
-            key,
-            iv: iv.to_vec(),
-            seq: 0,
-            etm,
-            secret,
-        })
+        Some(Protection { suite, key, iv: iv.to_vec(), seq: 0, etm, secret })
     }
 
     /// TLS 1.3 protection from a traffic secret.
@@ -218,12 +175,7 @@ impl Protection {
 
     /// TLS 1.3 KeyUpdate: the next traffic secret and its keys.
     pub fn updated(&self) -> Option<Protection> {
-        let next = expand_label(
-            self.suite.hash,
-            &self.secret,
-            "traffic upd",
-            self.suite.hash.len(),
-        );
+        let next = expand_label(self.suite.hash, &self.secret, "traffic upd", self.suite.hash.len());
         Protection::tls13(self.suite, &next)
     }
 
@@ -240,11 +192,7 @@ impl Protection {
     /// Decrypt one record (`ty`, `version` and `fragment` as on the wire). Returns the
     /// content type and the plaintext; `None` if the record does not decrypt.
     pub fn open(&mut self, ty: u8, version: u16, fragment: &[u8]) -> Option<(u8, Vec<u8>)> {
-        let r = if self.suite.tls13 {
-            self.open13(ty, version, fragment)
-        } else {
-            self.open12(ty, version, fragment)
-        };
+        let r = if self.suite.tls13 { self.open13(ty, version, fragment) } else { self.open12(ty, version, fragment) };
         if r.is_some() {
             self.seq += 1;
         }
@@ -254,14 +202,7 @@ impl Protection {
     fn aead(&self, nonce: [u8; 12], aad: &[u8], data: &[u8]) -> Option<Vec<u8>> {
         let Key::Aead(k) = &self.key else { return None };
         let mut buf = data.to_vec();
-        let n = k
-            .open_in_place(
-                aead::Nonce::assume_unique_for_key(nonce),
-                aead::Aad::from(aad),
-                &mut buf,
-            )
-            .ok()?
-            .len();
+        let n = k.open_in_place(aead::Nonce::assume_unique_for_key(nonce), aead::Aad::from(aad), &mut buf).ok()?.len();
         buf.truncate(n);
         Some(buf)
     }
@@ -344,35 +285,22 @@ pub(crate) mod tests {
 
     fn h(s: &str) -> Vec<u8> {
         let s: String = s.split_whitespace().collect();
-        (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
-            .collect()
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
     }
 
     #[test]
     fn hkdf_expand_label_rfc8448() {
         // RFC 8448, 3 (Simple 1-RTT Handshake): server handshake traffic secret → key, iv.
-        let secret = h(
-            "b6 7b 7d 69 0c c1 6c 4e 75 e5 42 13 cb 2d 37 b4 e9 c9 12 bc de d9 10 5d 42 be fd 59 d3 91 ad 38",
-        );
-        assert_eq!(
-            expand_label(Hash::Sha256, &secret, "key", 16),
-            h("3f ce 51 60 09 c2 17 27 d0 f2 e4 e8 6e e4 03 bc")
-        );
-        assert_eq!(
-            expand_label(Hash::Sha256, &secret, "iv", 12),
-            h("5d 31 3e b2 67 12 76 ee 13 00 0b 30")
-        );
+        let secret = h("b6 7b 7d 69 0c c1 6c 4e 75 e5 42 13 cb 2d 37 b4 e9 c9 12 bc de d9 10 5d 42 be fd 59 d3 91 ad 38");
+        assert_eq!(expand_label(Hash::Sha256, &secret, "key", 16), h("3f ce 51 60 09 c2 17 27 d0 f2 e4 e8 6e e4 03 bc"));
+        assert_eq!(expand_label(Hash::Sha256, &secret, "iv", 12), h("5d 31 3e b2 67 12 76 ee 13 00 0b 30"));
     }
 
     #[test]
     fn tls13_record_rfc8448() {
         // RFC 8448, 3: the server's first protected handshake record (EncryptedExtensions …)
         // starts like this; decryption with the server handshake key must succeed.
-        let secret = h(
-            "b6 7b 7d 69 0c c1 6c 4e 75 e5 42 13 cb 2d 37 b4 e9 c9 12 bc de d9 10 5d 42 be fd 59 d3 91 ad 38",
-        );
+        let secret = h("b6 7b 7d 69 0c c1 6c 4e 75 e5 42 13 cb 2d 37 b4 e9 c9 12 bc de d9 10 5d 42 be fd 59 d3 91 ad 38");
         let mut p = Protection::tls13(suite(0x1301).unwrap(), &secret).unwrap();
         // Our own record under that key: encrypt "hello" + content type 22 with ring.
         let nonce = p.xor_nonce();
@@ -380,12 +308,7 @@ pub(crate) mod tests {
         let mut buf = b"hello\x16".to_vec();
         let len = buf.len() + 16;
         let aad = [23, 3, 3, (len >> 8) as u8, len as u8];
-        k.seal_in_place_append_tag(
-            aead::Nonce::assume_unique_for_key(nonce),
-            aead::Aad::from(aad),
-            &mut buf,
-        )
-        .unwrap();
+        k.seal_in_place_append_tag(aead::Nonce::assume_unique_for_key(nonce), aead::Aad::from(aad), &mut buf).unwrap();
         assert_eq!(p.open(23, 0x0303, &buf), Some((22, b"hello".to_vec())));
         assert_eq!(p.seq, 1);
         assert!(p.open(23, 0x0303, &buf).is_none()); // wrong sequence number now

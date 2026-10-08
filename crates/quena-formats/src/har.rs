@@ -7,8 +7,8 @@ use base64::Engine;
 use quena_body::Body;
 use quena_model::*;
 use quena_store::Capture;
-use serde::Deserializer;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::Deserializer;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::Path;
@@ -28,12 +28,7 @@ pub struct HarOptions {
 
 impl Default for HarOptions {
     fn default() -> Self {
-        HarOptions {
-            max_body: 64 << 20,
-            decode: true,
-            comment: None,
-            extra: Vec::new(),
-        }
+        HarOptions { max_body: 64 << 20, decode: true, comment: None, extra: Vec::new() }
     }
 }
 
@@ -45,13 +40,7 @@ fn headers_json(h: &Headers) -> String {
     let items: Vec<String> = h
         .iter()
         .filter(|(k, _)| !k.starts_with(':'))
-        .map(|(k, v)| {
-            format!(
-                "{{\"name\":{},\"value\":{}}}",
-                jstr(k),
-                jstr(&latin1_to_utf8(v))
-            )
-        })
+        .map(|(k, v)| format!("{{\"name\":{},\"value\":{}}}", jstr(k), jstr(&latin1_to_utf8(v))))
         .collect();
     format!("[{}]", items.join(","))
 }
@@ -62,10 +51,7 @@ fn latin1_to_utf8(s: &str) -> String {
 }
 
 fn query_json(url: &str) -> String {
-    let q = url
-        .split_once('?')
-        .map(|(_, q)| q.split('#').next().unwrap_or(""))
-        .unwrap_or("");
+    let q = url.split_once('?').map(|(_, q)| q.split('#').next().unwrap_or("")).unwrap_or("");
     let items: Vec<String> = q
         .split('&')
         .filter(|p| !p.is_empty())
@@ -83,22 +69,14 @@ fn cookies_json(h: &Headers, response: bool) -> String {
         for v in h.get_all("set-cookie") {
             let nv = v.split(';').next().unwrap_or("");
             let (k, val) = nv.split_once('=').unwrap_or((nv, ""));
-            items.push(format!(
-                "{{\"name\":{},\"value\":{}}}",
-                jstr(k.trim()),
-                jstr(val.trim())
-            ));
+            items.push(format!("{{\"name\":{},\"value\":{}}}", jstr(k.trim()), jstr(val.trim())));
         }
     } else {
         for v in h.get_all("cookie") {
             for c in v.split(';') {
                 let (k, val) = c.split_once('=').unwrap_or((c, ""));
                 if !k.trim().is_empty() {
-                    items.push(format!(
-                        "{{\"name\":{},\"value\":{}}}",
-                        jstr(k.trim()),
-                        jstr(val.trim())
-                    ));
+                    items.push(format!("{{\"name\":{},\"value\":{}}}", jstr(k.trim()), jstr(val.trim())));
                 }
             }
         }
@@ -108,11 +86,7 @@ fn cookies_json(h: &Headers, response: bool) -> String {
 
 fn is_text_type(ct: &str) -> bool {
     let ct = ct.to_ascii_lowercase();
-    ct.starts_with("text/")
-        || ct.contains("json")
-        || ct.contains("xml")
-        || ct.contains("javascript")
-        || ct.contains("x-www-form-urlencoded")
+    ct.starts_with("text/") || ct.contains("json") || ct.contains("xml") || ct.contains("javascript") || ct.contains("x-www-form-urlencoded")
 }
 
 /// Decoded view of a body (streams through the decompressor).
@@ -121,23 +95,14 @@ fn decoded_reader(body: &Body, headers: &Headers, decode: bool) -> Box<dyn Read>
     if !decode {
         return base;
     }
-    let Some(ce) = headers.get("content-encoding") else {
-        return base;
-    };
-    let Ok(encs) = quena_body::decode::parse_encodings(ce) else {
-        return base;
-    };
+    let Some(ce) = headers.get("content-encoding") else { return base };
+    let Ok(encs) = quena_body::decode::parse_encodings(ce) else { return base };
     quena_body::decode::decoding_reader(base, &encs)
 }
 
 /// Write a JSON string value by streaming `r`, either as UTF-8 text (with
 /// escaping) or base64. Returns the number of decoded bytes.
-fn write_stream_value(
-    w: &mut dyn Write,
-    mut r: Box<dyn Read>,
-    text: bool,
-    max: u64,
-) -> Result<(u64, bool)> {
+fn write_stream_value(w: &mut dyn Write, mut r: Box<dyn Read>, text: bool, max: u64) -> Result<(u64, bool)> {
     w.write_all(b"\"")?;
     let mut total = 0u64;
     let mut buf = vec![0u8; 1 << 20];
@@ -177,11 +142,7 @@ fn write_stream_value(
             let esc = serde_json::to_string(&String::from_utf8_lossy(&carry))?;
             w.write_all(&esc.as_bytes()[1..esc.len() - 1])?;
         } else {
-            w.write_all(
-                base64::engine::general_purpose::STANDARD
-                    .encode(&carry)
-                    .as_bytes(),
-            )?;
+            w.write_all(base64::engine::general_purpose::STANDARD.encode(&carry).as_bytes())?;
         }
     }
     w.write_all(b"\"")?;
@@ -195,20 +156,10 @@ fn ms_between(a: Option<Micros>, b: Option<Micros>) -> f64 {
     }
 }
 
-pub fn export(
-    cap: &Arc<Capture>,
-    ids: &[SessionId],
-    path: &Path,
-    o: &HarOptions,
-    p: &dyn Progress,
-) -> Result<usize> {
+pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, o: &HarOptions, p: &dyn Progress) -> Result<usize> {
     let tmp = path.with_extension("har.part");
     let mut w = BufWriter::with_capacity(1 << 20, File::create(&tmp)?);
-    write!(
-        w,
-        "{{\"log\":{{\"version\":\"1.2\",\"creator\":{{\"name\":\"Quena\",\"version\":\"{}\"}},\"pages\":[],\"entries\":[",
-        env!("CARGO_PKG_VERSION")
-    )?;
+    write!(w, "{{\"log\":{{\"version\":\"1.2\",\"creator\":{{\"name\":\"Quena\",\"version\":\"{}\"}},\"pages\":[],\"entries\":[", env!("CARGO_PKG_VERSION"))?;
     let mut n = 0;
     for (i, id) in ids.iter().enumerate() {
         if p.cancelled() {
@@ -221,22 +172,14 @@ pub fn export(
         if d.summary.kind == SessionKind::Tunnel {
             continue;
         }
-        let Some((req_body, resp_body)) = cap.bodies_of(*id) else {
-            continue;
-        };
+        let Some((req_body, resp_body)) = cap.bodies_of(*id) else { continue };
         if n > 0 {
             w.write_all(b",")?;
         }
         n += 1;
         let t = &d.timers;
-        let start = t
-            .client_begin_request
-            .or(t.client_connected)
-            .unwrap_or(d.summary.started_at);
-        let wait = ms_between(
-            t.server_begin_request.or(t.client_done_request),
-            t.got_response_headers,
-        );
+        let start = t.client_begin_request.or(t.client_connected).unwrap_or(d.summary.started_at);
+        let wait = ms_between(t.server_begin_request.or(t.client_done_request), t.got_response_headers);
         let receive = ms_between(t.got_response_headers, t.server_done_response);
         let send = ms_between(t.client_begin_request, t.client_done_request).max(0.0);
         let total = d.summary.duration_ms.map(|v| v as f64).unwrap_or(0.0);
@@ -253,22 +196,12 @@ pub fn export(
             req_body.wire_len()
         )?;
         if !req_body.is_empty() {
-            let ct = d
-                .request
-                .headers
-                .get("content-type")
-                .unwrap_or("application/octet-stream")
-                .to_string();
+            let ct = d.request.headers.get("content-type").unwrap_or("application/octet-stream").to_string();
             write!(w, ",\"postData\":{{\"mimeType\":{},\"text\":", jstr(&ct))?;
             // A compressed request body is written as it was sent (base64), so the bytes and
             // its Content-Encoding stay consistent on import.
             let text = is_text_type(&ct) && d.request.headers.get("content-encoding").is_none();
-            let (_, truncated) = write_stream_value(
-                &mut w,
-                decoded_reader(&req_body, &d.request.headers, false),
-                text,
-                o.max_body,
-            )?;
+            let (_, truncated) = write_stream_value(&mut w, decoded_reader(&req_body, &d.request.headers, false), text, o.max_body)?;
             if !text {
                 w.write_all(b",\"encoding\":\"base64\"")?;
             }
@@ -298,23 +231,14 @@ pub fn export(
                 } else {
                     let text = is_text_type(&ct);
                     w.write_all(b",\"text\":")?;
-                    let (size, truncated) = write_stream_value(
-                        &mut w,
-                        decoded_reader(&resp_body, &r.headers, o.decode),
-                        text,
-                        o.max_body,
-                    )?;
+                    let (size, truncated) = write_stream_value(&mut w, decoded_reader(&resp_body, &r.headers, o.decode), text, o.max_body)?;
                     if !text {
                         w.write_all(b",\"encoding\":\"base64\"")?;
                     }
                     if truncated {
                         w.write_all(b",\"comment\":\"body omitted (too large)\"")?;
                     }
-                    write!(
-                        w,
-                        ",\"size\":{size},\"compression\":{}",
-                        size as i64 - resp_body.len() as i64
-                    )?;
+                    write!(w, ",\"size\":{size},\"compression\":{}", size as i64 - resp_body.len() as i64)?;
                 }
                 w.write_all(b"}},")?;
             }
@@ -332,15 +256,7 @@ pub fn export(
             receive.max(0.0)
         )?;
         if let Some(a) = &d.connection.server_addr {
-            write!(
-                w,
-                ",\"serverIPAddress\":{}",
-                jstr(
-                    a.rsplit_once(':')
-                        .map(|(ip, _)| ip.trim_matches(['[', ']']))
-                        .unwrap_or(a)
-                )
-            )?;
+            write!(w, ",\"serverIPAddress\":{}", jstr(a.rsplit_once(':').map(|(ip, _)| ip.trim_matches(['[', ']'])).unwrap_or(a)))?;
         }
         if !d.summary.comment.is_empty() {
             write!(w, ",\"comment\":{}", jstr(&d.summary.comment))?;
@@ -453,15 +369,10 @@ fn num_of(v: Option<&Value>, default: f64) -> f64 {
 }
 
 fn name_values(v: Option<&Value>) -> Vec<NameValue> {
-    let Some(Value::Array(a)) = v else {
-        return vec![];
-    };
+    let Some(Value::Array(a)) = v else { return vec![] };
     a.iter()
         .filter(|nv| nv.is_object())
-        .map(|nv| NameValue {
-            name: str_of(nv.get("name")),
-            value: str_of(nv.get("value")),
-        })
+        .map(|nv| NameValue { name: str_of(nv.get("name")), value: str_of(nv.get("value")) })
         .filter(|nv| !nv.name.is_empty())
         .collect()
 }
@@ -470,9 +381,7 @@ fn entry_of(v: &Value) -> Option<HarEntry> {
     let e = v.as_object()?;
     let req = e.get("request").filter(|r| r.is_object());
     let resp = e.get("response").filter(|r| r.is_object());
-    let content = resp
-        .and_then(|r| r.get("content"))
-        .filter(|c| c.is_object());
+    let content = resp.and_then(|r| r.get("content")).filter(|c| c.is_object());
     let timings = e.get("timings").filter(|t| t.is_object());
     let status = num_of(resp.and_then(|r| r.get("status")), 0.0);
     Some(HarEntry {
@@ -483,20 +392,10 @@ fn entry_of(v: &Value) -> Option<HarEntry> {
             url: str_of(req.and_then(|r| r.get("url"))),
             http_version: str_of(req.and_then(|r| r.get("httpVersion"))),
             headers: name_values(req.and_then(|r| r.get("headers"))),
-            post_data: req
-                .and_then(|r| r.get("postData"))
-                .filter(|p| p.is_object())
-                .map(|p| PostData {
-                    text: str_of(p.get("text")),
-                    encoding: opt_str(p.get("encoding")),
-                }),
+            post_data: req.and_then(|r| r.get("postData")).filter(|p| p.is_object()).map(|p| PostData { text: str_of(p.get("text")), encoding: opt_str(p.get("encoding")) }),
         },
         response: HarResponse {
-            status: if (0.0..=999.0).contains(&status) {
-                status as u16
-            } else {
-                0
-            },
+            status: if (0.0..=999.0).contains(&status) { status as u16 } else { 0 },
             status_text: str_of(resp.and_then(|r| r.get("statusText"))),
             http_version: str_of(resp.and_then(|r| r.get("httpVersion"))),
             headers: name_values(resp.and_then(|r| r.get("headers"))),
@@ -529,17 +428,9 @@ fn to_headers(v: &[NameValue]) -> Headers {
 fn decode_base64(text: &str) -> Option<Vec<u8>> {
     use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
     let clean: String = text.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-    let cfg = GeneralPurposeConfig::new()
-        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
-        .with_decode_allow_trailing_bits(true);
-    let alphabet = if clean.contains(['-', '_']) {
-        &base64::alphabet::URL_SAFE
-    } else {
-        &base64::alphabet::STANDARD
-    };
-    GeneralPurpose::new(alphabet, cfg)
-        .decode(clean.as_bytes())
-        .ok()
+    let cfg = GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent).with_decode_allow_trailing_bits(true);
+    let alphabet = if clean.contains(['-', '_']) { &base64::alphabet::URL_SAFE } else { &base64::alphabet::STANDARD };
+    GeneralPurpose::new(alphabet, cfg).decode(clean.as_bytes()).ok()
 }
 
 fn body_bytes(text: &str, encoding: Option<&str>) -> Vec<u8> {
@@ -561,24 +452,13 @@ fn to_session(cap: &Arc<Capture>, e: HarEntry) -> (SessionDetail, Body, Body) {
         version: HttpVersion::parse(&e.request.http_version).unwrap_or(HttpVersion::Http11),
         headers: req_headers,
     };
-    let req_bytes = e
-        .request
-        .post_data
-        .as_ref()
-        .map(|p| body_bytes(&p.text, p.encoding.as_deref()))
-        .unwrap_or_default();
+    let req_bytes = e.request.post_data.as_ref().map(|p| body_bytes(&p.text, p.encoding.as_deref())).unwrap_or_default();
     // Most HAR writers store the posted text decoded but keep the request's Content-Encoding;
     // keep the header only if the stored bytes are encoded: they decode, or they carry a
     // compression signature (then they are really corrupt, which diagnostics should see).
-    if let Some(ce) = d
-        .request
-        .headers
-        .get("content-encoding")
-        .map(str::to_string)
-    {
+    if let Some(ce) = d.request.headers.get("content-encoding").map(str::to_string) {
         let encoded = !req_bytes.is_empty()
-            && (quena_body::decode::decode_bytes(&req_bytes, &ce, 1 << 16).is_ok()
-                || quena_body::charset::compressed_magic(&req_bytes).is_some());
+            && (quena_body::decode::decode_bytes(&req_bytes, &ce, 1 << 16).is_ok() || quena_body::charset::compressed_magic(&req_bytes).is_some());
         if !encoded {
             d.request.headers.remove("content-encoding");
         }
@@ -589,13 +469,7 @@ fn to_session(cap: &Arc<Capture>, e: HarEntry) -> (SessionDetail, Body, Body) {
     // HAR content is decoded: drop encoding headers so the stored body matches.
     resp_headers.remove("content-encoding");
     resp_headers.remove("transfer-encoding");
-    let resp_bytes = e
-        .response
-        .content
-        .text
-        .as_deref()
-        .map(|t| body_bytes(t, e.response.content.encoding.as_deref()))
-        .unwrap_or_default();
+    let resp_bytes = e.response.content.text.as_deref().map(|t| body_bytes(t, e.response.content.encoding.as_deref())).unwrap_or_default();
     if resp_headers.get("content-length").is_some() {
         resp_headers.set("Content-Length", resp_bytes.len().to_string());
     }
@@ -621,10 +495,7 @@ fn to_session(cap: &Arc<Capture>, e: HarEntry) -> (SessionDetail, Body, Body) {
     d.connection.server_addr = e.server_ip_address;
     d.summary.comment = e.comment.unwrap_or_default();
     d.process = e.process.map(|p| {
-        let (n, pid) = p
-            .rsplit_once(':')
-            .map(|(a, b)| (a.to_string(), b.parse().unwrap_or(0)))
-            .unwrap_or((p.clone(), 0));
+        let (n, pid) = p.rsplit_once(':').map(|(a, b)| (a.to_string(), b.parse().unwrap_or(0))).unwrap_or((p.clone(), 0));
         ProcessInfo { pid, name: n }
     });
     d.summary.state = SessionState::Done;
@@ -747,26 +618,11 @@ pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<S
     let mut ids = Vec::new();
     let mut skipped = 0;
     let mut de = serde_json::Deserializer::from_reader(f);
-    Import {
-        cap,
-        ids: &mut ids,
-        skipped: &mut skipped,
-        p,
-    }
-    .deserialize(&mut de)
-    .map_err(|e| {
-        if e.to_string().contains("cancelled") {
-            FormatError::Cancelled
-        } else {
-            FormatError::Json(e)
-        }
+    Import { cap, ids: &mut ids, skipped: &mut skipped, p }.deserialize(&mut de).map_err(|e| {
+        if e.to_string().contains("cancelled") { FormatError::Cancelled } else { FormatError::Json(e) }
     })?;
     if skipped > 0 {
-        tracing::warn!(
-            skipped,
-            imported = ids.len(),
-            "HAR import: skipped entries that are not objects"
-        );
+        tracing::warn!(skipped, imported = ids.len(), "HAR import: skipped entries that are not objects");
     }
     Ok(ids)
 }
@@ -783,12 +639,7 @@ mod tests {
         rh.push("Host", "example.com");
         rh.push("Cookie", "a=1; b=2");
         rh.push("Content-Type", "application/json");
-        d.request = RequestHead {
-            method: "POST".into(),
-            url: "https://example.com/api?x=1&y=2".into(),
-            version: HttpVersion::Http11,
-            headers: rh,
-        };
+        d.request = RequestHead { method: "POST".into(), url: "https://example.com/api?x=1&y=2".into(), version: HttpVersion::Http11, headers: rh };
         let mut sh = Headers::new();
         sh.push("Content-Type", "text/html; charset=utf-8");
         sh.push("Content-Encoding", "gzip");
@@ -796,19 +647,11 @@ mod tests {
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         gz.write_all("<p>Grüße \"quoted\"</p>".as_bytes()).unwrap();
         let gz = gz.finish().unwrap();
-        d.response = Some(ResponseHead {
-            status: 200,
-            reason: "OK".into(),
-            version: HttpVersion::Http11,
-            headers: sh,
-        });
+        d.response = Some(ResponseHead { status: 200, reason: "OK".into(), version: HttpVersion::Http11, headers: sh });
         d.summary.state = SessionState::Done;
         d.summary.comment = "hello".into();
         d.summary.color = Some(MarkColor::Red);
-        d.process = Some(ProcessInfo {
-            pid: 42,
-            name: "chrome".into(),
-        });
+        d.process = Some(ProcessInfo { pid: 42, name: "chrome".into() });
         d.timers.client_begin_request = Some(1_790_000_000_000_000);
         d.timers.client_done_response = Some(1_790_000_000_250_000);
         let req = cap.bodies.store_bytes(br#"{"q":1}"#);
@@ -822,10 +665,7 @@ mod tests {
         let cap = Capture::open(dir.path().join("a"), BodyConfig::default(), true).unwrap();
         let id = sample(&cap);
         let path = dir.path().join("x.har");
-        assert_eq!(
-            export(&cap, &[id], &path, &HarOptions::default(), &NoProgress).unwrap(),
-            1
-        );
+        assert_eq!(export(&cap, &[id], &path, &HarOptions::default(), &NoProgress).unwrap(), 1);
         let v: serde_json::Value = serde_json::from_reader(File::open(&path).unwrap()).unwrap();
         let e = &v["log"]["entries"][0];
         assert_eq!(e["response"]["content"]["text"], "<p>Grüße \"quoted\"</p>");
@@ -838,10 +678,7 @@ mod tests {
         assert_eq!(d.request.method, "POST");
         assert_eq!(d.summary.comment, "hello");
         let (_, resp) = cap2.bodies_of(ids[0]).unwrap();
-        assert_eq!(
-            String::from_utf8(resp.read_range(0, 1000).unwrap()).unwrap(),
-            "<p>Grüße \"quoted\"</p>"
-        );
+        assert_eq!(String::from_utf8(resp.read_range(0, 1000).unwrap()).unwrap(), "<p>Grüße \"quoted\"</p>");
     }
 
     #[test]
@@ -857,11 +694,7 @@ mod tests {
         std::fs::write(&path, har).unwrap();
         let ids = import(&cap, &path, &NoProgress).unwrap();
         let d = cap.detail(ids[0]).unwrap();
-        assert_eq!(
-            d.request.headers.get("content-encoding"),
-            None,
-            "decoded text must not claim gzip"
-        );
+        assert_eq!(d.request.headers.get("content-encoding"), None, "decoded text must not claim gzip");
         // Our own export keeps a really compressed request body and its header together.
         let gz = {
             use std::io::Write;
@@ -891,10 +724,7 @@ mod tests {
         let cap = Capture::open(dir.path().join("a"), BodyConfig::default(), true).unwrap();
         let id = sample(&cap);
         let path = dir.path().join("x.saz");
-        assert_eq!(
-            crate::saz::export(&cap, &[id], &path, &NoProgress).unwrap(),
-            1
-        );
+        assert_eq!(crate::saz::export(&cap, &[id], &path, &NoProgress).unwrap(), 1);
         let cap2 = Capture::open(dir.path().join("b"), BodyConfig::default(), true).unwrap();
         let ids = crate::saz::import(&cap2, &path, &NoProgress).unwrap();
         assert_eq!(ids.len(), 1);
@@ -905,17 +735,11 @@ mod tests {
         assert_eq!(d.summary.color, Some(MarkColor::Red));
         assert_eq!(d.summary.comment, "hello");
         assert_eq!(d.process.as_ref().unwrap().display(), "chrome:42");
-        assert_eq!(
-            d.timers.client_begin_request,
-            orig.timers.client_begin_request
-        );
+        assert_eq!(d.timers.client_begin_request, orig.timers.client_begin_request);
         // chunked re-encoding round-trips to the same raw bytes
         let (_, a) = cap.bodies_of(id).unwrap();
         let (_, b) = cap2.bodies_of(ids[0]).unwrap();
-        assert_eq!(
-            a.read_range(0, 10_000).unwrap(),
-            b.read_range(0, 10_000).unwrap()
-        );
+        assert_eq!(a.read_range(0, 10_000).unwrap(), b.read_range(0, 10_000).unwrap());
     }
 
     #[test]

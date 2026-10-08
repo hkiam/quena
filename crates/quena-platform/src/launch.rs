@@ -61,11 +61,7 @@ fn candidates(kind: &str) -> Vec<PathBuf> {
     }
     #[cfg(windows)]
     {
-        let roots: Vec<PathBuf> = ["ProgramFiles", "ProgramFiles(x86)", "LocalAppData"]
-            .iter()
-            .filter_map(|v| std::env::var_os(v))
-            .map(PathBuf::from)
-            .collect();
+        let roots: Vec<PathBuf> = ["ProgramFiles", "ProgramFiles(x86)", "LocalAppData"].iter().filter_map(|v| std::env::var_os(v)).map(PathBuf::from).collect();
         let rel: &[&str] = match kind {
             "chrome" => &[r"Google\Chrome\Application\chrome.exe"],
             "edge" => &[r"Microsoft\Edge\Application\msedge.exe"],
@@ -75,10 +71,7 @@ fn candidates(kind: &str) -> Vec<PathBuf> {
             "firefox" => &[r"Mozilla Firefox\firefox.exe"],
             _ => &[],
         };
-        roots
-            .iter()
-            .flat_map(|r| rel.iter().map(move |p| r.join(p)))
-            .collect()
+        roots.iter().flat_map(|r| rel.iter().map(move |p| r.join(p))).collect()
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -98,9 +91,7 @@ fn candidates(kind: &str) -> Vec<PathBuf> {
 /// A program on the PATH.
 pub fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|d| d.join(name))
-        .find(|p| p.is_file())
+    std::env::split_paths(&path).map(|d| d.join(name)).find(|p| p.is_file())
 }
 
 /// The browsers installed on this machine, in a fixed order.
@@ -108,15 +99,7 @@ pub fn find_browsers() -> Vec<Browser> {
     KINDS
         .iter()
         .filter_map(|(kind, name, family)| {
-            candidates(kind)
-                .into_iter()
-                .find(|p| p.is_file())
-                .map(|exe| Browser {
-                    kind: kind.to_string(),
-                    name: name.to_string(),
-                    exe,
-                    family: *family,
-                })
+            candidates(kind).into_iter().find(|p| p.is_file()).map(|exe| Browser { kind: kind.to_string(), name: name.to_string(), exe, family: *family })
         })
         .collect()
 }
@@ -124,11 +107,7 @@ pub fn find_browsers() -> Vec<Browser> {
 /// Start a program and leave it running on its own (Quena does not wait for it).
 pub fn launch_detached(exe: &Path, args: &[String], env: &[(String, String)]) -> Result<()> {
     let mut c = Command::new(exe);
-    c.args(args)
-        .envs(env.iter().map(|(k, v)| (k, v)))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    c.args(args).envs(env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -142,9 +121,7 @@ pub fn launch_detached(exe: &Path, args: &[String], env: &[(String, String)]) ->
         // Its own process group: closing Quena (or Ctrl-C in the dev terminal) leaves it alone.
         c.process_group(0);
     }
-    c.spawn()
-        .map(|_| ())
-        .map_err(|e| PlatformError::Command(format!("{}: {e}", exe.display())))
+    c.spawn().map(|_| ()).map_err(|e| PlatformError::Command(format!("{}: {e}", exe.display())))
 }
 
 /// Open a terminal window whose shell has `env` set. `dir` is a folder for the start script.
@@ -162,14 +139,9 @@ pub fn open_terminal(env: &[(String, String)], dir: &Path) -> Result<()> {
         s.push_str("cd \"$HOME\"\nexec \"${SHELL:-/bin/zsh}\" -l\n");
         std::fs::write(&script, s)?;
         set_executable(&script)?;
-        let out = Command::new("/usr/bin/open")
-            .args(["-a", "Terminal"])
-            .arg(&script)
-            .output()?;
+        let out = Command::new("/usr/bin/open").args(["-a", "Terminal"]).arg(&script).output()?;
         if !out.status.success() {
-            return Err(PlatformError::Command(
-                String::from_utf8_lossy(&out.stderr).trim().to_string(),
-            ));
+            return Err(PlatformError::Command(String::from_utf8_lossy(&out.stderr).trim().to_string()));
         }
         Ok(())
     }
@@ -184,21 +156,8 @@ pub fn open_terminal(env: &[(String, String)], dir: &Path) -> Result<()> {
         std::fs::write(&script, s)?;
         let script_s = script.display().to_string();
         let args: Vec<String> = match which_windows("wt.exe") {
-            Some(_) => vec![
-                "-w".into(),
-                "new".into(),
-                "cmd".into(),
-                "/K".into(),
-                script_s,
-            ],
-            None => vec![
-                "/C".into(),
-                "start".into(),
-                "Quena".into(),
-                "cmd".into(),
-                "/K".into(),
-                script_s,
-            ],
+            Some(_) => vec!["-w".into(), "new".into(), "cmd".into(), "/K".into(), script_s],
+            None => vec!["/C".into(), "start".into(), "Quena".into(), "cmd".into(), "/K".into(), script_s],
         };
         let exe = which_windows("wt.exe").unwrap_or_else(|| PathBuf::from("cmd.exe"));
         launch_detached(&exe, &args, &[])
@@ -207,38 +166,22 @@ pub fn open_terminal(env: &[(String, String)], dir: &Path) -> Result<()> {
     {
         let _ = dir;
         // The terminal inherits the environment; its shell starts with it.
-        for term in [
-            "x-terminal-emulator",
-            "gnome-terminal",
-            "konsole",
-            "xfce4-terminal",
-            "alacritty",
-            "kitty",
-            "xterm",
-        ] {
+        for term in ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "alacritty", "kitty", "xterm"] {
             if let Some(exe) = which(term) {
                 return launch_detached(&exe, &[], env);
             }
         }
-        Err(PlatformError::Command(
-            "no terminal program found (x-terminal-emulator, gnome-terminal, konsole, xterm …)"
-                .into(),
-        ))
+        Err(PlatformError::Command("no terminal program found (x-terminal-emulator, gnome-terminal, konsole, xterm …)".into()))
     }
 }
 
 #[cfg(windows)]
 fn which_windows(name: &str) -> Option<PathBuf> {
-    which(name).or_else(|| {
-        std::env::var_os("LocalAppData")
-            .map(|d| PathBuf::from(d).join(r"Microsoft\WindowsApps").join(name))
-            .filter(|p| p.is_file())
-    })
+    which(name).or_else(|| std::env::var_os("LocalAppData").map(|d| PathBuf::from(d).join(r"Microsoft\WindowsApps").join(name)).filter(|p| p.is_file()))
 }
 
 #[cfg(target_os = "macos")]
-const BANNER_SH: &str =
-    "echo 'Quena: HTTP(S)_PROXY and the root certificate are set for this shell.'\n";
+const BANNER_SH: &str = "echo 'Quena: HTTP(S)_PROXY and the root certificate are set for this shell.'\n";
 
 #[cfg(target_os = "macos")]
 fn set_executable(p: &Path) -> std::io::Result<()> {
@@ -259,14 +202,8 @@ pub fn system_ca_pem() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         let mut pem = String::new();
-        for kc in [
-            "/System/Library/Keychains/SystemRootCertificates.keychain",
-            "/Library/Keychains/System.keychain",
-        ] {
-            if let Ok(out) = Command::new("/usr/bin/security")
-                .args(["find-certificate", "-a", "-p", kc])
-                .output()
-            {
+        for kc in ["/System/Library/Keychains/SystemRootCertificates.keychain", "/Library/Keychains/System.keychain"] {
+            if let Ok(out) = Command::new("/usr/bin/security").args(["find-certificate", "-a", "-p", kc]).output() {
                 if out.status.success() {
                     pem.push_str(&String::from_utf8_lossy(&out.stdout));
                 }
@@ -280,15 +217,10 @@ pub fn system_ca_pem() -> Option<String> {
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
-        [
-            "/etc/ssl/certs/ca-certificates.crt",
-            "/etc/pki/tls/certs/ca-bundle.crt",
-            "/etc/ssl/ca-bundle.pem",
-            "/etc/ssl/cert.pem",
-        ]
-        .iter()
-        .find_map(|p| std::fs::read_to_string(p).ok())
-        .filter(|s| s.contains("BEGIN CERTIFICATE"))
+        ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/ssl/cert.pem"]
+            .iter()
+            .find_map(|p| std::fs::read_to_string(p).ok())
+            .filter(|s| s.contains("BEGIN CERTIFICATE"))
     }
 }
 
@@ -305,10 +237,7 @@ mod tests {
     #[test]
     fn browsers_are_listed_in_order_without_panicking() {
         let found = find_browsers();
-        let order: Vec<usize> = found
-            .iter()
-            .map(|b| KINDS.iter().position(|(k, ..)| *k == b.kind).unwrap())
-            .collect();
+        let order: Vec<usize> = found.iter().map(|b| KINDS.iter().position(|(k, ..)| *k == b.kind).unwrap()).collect();
         assert!(order.windows(2).all(|w| w[0] < w[1]), "{found:?}");
         assert!(found.iter().all(|b| b.exe.is_file()));
     }

@@ -13,17 +13,8 @@ use std::sync::Arc;
 struct Adapter(Arc<PluginHost>);
 
 impl PluginDecoders for Adapter {
-    fn decode(
-        &self,
-        index: u16,
-        ct: Option<&str>,
-        input: &mut dyn std::io::Read,
-        output: &mut dyn std::io::Write,
-        cancelled: &dyn Fn() -> bool,
-    ) -> std::io::Result<u64> {
-        self.0
-            .decode(index, ct, input, output, cancelled)
-            .map_err(|e| std::io::Error::other(format!("{e:#}")))
+    fn decode(&self, index: u16, ct: Option<&str>, input: &mut dyn std::io::Read, output: &mut dyn std::io::Write, cancelled: &dyn Fn() -> bool) -> std::io::Result<u64> {
+        self.0.decode(index, ct, input, output, cancelled).map_err(|e| std::io::Error::other(format!("{e:#}")))
     }
     fn pretty_kind(&self, index: u16) -> Option<PrettyKind> {
         match self.0.output(index)? {
@@ -40,8 +31,7 @@ impl AppCore {
     /// event tells the UI when it is done (views that asked early reload their plugin lists).
     pub fn init_plugins(self: &Arc<Self>, bundled: Option<PathBuf>) -> Result<()> {
         let r = self.start_plugin_host(Self::plugin_search_path(&self.paths.data, bundled));
-        self.plugins_done
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.plugins_done.store(true, std::sync::atomic::Ordering::Release);
         self.emit("plugins", serde_json::Value::Null);
         r
     }
@@ -50,19 +40,14 @@ impl AppCore {
     /// `QUENA_PLUGIN_DIR` (an explicit choice, e.g. the CLI's `--plugins`).
     pub fn init_plugins_from(self: &Arc<Self>, dirs: Vec<PathBuf>) -> Result<()> {
         let r = self.start_plugin_host(dirs);
-        self.plugins_done
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.plugins_done.store(true, std::sync::atomic::Ordering::Release);
         self.emit("plugins", serde_json::Value::Null);
         r
     }
 
     /// The directories the plugin host searches, in order (empty before `init_plugins`).
     pub fn plugin_search_dirs(&self) -> Vec<PathBuf> {
-        self.plugin_host
-            .read()
-            .as_ref()
-            .map(|h| h.dirs().to_vec())
-            .unwrap_or_default()
+        self.plugin_host.read().as_ref().map(|h| h.dirs().to_vec()).unwrap_or_default()
     }
 
     /// `QUENA_PLUGIN_DIR` (development: freshly built plugins win), the user's plugin dir, then
@@ -94,24 +79,15 @@ impl AppCore {
 
     pub(crate) fn install_plugin_decoders(&self, cap: &Arc<Capture>) {
         let h = self.plugin_host.read().clone();
-        cap.bodies
-            .set_plugins(h.map(|h| Arc::new(Adapter(h)) as Arc<dyn PluginDecoders>));
+        cap.bodies.set_plugins(h.map(|h| Arc::new(Adapter(h)) as Arc<dyn PluginDecoders>));
     }
 
     pub fn plugins(&self) -> Vec<PluginInfo> {
-        self.plugin_host
-            .read()
-            .as_ref()
-            .map(|h| h.list())
-            .unwrap_or_default()
+        self.plugin_host.read().as_ref().map(|h| h.list()).unwrap_or_default()
     }
 
     pub fn plugin_set_enabled(&self, id: &str, on: bool) -> Result<()> {
-        self.plugin_host
-            .read()
-            .as_ref()
-            .ok_or_else(|| anyhow!("plugin host not available"))?
-            .set_enabled(id, on)
+        self.plugin_host.read().as_ref().ok_or_else(|| anyhow!("plugin host not available"))?.set_enabled(id, on)
     }
 
     pub fn plugins_rescan(&self) -> Vec<PluginInfo> {
@@ -124,8 +100,7 @@ impl AppCore {
     /// Header inspector plugins' view of one header value (best match first).
     pub fn plugin_inspect_header(&self, name: &str, value: &str) -> Vec<HeaderInspection> {
         let host = self.plugin_host.read().clone();
-        host.map(|h| h.inspect_header(name, value))
-            .unwrap_or_default()
+        host.map(|h| h.inspect_header(name, value)).unwrap_or_default()
     }
 
     pub fn plugin_dir(&self) -> PathBuf {
@@ -133,9 +108,7 @@ impl AppCore {
     }
 
     pub(crate) fn add_plugin_candidates(&self, dto: &mut DetailDto, req: &Body, resp: &Body) {
-        let Some(host) = self.plugin_host.read().clone() else {
-            return;
-        };
+        let Some(host) = self.plugin_host.read().clone() else { return };
         let probe = |b: &Body, ct: Option<&str>, ce: Option<&str>| -> Vec<PluginCandidate> {
             if b.is_empty() {
                 return vec![];
@@ -159,15 +132,7 @@ impl AppCore {
                 })
                 .collect()
         };
-        dto.request_body.plugins = probe(
-            req,
-            dto.request_body.content_type.as_deref(),
-            dto.request_body.content_encoding.as_deref(),
-        );
-        dto.response_body.plugins = probe(
-            resp,
-            dto.response_body.content_type.as_deref(),
-            dto.response_body.content_encoding.as_deref(),
-        );
+        dto.request_body.plugins = probe(req, dto.request_body.content_type.as_deref(), dto.request_body.content_encoding.as_deref());
+        dto.response_body.plugins = probe(resp, dto.response_body.content_type.as_deref(), dto.response_body.content_encoding.as_deref());
     }
 }

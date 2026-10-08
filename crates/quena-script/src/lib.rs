@@ -68,10 +68,7 @@ pub struct SessionMeta {
 
 impl SessionMeta {
     pub fn is_empty(&self) -> bool {
-        self.comment.is_none()
-            && self.color.is_none()
-            && self.custom.is_none()
-            && self.flags.is_empty()
+        self.comment.is_none() && self.color.is_none() && self.custom.is_none() && self.flags.is_empty()
     }
 }
 
@@ -108,34 +105,19 @@ pub enum RequestDecision {
 
 impl Default for RequestDecision {
     fn default() -> Self {
-        RequestDecision::Continue {
-            method: None,
-            url: None,
-            headers: None,
-            meta: SessionMeta::default(),
-        }
+        RequestDecision::Continue { method: None, url: None, headers: None, meta: SessionMeta::default() }
     }
 }
 
 /// The script's decision for a response.
 #[derive(Debug, Clone)]
 pub enum ResponseDecision {
-    Continue {
-        status: Option<u16>,
-        headers: Option<Vec<(String, String)>>,
-        meta: SessionMeta,
-    },
-    Abort {
-        meta: SessionMeta,
-    },
+    Continue { status: Option<u16>, headers: Option<Vec<(String, String)>>, meta: SessionMeta },
+    Abort { meta: SessionMeta },
 }
 
 impl Default for ResponseDecision {
     fn default() -> Self {
-        ResponseDecision::Continue {
-            status: None,
-            headers: None,
-            meta: SessionMeta::default(),
-        }
+        ResponseDecision::Continue { status: None, headers: None, meta: SessionMeta::default() }
     }
 }

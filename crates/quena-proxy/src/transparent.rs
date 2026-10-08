@@ -33,16 +33,7 @@ pub(crate) async fn serve(ctx: Arc<ConnCtx>, mut s: TcpStream) {
         let mut h = Headers::new();
         h.push("Quena-Original-Destination", o.to_string());
         let (live, process) = begin_tunnel(&ctx, &join_host_port(&host, o.port()), h).await;
-        run_tunnel(
-            ctx,
-            live,
-            process,
-            s,
-            host,
-            o.port(),
-            TunnelKind::Transparent,
-        )
-        .await;
+        run_tunnel(ctx, live, process, s, host, o.port(), TunnelKind::Transparent).await;
         return;
     }
     // The name inside: TLS server name, or the Host header of plain HTTP.
@@ -68,16 +59,7 @@ pub(crate) async fn serve(ctx: Arc<ConnCtx>, mut s: TcpStream) {
             return;
         };
         let (live, process) = begin_tunnel(&ctx, &join_host_port(&host, 443), Headers::new()).await;
-        run_tunnel(
-            ctx,
-            live,
-            process,
-            Prefixed::new(buf, s),
-            host,
-            443,
-            TunnelKind::Transparent,
-        )
-        .await;
+        run_tunnel(ctx, live, process, Prefixed::new(buf, s), host, 443, TunnelKind::Transparent).await;
     } else if first.is_ascii_uppercase() {
         // Plain HTTP: the Host header names the target (origin-form request).
         serve_h1(ctx, Prefixed::new(buf, s)).await;
@@ -90,11 +72,7 @@ pub(crate) async fn serve(ctx: Arc<ConnCtx>, mut s: TcpStream) {
 async fn read_record(s: &mut TcpStream, buf: &mut Vec<u8>) -> std::io::Result<()> {
     let mut chunk = [0u8; 4096];
     loop {
-        let want = if buf.len() >= 5 {
-            (5 + u16::from_be_bytes([buf[3], buf[4]]) as usize).min(MAX_RECORD)
-        } else {
-            5
-        };
+        let want = if buf.len() >= 5 { (5 + u16::from_be_bytes([buf[3], buf[4]]) as usize).min(MAX_RECORD) } else { 5 };
         if buf.len() >= want {
             return Ok(());
         }
@@ -139,10 +117,7 @@ pub(crate) fn client_hello_sni(rec: &[u8]) -> Option<String> {
             let n = r.u16()? as usize;
             let name = r.take(n)?;
             if kind == 0 {
-                let name = std::str::from_utf8(name)
-                    .ok()?
-                    .trim_end_matches('.')
-                    .to_ascii_lowercase();
+                let name = std::str::from_utf8(name).ok()?.trim_end_matches('.').to_ascii_lowercase();
                 return (!name.is_empty()).then_some(name);
             }
         }
@@ -181,37 +156,21 @@ fn original_dst(s: &TcpStream) -> Option<SocketAddr> {
     const SOL_IPV6: i32 = 41;
     const SO_ORIGINAL_DST: i32 = 80;
     unsafe extern "C" {
-        fn getsockopt(
-            socket: i32,
-            level: i32,
-            name: i32,
-            value: *mut std::ffi::c_void,
-            option_len: *mut u32,
-        ) -> i32;
+        fn getsockopt(socket: i32, level: i32, name: i32, value: *mut std::ffi::c_void, option_len: *mut u32) -> i32;
     }
     let fd = s.as_raw_fd();
     for level in [SOL_IP, SOL_IPV6] {
         let mut buf = [0u8; 128];
         let mut len = buf.len() as u32;
         // SAFETY: `buf` is valid for `len` bytes; the kernel writes at most `len` bytes.
-        let r = unsafe {
-            getsockopt(
-                fd,
-                level,
-                SO_ORIGINAL_DST,
-                buf.as_mut_ptr().cast(),
-                &mut len,
-            )
-        };
+        let r = unsafe { getsockopt(fd, level, SO_ORIGINAL_DST, buf.as_mut_ptr().cast(), &mut len) };
         if r != 0 {
             continue;
         }
         let family = u16::from_ne_bytes([buf[0], buf[1]]);
         let port = u16::from_be_bytes([buf[2], buf[3]]);
         match family {
-            2 if len >= 8 => {
-                return Some(SocketAddr::from(([buf[4], buf[5], buf[6], buf[7]], port)));
-            }
+            2 if len >= 8 => return Some(SocketAddr::from(([buf[4], buf[5], buf[6], buf[7]], port))),
             10 if len >= 24 => {
                 let mut a = [0u8; 16];
                 a.copy_from_slice(&buf[8..24]);
@@ -269,11 +228,7 @@ mod tests {
 
     #[test]
     fn server_name_is_found_among_other_extensions() {
-        let rec = hello(&[
-            (0x002b, vec![2, 3, 4]),
-            sni("API.Example.com."),
-            (0x0010, vec![0, 3, 2, b'h', b'2']),
-        ]);
+        let rec = hello(&[(0x002b, vec![2, 3, 4]), sni("API.Example.com."), (0x0010, vec![0, 3, 2, b'h', b'2'])]);
         assert_eq!(client_hello_sni(&rec).as_deref(), Some("api.example.com"));
         assert_eq!(client_hello_sni(&hello(&[(0x002b, vec![2, 3, 4])])), None);
         // Truncated or not a handshake: no name, no panic.

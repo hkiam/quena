@@ -18,14 +18,7 @@ struct Flow {
 
 impl Flow {
     fn new(cport: u16, sport: u16) -> Flow {
-        Flow {
-            c: ([10, 0, 0, 1], cport),
-            s: ([10, 0, 0, 2], sport),
-            cseq: 1000,
-            sseq: 5000,
-            ts: T0,
-            frames: Vec::new(),
-        }
+        Flow { c: ([10, 0, 0, 1], cport), s: ([10, 0, 0, 2], sport), cseq: 1000, sseq: 5000, ts: T0, frames: Vec::new() }
     }
     fn at(mut self, ts: Micros) -> Flow {
         self.ts = ts;
@@ -34,11 +27,7 @@ impl Flow {
     fn push(&mut self, from_client: bool, seq: u32, flags: u8, data: &[u8]) {
         self.ts += 1000;
         // Each side acknowledges everything the other one sent, captured or not.
-        let f = if from_client {
-            ipv4_tcp_ack(self.c, self.s, seq, self.sseq, flags, data)
-        } else {
-            ipv4_tcp_ack(self.s, self.c, seq, self.cseq, flags, data)
-        };
+        let f = if from_client { ipv4_tcp_ack(self.c, self.s, seq, self.sseq, flags, data) } else { ipv4_tcp_ack(self.s, self.c, seq, self.cseq, flags, data) };
         self.frames.push((self.ts, f));
     }
     fn handshake(&mut self) -> &mut Self {
@@ -76,10 +65,7 @@ fn load(file: &[u8]) -> (tempfile::TempDir, Arc<Capture>, Result<Vec<SessionId>>
 
 fn bodies(cap: &Arc<Capture>, id: SessionId) -> (Vec<u8>, Vec<u8>) {
     let (q, s) = cap.bodies_of(id).unwrap();
-    (
-        q.read_range(0, 1 << 20).unwrap(),
-        s.read_range(0, 1 << 20).unwrap(),
-    )
+    (q.read_range(0, 1 << 20).unwrap(), s.read_range(0, 1 << 20).unwrap())
 }
 
 #[test]
@@ -110,10 +96,7 @@ fn keep_alive_chunked_and_timers() {
     assert!(!a.connection.server_conn_reused);
     let b = cap.detail(ids[1]).unwrap();
     assert_eq!(b.request.method, "POST");
-    assert_eq!(
-        bodies(&cap, ids[1]),
-        (b"{\"a\":1}".to_vec(), b"ok".to_vec())
-    );
+    assert_eq!(bodies(&cap, ids[1]), (b"{\"a\":1}".to_vec(), b"ok".to_vec()));
     assert!(b.connection.server_conn_reused);
     assert_eq!(b.connection.client_conn_id, a.connection.client_conn_id);
     assert_eq!(b.timers.tcp_connect_ms, None);
@@ -132,18 +115,12 @@ fn pipelining_head_continue_and_close_delimited() {
         .close();
     let (_d, cap, ids) = load(&pcapng(1, &f.frames));
     let ids = ids.unwrap();
-    let urls: Vec<String> = ids
-        .iter()
-        .map(|i| cap.detail(*i).unwrap().request.url)
-        .collect();
+    let urls: Vec<String> = ids.iter().map(|i| cap.detail(*i).unwrap().request.url).collect();
     assert_eq!(urls, ["http://h/h", "http://h/n", "http://h/p"]);
     assert_eq!(cap.detail(ids[1]).unwrap().response.unwrap().status, 304);
     let p = cap.detail(ids[2]).unwrap();
     assert_eq!(p.response.unwrap().status, 200);
-    assert_eq!(
-        bodies(&cap, ids[2]),
-        (b"abc".to_vec(), b"until the end".to_vec())
-    );
+    assert_eq!(bodies(&cap, ids[2]), (b"abc".to_vec(), b"until the end".to_vec()));
     assert_eq!(p.summary.state, SessionState::Done);
 }
 
@@ -170,19 +147,11 @@ fn reordered_retransmitted_and_missing_segments() {
     let ids = ids.unwrap();
     assert_eq!(ids.len(), 2);
     assert_eq!(bodies(&cap, ids[0]).1, b"0123456789");
-    assert_eq!(
-        cap.detail(ids[0]).unwrap().summary.state,
-        SessionState::Done
-    );
+    assert_eq!(cap.detail(ids[0]).unwrap().summary.state, SessionState::Done);
     let d = cap.detail(ids[1]).unwrap();
     assert_eq!(bodies(&cap, ids[1]).1, b"wxyz");
     assert_eq!(d.summary.state, SessionState::Aborted);
-    assert!(
-        d.error
-            .unwrap()
-            .contains("4 bytes of the response body are missing"),
-        "error"
-    );
+    assert!(d.error.unwrap().contains("4 bytes of the response body are missing"), "error");
 }
 
 #[test]
@@ -208,11 +177,7 @@ fn websocket_frames() {
         .client(b"GET /ws HTTP/1.1\r\nHost: w\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
         .server(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n\x81\x02hi");
     let key = [1u8, 2, 3, 4];
-    let masked: Vec<u8> = b"hello"
-        .iter()
-        .enumerate()
-        .map(|(i, b)| b ^ key[i & 3])
-        .collect();
+    let masked: Vec<u8> = b"hello".iter().enumerate().map(|(i, b)| b ^ key[i & 3]).collect();
     f.client(&[&[0x81, 0x85][..], &key, &masked].concat());
     f.server(&[0x88, 0x00]).close();
     let (_d, cap, ids) = load(&pcap(1, &f.frames));
@@ -241,47 +206,19 @@ fn h2_frame(ty: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
 #[test]
 fn http2_cleartext() {
     let mut enc = fluke_hpack::Encoder::new();
-    let req = enc.encode(vec![
-        (&b":method"[..], &b"POST"[..]),
-        (b":scheme", b"http"),
-        (b":authority", b"api.test:8080"),
-        (b":path", b"/v1"),
-        (b"x-id", b"7"),
-    ]);
-    let req3 = enc.encode(vec![
-        (&b":method"[..], &b"GET"[..]),
-        (b":scheme", b"http"),
-        (b":authority", b"api.test:8080"),
-        (b":path", b"/v3"),
-    ]);
+    let req = enc.encode(vec![(&b":method"[..], &b"POST"[..]), (b":scheme", b"http"), (b":authority", b"api.test:8080"), (b":path", b"/v1"), (b"x-id", b"7")]);
+    let req3 = enc.encode(vec![(&b":method"[..], &b"GET"[..]), (b":scheme", b"http"), (b":authority", b"api.test:8080"), (b":path", b"/v3")]);
     let mut senc = fluke_hpack::Encoder::new();
-    let resp = senc.encode(vec![
-        (&b":status"[..], &b"200"[..]),
-        (b"content-type", b"application/json"),
-    ]);
+    let resp = senc.encode(vec![(&b":status"[..], &b"200"[..]), (b"content-type", b"application/json")]);
     let mut client = h2::PREFACE.to_vec();
     client.extend(h2_frame(4, 0, 0, &[]));
     client.extend(h2_frame(1, END_HEADERS_T, 1, &req[..3]));
     let mut f = Flow::new(50005, 8080);
     f.handshake().client(&client);
     // Header block split over CONTINUATION, then a DATA frame with padding.
-    f.client(
-        &[
-            h2_frame(9, 0x4, 1, &req[3..]),
-            h2_frame(0, 0x1 | 0x8, 1, &[2, b'{', b'}', 0, 0]),
-        ]
-        .concat(),
-    );
+    f.client(&[h2_frame(9, 0x4, 1, &req[3..]), h2_frame(0, 0x1 | 0x8, 1, &[2, b'{', b'}', 0, 0])].concat());
     f.client(&h2_frame(1, 0x4 | 0x1, 3, &req3));
-    f.server(
-        &[
-            h2_frame(4, 0, 0, &[]),
-            h2_frame(1, 0x4, 1, &resp),
-            h2_frame(0, 0x1, 1, b"[1]"),
-            h2_frame(3, 0, 3, &8u32.to_be_bytes()),
-        ]
-        .concat(),
-    );
+    f.server(&[h2_frame(4, 0, 0, &[]), h2_frame(1, 0x4, 1, &resp), h2_frame(0, 0x1, 1, b"[1]"), h2_frame(3, 0, 3, &8u32.to_be_bytes())].concat());
     f.close();
     let (_d, cap, ids) = load(&pcap(1, &f.frames));
     let ids = ids.unwrap();
@@ -305,11 +242,7 @@ const END_HEADERS_T: u8 = 0;
 #[test]
 fn tls_is_a_tunnel() {
     let mut f = Flow::new(50006, 443);
-    f.handshake()
-        .client(&tls::tests::client_hello_record("secure.test"))
-        .server(&tls::tests::server_hello_record())
-        .client(&[0x17, 3, 3, 0, 2, 9, 9])
-        .close();
+    f.handshake().client(&tls::tests::client_hello_record("secure.test")).server(&tls::tests::server_hello_record()).client(&[0x17, 3, 3, 0, 2, 9, 9]).close();
     // The same through an explicit proxy.
     let mut p = Flow::new(50007, 3128).at(T0 + 10_000_000);
     p.handshake()
@@ -327,19 +260,13 @@ fn tls_is_a_tunnel() {
     assert_eq!(a.summary.kind, SessionKind::Tunnel);
     assert_eq!(a.request.url, "secure.test:443");
     let tls = a.connection.client_tls.unwrap();
-    assert_eq!(
-        (tls.version.as_str(), tls.alpn.as_deref()),
-        ("TLS 1.3", Some("h2"))
-    );
+    assert_eq!((tls.version.as_str(), tls.alpn.as_deref()), ("TLS 1.3", Some("h2")));
     assert!(a.summary.custom.starts_with('↑'));
     let b = cap.detail(ids[1]).unwrap();
     assert_eq!(b.summary.kind, SessionKind::Tunnel);
     assert_eq!(b.request.url, "other.test:443");
     assert_eq!(b.response.unwrap().status, 200);
-    assert_eq!(
-        b.connection.client_tls.unwrap().sni.as_deref(),
-        Some("other.test")
-    );
+    assert_eq!(b.connection.client_tls.unwrap().sni.as_deref(), Some("other.test"));
 }
 
 #[test]
@@ -358,18 +285,10 @@ fn not_a_capture_or_no_http() {
     let (_d, _cap, r) = load(b"{\"log\":{}}");
     assert!(matches!(r, Err(FormatError::Invalid(_))));
     let mut f = Flow::new(50009, 25);
-    f.handshake()
-        .server(b"220 mail ESMTP\r\n")
-        .client(b"EHLO x\r\n")
-        .close();
+    f.handshake().server(b"220 mail ESMTP\r\n").client(b"EHLO x\r\n").close();
     let (_d, _cap, r) = load(&pcap(1, &f.frames));
-    let Err(FormatError::Invalid(msg)) = r else {
-        panic!()
-    };
-    assert!(
-        msg.contains("no HTTP traffic") && msg.contains("1 connection(s) not HTTP"),
-        "{msg}"
-    );
+    let Err(FormatError::Invalid(msg)) = r else { panic!() };
+    assert!(msg.contains("no HTTP traffic") && msg.contains("1 connection(s) not HTTP"), "{msg}");
 }
 
 impl Flow {
@@ -377,8 +296,7 @@ impl Flow {
     fn server_cut(&mut self, data: &[u8], keep: usize) -> &mut Self {
         self.ts += 1000;
         let f = ipv4_tcp_ack(self.s, self.c, self.sseq, self.cseq, ACK | PSH, data);
-        self.frames
-            .push((self.ts, f[..f.len() - (data.len() - keep)].to_vec()));
+        self.frames.push((self.ts, f[..f.len() - (data.len() - keep)].to_vec()));
         self.sseq = self.sseq.wrapping_add(data.len() as u32);
         self
     }
@@ -408,11 +326,7 @@ fn lost_response_keeps_the_pairing() {
     assert_eq!(ids.len(), 2);
     let a = cap.detail(ids[0]).unwrap();
     assert!(a.response.is_none());
-    assert!(
-        a.error
-            .unwrap()
-            .contains("the response is missing in the capture")
-    );
+    assert!(a.error.unwrap().contains("the response is missing in the capture"));
     let b = cap.detail(ids[1]).unwrap();
     assert_eq!(b.request.url, "http://l/2");
     assert_eq!(b.response.unwrap().status, 404);
@@ -441,17 +355,12 @@ fn lost_request_keeps_the_pairing() {
 fn upgrade_without_its_request() {
     let mut f = Flow::new(50012, 80);
     // The capture starts after the upgrade request.
-    f.server(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n\x81\x02hi")
-        .client(&[0x81, 0x80, 0, 0, 0, 0])
-        .close();
+    f.server(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n\x81\x02hi").client(&[0x81, 0x80, 0, 0, 0, 0]).close();
     let (_d, cap, ids) = load(&pcap(1, &f.frames));
     let d = cap.detail(ids.unwrap()[0]).unwrap();
     assert_eq!(d.summary.kind, SessionKind::WebSocket);
     assert_eq!(d.request.url, "http://10.0.0.2/");
-    assert_eq!(
-        d.error.as_deref(),
-        Some("the request is not in the capture")
-    );
+    assert_eq!(d.error.as_deref(), Some("the request is not in the capture"));
     assert_eq!(&bodies(&cap, d.summary.id).1[16..18], b"hi");
 }
 
@@ -459,17 +368,8 @@ fn upgrade_without_its_request() {
 fn snapshot_length_and_damaged_end() {
     let mut f = Flow::new(50013, 80);
     let body = [b'x'; 100];
-    f.handshake()
-        .client(b"GET /big HTTP/1.1\r\nHost: s\r\n\r\n");
-    f.server_cut(
-        &[
-            &b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n"[..],
-            &body,
-        ]
-        .concat(),
-        60,
-    )
-    .close();
+    f.handshake().client(b"GET /big HTTP/1.1\r\nHost: s\r\n\r\n");
+    f.server_cut(&[&b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n"[..], &body].concat(), 60).close();
     let mut file = pcap(1, &f.frames);
     file.extend_from_slice(&[0; 8]);
     file.extend_from_slice(&u32::MAX.to_le_bytes()); // damaged record: absurd length
@@ -478,11 +378,7 @@ fn snapshot_length_and_damaged_end() {
     let d = cap.detail(ids.unwrap()[0]).unwrap();
     assert_eq!(d.response.unwrap().status, 200);
     assert_eq!(bodies(&cap, d.summary.id).1, [b'x'; 20]);
-    assert!(
-        d.error
-            .unwrap()
-            .contains("80 bytes of the response body are missing")
-    );
+    assert!(d.error.unwrap().contains("80 bytes of the response body are missing"));
 }
 
 #[test]
@@ -508,18 +404,9 @@ fn lost_upgrade_response_releases_the_client() {
     let (_d, cap, ids) = load(&pcap(1, &f.frames));
     let ids = ids.unwrap();
     assert_eq!(ids.len(), 2);
-    assert!(
-        cap.detail(ids[0])
-            .unwrap()
-            .error
-            .unwrap()
-            .contains("the response is missing")
-    );
+    assert!(cap.detail(ids[0]).unwrap().error.unwrap().contains("the response is missing"));
     let b = cap.detail(ids[1]).unwrap();
-    assert_eq!(
-        (b.request.url.as_str(), b.response.unwrap().status),
-        ("http://u/next", 200)
-    );
+    assert_eq!((b.request.url.as_str(), b.response.unwrap().status), ("http://u/next", 200));
 }
 
 #[test]
@@ -527,8 +414,7 @@ fn picked_up_in_a_long_download() {
     let mut f = Flow::new(50016, 80);
     let chunk = vec![b'z'; 40_000];
     f.server(&chunk).server(&chunk); // the rest of a response that started before the capture
-    f.client(b"GET /after HTTP/1.1\r\nHost: d\r\n\r\n")
-        .server(b"HTTP/1.1 204 No Content\r\n\r\n");
+    f.client(b"GET /after HTTP/1.1\r\nHost: d\r\n\r\n").server(b"HTTP/1.1 204 No Content\r\n\r\n");
     let (_d, cap, ids) = load(&pcap(1, &f.frames));
     let ids = ids.unwrap();
     assert_eq!(ids.len(), 1);
@@ -544,74 +430,34 @@ fn any_method_and_data_in_the_syn() {
     f.cseq += 1 + req.len() as u32;
     f.push(false, f.sseq, SYN | ACK, b"");
     f.sseq += 1;
-    f.server(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n")
-        .close();
+    f.server(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n").close();
     let (_d, cap, ids) = load(&pcap(1, &f.frames));
     let d = cap.detail(ids.unwrap()[0]).unwrap();
-    assert_eq!(
-        (d.request.method.as_str(), d.request.url.as_str()),
-        ("MKCALENDAR", "http://c/cal")
-    );
+    assert_eq!((d.request.method.as_str(), d.request.url.as_str()), ("MKCALENDAR", "http://c/cal"));
     assert_eq!(d.response.unwrap().status, 201);
 }
 
 #[test]
 fn http2_stream_promised_twice() {
     let mut cenc = fluke_hpack::Encoder::new();
-    let req = cenc.encode(vec![
-        (&b":method"[..], &b"GET"[..]),
-        (b":scheme", b"http"),
-        (b":authority", b"p"),
-        (b":path", b"/"),
-    ]);
+    let req = cenc.encode(vec![(&b":method"[..], &b"GET"[..]), (b":scheme", b"http"), (b":authority", b"p"), (b":path", b"/")]);
     let mut senc = fluke_hpack::Encoder::new();
-    let promise = senc.encode(vec![
-        (&b":method"[..], &b"GET"[..]),
-        (b":scheme", b"http"),
-        (b":authority", b"p"),
-        (b":path", b"/style.css"),
-    ]);
-    let promise2 = senc.encode(vec![
-        (&b":method"[..], &b"GET"[..]),
-        (b":scheme", b"http"),
-        (b":authority", b"p"),
-        (b":path", b"/app.js"),
-    ]);
+    let promise = senc.encode(vec![(&b":method"[..], &b"GET"[..]), (b":scheme", b"http"), (b":authority", b"p"), (b":path", b"/style.css")]);
+    let promise2 = senc.encode(vec![(&b":method"[..], &b"GET"[..]), (b":scheme", b"http"), (b":authority", b"p"), (b":path", b"/app.js")]);
     let resp = senc.encode(vec![(&b":status"[..], &b"200"[..])]);
     let mut client = h2::PREFACE.to_vec();
     client.extend(h2_frame(1, 0x4 | 0x1, 1, &req));
     let pp = |block: &[u8]| [&2u32.to_be_bytes()[..], block].concat();
     let mut f = Flow::new(50018, 80);
     f.handshake().client(&client);
-    f.server(
-        &[
-            h2_frame(5, 0x4, 1, &pp(&promise)),
-            h2_frame(5, 0x4, 1, &pp(&promise2)),
-        ]
-        .concat(),
-    );
-    f.server(
-        &[
-            h2_frame(1, 0x4 | 0x1, 1, &resp),
-            h2_frame(1, 0x4, 2, &resp),
-            h2_frame(0, 0x1, 2, b"js"),
-        ]
-        .concat(),
-    );
+    f.server(&[h2_frame(5, 0x4, 1, &pp(&promise)), h2_frame(5, 0x4, 1, &pp(&promise2))].concat());
+    f.server(&[h2_frame(1, 0x4 | 0x1, 1, &resp), h2_frame(1, 0x4, 2, &resp), h2_frame(0, 0x1, 2, b"js")].concat());
     f.close();
     let (_d, cap, ids) = load(&pcap(1, &f.frames));
     let ids = ids.unwrap();
-    let by_url = |u: &str| {
-        ids.iter()
-            .map(|i| cap.detail(*i).unwrap())
-            .find(|d| d.request.url.ends_with(u))
-            .unwrap()
-    };
+    let by_url = |u: &str| ids.iter().map(|i| cap.detail(*i).unwrap()).find(|d| d.request.url.ends_with(u)).unwrap();
     assert_eq!(ids.len(), 3);
-    assert_eq!(
-        by_url("/style.css").error.as_deref(),
-        Some("the server announced this stream again")
-    );
+    assert_eq!(by_url("/style.css").error.as_deref(), Some("the server announced this stream again"));
     let js = by_url("/app.js");
     assert_eq!(js.response.unwrap().status, 200);
     assert_eq!(bodies(&cap, js.summary.id).1, b"js");
@@ -621,10 +467,7 @@ fn http2_stream_promised_twice() {
 #[test]
 fn macos_packet_tap() {
     let mut f = Flow::new(50019, 8080);
-    f.handshake()
-        .client(b"GET /lo HTTP/1.1\r\nHost: localhost:8080\r\n\r\n")
-        .server(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-        .close();
+    f.handshake().client(b"GET /lo HTTP/1.1\r\nHost: localhost:8080\r\n\r\n").server(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").close();
     // Each Ethernet frame becomes a loopback frame (NULL) inside a packet tap header.
     let frames: Vec<(Micros, Vec<u8>)> = f
         .frames
@@ -650,10 +493,7 @@ mod tls_e2e {
     use super::*;
     use rustls::crypto::{CryptoProvider, ring as rr};
     use rustls::pki_types::{PrivatePkcs8KeyDer, ServerName};
-    use rustls::{
-        ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection,
-        SupportedCipherSuite, SupportedProtocolVersion,
-    };
+    use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConfig, ServerConnection, SupportedCipherSuite, SupportedProtocolVersion};
     use std::io::Write as _;
     use std::sync::Mutex;
 
@@ -664,11 +504,7 @@ mod tls_e2e {
     impl rustls::KeyLog for Log {
         fn log(&self, label: &str, client_random: &[u8], secret: &[u8]) {
             let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
-            self.0.lock().unwrap().push_str(&format!(
-                "{label} {} {}\n",
-                hex(client_random),
-                hex(secret)
-            ));
+            self.0.lock().unwrap().push_str(&format!("{label} {} {}\n", hex(client_random), hex(secret)));
         }
         fn will_log(&self, _: &str) -> bool {
             true
@@ -681,41 +517,23 @@ mod tls_e2e {
         log: Arc<Log>,
     }
 
-    fn pair(
-        suite: SupportedCipherSuite,
-        version: &'static SupportedProtocolVersion,
-        alpn: &[&[u8]],
-    ) -> Pair {
+    fn pair(suite: SupportedCipherSuite, version: &'static SupportedProtocolVersion, alpn: &[&[u8]]) -> Pair {
         let ck = rcgen::generate_simple_self_signed(vec!["example.test".into()]).unwrap();
-        let provider = Arc::new(CryptoProvider {
-            cipher_suites: vec![suite],
-            ..rr::default_provider()
-        });
+        let provider = Arc::new(CryptoProvider { cipher_suites: vec![suite], ..rr::default_provider() });
         let mut server = ServerConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[version])
             .unwrap()
             .with_no_client_auth()
-            .with_single_cert(
-                vec![ck.cert.der().clone()],
-                PrivatePkcs8KeyDer::from(ck.signing_key.serialize_der()).into(),
-            )
+            .with_single_cert(vec![ck.cert.der().clone()], PrivatePkcs8KeyDer::from(ck.signing_key.serialize_der()).into())
             .unwrap();
         server.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
         let mut roots = RootCertStore::empty();
         roots.add(ck.cert.der().clone()).unwrap();
-        let mut client = ClientConfig::builder_with_provider(provider)
-            .with_protocol_versions(&[version])
-            .unwrap()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+        let mut client = ClientConfig::builder_with_provider(provider).with_protocol_versions(&[version]).unwrap().with_root_certificates(roots).with_no_client_auth();
         client.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
         let log = Arc::new(Log::default());
         client.key_log = log.clone();
-        let c = ClientConnection::new(
-            Arc::new(client),
-            ServerName::try_from("example.test").unwrap(),
-        )
-        .unwrap();
+        let c = ClientConnection::new(Arc::new(client), ServerName::try_from("example.test").unwrap()).unwrap();
         let s = ServerConnection::new(Arc::new(server)).unwrap();
         Pair { c, s, log }
     }
@@ -775,10 +593,7 @@ mod tls_e2e {
         }
     }
 
-    fn load_with(
-        file: &[u8],
-        keylog: Option<&str>,
-    ) -> (tempfile::TempDir, Arc<Capture>, PcapReport) {
+    fn load_with(file: &[u8], keylog: Option<&str>) -> (tempfile::TempDir, Arc<Capture>, PcapReport) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("x.pcap");
         std::fs::write(&path, file).unwrap();
@@ -795,16 +610,11 @@ mod tls_e2e {
 
     const REQ1: &[u8] = b"GET /one HTTP/1.1\r\nHost: example.test\r\n\r\n";
     const RESP1: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst";
-    const REQ2: &[u8] =
-        b"POST /two HTTP/1.1\r\nHost: example.test\r\nContent-Length: 4\r\n\r\ndata";
+    const REQ2: &[u8] = b"POST /two HTTP/1.1\r\nHost: example.test\r\nContent-Length: 4\r\n\r\ndata";
     const RESP2: &[u8] = b"HTTP/1.1 201 Created\r\nContent-Length: 6\r\n\r\nsecond";
 
     /// A TLS connection with two HTTP/1.1 exchanges; `update`: a key update between them.
-    fn h1_capture(
-        suite: SupportedCipherSuite,
-        version: &'static SupportedProtocolVersion,
-        update: bool,
-    ) -> (Vec<u8>, String) {
+    fn h1_capture(suite: SupportedCipherSuite, version: &'static SupportedProtocolVersion, update: bool) -> (Vec<u8>, String) {
         let mut p = pair(suite, version, &[b"http/1.1"]);
         let mut f = Flow::new(50100, 443);
         f.handshake();
@@ -824,48 +634,27 @@ mod tls_e2e {
         let a = cap.detail(ids[0]).unwrap();
         assert_eq!(a.request.url, "https://example.test/one");
         assert!(a.summary.has_flag(flags::DECRYPTED));
-        assert_eq!(
-            a.connection.client_tls.as_ref().unwrap().sni.as_deref(),
-            Some("example.test")
-        );
+        assert_eq!(a.connection.client_tls.as_ref().unwrap().sni.as_deref(), Some("example.test"));
         assert!(a.timers.tls_handshake_ms.is_some());
         assert_eq!(bodies(cap, ids[0]).1, b"first");
         let b = cap.detail(ids[1]).unwrap();
-        assert_eq!(
-            (b.request.method.as_str(), b.response.unwrap().status),
-            ("POST", 201)
-        );
+        assert_eq!((b.request.method.as_str(), b.response.unwrap().status), ("POST", 201));
         assert_eq!(bodies(cap, ids[1]), (b"data".to_vec(), b"second".to_vec()));
         assert!(b.error.is_none());
     }
 
     #[test]
     fn tls13_with_key_update() {
-        let (file, keys) = h1_capture(
-            rr::cipher_suite::TLS13_AES_256_GCM_SHA384,
-            &rustls::version::TLS13,
-            true,
-        );
+        let (file, keys) = h1_capture(rr::cipher_suite::TLS13_AES_256_GCM_SHA384, &rustls::version::TLS13, true);
         let (_d, cap, r) = load_with(&file, Some(&keys));
         assert_eq!((r.tls, r.decrypted, r.no_keys), (1, 1, 0));
         assert_decrypted(&cap, &r.ids);
-        assert_eq!(
-            cap.detail(r.ids[0])
-                .unwrap()
-                .connection
-                .client_tls
-                .unwrap()
-                .version,
-            "TLS 1.3"
-        );
+        assert_eq!(cap.detail(r.ids[0]).unwrap().connection.client_tls.unwrap().version, "TLS 1.3");
     }
 
     #[test]
     fn tls12_gcm_and_chacha() {
-        for suite in [
-            rr::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-            rr::cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-        ] {
+        for suite in [rr::cipher_suite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, rr::cipher_suite::TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256] {
             let (file, keys) = h1_capture(suite, &rustls::version::TLS12, false);
             let (_d, cap, r) = load_with(&file, Some(&keys));
             assert_eq!(r.decrypted, 1, "{suite:?}");
@@ -875,18 +664,11 @@ mod tls_e2e {
 
     #[test]
     fn without_keys_a_tunnel_with_embedded_keys_decrypted() {
-        let (file, keys) = h1_capture(
-            rr::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
-            &rustls::version::TLS13,
-            false,
-        );
+        let (file, keys) = h1_capture(rr::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256, &rustls::version::TLS13, false);
         let (_d, cap, r) = load_with(&file, None);
         assert_eq!((r.tls, r.decrypted, r.no_keys), (1, 0, 1));
         let d = cap.detail(r.ids[0]).unwrap();
-        assert_eq!(
-            (d.summary.kind, d.request.url.as_str()),
-            (SessionKind::Tunnel, "example.test:443")
-        );
+        assert_eq!((d.summary.kind, d.request.url.as_str()), (SessionKind::Tunnel, "example.test:443"));
         // The same packets as pcapng with the secrets embedded (Wireshark's "Inject secrets").
         let mut frames = Vec::new();
         let mut rd = file::Reader::new(&file[..]).unwrap();
@@ -901,74 +683,37 @@ mod tls_e2e {
 
     #[test]
     fn http2_inside_tls() {
-        let mut p = pair(
-            rr::cipher_suite::TLS13_AES_128_GCM_SHA256,
-            &rustls::version::TLS13,
-            &[b"h2"],
-        );
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"h2"]);
         let mut f = Flow::new(50101, 443);
         f.handshake();
         p.pump(&mut f);
         let mut enc = fluke_hpack::Encoder::new();
-        let req = enc.encode(vec![
-            (&b":method"[..], &b"GET"[..]),
-            (b":scheme", b"https"),
-            (b":authority", b"example.test"),
-            (b":path", b"/h2"),
-        ]);
+        let req = enc.encode(vec![(&b":method"[..], &b"GET"[..]), (b":scheme", b"https"), (b":authority", b"example.test"), (b":path", b"/h2")]);
         let mut senc = fluke_hpack::Encoder::new();
         let resp = senc.encode(vec![(&b":status"[..], &b"200"[..])]);
-        let client = [
-            h2::PREFACE.to_vec(),
-            h2_frame(4, 0, 0, &[]),
-            h2_frame(1, 0x4 | 0x1, 1, &req),
-        ]
-        .concat();
-        let server = [
-            h2_frame(4, 0, 0, &[]),
-            h2_frame(1, 0x4, 1, &resp),
-            h2_frame(0, 0x1, 1, b"over h2"),
-        ]
-        .concat();
+        let client = [h2::PREFACE.to_vec(), h2_frame(4, 0, 0, &[]), h2_frame(1, 0x4 | 0x1, 1, &req)].concat();
+        let server = [h2_frame(4, 0, 0, &[]), h2_frame(1, 0x4, 1, &resp), h2_frame(0, 0x1, 1, b"over h2")].concat();
         p.exchange(&mut f, &client, &server);
         f.close();
         let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
         assert_eq!(r.ids.len(), 1);
         let d = cap.detail(r.ids[0]).unwrap();
-        assert_eq!(
-            (d.request.url.as_str(), d.request.version),
-            ("https://example.test/h2", HttpVersion::Http2)
-        );
+        assert_eq!((d.request.url.as_str(), d.request.version), ("https://example.test/h2", HttpVersion::Http2));
         assert_eq!(bodies(&cap, r.ids[0]).1, b"over h2");
     }
 
     #[test]
     fn tls13_handshake_secrets_alone_are_not_enough() {
-        let (file, keys) = h1_capture(
-            rr::cipher_suite::TLS13_AES_128_GCM_SHA256,
-            &rustls::version::TLS13,
-            false,
-        );
-        let partial: String = keys
-            .lines()
-            .filter(|l| l.contains("HANDSHAKE"))
-            .map(|l| format!("{l}\n"))
-            .collect();
+        let (file, keys) = h1_capture(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, false);
+        let partial: String = keys.lines().filter(|l| l.contains("HANDSHAKE")).map(|l| format!("{l}\n")).collect();
         let (_d, cap, r) = load_with(&file, Some(&partial));
         assert_eq!((r.decrypted, r.no_keys), (0, 1));
-        assert_eq!(
-            cap.detail(r.ids[0]).unwrap().summary.kind,
-            SessionKind::Tunnel
-        );
+        assert_eq!(cap.detail(r.ids[0]).unwrap().summary.kind, SessionKind::Tunnel);
     }
 
     #[test]
     fn a_gap_ends_decryption_and_says_so() {
-        let mut p = pair(
-            rr::cipher_suite::TLS13_AES_128_GCM_SHA256,
-            &rustls::version::TLS13,
-            &[b"http/1.1"],
-        );
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"http/1.1"]);
         let mut f = Flow::new(50103, 443);
         f.handshake();
         p.pump(&mut f);
@@ -986,49 +731,19 @@ mod tls_e2e {
         f.close();
         let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
         let all: Vec<_> = r.ids.iter().map(|i| cap.detail(*i).unwrap()).collect();
-        let second = all
-            .iter()
-            .find(|d| d.request.url.ends_with("/two"))
-            .unwrap();
-        assert!(
-            second
-                .error
-                .as_deref()
-                .unwrap()
-                .contains("bytes of the encrypted connection are missing"),
-            "{:?}",
-            second.error
-        );
+        let second = all.iter().find(|d| d.request.url.ends_with("/two")).unwrap();
+        assert!(second.error.as_deref().unwrap().contains("bytes of the encrypted connection are missing"), "{:?}", second.error);
         // The tunnel stays, to say why decryption stopped.
-        let tunnel = all
-            .iter()
-            .find(|d| d.summary.kind == SessionKind::Tunnel)
-            .unwrap();
-        assert!(
-            tunnel
-                .error
-                .as_deref()
-                .unwrap()
-                .contains("could not be decrypted")
-        );
-        assert!(
-            all.iter()
-                .find(|d| d.request.url.ends_with("/one"))
-                .unwrap()
-                .error
-                .is_none()
-        );
+        let tunnel = all.iter().find(|d| d.summary.kind == SessionKind::Tunnel).unwrap();
+        assert!(tunnel.error.as_deref().unwrap().contains("could not be decrypted"));
+        assert!(all.iter().find(|d| d.request.url.ends_with("/one")).unwrap().error.is_none());
     }
 
     #[test]
     fn requests_without_host_name_the_tls_server() {
         let req = b"GET /nohost HTTP/1.1\r\n\r\n";
         // Through a proxy: the CONNECT target, not the proxy's address.
-        let mut p = pair(
-            rr::cipher_suite::TLS13_AES_128_GCM_SHA256,
-            &rustls::version::TLS13,
-            &[b"http/1.1"],
-        );
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"http/1.1"]);
         let mut f = Flow::new(50104, 3128);
         f.handshake()
             .client(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n")
@@ -1037,35 +752,21 @@ mod tls_e2e {
         p.exchange(&mut f, req, RESP1);
         f.close();
         let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
-        assert_eq!(
-            cap.detail(r.ids[1]).unwrap().request.url,
-            "https://example.test/nohost"
-        );
+        assert_eq!(cap.detail(r.ids[1]).unwrap().request.url, "https://example.test/nohost");
         // Direct: the server name from the ClientHello.
-        let mut p = pair(
-            rr::cipher_suite::TLS13_AES_128_GCM_SHA256,
-            &rustls::version::TLS13,
-            &[b"http/1.1"],
-        );
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"http/1.1"]);
         let mut f = Flow::new(50105, 443);
         f.handshake();
         p.pump(&mut f);
         p.exchange(&mut f, req, RESP1);
         f.close();
         let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
-        assert_eq!(
-            cap.detail(r.ids[0]).unwrap().request.url,
-            "https://example.test/nohost"
-        );
+        assert_eq!(cap.detail(r.ids[0]).unwrap().request.url, "https://example.test/nohost");
     }
 
     #[test]
     fn connect_tunnel_through_a_proxy() {
-        let mut p = pair(
-            rr::cipher_suite::TLS13_AES_128_GCM_SHA256,
-            &rustls::version::TLS13,
-            &[b"http/1.1"],
-        );
+        let mut p = pair(rr::cipher_suite::TLS13_AES_128_GCM_SHA256, &rustls::version::TLS13, &[b"http/1.1"]);
         let mut f = Flow::new(50102, 3128);
         f.handshake()
             .client(b"CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n")
@@ -1076,10 +777,7 @@ mod tls_e2e {
         let (_d, cap, r) = load_with(&pcap(1, &f.frames), Some(&p.keylog()));
         assert_eq!(r.ids.len(), 2);
         let tunnel = cap.detail(r.ids[0]).unwrap();
-        assert_eq!(
-            (tunnel.summary.kind, tunnel.request.method.as_str()),
-            (SessionKind::Tunnel, "CONNECT")
-        );
+        assert_eq!((tunnel.summary.kind, tunnel.request.method.as_str()), (SessionKind::Tunnel, "CONNECT"));
         let inner = cap.detail(r.ids[1]).unwrap();
         assert_eq!(inner.request.url, "https://example.test/one");
         assert!(inner.connection.server_conn_reused);

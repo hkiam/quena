@@ -143,70 +143,47 @@ async fn remove_where(core: State<'_, Core>, expr: String) -> R<usize> {
 }
 
 #[tauri::command]
-async fn summaries(
-    core: State<'_, Core>,
-    ids: Vec<SessionId>,
-) -> R<Vec<quena_model::SessionSummary>> {
+async fn summaries(core: State<'_, Core>, ids: Vec<SessionId>) -> R<Vec<quena_model::SessionSummary>> {
     Ok(core.summaries(&ids))
 }
 
 #[tauri::command]
-async fn timers(
-    core: State<'_, Core>,
-    ids: Vec<SessionId>,
-) -> R<Vec<quena_app_core::SessionTimers>> {
+async fn timers(core: State<'_, Core>, ids: Vec<SessionId>) -> R<Vec<quena_app_core::SessionTimers>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.timers(&ids))).await
 }
 
 /// Several tree levels (hosts and every open node) in one pass over the view.
 #[tauri::command]
-async fn structure(
-    core: State<'_, Core>,
-    levels: Vec<quena_app_core::structure::LevelQuery>,
-) -> R<Vec<quena_app_core::structure::TreeLevel>> {
+async fn structure(core: State<'_, Core>, levels: Vec<quena_app_core::structure::LevelQuery>) -> R<Vec<quena_app_core::structure::TreeLevel>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.structure_levels(&levels))).await
 }
 
 /// Sessions of a node; `exact` for the "(this path)" node (that path only, nothing below).
 #[tauri::command]
-async fn structure_ids(
-    core: State<'_, Core>,
-    host: String,
-    path: String,
-    exact: Option<bool>,
-) -> R<Vec<SessionId>> {
+async fn structure_ids(core: State<'_, Core>, host: String, path: String, exact: Option<bool>) -> R<Vec<SessionId>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.structure_ids(&host, &path, exact.unwrap_or(false)))).await
 }
 
 /// The navigator's groups of the sessions the filters let through.
 #[tauri::command]
-async fn nav_groups(
-    core: State<'_, Core>,
-    by: quena_index::GroupBy,
-) -> R<quena_app_core::navigator::NavGroups> {
+async fn nav_groups(core: State<'_, Core>, by: quena_index::GroupBy) -> R<quena_app_core::navigator::NavGroups> {
     let core = core.inner().clone();
     blocking(move || Ok(core.nav_groups(by))).await
 }
 
 /// The sessions of a group or structure node (the filters applied).
 #[tauri::command]
-async fn nav_ids(
-    core: State<'_, Core>,
-    scope: quena_app_core::navigator::NavScope,
-) -> R<Vec<SessionId>> {
+async fn nav_ids(core: State<'_, Core>, scope: quena_app_core::navigator::NavScope) -> R<Vec<SessionId>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.nav_ids(&scope))).await
 }
 
 /// Narrow the list to a group or structure node (`null`: no narrowing).
 #[tauri::command]
-async fn set_scope(
-    core: State<'_, Core>,
-    scope: Option<quena_app_core::navigator::NavScope>,
-) -> R<()> {
+async fn set_scope(core: State<'_, Core>, scope: Option<quena_app_core::navigator::NavScope>) -> R<()> {
     let core = core.inner().clone();
     blocking(move || core.set_scope(scope).map_err(e)).await
 }
@@ -254,50 +231,21 @@ async fn detail(core: State<'_, Core>, id: SessionId) -> R<Option<DetailDto>> {
 }
 
 #[tauri::command]
-async fn body_open(
-    core: State<'_, Core>,
-    id: SessionId,
-    part: Part,
-    variant: Variant,
-) -> R<BodyView> {
+async fn body_open(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant) -> R<BodyView> {
     let core = core.inner().clone();
     blocking(move || core.body_open(id, part, variant).map_err(e)).await
 }
 
 #[tauri::command]
-async fn body_lines(
-    core: State<'_, Core>,
-    id: SessionId,
-    part: Part,
-    variant: Variant,
-    start: u64,
-    count: usize,
-    charset: Option<String>,
-) -> R<LinesDto> {
+async fn body_lines(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, start: u64, count: usize, charset: Option<String>) -> R<LinesDto> {
     let core = core.inner().clone();
-    blocking(move || {
-        core.body_lines(id, part, variant, start, count, charset.as_deref())
-            .map_err(e)
-    })
-    .await
+    blocking(move || core.body_lines(id, part, variant, start, count, charset.as_deref()).map_err(e)).await
 }
 
 #[tauri::command]
-async fn body_search(
-    core: State<'_, Core>,
-    id: SessionId,
-    part: Part,
-    variant: Variant,
-    needle: String,
-    ignore_case: bool,
-    charset: Option<String>,
-) -> R<u64> {
+async fn body_search(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, needle: String, ignore_case: bool, charset: Option<String>) -> R<u64> {
     let core = core.inner().clone();
-    blocking(move || {
-        core.body_search(id, part, variant, needle, ignore_case, charset.as_deref())
-            .map_err(e)
-    })
-    .await
+    blocking(move || core.body_search(id, part, variant, needle, ignore_case, charset.as_deref()).map_err(e)).await
 }
 
 #[tauri::command]
@@ -306,31 +254,19 @@ async fn search_result(core: State<'_, Core>, job: u64) -> R<Option<SearchResult
 }
 
 #[tauri::command]
-async fn save_body(
-    core: State<'_, Core>,
-    id: SessionId,
-    part: Part,
-    variant: Variant,
-    path: String,
-) -> R<u64> {
+async fn save_body(core: State<'_, Core>, id: SessionId, part: Part, variant: Variant, path: String) -> R<u64> {
     let core = core.inner().clone();
     blocking(move || core.save_body(id, part, variant, path.into()).map_err(e)).await
 }
 
 #[tauri::command]
-async fn find_sessions(
-    core: State<'_, Core>,
-    options: quena_app_core::find::FindOptions,
-) -> R<u64> {
+async fn find_sessions(core: State<'_, Core>, options: quena_app_core::find::FindOptions) -> R<u64> {
     let core = core.inner().clone();
     blocking(move || core.find_sessions(options).map_err(e)).await
 }
 
 #[tauri::command]
-async fn find_result(
-    core: State<'_, Core>,
-    job: u64,
-) -> R<Option<quena_app_core::find::FindResult>> {
+async fn find_result(core: State<'_, Core>, job: u64) -> R<Option<quena_app_core::find::FindResult>> {
     Ok(core.find_result(job))
 }
 
@@ -433,11 +369,7 @@ async fn recoverable(core: State<'_, Core>) -> R<Vec<quena_store_dto::Recoverabl
     Ok(core
         .recoverable_captures()
         .into_iter()
-        .map(|c| quena_store_dto::Recoverable {
-            dir: c.dir.display().to_string(),
-            sessions: c.sessions,
-            modified: c.modified,
-        })
+        .map(|c| quena_store_dto::Recoverable { dir: c.dir.display().to_string(), sessions: c.sessions, modified: c.modified })
         .collect())
 }
 
@@ -498,20 +430,13 @@ async fn device_info(core: State<'_, Core>, engine: State<'_, Engine>) -> R<Devi
 }
 
 #[tauri::command]
-async fn replay(
-    core: State<'_, Core>,
-    ids: Vec<SessionId>,
-    options: quena_app_core::compose::ReplayOptions,
-) -> R<usize> {
+async fn replay(core: State<'_, Core>, ids: Vec<SessionId>, options: quena_app_core::compose::ReplayOptions) -> R<usize> {
     let core = core.inner().clone();
     blocking(move || core.replay(ids, options).map_err(e)).await
 }
 
 #[tauri::command]
-async fn compose(
-    core: State<'_, Core>,
-    request: quena_app_core::compose::ComposeRequest,
-) -> R<SessionId> {
+async fn compose(core: State<'_, Core>, request: quena_app_core::compose::ComposeRequest) -> R<SessionId> {
     let core = core.inner().clone();
     blocking(move || core.compose(request).map_err(e)).await
 }
@@ -541,26 +466,9 @@ async fn import_archive(core: State<'_, Core>, path: String) -> R<u64> {
 /// A packet capture again, with a TLS key log; `replace`: the sessions of its first import,
 /// with the session numbering they belong to (event `pcap-import`).
 #[tauri::command]
-async fn import_capture(
-    core: State<'_, Core>,
-    path: String,
-    name: Option<String>,
-    keylog: String,
-    replace: Vec<SessionId>,
-    numbering: u64,
-) -> R<u64> {
+async fn import_capture(core: State<'_, Core>, path: String, name: Option<String>, keylog: String, replace: Vec<SessionId>, numbering: u64) -> R<u64> {
     let core = core.inner().clone();
-    blocking(move || {
-        core.import_capture(
-            path.into(),
-            name,
-            vec![keylog.into()],
-            replace,
-            Some(numbering),
-        )
-        .map_err(e)
-    })
-    .await
+    blocking(move || core.import_capture(path.into(), name, vec![keylog.into()], replace, Some(numbering)).map_err(e)).await
 }
 
 /// Sanitized export (SAZ/HAR by `format` or the extension); the event `export-sanitized`
@@ -574,20 +482,13 @@ async fn export_sanitized(
     options: quena_app_core::sanitize::SanitizeOptions,
 ) -> R<u64> {
     let core = core.inner().clone();
-    blocking(move || {
-        core.export_sanitized(ids, path.into(), format, options)
-            .map_err(e)
-    })
-    .await
+    blocking(move || core.export_sanitized(ids, path.into(), format, options).map_err(e)).await
 }
 
 /// The presets of the sanitized export (`support`, `gdpr`), for the dialog.
 #[tauri::command]
 async fn sanitize_presets() -> R<Vec<quena_app_core::sanitize::SanitizeOptions>> {
-    Ok(["support", "gdpr"]
-        .iter()
-        .filter_map(|p| quena_app_core::sanitize::SanitizeOptions::preset(p))
-        .collect())
+    Ok(["support", "gdpr"].iter().filter_map(|p| quena_app_core::sanitize::SanitizeOptions::preset(p)).collect())
 }
 
 /// Check sanitize options before the save dialog (an invalid pattern names itself).
@@ -607,8 +508,7 @@ async fn reveal_path(path: String) -> R<()> {
 async fn hosts_file_import() -> R<Vec<quena_app_core::settings::HostRemapEntry>> {
     blocking(|| {
         let path = quena_platform::hosts_file_path();
-        let text =
-            std::fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
         Ok(quena_app_core::settings::parse_hosts_file(&text))
     })
     .await
@@ -625,12 +525,7 @@ async fn browsers_list(core: State<'_, Core>) -> R<Vec<quena_app_core::launch::B
 #[tauri::command]
 async fn launch_browser(core: State<'_, Core>, kind: String, url: Option<String>) -> R<String> {
     let c = core.inner().clone();
-    blocking(move || {
-        c.launch_browser(&kind, url.as_deref().filter(|u| !u.trim().is_empty()))
-            .map(|b| b.name)
-            .map_err(e)
-    })
-    .await
+    blocking(move || c.launch_browser(&kind, url.as_deref().filter(|u| !u.trim().is_empty())).map(|b| b.name).map_err(e)).await
 }
 
 /// Open a terminal whose tools use Quena (starts capturing if needed).
@@ -643,21 +538,10 @@ async fn open_terminal(core: State<'_, Core>) -> R<()> {
 /// One chunk of a file dropped onto the window (raw body; name, offset etc. in headers).
 #[tauri::command]
 async fn drop_chunk(core: State<'_, Core>, request: tauri::ipc::Request<'_>) -> R<Option<u64>> {
-    let h = |k: &str| {
-        request
-            .headers()
-            .get(k)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string()
-    };
+    let h = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let id = h("quena-drop-id");
-    let name = percent_encoding::percent_decode_str(&h("quena-drop-name"))
-        .decode_utf8_lossy()
-        .into_owned();
-    let offset: u64 = h("quena-drop-offset")
-        .parse()
-        .map_err(|_| "invalid drop offset".to_string())?;
+    let name = percent_encoding::percent_decode_str(&h("quena-drop-name")).decode_utf8_lossy().into_owned();
+    let offset: u64 = h("quena-drop-offset").parse().map_err(|_| "invalid drop offset".to_string())?;
     let last = h("quena-drop-last") == "1";
     let data = match request.body() {
         tauri::ipc::InvokeBody::Raw(b) => b.clone(),
@@ -684,10 +568,7 @@ async fn read_text_file(path: String) -> R<String> {
 fn read_report_file(path: &str) -> R<String> {
     use std::io::Read;
     let p = std::path::Path::new(path);
-    if !p
-        .extension()
-        .is_some_and(|x| x.eq_ignore_ascii_case("json"))
-    {
+    if !p.extension().is_some_and(|x| x.eq_ignore_ascii_case("json")) {
         return Err(format!("{path}: not a .json file"));
     }
     // Checked before opening: opening a FIFO for reading would block.
@@ -700,29 +581,19 @@ fn read_report_file(path: &str) -> R<String> {
         return Err(format!("{path}: not a regular file"));
     }
     if meta.len() > MAX_TEXT_FILE {
-        return Err(format!(
-            "{path}: file is larger than {} MB",
-            MAX_TEXT_FILE >> 20
-        ));
+        return Err(format!("{path}: file is larger than {} MB", MAX_TEXT_FILE >> 20));
     }
     let mut s = String::new();
     // `take` also bounds a file that grows while it is read.
-    f.take(MAX_TEXT_FILE + 1)
-        .read_to_string(&mut s)
-        .map_err(e)?;
+    f.take(MAX_TEXT_FILE + 1).read_to_string(&mut s).map_err(e)?;
     if s.len() as u64 > MAX_TEXT_FILE {
-        return Err(format!(
-            "{path}: file is larger than {} MB",
-            MAX_TEXT_FILE >> 20
-        ));
+        return Err(format!("{path}: file is larger than {} MB", MAX_TEXT_FILE >> 20));
     }
     Ok(s)
 }
 
 #[tauri::command]
-async fn diag_analyzers(
-    core: State<'_, Core>,
-) -> R<Vec<quena_app_core::diagnostics::DiagAnalyzer>> {
+async fn diag_analyzers(core: State<'_, Core>) -> R<Vec<quena_app_core::diagnostics::DiagAnalyzer>> {
     Ok(core.diag_analyzers())
 }
 
@@ -739,27 +610,15 @@ async fn plugins_ready(core: State<'_, Core>) -> R<bool> {
 }
 
 #[tauri::command]
-async fn diag_scope_options(
-    core: State<'_, Core>,
-) -> R<quena_app_core::diagnostics::DiagScopeOptions> {
+async fn diag_scope_options(core: State<'_, Core>) -> R<quena_app_core::diagnostics::DiagScopeOptions> {
     let core = core.inner().clone();
     blocking(move || Ok(core.diag_scope_options())).await
 }
 
 #[tauri::command]
-async fn diag_run(
-    core: State<'_, Core>,
-    index: u16,
-    options: String,
-    ids: Option<Vec<SessionId>>,
-    filter: Option<quena_app_core::diagnostics::DiagFilter>,
-) -> R<u64> {
+async fn diag_run(core: State<'_, Core>, index: u16, options: String, ids: Option<Vec<SessionId>>, filter: Option<quena_app_core::diagnostics::DiagFilter>) -> R<u64> {
     let core = core.inner().clone();
-    blocking(move || {
-        core.diag_run(index, options, ids, filter.unwrap_or_default())
-            .map_err(e)
-    })
-    .await
+    blocking(move || core.diag_run(index, options, ids, filter.unwrap_or_default()).map_err(e)).await
 }
 
 #[tauri::command]
@@ -770,9 +629,7 @@ async fn diag_report(core: State<'_, Core>) -> R<Option<String>> {
 use quena_app_core::rules::{AutoResponderState, BreakpointState, PausedInfo, Resume};
 
 fn rules(core: &Core) -> R<std::sync::Arc<quena_app_core::rules::Rules>> {
-    core.rules
-        .clone()
-        .ok_or_else(|| "rules unavailable".to_string())
+    core.rules.clone().ok_or_else(|| "rules unavailable".to_string())
 }
 
 #[tauri::command]
@@ -782,9 +639,7 @@ async fn ar_get(core: State<'_, Core>) -> R<AutoResponderState> {
 
 #[tauri::command]
 async fn ar_set(core: State<'_, Core>, state: AutoResponderState) -> R<()> {
-    rules(core.inner())?
-        .set_autoresponder(state, true)
-        .map_err(e)
+    rules(core.inner())?.set_autoresponder(state, true).map_err(e)
 }
 
 #[tauri::command]
@@ -793,48 +648,29 @@ async fn rw_get(core: State<'_, Core>) -> R<quena_app_core::rewrite::RewriteStat
 }
 
 #[tauri::command]
-async fn rw_set(
-    core: State<'_, Core>,
-    state: quena_app_core::rewrite::RewriteState,
-) -> R<quena_app_core::rewrite::RewriteState> {
+async fn rw_set(core: State<'_, Core>, state: quena_app_core::rewrite::RewriteState) -> R<quena_app_core::rewrite::RewriteState> {
     rules(core.inner())?.rewrite.set(state).map_err(e)
 }
 
 /// Save one rewrite rule (new: `id` 0, appended) without replacing the others.
 #[tauri::command]
-async fn rw_update(
-    core: State<'_, Core>,
-    rule: quena_app_core::rewrite::RewriteRule,
-) -> R<quena_app_core::rewrite::RewriteState> {
+async fn rw_update(core: State<'_, Core>, rule: quena_app_core::rewrite::RewriteRule) -> R<quena_app_core::rewrite::RewriteState> {
     let c = core.inner().clone();
     blocking(move || c.rewrite_update(rule).map_err(e)).await
 }
 
 /// Try a rewrite rule on a captured session (before / after), without traffic.
 #[tauri::command]
-async fn rw_preview(
-    core: State<'_, Core>,
-    rule: quena_app_core::rewrite::RewriteRule,
-    id: SessionId,
-) -> R<quena_app_core::rewrite::RewritePreview> {
+async fn rw_preview(core: State<'_, Core>, rule: quena_app_core::rewrite::RewriteRule, id: SessionId) -> R<quena_app_core::rewrite::RewritePreview> {
     let c = core.inner().clone();
     blocking(move || c.rewrite_preview(rule, id).map_err(e)).await
 }
 
 /// Apply rewrite rules to captured sessions (changed copies; the originals stay).
 #[tauri::command]
-async fn rw_apply(
-    core: State<'_, Core>,
-    ids: Vec<SessionId>,
-    rule_ids: Option<Vec<u64>>,
-    group: Option<String>,
-) -> R<quena_app_core::rewrite::RewriteApplied> {
+async fn rw_apply(core: State<'_, Core>, ids: Vec<SessionId>, rule_ids: Option<Vec<u64>>, group: Option<String>) -> R<quena_app_core::rewrite::RewriteApplied> {
     let c = core.inner().clone();
-    blocking(move || {
-        c.rewrite_apply(&ids, rule_ids.as_deref(), group.as_deref())
-            .map_err(e)
-    })
-    .await
+    blocking(move || c.rewrite_apply(&ids, rule_ids.as_deref(), group.as_deref()).map_err(e)).await
 }
 
 #[tauri::command]
@@ -869,42 +705,23 @@ async fn ar_export_farx(core: State<'_, Core>, path: String) -> R<()> {
 use quena_app_core::mockgen::{MockOptions, MockPackage, MockPreview};
 
 #[tauri::command]
-async fn mock_preview(
-    core: State<'_, Core>,
-    ids: Vec<SessionId>,
-    opts: MockOptions,
-) -> R<MockPreview> {
+async fn mock_preview(core: State<'_, Core>, ids: Vec<SessionId>, opts: MockOptions) -> R<MockPreview> {
     let core = core.inner().clone();
     blocking(move || core.mock_preview(ids, opts).map_err(e)).await
 }
 
 #[tauri::command]
-async fn mock_export_wiremock(
-    core: State<'_, Core>,
-    ids: Vec<SessionId>,
-    path: String,
-    opts: MockOptions,
-) -> R<u64> {
+async fn mock_export_wiremock(core: State<'_, Core>, ids: Vec<SessionId>, path: String, opts: MockOptions) -> R<u64> {
     core.mock_export_wiremock(ids, path.into(), opts).map_err(e)
 }
 
 #[tauri::command]
-async fn mock_export_package(
-    core: State<'_, Core>,
-    ids: Vec<SessionId>,
-    path: String,
-    opts: MockOptions,
-) -> R<u64> {
+async fn mock_export_package(core: State<'_, Core>, ids: Vec<SessionId>, path: String, opts: MockOptions) -> R<u64> {
     core.mock_export_package(ids, path.into(), opts).map_err(e)
 }
 
 #[tauri::command]
-async fn mock_apply(
-    core: State<'_, Core>,
-    ids: Vec<SessionId>,
-    opts: MockOptions,
-    name: String,
-) -> R<u64> {
+async fn mock_apply(core: State<'_, Core>, ids: Vec<SessionId>, opts: MockOptions, name: String) -> R<u64> {
     core.mock_apply(ids, opts, name).map_err(e)
 }
 
@@ -916,31 +733,16 @@ async fn mock_import_package(core: State<'_, Core>, path: String, replace: bool)
 
 /// A package dropped onto the Mock Rules tab (raw bytes; name and mode in headers).
 #[tauri::command]
-async fn mock_import_package_data(
-    core: State<'_, Core>,
-    request: tauri::ipc::Request<'_>,
-) -> R<MockPackage> {
-    let h = |k: &str| {
-        request
-            .headers()
-            .get(k)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string()
-    };
-    let name = percent_encoding::percent_decode_str(&h("quena-mock-name"))
-        .decode_utf8_lossy()
-        .into_owned();
+async fn mock_import_package_data(core: State<'_, Core>, request: tauri::ipc::Request<'_>) -> R<MockPackage> {
+    let h = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let name = percent_encoding::percent_decode_str(&h("quena-mock-name")).decode_utf8_lossy().into_owned();
     let replace = h("quena-mock-replace") == "1";
     let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
         return Err("expected raw bytes".into());
     };
     // The body is borrowed from the request: work on it in place (no copy of a package that
     // can be hundreds of MB), off the async workers' queue.
-    tokio::task::block_in_place(|| {
-        core.mock_import_package_bytes(&name, data, replace)
-            .map_err(e)
-    })
+    tokio::task::block_in_place(|| core.mock_import_package_bytes(&name, data, replace).map_err(e))
 }
 
 #[tauri::command]
@@ -1004,11 +806,7 @@ async fn plugins_rescan(core: State<'_, Core>) -> R<Vec<quena_plugin_host::Plugi
 }
 
 #[tauri::command]
-async fn plugins_inspect_header(
-    core: State<'_, Core>,
-    name: String,
-    value: String,
-) -> R<Vec<quena_plugin_host::HeaderInspection>> {
+async fn plugins_inspect_header(core: State<'_, Core>, name: String, value: String) -> R<Vec<quena_plugin_host::HeaderInspection>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.plugin_inspect_header(&name, &value))).await
 }
@@ -1021,19 +819,9 @@ async fn plugins_reveal(core: State<'_, Core>) -> R<()> {
 }
 
 #[tauri::command]
-async fn auth_set_credential(
-    core: State<'_, Core>,
-    host: String,
-    user: String,
-    domain: String,
-    password: Option<String>,
-) -> R<()> {
+async fn auth_set_credential(core: State<'_, Core>, host: String, user: String, domain: String, password: Option<String>) -> R<()> {
     let core = core.inner().clone();
-    blocking(move || {
-        core.auth_set_credential(host, user, domain, password)
-            .map_err(e)
-    })
-    .await
+    blocking(move || core.auth_set_credential(host, user, domain, password).map_err(e)).await
 }
 
 #[tauri::command]
@@ -1043,51 +831,26 @@ async fn auth_remove_credential(core: State<'_, Core>, host: String) -> R<()> {
 }
 
 #[tauri::command]
-async fn ws_frames(
-    core: State<'_, Core>,
-    id: SessionId,
-    start: u64,
-    count: usize,
-) -> R<quena_app_core::ws::WsMessages> {
+async fn ws_frames(core: State<'_, Core>, id: SessionId, start: u64, count: usize) -> R<quena_app_core::ws::WsMessages> {
     let core = core.inner().clone();
     blocking(move || Ok(core.ws_frames(id, start, count))).await
 }
 
 #[tauri::command]
-async fn save_body_range(
-    core: State<'_, Core>,
-    id: SessionId,
-    part: Part,
-    offset: u64,
-    len: u64,
-    path: String,
-) -> R<u64> {
+async fn save_body_range(core: State<'_, Core>, id: SessionId, part: Part, offset: u64, len: u64, path: String) -> R<u64> {
     let core = core.inner().clone();
-    blocking(move || {
-        core.save_body_range(id, part, offset, len, path.into())
-            .map_err(e)
-    })
-    .await
+    blocking(move || core.save_body_range(id, part, offset, len, path.into()).map_err(e)).await
 }
 
 #[tauri::command]
-async fn grpc(
-    core: State<'_, Core>,
-    id: SessionId,
-    part: Part,
-    type_name: Option<String>,
-) -> R<Option<quena_app_core::grpc::Grpc>> {
+async fn grpc(core: State<'_, Core>, id: SessionId, part: Part, type_name: Option<String>) -> R<Option<quena_app_core::grpc::Grpc>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.grpc(id, part, type_name.as_deref()))).await
 }
 
 /// A MessagePack body as a tree (`None`: not MessagePack).
 #[tauri::command]
-async fn msgpack(
-    core: State<'_, Core>,
-    id: SessionId,
-    part: Part,
-) -> R<Option<quena_app_core::msgpack::Msgpack>> {
+async fn msgpack(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<quena_app_core::msgpack::Msgpack>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.msgpack(id, part))).await
 }
@@ -1101,20 +864,13 @@ async fn protobuf_status(core: State<'_, Core>) -> R<quena_app_core::protobuf::S
 
 /// Fetch a gRPC session's schema from its server (server reflection).
 #[tauri::command]
-async fn grpc_reflect(
-    core: State<'_, Core>,
-    id: SessionId,
-) -> R<quena_app_core::protobuf::Reflected> {
+async fn grpc_reflect(core: State<'_, Core>, id: SessionId) -> R<quena_app_core::protobuf::Reflected> {
     let core = core.inner().clone();
     blocking(move || core.grpc_reflect(id).map_err(e)).await
 }
 
 #[tauri::command]
-async fn multipart(
-    core: State<'_, Core>,
-    id: SessionId,
-    part: Part,
-) -> R<Option<quena_app_core::multipart::Multipart>> {
+async fn multipart(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<quena_app_core::multipart::Multipart>> {
     let core = core.inner().clone();
     blocking(move || Ok(core.multipart(id, part))).await
 }
@@ -1199,10 +955,7 @@ async fn script_menus(core: State<'_, Core>) -> R<Vec<String>> {
 
 #[tauri::command]
 async fn script_run_menu(core: State<'_, Core>, index: usize, ids: Vec<SessionId>) -> R<usize> {
-    rules(core.inner())?
-        .run_script_menu(index, &ids)
-        .await
-        .map_err(e)
+    rules(core.inner())?.run_script_menu(index, &ids).await.map_err(e)
 }
 
 /// Archives passed to the app (file association, command line, macOS "Open With") that
@@ -1363,34 +1116,18 @@ mod read_report_file_tests {
         assert_eq!(read_report_file(ok.to_str().unwrap()).unwrap(), "{}");
         let txt = dir.join("notes.txt");
         std::fs::write(&txt, "x").unwrap();
-        assert!(
-            read_report_file(txt.to_str().unwrap())
-                .unwrap_err()
-                .contains("not a .json file")
-        );
+        assert!(read_report_file(txt.to_str().unwrap()).unwrap_err().contains("not a .json file"));
         // A directory named like a report is no file.
         let d = dir.join("dir.json");
         std::fs::create_dir_all(&d).unwrap();
-        assert!(
-            read_report_file(d.to_str().unwrap())
-                .unwrap_err()
-                .contains("not a regular file")
-        );
+        assert!(read_report_file(d.to_str().unwrap()).unwrap_err().contains("not a regular file"));
         // A FIFO is refused instead of blocking the reader.
         #[cfg(unix)]
         {
             let fifo = dir.join("fifo.json");
             let _ = std::fs::remove_file(&fifo);
-            if std::process::Command::new("mkfifo")
-                .arg(&fifo)
-                .status()
-                .is_ok_and(|s| s.success())
-            {
-                assert!(
-                    read_report_file(fifo.to_str().unwrap())
-                        .unwrap_err()
-                        .contains("not a regular file")
-                );
+            if std::process::Command::new("mkfifo").arg(&fifo).status().is_ok_and(|s| s.success()) {
+                assert!(read_report_file(fifo.to_str().unwrap()).unwrap_err().contains("not a regular file"));
             }
         }
         let _ = std::fs::remove_dir_all(&dir);

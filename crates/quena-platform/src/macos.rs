@@ -58,19 +58,8 @@ fn parse_scutil(out: &str) -> SystemProxy {
     SystemProxy {
         http: pair("HTTPEnable", "HTTPProxy", "HTTPPort"),
         https: pair("HTTPSEnable", "HTTPSProxy", "HTTPSPort"),
-        pac_url: if kv
-            .get("ProxyAutoConfigEnable")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-        {
-            kv.get("ProxyAutoConfigURLString").cloned()
-        } else {
-            None
-        },
-        auto_discovery: kv
-            .get("ProxyAutoDiscoveryEnable")
-            .map(|v| v == "1")
-            .unwrap_or(false),
+        pac_url: if kv.get("ProxyAutoConfigEnable").map(|v| v == "1").unwrap_or(false) { kv.get("ProxyAutoConfigURLString").cloned() } else { None },
+        auto_discovery: kv.get("ProxyAutoDiscoveryEnable").map(|v| v == "1").unwrap_or(false),
         exceptions,
     }
 }
@@ -118,18 +107,9 @@ fn get_proxy(kind: &str, service: &str) -> Result<(bool, String, u16)> {
 }
 
 fn get_bypass(service: &str) -> Vec<String> {
-    run(
-        "/usr/sbin/networksetup",
-        &["-getproxybypassdomains", service],
-    )
-    .map(|o| {
-        o.lines()
-            .filter(|l| !l.contains("There aren't any"))
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect()
-    })
-    .unwrap_or_default()
+    run("/usr/sbin/networksetup", &["-getproxybypassdomains", service])
+        .map(|o| o.lines().filter(|l| !l.contains("There aren't any")).map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .unwrap_or_default()
 }
 
 /// Run `f` for every network service at once. Each `networksetup` call is its own process
@@ -139,10 +119,7 @@ fn per_service<T: Send>(svcs: &[String], f: impl Fn(&str) -> T + Sync) -> Vec<T>
     std::thread::scope(|scope| {
         let f = &f;
         let handles: Vec<_> = svcs.iter().map(|s| scope.spawn(move || f(s))).collect();
-        handles
-            .into_iter()
-            .map(|h| h.join().expect("networksetup worker"))
-            .collect()
+        handles.into_iter().map(|h| h.join().expect("networksetup worker")).collect()
     })
 }
 
@@ -151,31 +128,17 @@ pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<(
     // Keep an existing backup (e.g. after a crash) – it holds the original state.
     if !backup.exists() {
         let states = per_service(&svcs, |s| -> Result<ServiceState> {
-            Ok(ServiceState {
-                service: s.to_string(),
-                web: get_proxy("-getwebproxy", s)?,
-                secure: get_proxy("-getsecurewebproxy", s)?,
-                bypass: get_bypass(s),
-            })
+            Ok(ServiceState { service: s.to_string(), web: get_proxy("-getwebproxy", s)?, secure: get_proxy("-getsecurewebproxy", s)?, bypass: get_bypass(s) })
         })
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
-        let b = Backup {
-            port,
-            services: states,
-        };
+        let b = Backup { port, services: states };
         crate::write_atomic(backup, &serde_json::to_vec_pretty(&b).expect("backup json"))?;
     }
     let p = port.to_string();
     per_service(&svcs, |s| -> Result<()> {
-        run(
-            "/usr/sbin/networksetup",
-            &["-setwebproxy", s, "127.0.0.1", &p],
-        )?;
-        run(
-            "/usr/sbin/networksetup",
-            &["-setsecurewebproxy", s, "127.0.0.1", &p],
-        )?;
+        run("/usr/sbin/networksetup", &["-setwebproxy", s, "127.0.0.1", &p])?;
+        run("/usr/sbin/networksetup", &["-setsecurewebproxy", s, "127.0.0.1", &p])?;
         if !bypass.is_empty() {
             let mut args: Vec<&str> = vec!["-setproxybypassdomains", s];
             args.extend(bypass.iter().map(|b| b.as_str()));
@@ -190,9 +153,7 @@ pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<(
 }
 
 pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
-    let Ok(data) = std::fs::read(backup) else {
-        return Ok(false);
-    };
+    let Ok(data) = std::fs::read(backup) else { return Ok(false) };
     let b: Backup = match serde_json::from_slice(&data) {
         Ok(b) => b,
         Err(e) => {
@@ -201,10 +162,7 @@ pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
             tracing::error!(target: "quena::platform", "system proxy backup unreadable ({e}); turning off proxies that point to this Mac");
             if let Ok(svcs) = services() {
                 per_service(&svcs, |s| {
-                    for (get, state) in [
-                        ("-getwebproxy", "-setwebproxystate"),
-                        ("-getsecurewebproxy", "-setsecurewebproxystate"),
-                    ] {
+                    for (get, state) in [("-getwebproxy", "-setwebproxystate"), ("-getsecurewebproxy", "-setsecurewebproxystate")] {
                         if let Ok((true, host, _)) = get_proxy(get, s) {
                             if host == "127.0.0.1" || host == "localhost" {
                                 let _ = run("/usr/sbin/networksetup", &[state, s, "off"]);
@@ -222,34 +180,15 @@ pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
     let names: Vec<String> = b.services.iter().map(|s| s.service.clone()).collect();
     let failures: Vec<String> = per_service(&names, |name| {
         let mut failures = Vec::new();
-        let Some(s) = b.services.iter().find(|x| x.service == name) else {
-            return failures;
-        };
+        let Some(s) = b.services.iter().find(|x| x.service == name) else { return failures };
         let restore = |set: &str, state: &str, v: &(bool, String, u16)| -> Result<()> {
             if !v.1.is_empty() && v.2 != 0 && !(v.1 == "127.0.0.1" && v.2 == b.port) {
-                run(
-                    "/usr/sbin/networksetup",
-                    &[set, &s.service, &v.1, &v.2.to_string()],
-                )?;
+                run("/usr/sbin/networksetup", &[set, &s.service, &v.1, &v.2.to_string()])?;
             }
-            run(
-                "/usr/sbin/networksetup",
-                &[
-                    state,
-                    &s.service,
-                    if v.0 && !(v.1 == "127.0.0.1" && v.2 == b.port) {
-                        "on"
-                    } else {
-                        "off"
-                    },
-                ],
-            )?;
+            run("/usr/sbin/networksetup", &[state, &s.service, if v.0 && !(v.1 == "127.0.0.1" && v.2 == b.port) { "on" } else { "off" }])?;
             Ok(())
         };
-        for (set, state, v) in [
-            ("-setwebproxy", "-setwebproxystate", &s.web),
-            ("-setsecurewebproxy", "-setsecurewebproxystate", &s.secure),
-        ] {
+        for (set, state, v) in [("-setwebproxy", "-setwebproxystate", &s.web), ("-setsecurewebproxy", "-setsecurewebproxystate", &s.secure)] {
             if let Err(e) = restore(set, state, v) {
                 failures.push(format!("{}: {e}", s.service));
             }
@@ -284,41 +223,20 @@ fn login_keychain() -> String {
 
 pub fn install_root_ca(cert: &Path) -> Result<()> {
     let p = cert.to_string_lossy();
-    run(
-        "/usr/bin/security",
-        &[
-            "add-trusted-cert",
-            "-r",
-            "trustRoot",
-            "-p",
-            "ssl",
-            "-p",
-            "basic",
-            "-k",
-            &login_keychain(),
-            &p,
-        ],
-    )?;
+    run("/usr/bin/security", &["add-trusted-cert", "-r", "trustRoot", "-p", "ssl", "-p", "basic", "-k", &login_keychain(), &p])?;
     Ok(())
 }
 
 pub fn remove_root_ca(cert: &Path, sha1: &str) -> Result<()> {
     let p = cert.to_string_lossy();
     let _ = run("/usr/bin/security", &["remove-trusted-cert", &p]);
-    run(
-        "/usr/bin/security",
-        &["delete-certificate", "-Z", sha1, &login_keychain()],
-    )?;
+    run("/usr/bin/security", &["delete-certificate", "-Z", sha1, &login_keychain()])?;
     Ok(())
 }
 
 pub fn is_root_ca_trusted(cert: &Path) -> bool {
     let p = cert.to_string_lossy();
-    run(
-        "/usr/bin/security",
-        &["verify-cert", "-c", &p, "-p", "ssl", "-L", "-q"],
-    )
-    .is_ok()
+    run("/usr/bin/security", &["verify-cert", "-c", &p, "-p", "ssl", "-L", "-q"]).is_ok()
 }
 
 pub fn open(target: &str) -> Result<()> {
@@ -334,58 +252,17 @@ pub fn reveal(path: &Path) -> Result<()> {
 pub fn secure_set(account: &str, secret: &[u8]) -> Result<()> {
     // Store hex so binary secrets survive; the value lives only in the child's argv
     // and then in the Keychain (protected by its ACL) – never in a Quena file.
-    let value = format!(
-        "hex:{}",
-        secret
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    );
-    let _ = run(
-        "/usr/bin/security",
-        &[
-            "delete-generic-password",
-            "-a",
-            account,
-            "-s",
-            crate::secure::SERVICE,
-        ],
-    );
-    run(
-        "/usr/bin/security",
-        &[
-            "add-generic-password",
-            "-a",
-            account,
-            "-s",
-            crate::secure::SERVICE,
-            "-U",
-            "-w",
-            &value,
-        ],
-    )
-    .map(|_| ())
+    let value = format!("hex:{}", secret.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let _ = run("/usr/bin/security", &["delete-generic-password", "-a", account, "-s", crate::secure::SERVICE]);
+    run("/usr/bin/security", &["add-generic-password", "-a", account, "-s", crate::secure::SERVICE, "-U", "-w", &value]).map(|_| ())
 }
 
 pub fn secure_get(account: &str) -> Result<Option<Vec<u8>>> {
-    match run(
-        "/usr/bin/security",
-        &[
-            "find-generic-password",
-            "-a",
-            account,
-            "-s",
-            crate::secure::SERVICE,
-            "-w",
-        ],
-    ) {
+    match run("/usr/bin/security", &["find-generic-password", "-a", account, "-s", crate::secure::SERVICE, "-w"]) {
         Ok(out) => {
             let v = out.trim();
             if let Some(hex) = v.strip_prefix("hex:") {
-                let bytes = (0..hex.len())
-                    .step_by(2)
-                    .filter_map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
-                    .collect();
+                let bytes = (0..hex.len()).step_by(2).filter_map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok()).collect();
                 Ok(Some(bytes))
             } else {
                 Ok(Some(v.as_bytes().to_vec()))
@@ -396,23 +273,12 @@ pub fn secure_get(account: &str) -> Result<Option<Vec<u8>>> {
 }
 
 pub fn secure_delete(account: &str) -> Result<()> {
-    let _ = run(
-        "/usr/bin/security",
-        &[
-            "delete-generic-password",
-            "-a",
-            account,
-            "-s",
-            crate::secure::SERVICE,
-        ],
-    );
+    let _ = run("/usr/bin/security", &["delete-generic-password", "-a", account, "-s", crate::secure::SERVICE]);
     Ok(())
 }
 
 pub fn local_addresses() -> Vec<(String, String)> {
-    let Ok(out) = run("/sbin/ifconfig", &[]) else {
-        return vec![];
-    };
+    let Ok(out) = run("/sbin/ifconfig", &[]) else { return vec![] };
     let mut res = Vec::new();
     let mut iface = String::new();
     for line in out.lines() {
@@ -447,9 +313,7 @@ struct Cache {
 
 impl Default for ProcessLookup {
     fn default() -> Self {
-        ProcessLookup {
-            cache: Mutex::new(Cache::default()),
-        }
+        ProcessLookup { cache: Mutex::new(Cache::default()) }
     }
 }
 
@@ -470,8 +334,7 @@ impl ProcessLookup {
         for attempt in 0..2 {
             let scanned = {
                 let c = self.cache.lock();
-                c.last_scan
-                    .is_some_and(|t| t.elapsed() < Duration::from_millis(40))
+                c.last_scan.is_some_and(|t| t.elapsed() < Duration::from_millis(40))
             };
             if scanned && attempt == 0 {
                 std::thread::sleep(Duration::from_millis(40));
@@ -493,27 +356,19 @@ impl ProcessLookup {
         use libproc::libproc::proc_pid::{listpidinfo, pidinfo};
         use libproc::processes::{ProcFilter, pids_by_type};
         let me = std::process::id();
-        let Ok(pids) = pids_by_type(ProcFilter::All) else {
-            return;
-        };
+        let Ok(pids) = pids_by_type(ProcFilter::All) else { return };
         let mut found: Vec<(u16, u32)> = Vec::new();
         for pid in pids {
             if pid == 0 || pid == me {
                 continue;
             }
-            let Ok(info) = pidinfo::<BSDInfo>(pid as i32, 0) else {
-                continue;
-            };
-            let Ok(fds) = listpidinfo::<ListFDs>(pid as i32, info.pbi_nfiles as usize) else {
-                continue;
-            };
+            let Ok(info) = pidinfo::<BSDInfo>(pid as i32, 0) else { continue };
+            let Ok(fds) = listpidinfo::<ListFDs>(pid as i32, info.pbi_nfiles as usize) else { continue };
             for fd in fds {
                 if !matches!(ProcFDType::from(fd.proc_fdtype), ProcFDType::Socket) {
                     continue;
                 }
-                let Ok(s) = pidfdinfo::<SocketFDInfo>(pid as i32, fd.proc_fd) else {
-                    continue;
-                };
+                let Ok(s) = pidfdinfo::<SocketFDInfo>(pid as i32, fd.proc_fd) else { continue };
                 if !matches!(SocketInfoKind::from(s.psi.soi_kind), SocketInfoKind::Tcp) {
                     continue;
                 }
@@ -534,8 +389,7 @@ impl ProcessLookup {
             }
         }
         // Forget old entries (ports are reused).
-        c.by_port
-            .retain(|_, (_, t)| now.duration_since(*t) < Duration::from_secs(120));
+        c.by_port.retain(|_, (_, t)| now.duration_since(*t) < Duration::from_secs(120));
         if c.names.len() > 4096 {
             c.names.clear();
         }
@@ -573,11 +427,7 @@ mod tests {
         // Connect a child process (curl) to a local listener and find it.
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
-        let mut child = std::process::Command::new("/usr/bin/nc")
-            .args(["127.0.0.1", &port.to_string()])
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child = std::process::Command::new("/usr/bin/nc").args(["127.0.0.1", &port.to_string()]).stdin(std::process::Stdio::piped()).spawn().unwrap();
         let (_s, peer) = l.accept().unwrap();
         let pl = ProcessLookup::new();
         let t = Instant::now();

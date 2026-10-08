@@ -100,11 +100,7 @@ impl Compiled {
         }
         // Hosts
         if s.host_mode != HostMode::NoFilter && !self.hosts.is_empty() {
-            let host = if tunnel {
-                host_without_port(&r.url)
-            } else {
-                host_without_port(&r.host)
-            };
+            let host = if tunnel { host_without_port(&r.url) } else { host_without_port(&r.host) };
             let hit = self.hosts.iter().any(|p| glob_match(p, host));
             if (s.host_mode == HostMode::ShowOnly) != hit {
                 return false;
@@ -119,19 +115,10 @@ impl Compiled {
             ProcessMode::Remote if !proc_lc.starts_with("remote:") => return false,
             _ => {}
         }
-        if !self.process_only.is_empty()
-            && !self
-                .process_only
-                .iter()
-                .any(|p| proc_lc.contains(p.as_str()))
-        {
+        if !self.process_only.is_empty() && !self.process_only.iter().any(|p| proc_lc.contains(p.as_str())) {
             return false;
         }
-        if self
-            .hide_processes
-            .iter()
-            .any(|p| proc_lc.contains(p.as_str()))
-        {
+        if self.hide_processes.iter().any(|p| proc_lc.contains(p.as_str())) {
             return false;
         }
         // URL
@@ -173,19 +160,14 @@ impl Compiled {
             if s.hide_scripts && (ct.contains("javascript") || ct.contains("ecmascript")) {
                 return false;
             }
-            if s.hide_fonts
-                && (ct.starts_with("font/") || ct.contains("font-") || ct.contains("woff"))
-            {
+            if s.hide_fonts && (ct.starts_with("font/") || ct.contains("font-") || ct.contains("woff")) {
                 return false;
             }
             if self.ct_hide.iter().any(|p| ct.contains(p.as_str())) {
                 return false;
             }
         }
-        if !self.ct_show.is_empty()
-            && r.status != 0
-            && !self.ct_show.iter().any(|p| ct.contains(p.as_str()))
-        {
+        if !self.ct_show.is_empty() && r.status != 0 && !self.ct_show.iter().any(|p| ct.contains(p.as_str())) {
             return false;
         }
         // Size and duration (only once known)
@@ -244,12 +226,7 @@ mod tests {
 
     #[test]
     fn disabled_matches_all() {
-        let f = Filter::compile(&FilterSettings {
-            enabled: false,
-            hide_images: true,
-            ..Default::default()
-        })
-        .unwrap();
+        let f = Filter::compile(&FilterSettings { enabled: false, hide_images: true, ..Default::default() }).unwrap();
         assert!(f.matches(&row("a", 200, "image/png")));
     }
 }

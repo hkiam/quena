@@ -34,12 +34,7 @@ const GSS_S_COMPLETE: OM_uint32 = 0;
 const GSS_S_CONTINUE_NEEDED: OM_uint32 = 1;
 const GSS_C_MUTUAL_FLAG: OM_uint32 = 2;
 
-type ImportNameFn = unsafe extern "C" fn(
-    minor: *mut OM_uint32,
-    input: *const GssBufferDesc,
-    name_type: *const GssOidDesc,
-    output: *mut *mut c_void,
-) -> OM_uint32;
+type ImportNameFn = unsafe extern "C" fn(minor: *mut OM_uint32, input: *const GssBufferDesc, name_type: *const GssOidDesc, output: *mut *mut c_void) -> OM_uint32;
 type InitSecContextFn = unsafe extern "C" fn(
     minor: *mut OM_uint32,
     cred: *const c_void,
@@ -55,15 +50,9 @@ type InitSecContextFn = unsafe extern "C" fn(
     ret_flags: *mut OM_uint32,
     time_rec: *mut OM_uint32,
 ) -> OM_uint32;
-type ReleaseNameFn =
-    unsafe extern "C" fn(minor: *mut OM_uint32, name: *mut *mut c_void) -> OM_uint32;
-type ReleaseBufferFn =
-    unsafe extern "C" fn(minor: *mut OM_uint32, buf: *mut GssBufferDesc) -> OM_uint32;
-type DeleteSecContextFn = unsafe extern "C" fn(
-    minor: *mut OM_uint32,
-    ctx: *mut *mut c_void,
-    out: *mut GssBufferDesc,
-) -> OM_uint32;
+type ReleaseNameFn = unsafe extern "C" fn(minor: *mut OM_uint32, name: *mut *mut c_void) -> OM_uint32;
+type ReleaseBufferFn = unsafe extern "C" fn(minor: *mut OM_uint32, buf: *mut GssBufferDesc) -> OM_uint32;
+type DeleteSecContextFn = unsafe extern "C" fn(minor: *mut OM_uint32, ctx: *mut *mut c_void, out: *mut GssBufferDesc) -> OM_uint32;
 
 /// The GSS-API entry points we use, from whichever backend the platform has.
 struct Gss {
@@ -80,12 +69,7 @@ mod backend {
 
     #[link(name = "GSS", kind = "framework")]
     unsafe extern "C" {
-        fn gss_import_name(
-            minor: *mut OM_uint32,
-            input: *const GssBufferDesc,
-            name_type: *const GssOidDesc,
-            output: *mut *mut c_void,
-        ) -> OM_uint32;
+        fn gss_import_name(minor: *mut OM_uint32, input: *const GssBufferDesc, name_type: *const GssOidDesc, output: *mut *mut c_void) -> OM_uint32;
         fn gss_init_sec_context(
             minor: *mut OM_uint32,
             cred: *const c_void,
@@ -103,11 +87,7 @@ mod backend {
         ) -> OM_uint32;
         fn gss_release_name(minor: *mut OM_uint32, name: *mut *mut c_void) -> OM_uint32;
         fn gss_release_buffer(minor: *mut OM_uint32, buf: *mut GssBufferDesc) -> OM_uint32;
-        fn gss_delete_sec_context(
-            minor: *mut OM_uint32,
-            ctx: *mut *mut c_void,
-            out: *mut GssBufferDesc,
-        ) -> OM_uint32;
+        fn gss_delete_sec_context(minor: *mut OM_uint32, ctx: *mut *mut c_void, out: *mut GssBufferDesc) -> OM_uint32;
     }
 
     static GSS: Gss = Gss {
@@ -129,12 +109,7 @@ mod backend {
     use std::sync::OnceLock;
 
     /// MIT first (the common default), then Heimdal.
-    pub(super) const CANDIDATES: &[&str] = &[
-        "libgssapi_krb5.so.2",
-        "libgssapi_krb5.so",
-        "libgssapi.so.3",
-        "libgssapi.so",
-    ];
+    pub(super) const CANDIDATES: &[&str] = &["libgssapi_krb5.so.2", "libgssapi_krb5.so", "libgssapi.so.3", "libgssapi.so"];
 
     // The Library stays alive for the process lifetime alongside its function table.
     static LOADED: OnceLock<Result<(libloading::Library, Gss), String>> = OnceLock::new();
@@ -197,52 +172,25 @@ impl NegotiateCtx {
     pub fn new(host: &str) -> Result<NegotiateCtx, AuthError> {
         let gss = backend::gss()?;
         let spn = format!("HTTP@{host}");
-        let mut buf = GssBufferDesc {
-            length: spn.len(),
-            value: spn.as_ptr() as *mut c_void,
-        };
-        let name_oid = GssOidDesc {
-            length: HOSTBASED_OID.len() as u32,
-            elements: HOSTBASED_OID.as_ptr() as *const c_void,
-        };
+        let mut buf = GssBufferDesc { length: spn.len(), value: spn.as_ptr() as *mut c_void };
+        let name_oid = GssOidDesc { length: HOSTBASED_OID.len() as u32, elements: HOSTBASED_OID.as_ptr() as *const c_void };
         let mut minor = 0;
         let mut target: *mut c_void = std::ptr::null_mut();
         let major = unsafe { (gss.import_name)(&mut minor, &mut buf, &name_oid, &mut target) };
         if major != GSS_S_COMPLETE {
-            return Err(AuthError::Other(format!(
-                "gss_import_name failed (0x{major:x})"
-            )));
+            return Err(AuthError::Other(format!("gss_import_name failed (0x{major:x})")));
         }
-        Ok(NegotiateCtx {
-            gss,
-            ctx: std::ptr::null_mut(),
-            target,
-            complete: false,
-        })
+        Ok(NegotiateCtx { gss, ctx: std::ptr::null_mut(), target, complete: false })
     }
 
     pub fn step(&mut self, input: Option<&[u8]>) -> Result<Vec<u8>, AuthError> {
         if self.complete {
-            return Err(AuthError::Protocol(
-                "Negotiate handshake already complete".into(),
-            ));
+            return Err(AuthError::Protocol("Negotiate handshake already complete".into()));
         }
-        let mech = GssOidDesc {
-            length: SPNEGO_OID.len() as u32,
-            elements: SPNEGO_OID.as_ptr() as *const c_void,
-        };
-        let in_buf = input.map(|d| GssBufferDesc {
-            length: d.len(),
-            value: d.as_ptr() as *mut c_void,
-        });
-        let in_ptr = in_buf
-            .as_ref()
-            .map(|b| b as *const GssBufferDesc)
-            .unwrap_or(std::ptr::null());
-        let mut out = GssBufferDesc {
-            length: 0,
-            value: std::ptr::null_mut(),
-        };
+        let mech = GssOidDesc { length: SPNEGO_OID.len() as u32, elements: SPNEGO_OID.as_ptr() as *const c_void };
+        let in_buf = input.map(|d| GssBufferDesc { length: d.len(), value: d.as_ptr() as *mut c_void });
+        let in_ptr = in_buf.as_ref().map(|b| b as *const GssBufferDesc).unwrap_or(std::ptr::null());
+        let mut out = GssBufferDesc { length: 0, value: std::ptr::null_mut() };
         let mut minor = 0;
         let mut ret_flags = 0;
         let major = unsafe {
@@ -272,8 +220,7 @@ impl NegotiateCtx {
         }
         self.complete = major == GSS_S_COMPLETE;
         let token = if out.length > 0 {
-            let slice =
-                unsafe { std::slice::from_raw_parts(out.value as *const u8, out.length) }.to_vec();
+            let slice = unsafe { std::slice::from_raw_parts(out.value as *const u8, out.length) }.to_vec();
             unsafe { (self.gss.release_buffer)(&mut minor, &mut out) };
             slice
         } else {
@@ -286,10 +233,7 @@ impl NegotiateCtx {
 impl Drop for NegotiateCtx {
     fn drop(&mut self) {
         let mut minor = 0;
-        let mut out = GssBufferDesc {
-            length: 0,
-            value: std::ptr::null_mut(),
-        };
+        let mut out = GssBufferDesc { length: 0, value: std::ptr::null_mut() };
         unsafe {
             if !self.ctx.is_null() {
                 (self.gss.delete_sec_context)(&mut minor, &mut self.ctx, &mut out);
@@ -320,16 +264,9 @@ mod tests {
             Err(AuthError::NoCredentials | AuthError::Unsupported) => {}
             Err(e) => panic!("unexpected error: {e}"),
             // GSS.framework may still find a KCM/keychain identity despite KRB5CCNAME.
-            Ok(tok) => assert!(
-                cfg!(target_os = "macos") && !tok.is_empty(),
-                "no-ticket step produced a token"
-            ),
+            Ok(tok) => assert!(cfg!(target_os = "macos") && !tok.is_empty(), "no-ticket step produced a token"),
         }
-        assert!(
-            t0.elapsed() < Duration::from_secs(10),
-            "no-ticket step took {:?}",
-            t0.elapsed()
-        );
+        assert!(t0.elapsed() < Duration::from_secs(10), "no-ticket step took {:?}", t0.elapsed());
     }
 
     #[cfg(target_os = "linux")]

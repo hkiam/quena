@@ -16,10 +16,7 @@ const N: u64 = 500_000;
 /// debug-build guards on slow shared VMs and sets a larger value; an accidental
 /// O(n²) at 500k rows would still take minutes and fail.
 fn slack() -> f64 {
-    std::env::var("QUENA_PERF_SLACK")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1.0)
+    std::env::var("QUENA_PERF_SLACK").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0)
 }
 
 fn row(id: u64) -> SessionSummary {
@@ -66,20 +63,14 @@ fn viewport_query_is_fast_on_500k() {
     }
     let per = t.elapsed().as_micros() as f64 / iters as f64;
     eprintln!("[perf] window(100) over 500k: {per:.1} µs/query ({sink} rows total)");
-    assert!(
-        per < 2000.0 * slack(),
-        "viewport query too slow: {per} µs (budget frame is 16 ms)"
-    );
+    assert!(per < 2000.0 * slack(), "viewport query too slow: {per} µs (budget frame is 16 ms)");
 }
 
 #[test]
 fn per_frame_inserts_stay_incremental_and_fast() {
     // Sorted view (non-natural order) is the expensive case: inserts keep it sorted.
     let idx = build();
-    idx.set_sort(Sort {
-        column: Column::Host,
-        descending: false,
-    });
+    idx.set_sort(Sort { column: Column::Host, descending: false });
     idx.tick();
 
     // 5000 sessions/s arrive over ~60 frames/s, i.e. ~83 per frame — the index takes
@@ -106,9 +97,7 @@ fn per_frame_inserts_stay_incremental_and_fast() {
         // index; a slow index makes most frames slow.
         let p90 = times[times.len() * 9 / 10];
         let worst = times[times.len() - 1];
-        eprintln!(
-            "[perf] per-frame tick (200 sorted inserts): p90 {p90:.2} ms, worst {worst:.2} ms"
-        );
+        eprintln!("[perf] per-frame tick (200 sorted inserts): p90 {p90:.2} ms, worst {worst:.2} ms");
         if best.is_none_or(|(b, _)| p90 < b) {
             best = Some((p90, worst));
         }
@@ -119,10 +108,7 @@ fn per_frame_inserts_stay_incremental_and_fast() {
     let (p90, _) = best.unwrap();
     assert_eq!(idx.len(), (next - 1) as usize);
     // Must stay well inside a 16 ms frame so scrolling never stutters under load.
-    assert!(
-        p90 < 16.0 * slack(),
-        "per-frame insert tick too slow: p90 {p90} ms"
-    );
+    assert!(p90 < 16.0 * slack(), "per-frame insert tick too slow: p90 {p90} ms");
 }
 
 #[test]
@@ -131,10 +117,7 @@ fn large_burst_is_throttled_then_rebuilds() {
     // (backpressure, R5) rather than rebuilding on every tick, then rebuilds once the
     // throttle window passes. This proves the coalescing, not just raw speed.
     let idx = build();
-    idx.set_sort(Sort {
-        column: Column::Host,
-        descending: false,
-    });
+    idx.set_sort(Sort { column: Column::Host, descending: false });
     idx.tick();
 
     for id in (N + 1)..=(N + 5000) {
@@ -143,18 +126,9 @@ fn large_burst_is_throttled_then_rebuilds() {
     // Immediately after a full sort, the >256-change burst is throttled (coalesced):
     // the tick reports no change and defers the rebuild rather than rebuilding now.
     let immediate = idx.tick();
-    eprintln!(
-        "[perf] burst tick immediately after sort: changed={immediate} (expected false = throttled)"
-    );
-    assert!(
-        !immediate,
-        "large burst should be throttled right after a full sort, not rebuilt every tick"
-    );
-    assert_eq!(
-        idx.view_len(),
-        N as usize,
-        "throttled tick must not yet apply the burst to the view"
-    );
+    eprintln!("[perf] burst tick immediately after sort: changed={immediate} (expected false = throttled)");
+    assert!(!immediate, "large burst should be throttled right after a full sort, not rebuilt every tick");
+    assert_eq!(idx.view_len(), N as usize, "throttled tick must not yet apply the burst to the view");
 
     // After the throttle window, a tick applies the burst in one rebuild.
     std::thread::sleep(std::time::Duration::from_millis(550));
@@ -172,14 +146,7 @@ fn filter_and_sort_switch_on_500k() {
     let idx = build();
 
     let t = Instant::now();
-    idx.set_filter(
-        Filter::compile(&FilterSettings {
-            enabled: true,
-            hide_success: true,
-            ..Default::default()
-        })
-        .unwrap(),
-    );
+    idx.set_filter(Filter::compile(&FilterSettings { enabled: true, hide_success: true, ..Default::default() }).unwrap());
     idx.tick();
     let filter_ms = t.elapsed().as_secs_f64() * 1000.0;
     let visible = idx.view_len();
@@ -188,10 +155,7 @@ fn filter_and_sort_switch_on_500k() {
     assert!(visible > 0 && visible < N as usize);
 
     let t = Instant::now();
-    idx.set_sort(Sort {
-        column: Column::Body,
-        descending: true,
-    });
+    idx.set_sort(Sort { column: Column::Body, descending: true });
     idx.tick();
     let sort_ms = t.elapsed().as_secs_f64() * 1000.0;
     eprintln!("[perf] sort switch (body desc) over 500k: {sort_ms:.1} ms");
@@ -204,12 +168,6 @@ fn filter_and_sort_switch_on_500k() {
     }
     // A full re-sort/rebuild of 500k is a background-ish operation but must stay well
     // under a second so the "latest wins" switch feels immediate.
-    assert!(
-        filter_ms < 1500.0 * slack(),
-        "filter switch too slow: {filter_ms} ms"
-    );
-    assert!(
-        sort_ms < 1500.0 * slack(),
-        "sort switch too slow: {sort_ms} ms"
-    );
+    assert!(filter_ms < 1500.0 * slack(), "filter switch too slow: {filter_ms} ms");
+    assert!(sort_ms < 1500.0 * slack(), "sort switch too slow: {sort_ms} ms");
 }
