@@ -338,6 +338,14 @@ pub(crate) async fn serve(ctx: Arc<ConnCtx>, mut stream: TcpStream) {
                 format!("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{msg}", msg.len()).as_bytes(),
             )
             .await;
+            // Close the sending side, then read what the client sent: closing with unread
+            // bytes makes Windows reset the connection, and the client loses the answer.
+            let _ = tokio::io::AsyncWriteExt::shutdown(&mut io).await;
+            let mut sink = [0u8; 4096];
+            let _ = tokio::time::timeout(Duration::from_secs(2), async {
+                while matches!(io.read(&mut sink).await, Ok(n) if n > 0) {}
+            })
+            .await;
         }
         (_, _) if first == H2_PREFACE => serve_h2c(ctx, io).await,
         _ => serve_h1(ctx, io).await,
