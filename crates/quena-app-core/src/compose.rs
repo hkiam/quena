@@ -73,25 +73,52 @@ pub fn parse_raw_request(raw: &str) -> Result<ParsedRequest> {
     let mut lines = head.lines();
     let first = lines.next().ok_or_else(|| anyhow!("empty request"))?;
     let mut parts = first.split_whitespace();
-    let method = parts.next().ok_or_else(|| anyhow!("missing method"))?.to_string();
-    let mut url = parts.next().ok_or_else(|| anyhow!("missing URL"))?.to_string();
+    let method = parts
+        .next()
+        .ok_or_else(|| anyhow!("missing method"))?
+        .to_string();
+    let mut url = parts
+        .next()
+        .ok_or_else(|| anyhow!("missing URL"))?
+        .to_string();
     let version = parts.next().unwrap_or("HTTP/1.1").to_string();
     let headers: Vec<&str> = lines.collect();
     if url.starts_with('/') {
         let host = headers
             .iter()
-            .find_map(|l| l.split_once(':').filter(|(k, _)| k.trim().eq_ignore_ascii_case("host")).map(|(_, v)| v.trim().to_string()))
+            .find_map(|l| {
+                l.split_once(':')
+                    .filter(|(k, _)| k.trim().eq_ignore_ascii_case("host"))
+                    .map(|(_, v)| v.trim().to_string())
+            })
             .ok_or_else(|| anyhow!("relative URL needs a Host header"))?;
         url = format!("http://{host}{url}");
     }
-    Ok(ParsedRequest { method, url, version, headers: headers.join("\n"), body: body.to_string() })
+    Ok(ParsedRequest {
+        method,
+        url,
+        version,
+        headers: headers.join("\n"),
+        body: body.to_string(),
+    })
 }
 
 /// Parse a `curl` command line into a Composer-ready request.
 pub fn parse_curl(cmd: &str) -> Result<ParsedRequest> {
     let c = quena_formats::curl::parse(cmd).map_err(|e| anyhow!("{e}"))?;
-    let headers = c.headers.iter().map(|(n, v)| format!("{n}: {v}")).collect::<Vec<_>>().join("\n");
-    Ok(ParsedRequest { method: c.method, url: c.url, version: "HTTP/1.1".into(), headers, body: c.body })
+    let headers = c
+        .headers
+        .iter()
+        .map(|(n, v)| format!("{n}: {v}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(ParsedRequest {
+        method: c.method,
+        url: c.url,
+        version: "HTTP/1.1".into(),
+        headers,
+        body: c.body,
+    })
 }
 
 fn parse_header_lines(s: &str) -> Headers {
@@ -110,7 +137,10 @@ fn parse_header_lines(s: &str) -> Headers {
 
 impl AppCore {
     pub(crate) fn proxy_engine(&self) -> Result<Arc<ProxyEngine>> {
-        self.proxy_engine.read().clone().ok_or_else(|| anyhow!("capture engine not available"))
+        self.proxy_engine
+            .read()
+            .clone()
+            .ok_or_else(|| anyhow!("capture engine not available"))
     }
 
     pub fn set_proxy_engine(&self, e: Arc<ProxyEngine>) {
@@ -125,13 +155,23 @@ impl AppCore {
         let mut jobs = Vec::new();
         for id in ids {
             let Some(d) = cap.detail(id) else { continue };
-            if d.summary.kind == SessionKind::Tunnel || d.request.method.eq_ignore_ascii_case("CONNECT") {
+            if d.summary.kind == SessionKind::Tunnel
+                || d.request.method.eq_ignore_ascii_case("CONNECT")
+            {
                 continue;
             }
-            let Some((req_body, _)) = cap.bodies_of(id) else { continue };
+            let Some((req_body, _)) = cap.bodies_of(id) else {
+                continue;
+            };
             let mut head = d.request.clone();
             if o.unconditional {
-                for h in ["if-modified-since", "if-none-match", "if-match", "if-unmodified-since", "if-range"] {
+                for h in [
+                    "if-modified-since",
+                    "if-none-match",
+                    "if-match",
+                    "if-unmodified-since",
+                    "if-range",
+                ] {
                     head.headers.remove(h);
                 }
             }
@@ -185,7 +225,9 @@ impl AppCore {
         }
         let mut headers = parse_header_lines(&r.headers);
         let body = if let Some(id) = r.body_from_session {
-            cap.bodies_of(id).map(|(b, _)| b).ok_or_else(|| anyhow!("session #{id} not found"))?
+            cap.bodies_of(id)
+                .map(|(b, _)| b)
+                .ok_or_else(|| anyhow!("session #{id} not found"))?
         } else if let Some(f) = &r.body_file {
             // Stream the file into the store (large files are fine).
             let mut w = cap.bodies.writer_with_limit(u64::MAX);
@@ -201,7 +243,11 @@ impl AppCore {
             }
             w.finish()
         } else {
-            let (bytes, content_type) = quena_body::text::encode_edited(&r.body, headers.get("content-type"), r.body_charset.as_deref());
+            let (bytes, content_type) = quena_body::text::encode_edited(
+                &r.body,
+                headers.get("content-type"),
+                r.body_charset.as_deref(),
+            );
             if let Some(ct) = content_type {
                 headers.set("Content-Type", ct);
             }
@@ -209,7 +255,12 @@ impl AppCore {
         };
         if r.fix_content_length {
             headers.remove("transfer-encoding");
-            if body.len() > 0 || !matches!(r.method.to_ascii_uppercase().as_str(), "GET" | "HEAD" | "DELETE" | "OPTIONS") {
+            if body.len() > 0
+                || !matches!(
+                    r.method.to_ascii_uppercase().as_str(),
+                    "GET" | "HEAD" | "DELETE" | "OPTIONS"
+                )
+            {
                 headers.set("Content-Length", body.len().to_string());
             } else {
                 headers.remove("content-length");
@@ -218,9 +269,18 @@ impl AppCore {
         if headers.get("host").is_none() {
             headers.0.insert(0, ("Host".into(), uri.authority.clone()));
         }
-        let head = RequestHead { method: r.method.trim().to_ascii_uppercase(), url, version: HttpVersion::Http11, headers };
+        let head = RequestHead {
+            method: r.method.trim().to_ascii_uppercase(),
+            url,
+            version: HttpVersion::Http11,
+            headers,
+        };
         let shared = engine.proxy.shared.clone();
-        let opts = ExecuteOptions { flags: flags::COMPOSED | if r.breakpoint { flags::BREAKPOINTED } else { 0 }, comment: None, hooks: true };
+        let opts = ExecuteOptions {
+            flags: flags::COMPOSED | if r.breakpoint { flags::BREAKPOINTED } else { 0 },
+            comment: None,
+            hooks: true,
+        };
         let rt = engine.proxy.runtime().handle().clone();
         let (tx, rx) = std::sync::mpsc::channel();
         rt.spawn(async move {
@@ -230,7 +290,8 @@ impl AppCore {
             .await;
             let _ = id;
         });
-        rx.recv_timeout(std::time::Duration::from_secs(5)).map_err(|_| anyhow!("composer request did not start"))
+        rx.recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| anyhow!("composer request did not start"))
     }
 }
 
@@ -281,7 +342,10 @@ mod tests {
     use super::*;
     #[test]
     fn raw_parse() {
-        let p = parse_raw_request("POST /api HTTP/1.1\r\nHost: a.b\r\nContent-Type: text/plain\r\n\r\nhello").unwrap();
+        let p = parse_raw_request(
+            "POST /api HTTP/1.1\r\nHost: a.b\r\nContent-Type: text/plain\r\n\r\nhello",
+        )
+        .unwrap();
         assert_eq!(p.url, "http://a.b/api");
         assert_eq!(p.method, "POST");
         assert_eq!(p.body, "hello");

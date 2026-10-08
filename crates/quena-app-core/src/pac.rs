@@ -1,7 +1,7 @@
 //! PAC (proxy auto-config) integration: fetch a PAC script and expose it to the
 //! proxy as an [`UpstreamResolver`]. Evaluation itself lives in `quena-script`.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use quena_proxy::UpstreamResolver;
 use quena_script::PacEngine;
 use std::io::{Read, Write};
@@ -18,7 +18,10 @@ pub struct PacResolver {
 
 impl PacResolver {
     pub fn new(source_id: String, source: &str) -> Arc<PacResolver> {
-        Arc::new(PacResolver { engine: Arc::new(PacEngine::new(source)), source_id })
+        Arc::new(PacResolver {
+            engine: Arc::new(PacEngine::new(source)),
+            source_id,
+        })
     }
 
     pub fn error(&self) -> Option<String> {
@@ -28,7 +31,9 @@ impl PacResolver {
 
 impl std::fmt::Debug for PacResolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PacResolver").field("source", &self.source_id).finish()
+        f.debug_struct("PacResolver")
+            .field("source", &self.source_id)
+            .finish()
     }
 }
 
@@ -49,7 +54,9 @@ pub fn load_pac_source(loc: &str) -> Result<String> {
         return http_get(loc);
     }
     if loc.starts_with("https://") {
-        return Err(anyhow!("https:// PAC URLs are not fetched automatically; download the file and set its path"));
+        return Err(anyhow!(
+            "https:// PAC URLs are not fetched automatically; download the file and set its path"
+        ));
     }
     read_pac_file(loc)
 }
@@ -71,7 +78,11 @@ const PAC_MAX_BYTES: usize = 1 << 20;
 
 fn http_get(url: &str) -> Result<String> {
     let deadline = std::time::Instant::now() + PAC_FETCH_DEADLINE;
-    let remaining = || deadline.saturating_duration_since(std::time::Instant::now()).max(Duration::from_millis(1));
+    let remaining = || {
+        deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .max(Duration::from_millis(1))
+    };
     let rest = &url["http://".len()..];
     let (authority, path) = match rest.split_once('/') {
         Some((a, p)) => (a, format!("/{p}")),
@@ -95,14 +106,19 @@ fn http_get(url: &str) -> Result<String> {
     };
     let mut stream = TcpStream::connect_timeout(&addr, remaining().min(Duration::from_secs(10)))?;
     stream.set_write_timeout(Some(remaining()))?;
-    let req = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: Quena\r\n\r\n");
+    let req = format!(
+        "GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: Quena\r\n\r\n"
+    );
     stream.write_all(req.as_bytes())?;
     // Bounded in time (a server trickling bytes) and size (a server sending gigabytes).
     let mut buf = Vec::new();
     let mut chunk = [0u8; 16 * 1024];
     loop {
         if std::time::Instant::now() >= deadline {
-            return Err(anyhow!("PAC download did not finish within {} s", PAC_FETCH_DEADLINE.as_secs()));
+            return Err(anyhow!(
+                "PAC download did not finish within {} s",
+                PAC_FETCH_DEADLINE.as_secs()
+            ));
         }
         stream.set_read_timeout(Some(remaining()))?;
         let n = stream.read(&mut chunk)?;
@@ -114,7 +130,10 @@ fn http_get(url: &str) -> Result<String> {
             return Err(anyhow!("PAC file larger than {} KB", PAC_MAX_BYTES / 1024));
         }
     }
-    let idx = buf.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| anyhow!("malformed HTTP response"))?;
+    let idx = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| anyhow!("malformed HTTP response"))?;
     let head = &buf[..idx];
     let status_line = head.split(|&b| b == b'\n').next().unwrap_or(&[]);
     let status = String::from_utf8_lossy(status_line);
@@ -141,7 +160,10 @@ mod tests {
         let r = PacResolver::new("inline".into(), src);
         assert!(r.error().is_none());
         assert_eq!(r.upstream_for("intranet:80"), None);
-        assert_eq!(r.upstream_for("app.corp.example:443"), Some(("gw.corp.example".into(), 8080)));
+        assert_eq!(
+            r.upstream_for("app.corp.example:443"),
+            Some(("gw.corp.example".into(), 8080))
+        );
         assert_eq!(r.upstream_for("example.org:443"), None);
     }
 
@@ -158,7 +180,9 @@ mod tests {
 
     #[test]
     fn https_pac_is_rejected_with_guidance() {
-        let err = load_pac_source("https://proxy.example/proxy.pac").unwrap_err().to_string();
+        let err = load_pac_source("https://proxy.example/proxy.pac")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("https"));
     }
 }

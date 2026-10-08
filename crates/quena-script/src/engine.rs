@@ -4,9 +4,9 @@ use crate::{LogLine, RequestDecision, RequestInfo, ResponseDecision, ResponseInf
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender};
-use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::oneshot;
 
@@ -29,11 +29,26 @@ fn now_us() -> u64 {
 }
 
 enum Cmd {
-    Load { source: String, reply: oneshot::Sender<Result<LoadInfo, String>> },
-    Request { input: String, reply: oneshot::Sender<Result<String, String>> },
-    Response { input: String, reply: oneshot::Sender<Result<String, String>> },
-    Complete { input: String },
-    Menu { index: usize, input: String, reply: oneshot::Sender<Result<String, String>> },
+    Load {
+        source: String,
+        reply: oneshot::Sender<Result<LoadInfo, String>>,
+    },
+    Request {
+        input: String,
+        reply: oneshot::Sender<Result<String, String>>,
+    },
+    Response {
+        input: String,
+        reply: oneshot::Sender<Result<String, String>>,
+    },
+    Complete {
+        input: String,
+    },
+    Menu {
+        index: usize,
+        input: String,
+        reply: oneshot::Sender<Result<String, String>>,
+    },
     Shutdown,
 }
 
@@ -115,10 +130,19 @@ impl ScriptEngine {
             return Err("no script loaded".into());
         }
         let (reply, rx) = oneshot::channel();
-        if self.tx.try_send(Cmd::Menu { index, input: sessions_json, reply }).is_err() {
+        if self
+            .tx
+            .try_send(Cmd::Menu {
+                index,
+                input: sessions_json,
+                reply,
+            })
+            .is_err()
+        {
             return Err("script worker is busy".into());
         }
-        rx.await.unwrap_or_else(|_| Err("script worker did not reply".into()))
+        rx.await
+            .unwrap_or_else(|_| Err("script worker did not reply".into()))
     }
 
     /// Whether the current script defines `onBeforeRequest`.
@@ -159,13 +183,17 @@ impl ScriptEngine {
         if self.tx.send(Cmd::Load { source, reply }).is_err() {
             return Err("script worker is gone".into());
         }
-        let res = rx.await.unwrap_or_else(|_| Err("script worker did not reply".into()));
+        let res = rx
+            .await
+            .unwrap_or_else(|_| Err("script worker did not reply".into()));
         match &res {
             Ok(info) => {
                 self.loaded.store(true, Ordering::Relaxed);
                 self.has_request.store(info.has_request, Ordering::Relaxed);
-                self.has_response.store(info.has_response, Ordering::Relaxed);
-                self.has_complete.store(info.has_complete, Ordering::Relaxed);
+                self.has_response
+                    .store(info.has_response, Ordering::Relaxed);
+                self.has_complete
+                    .store(info.has_complete, Ordering::Relaxed);
                 *self.menus.lock() = info.menus.clone();
                 *self.column.lock() = info.column.clone();
                 *self.last_error.lock() = None;
@@ -277,7 +305,9 @@ fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>, alive: Arc<Ato
     let deadline = Arc::new(AtomicU64::new(NO_DEADLINE));
     {
         let deadline = deadline.clone();
-        rt.set_interrupt_handler(Some(Box::new(move || base.elapsed().as_micros() as u64 > deadline.load(Ordering::Relaxed))));
+        rt.set_interrupt_handler(Some(Box::new(move || {
+            base.elapsed().as_micros() as u64 > deadline.load(Ordering::Relaxed)
+        })));
     }
 
     // The context is rebuilt on each Load so hot reload starts from a clean slate.
@@ -311,7 +341,11 @@ fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>, alive: Arc<Ato
             Cmd::Complete { input } => {
                 let _ = dispatch(&ctx, &deadline, base, "__dispatchComplete", &input);
             }
-            Cmd::Menu { index, input, reply } => {
+            Cmd::Menu {
+                index,
+                input,
+                reply,
+            } => {
                 let out = dispatch_menu(&ctx, &deadline, base, index, &input);
                 let _ = reply.send(out);
             }
@@ -357,10 +391,14 @@ fn rebuild_and_load(
 ) -> Result<rquickjs::Context, String> {
     let c = rquickjs::Context::full(rt).map_err(|e| format!("context: {e}"))?;
     install_host(&c, logs)?;
-    deadline.store(base.elapsed().as_micros() as u64 + LOAD_BUDGET_US, Ordering::Relaxed);
+    deadline.store(
+        base.elapsed().as_micros() as u64 + LOAD_BUDGET_US,
+        Ordering::Relaxed,
+    );
     let r = c.with(|cx| -> Result<(), String> {
         cx.eval::<(), _>(PRELUDE).map_err(|e| js_err(&cx, e))?;
-        cx.eval::<(), _>(source.as_bytes()).map_err(|e| js_err(&cx, e))?;
+        cx.eval::<(), _>(source.as_bytes())
+            .map_err(|e| js_err(&cx, e))?;
         let boot: rquickjs::Function = cx.globals().get("__boot").map_err(|e| e.to_string())?;
         boot.call::<_, ()>(()).map_err(|e| js_err(&cx, e))?;
         Ok(())
@@ -369,9 +407,20 @@ fn rebuild_and_load(
     r.map(|_| c)
 }
 
-fn dispatch(ctx: &Option<rquickjs::Context>, deadline: &Arc<AtomicU64>, base: Instant, func: &str, input: &str) -> Result<String, String> {
-    let Some(c) = ctx else { return Err("no script loaded".into()) };
-    deadline.store(base.elapsed().as_micros() as u64 + HOOK_BUDGET_US, Ordering::Relaxed);
+fn dispatch(
+    ctx: &Option<rquickjs::Context>,
+    deadline: &Arc<AtomicU64>,
+    base: Instant,
+    func: &str,
+    input: &str,
+) -> Result<String, String> {
+    let Some(c) = ctx else {
+        return Err("no script loaded".into());
+    };
+    deadline.store(
+        base.elapsed().as_micros() as u64 + HOOK_BUDGET_US,
+        Ordering::Relaxed,
+    );
     let out = c.with(|cx| -> Result<String, String> {
         let f: rquickjs::Function = cx.globals().get(func).map_err(|e| e.to_string())?;
         let s: String = f.call((input.to_string(),)).map_err(|e| js_err(&cx, e))?;
@@ -381,19 +430,35 @@ fn dispatch(ctx: &Option<rquickjs::Context>, deadline: &Arc<AtomicU64>, base: In
     out
 }
 
-fn dispatch_menu(ctx: &Option<rquickjs::Context>, deadline: &Arc<AtomicU64>, base: Instant, index: usize, input: &str) -> Result<String, String> {
-    let Some(c) = ctx else { return Err("no script loaded".into()) };
-    deadline.store(base.elapsed().as_micros() as u64 + HOOK_BUDGET_US, Ordering::Relaxed);
+fn dispatch_menu(
+    ctx: &Option<rquickjs::Context>,
+    deadline: &Arc<AtomicU64>,
+    base: Instant,
+    index: usize,
+    input: &str,
+) -> Result<String, String> {
+    let Some(c) = ctx else {
+        return Err("no script loaded".into());
+    };
+    deadline.store(
+        base.elapsed().as_micros() as u64 + HOOK_BUDGET_US,
+        Ordering::Relaxed,
+    );
     let out = c.with(|cx| -> Result<String, String> {
         let f: rquickjs::Function = cx.globals().get("__runMenu").map_err(|e| e.to_string())?;
-        let s: String = f.call((index as u32, input.to_string())).map_err(|e| js_err(&cx, e))?;
+        let s: String = f
+            .call((index as u32, input.to_string()))
+            .map_err(|e| js_err(&cx, e))?;
         Ok(s)
     });
     deadline.store(NO_DEADLINE, Ordering::Relaxed);
     out
 }
 
-fn install_host(ctx: &rquickjs::Context, logs: &Arc<Mutex<VecDeque<LogLine>>>) -> Result<(), String> {
+fn install_host(
+    ctx: &rquickjs::Context,
+    logs: &Arc<Mutex<VecDeque<LogLine>>>,
+) -> Result<(), String> {
     let logs = logs.clone();
     ctx.with(|cx| -> Result<(), String> {
         let logs2 = logs.clone();
@@ -402,10 +467,16 @@ fn install_host(ctx: &rquickjs::Context, logs: &Arc<Mutex<VecDeque<LogLine>>>) -
             if l.len() >= MAX_LOG_LINES {
                 l.pop_front();
             }
-            l.push_back(LogLine { level, message, ts_us: now_us() });
+            l.push_back(LogLine {
+                level,
+                message,
+                ts_us: now_us(),
+            });
         })
         .map_err(|e| e.to_string())?;
-        cx.globals().set("__log", log_fn).map_err(|e| e.to_string())?;
+        cx.globals()
+            .set("__log", log_fn)
+            .map_err(|e| e.to_string())?;
         Ok(())
     })
 }
@@ -416,7 +487,11 @@ fn js_err(cx: &rquickjs::Ctx, e: rquickjs::Error) -> String {
         if let Some(ex) = exc.as_exception() {
             let msg = ex.message().unwrap_or_default();
             let stack = ex.stack().unwrap_or_default();
-            return if stack.is_empty() { msg } else { format!("{msg}\n{stack}") };
+            return if stack.is_empty() {
+                msg
+            } else {
+                format!("{msg}\n{stack}")
+            };
         }
         return format!("{:?}", exc);
     }
@@ -465,7 +540,13 @@ struct RespInput<'a> {
 
 impl<'a> From<&'a ResponseInfo> for RespInput<'a> {
     fn from(r: &'a ResponseInfo) -> Self {
-        RespInput { id: r.id, url: &r.url, status: r.status, reason: &r.reason, headers: &r.headers }
+        RespInput {
+            id: r.id,
+            url: &r.url,
+            status: r.status,
+            reason: &r.reason,
+            headers: &r.headers,
+        }
     }
 }
 
@@ -509,8 +590,18 @@ struct RespResult {
     headers: Option<Vec<(String, String)>>,
 }
 
-fn meta_of(comment: Option<String>, color: Option<String>, custom: Option<String>, flags: Vec<(String, String)>) -> SessionMeta {
-    SessionMeta { comment, color, custom, flags }
+fn meta_of(
+    comment: Option<String>,
+    color: Option<String>,
+    custom: Option<String>,
+    flags: Vec<(String, String)>,
+) -> SessionMeta {
+    SessionMeta {
+        comment,
+        color,
+        custom,
+        flags,
+    }
 }
 
 fn parse_req_result(json: &str) -> RequestDecision {
@@ -524,7 +615,12 @@ fn parse_req_result(json: &str) -> RequestDecision {
             body: r.resp_body.unwrap_or_default(),
             meta,
         },
-        _ => RequestDecision::Continue { method: r.method, url: r.url, headers: r.headers, meta },
+        _ => RequestDecision::Continue {
+            method: r.method,
+            url: r.url,
+            headers: r.headers,
+            meta,
+        },
     }
 }
 
@@ -533,7 +629,11 @@ fn parse_resp_result(json: &str) -> ResponseDecision {
     let meta = meta_of(r.comment, r.color, r.custom, r.flags);
     match r.action.as_str() {
         "abort" => ResponseDecision::Abort { meta },
-        _ => ResponseDecision::Continue { status: r.status, headers: r.headers, meta },
+        _ => ResponseDecision::Continue {
+            status: r.status,
+            headers: r.headers,
+            meta,
+        },
     }
 }
 
@@ -542,7 +642,10 @@ mod tests {
     use super::*;
 
     fn rt() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap()
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
     }
 
     #[test]
@@ -573,7 +676,9 @@ mod tests {
                 ..Default::default()
             };
             match e.on_request(&info).await {
-                RequestDecision::Continue { url, headers, meta, .. } => {
+                RequestDecision::Continue {
+                    url, headers, meta, ..
+                } => {
                     assert_eq!(url.as_deref(), Some("http://example.com/new"));
                     let h = headers.expect("headers changed");
                     assert!(h.iter().any(|(n, v)| n == "X-Quena" && v == "yes"));
@@ -600,12 +705,27 @@ mod tests {
             .await
             .unwrap();
 
-            let ad = RequestInfo { host: "ads.example.com".into(), ..Default::default() };
-            assert!(matches!(e.on_request(&ad).await, RequestDecision::Abort { .. }));
+            let ad = RequestInfo {
+                host: "ads.example.com".into(),
+                ..Default::default()
+            };
+            assert!(matches!(
+                e.on_request(&ad).await,
+                RequestDecision::Abort { .. }
+            ));
 
-            let mock = RequestInfo { host: "x".into(), path: "/mock".into(), ..Default::default() };
+            let mock = RequestInfo {
+                host: "x".into(),
+                path: "/mock".into(),
+                ..Default::default()
+            };
             match e.on_request(&mock).await {
-                RequestDecision::Respond { status, body, headers, .. } => {
+                RequestDecision::Respond {
+                    status,
+                    body,
+                    headers,
+                    ..
+                } => {
                     assert_eq!(status, 418);
                     assert_eq!(body, "teapot");
                     assert!(headers.iter().any(|(n, _)| n == "Content-Type"));
@@ -633,7 +753,10 @@ mod tests {
             let info = ResponseInfo {
                 id: 2,
                 status: 200,
-                headers: vec![("Set-Cookie".into(), "a=b".into()), ("Server".into(), "nginx".into())],
+                headers: vec![
+                    ("Set-Cookie".into(), "a=b".into()),
+                    ("Server".into(), "nginx".into()),
+                ],
                 ..Default::default()
             };
             match e.on_response(&info).await {
@@ -710,7 +833,9 @@ mod tests {
     fn hook_presence_is_detected() {
         rt().block_on(async {
             let e = ScriptEngine::new();
-            e.load("function onBeforeResponse(s){}".into()).await.unwrap();
+            e.load("function onBeforeResponse(s){}".into())
+                .await
+                .unwrap();
             assert!(e.is_loaded());
             assert!(!e.has_request_hook());
             assert!(e.has_response_hook());
@@ -719,8 +844,19 @@ mod tests {
             e.load("function onBoot(){}".into()).await.unwrap();
             assert!(!e.has_request_hook() && !e.has_response_hook() && !e.has_complete_hook());
             // on_request short-circuits to the default when there is no request hook.
-            let info = RequestInfo { method: "GET".into(), ..Default::default() };
-            assert!(matches!(e.on_request(&info).await, RequestDecision::Continue { method: None, url: None, headers: None, .. }));
+            let info = RequestInfo {
+                method: "GET".into(),
+                ..Default::default()
+            };
+            assert!(matches!(
+                e.on_request(&info).await,
+                RequestDecision::Continue {
+                    method: None,
+                    url: None,
+                    headers: None,
+                    ..
+                }
+            ));
         });
     }
 
@@ -728,8 +864,13 @@ mod tests {
     fn infinite_loop_is_interrupted() {
         rt().block_on(async {
             let e = ScriptEngine::new();
-            e.load("function onBeforeRequest(s){ while(true){} }".into()).await.unwrap();
-            let info = RequestInfo { method: "GET".into(), ..Default::default() };
+            e.load("function onBeforeRequest(s){ while(true){} }".into())
+                .await
+                .unwrap();
+            let info = RequestInfo {
+                method: "GET".into(),
+                ..Default::default()
+            };
             // Should return (default decision) rather than hang forever.
             let d = e.on_request(&info).await;
             assert!(matches!(d, RequestDecision::Continue { .. }));
@@ -740,12 +881,18 @@ mod tests {
     fn console_log_captured() {
         rt().block_on(async {
             let e = ScriptEngine::new();
-            e.load("console.log('hello', 1, {a:2}); function onBoot(){ console.warn('booted'); }".into())
-                .await
-                .unwrap();
+            e.load(
+                "console.log('hello', 1, {a:2}); function onBoot(){ console.warn('booted'); }"
+                    .into(),
+            )
+            .await
+            .unwrap();
             let logs = e.logs();
             assert!(logs.iter().any(|l| l.message.contains("hello 1")));
-            assert!(logs.iter().any(|l| l.level == "warn" && l.message == "booted"));
+            assert!(
+                logs.iter()
+                    .any(|l| l.level == "warn" && l.message == "booted")
+            );
         });
     }
 }

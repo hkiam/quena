@@ -39,7 +39,12 @@ pub struct Body(Arc<Inner>);
 
 impl Body {
     pub(crate) fn new(id: u64, path: PathBuf) -> Body {
-        Body(Arc::new(Inner { id, path, state: RwLock::new(State::default()), reader: RwLock::new(None) }))
+        Body(Arc::new(Inner {
+            id,
+            path,
+            state: RwLock::new(State::default()),
+            reader: RwLock::new(None),
+        }))
     }
 
     pub fn empty() -> Body {
@@ -51,7 +56,12 @@ impl Body {
     pub(crate) fn from_ref(r: &BodyRef, path: PathBuf) -> Body {
         match r {
             BodyRef::Empty => Body::empty(),
-            BodyRef::Inline { id, data, wire_len, truncated } => {
+            BodyRef::Inline {
+                id,
+                data,
+                wire_len,
+                truncated,
+            } => {
                 let b = Body::new(*id, path);
                 {
                     let mut s = b.0.state.write();
@@ -62,7 +72,13 @@ impl Body {
                 }
                 b
             }
-            BodyRef::Blob { id, len, wire_len, truncated, complete } => {
+            BodyRef::Blob {
+                id,
+                len,
+                wire_len,
+                truncated,
+                complete,
+            } => {
                 let b = Body::new(*id, path);
                 {
                     let mut s = b.0.state.write();
@@ -86,7 +102,11 @@ impl Body {
     /// Stored length (readable bytes).
     pub fn len(&self) -> u64 {
         let s = self.0.state.read();
-        if s.has_file { s.file_len } else { s.inline.len() as u64 }
+        if s.has_file {
+            s.file_len
+        } else {
+            s.inline.len() as u64
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -126,7 +146,12 @@ impl Body {
         } else if s.inline.is_empty() && s.wire_len == 0 {
             BodyRef::Empty
         } else {
-            BodyRef::Inline { id: self.0.id, data: s.inline.clone(), wire_len: s.wire_len, truncated: s.truncated }
+            BodyRef::Inline {
+                id: self.0.id,
+                data: s.inline.clone(),
+                wire_len: s.wire_len,
+                truncated: s.truncated,
+            }
         }
     }
 
@@ -184,7 +209,12 @@ impl Body {
     }
 
     pub fn stream(&self, offset: u64, follow: bool) -> BodyReader {
-        BodyReader { body: self.clone(), pos: offset, follow, cancel: None }
+        BodyReader {
+            body: self.clone(),
+            pos: offset,
+            follow,
+            cancel: None,
+        }
     }
 
     /// Delete the backing file (session removal).
@@ -203,7 +233,10 @@ fn read_exact_at(f: &File, mut buf: &mut [u8], mut offset: u64) -> io::Result<()
         #[cfg(windows)]
         let n = f.seek_read(buf, offset)?;
         if n == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "blob shorter than expected"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "blob shorter than expected",
+            ));
         }
         buf = &mut buf[n..];
         offset += n as u64;
@@ -263,8 +296,19 @@ pub struct BodyWriter {
 }
 
 impl BodyWriter {
-    pub(crate) fn new(body: Body, store: Arc<BodyStore>, inline_limit: usize, max_len: u64) -> Self {
-        BodyWriter { body, store, file: None, inline_limit, max_len }
+    pub(crate) fn new(
+        body: Body,
+        store: Arc<BodyStore>,
+        inline_limit: usize,
+        max_len: u64,
+    ) -> Self {
+        BodyWriter {
+            body,
+            store,
+            file: None,
+            inline_limit,
+            max_len,
+        }
     }
 
     pub fn body(&self) -> &Body {

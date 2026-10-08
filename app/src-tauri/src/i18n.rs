@@ -13,7 +13,9 @@ pub fn resolve(pref: &str) -> &'static str {
         "de" => "de",
         "en" => "en",
         _ => {
-            let sys = sys_locale::get_locale().unwrap_or_default().to_ascii_lowercase();
+            let sys = sys_locale::get_locale()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
             if sys.starts_with("de") { "de" } else { "en" }
         }
     }
@@ -21,7 +23,10 @@ pub fn resolve(pref: &str) -> &'static str {
 
 /// The preference saved in the UI settings.
 pub fn saved_pref(ui: &serde_json::Value) -> String {
-    ui.pointer("/layout/language").and_then(|v| v.as_str()).unwrap_or("system").to_string()
+    ui.pointer("/layout/language")
+        .and_then(|v| v.as_str())
+        .unwrap_or("system")
+        .to_string()
 }
 
 pub fn set(lang: &str) {

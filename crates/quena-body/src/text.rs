@@ -38,7 +38,10 @@ pub fn decoded_prefix(body: &Body, spec: &DeriveSpec, limit: usize) -> Vec<u8> {
 
 /// Charset of a stored body (examines the decoded prefix).
 pub fn detect_body(body: &Body, spec: &DeriveSpec) -> Detected {
-    charset::detect(spec.content_type.as_deref(), &decoded_prefix(body, spec, DETECT_PREFIX))
+    charset::detect(
+        spec.content_type.as_deref(),
+        &decoded_prefix(body, spec, DETECT_PREFIX),
+    )
 }
 
 /// Decode bytes of one piece of text (a line) without BOM handling; malformed sequences
@@ -71,11 +74,18 @@ pub fn encode(text: &str, enc: &'static Encoding) -> Option<Vec<u8>> {
 
 /// `content_type` with its `charset` parameter set to `name` (replaced or appended).
 pub fn with_charset(content_type: &str, name: &str) -> String {
-    let mut parts: Vec<String> = content_type.split(';').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect();
+    let mut parts: Vec<String> = content_type
+        .split(';')
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
     if parts.is_empty() {
         return content_type.to_string();
     }
-    parts.retain(|p| !p.split_once('=').is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case("charset")));
+    parts.retain(|p| {
+        !p.split_once('=')
+            .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case("charset"))
+    });
     parts.push(format!("charset={name}"));
     parts.join("; ")
 }
@@ -88,18 +98,34 @@ pub fn with_charset(content_type: &str, name: &str) -> String {
 /// the receiver can tell. If the text has characters that charset cannot represent, it is
 /// sent as UTF-8 and the second value is the Content-Type with `charset=utf-8`, which the
 /// caller puts into the message (nothing is replaced by `?` or character references).
-pub fn encode_edited(text: &str, content_type: Option<&str>, shown: Option<&str>) -> (Vec<u8>, Option<String>) {
-    let declared = content_type.and_then(charset::header_charset).and_then(|l| charset::for_label(&l));
-    let target = declared.or_else(|| shown.and_then(charset::for_label)).unwrap_or(UTF_8);
+pub fn encode_edited(
+    text: &str,
+    content_type: Option<&str>,
+    shown: Option<&str>,
+) -> (Vec<u8>, Option<String>) {
+    let declared = content_type
+        .and_then(charset::header_charset)
+        .and_then(|l| charset::for_label(&l));
+    let target = declared
+        .or_else(|| shown.and_then(charset::for_label))
+        .unwrap_or(UTF_8);
     match encode(text, target) {
         Some(mut b) => {
-            if declared.is_none() && (target == UTF_16LE || target == UTF_16BE) && !text.is_empty() {
-                let bom: &[u8] = if target == UTF_16LE { &[0xFF, 0xFE] } else { &[0xFE, 0xFF] };
+            if declared.is_none() && (target == UTF_16LE || target == UTF_16BE) && !text.is_empty()
+            {
+                let bom: &[u8] = if target == UTF_16LE {
+                    &[0xFF, 0xFE]
+                } else {
+                    &[0xFE, 0xFF]
+                };
                 b.splice(0..0, bom.iter().copied());
             }
             (b, None)
         }
-        None => (text.as_bytes().to_vec(), content_type.map(|c| with_charset(c, "utf-8"))),
+        None => (
+            text.as_bytes().to_vec(),
+            content_type.map(|c| with_charset(c, "utf-8")),
+        ),
     }
 }
 
@@ -168,7 +194,11 @@ impl<R: Read> Read for Transcoder<R> {
                 self.in_end = n;
                 self.eof = n == 0;
             }
-            let (res, read, written, _) = self.dec.decode_to_utf8(&self.input[self.in_start..self.in_end], &mut self.out, self.eof);
+            let (res, read, written, _) = self.dec.decode_to_utf8(
+                &self.input[self.in_start..self.in_end],
+                &mut self.out,
+                self.eof,
+            );
             self.in_start += read;
             self.out_start = 0;
             self.out_end = written;
@@ -204,14 +234,20 @@ mod tests {
             }
         }
         let mut out = String::new();
-        Transcoder::new(Slow(&src), UTF_16LE).read_to_string(&mut out).unwrap();
+        Transcoder::new(Slow(&src), UTF_16LE)
+            .read_to_string(&mut out)
+            .unwrap();
         assert_eq!(out, text);
         let mut out = Vec::new();
-        Transcoder::new(&b"Gr\xfc\xdfe"[..], encoding_rs::WINDOWS_1252).read_to_end(&mut out).unwrap();
+        Transcoder::new(&b"Gr\xfc\xdfe"[..], encoding_rs::WINDOWS_1252)
+            .read_to_end(&mut out)
+            .unwrap();
         assert_eq!(out, "Grüße".as_bytes());
         // Malformed input: replacement characters, no error.
         let mut out = String::new();
-        Transcoder::new(&b"a\xffb"[..], UTF_8).read_to_string(&mut out).unwrap();
+        Transcoder::new(&b"a\xffb"[..], UTF_8)
+            .read_to_string(&mut out)
+            .unwrap();
         assert_eq!(out, "a\u{fffd}b");
     }
 
@@ -222,21 +258,40 @@ mod tests {
         assert!(encode("😀", w1252).is_none());
         assert_eq!(encode("ä", UTF_16BE).unwrap(), [0x00, 0xE4]);
         // Declared charset wins; the text is encoded in it.
-        assert_eq!(encode_edited("Grüße", Some("text/plain; charset=ISO-8859-1"), Some("UTF-8")), (b"Gr\xfc\xdfe".to_vec(), None));
+        assert_eq!(
+            encode_edited(
+                "Grüße",
+                Some("text/plain; charset=ISO-8859-1"),
+                Some("UTF-8")
+            ),
+            (b"Gr\xfc\xdfe".to_vec(), None)
+        );
         // Not representable: UTF-8, and the Content-Type says so.
         let (b, ct) = encode_edited("Grüße 😀", Some("text/plain; charset=ISO-8859-1"), None);
         assert_eq!(b, "Grüße 😀".as_bytes());
         assert_eq!(ct.as_deref(), Some("text/plain; charset=utf-8"));
         // Without a declaration: the charset it was shown in (XML declaration, BOM …).
-        assert_eq!(encode_edited("<a>€</a>", Some("application/xml"), Some("ISO-8859-15")).0, b"<a>\xa4</a>");
-        assert_eq!(encode_edited("ä", Some("text/plain"), Some("UTF-16LE")).0, [0xFF, 0xFE, 0xE4, 0x00]);
+        assert_eq!(
+            encode_edited("<a>€</a>", Some("application/xml"), Some("ISO-8859-15")).0,
+            b"<a>\xa4</a>"
+        );
+        assert_eq!(
+            encode_edited("ä", Some("text/plain"), Some("UTF-16LE")).0,
+            [0xFF, 0xFE, 0xE4, 0x00]
+        );
         assert_eq!(encode_edited("ä", None, None).0, "ä".as_bytes());
-        assert_eq!(with_charset("text/html;charset=\"latin1\"; x=1", "utf-8"), "text/html; x=1; charset=utf-8");
+        assert_eq!(
+            with_charset("text/html;charset=\"latin1\"; x=1", "utf-8"),
+            "text/html; x=1; charset=utf-8"
+        );
     }
 
     #[test]
     fn needles() {
-        assert_eq!(encode_needle("Grüße", encoding_rs::WINDOWS_1252).unwrap(), b"Gr\xfc\xdfe");
+        assert_eq!(
+            encode_needle("Grüße", encoding_rs::WINDOWS_1252).unwrap(),
+            b"Gr\xfc\xdfe"
+        );
         assert_eq!(encode_needle("Grüße", UTF_8).unwrap(), "Grüße".as_bytes());
         assert!(encode_needle("x", UTF_16LE).is_none());
         assert!(encode_needle("€", encoding_rs::ISO_8859_2).is_none());

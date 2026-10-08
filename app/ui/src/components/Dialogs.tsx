@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, type McpStatus, type Recoverable, type Settings } from "../api";
+import { api, type McpStatus, type Recoverable, type SchemaStatus, type Settings } from "../api";
 import { actions } from "../actions";
 import { fmtBytes, fmtDateTime, isMac, modKey, osNames } from "../lib/format";
 import { get, say, set, useStore, type Dialog } from "../store";
@@ -457,6 +457,67 @@ function AuthOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) =>
 }
 
 /** MCP server: lets AI agents (Claude Code …) read and, if allowed, control Quena. */
+/** Settings → Bodies & Storage → Protobuf schemas. */
+function ProtobufOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => void }) {
+  const [status, setStatus] = useState<SchemaStatus | null>(null);
+  const saved = useStore((st) => st.settings?.protobuf);
+  useEffect(() => {
+    api.protobufStatus().then(setStatus, () => setStatus(null));
+  }, [saved]);
+  const pb = s.protobuf ?? { protoPaths: [], includePaths: [], reflection: false };
+  const add = async (directory: boolean) => {
+    const p = await openDialog(directory ? { directory: true, multiple: true } : { multiple: true, filters: [{ name: "Protocol Buffers", extensions: ["proto"] }] });
+    const picked = Array.isArray(p) ? p : typeof p === "string" ? [p] : [];
+    if (picked.length) up((x) => (x.protobuf = { ...pb, protoPaths: [...new Set([...pb.protoPaths, ...picked])] }));
+  };
+  const plain = { spellCheck: false, autoCorrect: "off", autoCapitalize: "off" } as const;
+  return (
+    <fieldset className="f-section">
+      <legend>{t("Protobuf schemas")}</legend>
+      <p className="muted small">{t("With .proto files the gRPC and protobuf view shows field names, types and enum values instead of field numbers. Folders are searched for .proto files; imports are resolved against them and the import paths.")}</p>
+      {pb.protoPaths.map((p) => (
+        <div key={p} className="f-row">
+          <span className="mono small pb-path" title={p}>
+            {p}
+          </span>
+          <button className="cc-del" title={t("Remove")} onClick={() => up((x) => (x.protobuf = { ...pb, protoPaths: pb.protoPaths.filter((q) => q !== p) }))}>
+            ✕
+          </button>
+        </div>
+      ))}
+      <div className="f-inline">
+        <button onClick={() => void add(false)}>{t("Add .proto files…")}</button>
+        <button onClick={() => void add(true)}>{t("Add folder…")}</button>
+      </div>
+      <div className="f-row">
+        <span>{t("Import paths (one per line)")}</span>
+        <textarea
+          {...plain}
+          className="mono"
+          rows={2}
+          value={pb.includePaths.join("\n")}
+          onChange={(e) => up((x) => (x.protobuf = { ...pb, includePaths: e.target.value.split("\n") }))}
+        />
+      </div>
+      <label className="f-check">
+        <input type="checkbox" checked={pb.reflection} onChange={(e) => up((x) => (x.protobuf = { ...pb, reflection: e.target.checked }))} /> {t("Allow fetching schemas from gRPC servers (server reflection, on request in the gRPC view)")}
+      </label>
+      {status && (
+        <p className={status.error ? "mocks-error" : "muted small"}>
+          {status.error
+            ? status.error
+            : t("{files} files, {messages} message types, {services} services; {reflected} fetched from servers", {
+                files: status.files,
+                messages: status.messages,
+                services: status.services.length,
+                reflected: status.reflected.length,
+              })}
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
 function McpOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => void }) {
   const [status, setStatus] = useState<McpStatus | null>(null);
   useEffect(() => {
@@ -794,6 +855,7 @@ function OptionsDialog() {
             <label className="f-check">
               <input type="checkbox" checked={s.losslessRecording} onChange={(e) => up((x) => (x.losslessRecording = e.target.checked))} /> {t("Lossless recording (forwarding waits for the disk)")}
             </label>
+            <ProtobufOptions s={s} up={up} />
           </>
         )}
       </div>

@@ -28,12 +28,22 @@ pub struct LogBuffer {
 
 impl LogBuffer {
     pub fn new(cap: usize) -> Arc<LogBuffer> {
-        Arc::new(LogBuffer { entries: Mutex::new(VecDeque::new()), seq: AtomicU64::new(0), cap })
+        Arc::new(LogBuffer {
+            entries: Mutex::new(VecDeque::new()),
+            seq: AtomicU64::new(0),
+            cap,
+        })
     }
 
     pub fn push(&self, level: &str, target: &str, message: String) {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let e = LogEntry { seq, time: quena_model::now_us(), level: level.into(), target: target.into(), message };
+        let e = LogEntry {
+            seq,
+            time: quena_model::now_us(),
+            level: level.into(),
+            target: target.into(),
+            message,
+        };
         let mut q = self.entries.lock();
         q.push_back(e);
         while q.len() > self.cap {
@@ -46,7 +56,12 @@ impl LogBuffer {
     }
 
     pub fn since(&self, seq: u64) -> Vec<LogEntry> {
-        self.entries.lock().iter().filter(|e| e.seq > seq).cloned().collect()
+        self.entries
+            .lock()
+            .iter()
+            .filter(|e| e.seq > seq)
+            .cloned()
+            .collect()
     }
 
     pub fn clear(&self) {

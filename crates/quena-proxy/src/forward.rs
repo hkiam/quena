@@ -65,7 +65,12 @@ pub struct ConnCtx {
     pub decrypted: bool,
     /// Per-connection dedicated upstream clients for authenticated hosts
     /// (connection pinning – never shared with another client connection).
-    pub auth_clients: parking_lot::Mutex<std::collections::HashMap<(String, u16), Arc<hyper_util::client::legacy::Client<crate::connector::Connector, ProxyBody>>>>,
+    pub auth_clients: parking_lot::Mutex<
+        std::collections::HashMap<
+            (String, u16),
+            Arc<hyper_util::client::legacy::Client<crate::connector::Connector, ProxyBody>>,
+        >,
+    >,
     /// Set on a reverse proxy port: every request goes to this route's targets.
     pub reverse: Option<Arc<crate::reverse::ReverseRoute>>,
     /// The listener besides the proxy port the connection came in on (Via column).
@@ -75,7 +80,10 @@ pub struct ConnCtx {
 impl ConnCtx {
     pub async fn process(&self) -> Option<ProcessInfo> {
         if self.remote {
-            return Some(ProcessInfo { pid: 0, name: format!("remote:{}", self.client_addr.ip().to_canonical()) });
+            return Some(ProcessInfo {
+                pid: 0,
+                name: format!("remote:{}", self.client_addr.ip().to_canonical()),
+            });
         }
         let mut rx = self.process.clone();
         if rx.borrow().is_none() {
@@ -102,7 +110,11 @@ fn version_of(v: Version) -> HttpVersion {
 pub fn record_headers(h: &http::HeaderMap, h1: bool) -> Headers {
     let mut out = Headers::new();
     for (k, v) in h {
-        let name = if h1 { title_case(k.as_str()) } else { k.as_str().to_string() };
+        let name = if h1 {
+            title_case(k.as_str())
+        } else {
+            k.as_str().to_string()
+        };
         out.push_bytes(&name, v.as_bytes());
     }
     out
@@ -123,11 +135,17 @@ fn to_header_map(h: &Headers, skip_hop: bool, keep_upgrade: bool) -> http::Heade
         }
         if skip_hop {
             let upgrade_hdr = keep_upgrade && (lk == "upgrade" || lk == "connection");
-            if !upgrade_hdr && (HOP_BY_HOP.contains(&lk.as_str()) || (connection_tokens.contains(&lk) && lk != "upgrade")) {
+            if !upgrade_hdr
+                && (HOP_BY_HOP.contains(&lk.as_str())
+                    || (connection_tokens.contains(&lk) && lk != "upgrade"))
+            {
                 continue;
             }
         }
-        let (Ok(name), Ok(val)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_bytes(&string_to_latin1(v))) else {
+        let (Ok(name), Ok(val)) = (
+            HeaderName::from_bytes(k.as_bytes()),
+            HeaderValue::from_bytes(&string_to_latin1(v)),
+        ) else {
             continue;
         };
         m.append(name, val);
@@ -145,11 +163,20 @@ fn absolute_url(req: &Request<Incoming>, ctx: &ConnCtx) -> Option<String> {
     let authority = uri
         .authority()
         .map(|a| a.to_string())
-        .or_else(|| req.headers().get(http::header::HOST).and_then(|h| h.to_str().ok()).map(|s| s.to_string()))
+        .or_else(|| {
+            req.headers()
+                .get(http::header::HOST)
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.to_string())
+        })
         .or_else(|| ctx.authority.clone())?;
     let pq = uri.path_and_query().map(|p| p.as_str()).unwrap_or("/");
     // Strip default ports for readability.
-    let authority = match (ctx.scheme, authority.strip_suffix(":443"), authority.strip_suffix(":80")) {
+    let authority = match (
+        ctx.scheme,
+        authority.strip_suffix(":443"),
+        authority.strip_suffix(":80"),
+    ) {
         ("https", Some(a), _) => a.to_string(),
         ("http", _, Some(a)) => a.to_string(),
         _ => authority,
@@ -162,18 +189,38 @@ fn absolute_url(req: &Request<Incoming>, ctx: &ConnCtx) -> Option<String> {
 pub(crate) const RESPONSE_HEAD_TIMEOUT: Duration = Duration::from_secs(600);
 
 fn is_self_target(shared: &Shared, url: &str) -> bool {
-    let Ok(u) = url.parse::<http::Uri>() else { return false };
-    let host = u.host().unwrap_or("").trim_matches(['[', ']']).to_ascii_lowercase();
+    let Ok(u) = url.parse::<http::Uri>() else {
+        return false;
+    };
+    let host = u
+        .host()
+        .unwrap_or("")
+        .trim_matches(['[', ']'])
+        .to_ascii_lowercase();
     if host == "quena.cert" || host == "quena" || host == "ipv4.quena" {
         return true;
     }
     // 0.0.0.0 / :: on our port reach the listener too.
-    if (host == "0.0.0.0" || host == "::") && shared.listen.read().iter().any(|a| Some(a.port()) == u.port_u16()) {
+    if (host == "0.0.0.0" || host == "::")
+        && shared
+            .listen
+            .read()
+            .iter()
+            .any(|a| Some(a.port()) == u.port_u16())
+    {
         return true;
     }
-    let port = u.port_u16().unwrap_or(if u.scheme_str() == Some("https") { 443 } else { 80 });
+    let port = u.port_u16().unwrap_or(if u.scheme_str() == Some("https") {
+        443
+    } else {
+        80
+    });
     let listen = shared.listen.read();
-    listen.iter().any(|a| a.port() == port) && (crate::util::is_loopback_host(&host) || quena_platform::local_addresses().iter().any(|(_, ip)| *ip == host))
+    listen.iter().any(|a| a.port() == port)
+        && (crate::util::is_loopback_host(&host)
+            || quena_platform::local_addresses()
+                .iter()
+                .any(|(_, ip)| *ip == host))
 }
 
 fn error_response(status: StatusCode, msg: &str) -> Response<ProxyBody> {
@@ -185,18 +232,32 @@ fn error_response(status: StatusCode, msg: &str) -> Response<ProxyBody> {
     );
     let mut r = Response::new(full(body));
     *r.status_mut() = status;
-    r.headers_mut().insert(http::header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
-    r.headers_mut().insert("x-quena-error", HeaderValue::from_static("1"));
-    r.headers_mut().insert(http::header::CACHE_CONTROL, HeaderValue::from_static("no-cache, must-revalidate"));
+    r.headers_mut().insert(
+        http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    r.headers_mut()
+        .insert("x-quena-error", HeaderValue::from_static("1"));
+    r.headers_mut().insert(
+        http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, must-revalidate"),
+    );
     r
 }
 
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn headers_only(cfg: &ProxyConfig, host: &str, ct: Option<&str>) -> bool {
-    host_matches(&cfg.headers_only_hosts, host) || ct.is_some_and(|ct| cfg.headers_only_types.iter().any(|t| ct.to_ascii_lowercase().contains(t.as_str())))
+    host_matches(&cfg.headers_only_hosts, host)
+        || ct.is_some_and(|ct| {
+            cfg.headers_only_types
+                .iter()
+                .any(|t| ct.to_ascii_lowercase().contains(t.as_str()))
+        })
 }
 
 /// Largest body held back completely (breakpoints, rules that edit bodies, automatic
@@ -205,7 +266,10 @@ fn headers_only(cfg: &ProxyConfig, host: &str, ct: Option<&str>) -> bool {
 const MAX_BUFFERED_BODY: u64 = 512 << 20;
 
 /// Read a body completely into the store (lossless, bypasses the recorder queue).
-pub(crate) async fn buffer_body<B>(shared: &Shared, mut body: B) -> Result<(StoredBody, bool), BoxError>
+pub(crate) async fn buffer_body<B>(
+    shared: &Shared,
+    mut body: B,
+) -> Result<(StoredBody, bool), BoxError>
 where
     B: http_body::Body<Data = Bytes> + Unpin,
     B::Error: Into<BoxError>,
@@ -217,7 +281,8 @@ where
         match body.frame().await {
             Some(Ok(f)) => {
                 if let Some(d) = f.data_ref() {
-                    tokio::task::block_in_place(|| w.write(d)).map_err(|e| Box::new(e) as BoxError)?;
+                    tokio::task::block_in_place(|| w.write(d))
+                        .map_err(|e| Box::new(e) as BoxError)?;
                     if w.body().len() > MAX_BUFFERED_BODY {
                         return Err(format!("the body is larger than {} MB and cannot be held back completely (breakpoint, rule, authentication or Stream off)", MAX_BUFFERED_BODY >> 20).into());
                     }
@@ -269,7 +334,11 @@ pub(crate) enum HeldBack<B> {
 
 /// Read a body for a hook that only wants it when it is small: up to `limit` bytes within
 /// [`HOLD_BACK_WAIT`] (in memory), else hand it back for streaming.
-pub(crate) async fn hold_back<B>(shared: &Shared, mut body: Prefixed<B>, limit: u64) -> Result<HeldBack<B>, BoxError>
+pub(crate) async fn hold_back<B>(
+    shared: &Shared,
+    mut body: Prefixed<B>,
+    limit: u64,
+) -> Result<HeldBack<B>, BoxError>
 where
     B: http_body::Body<Data = Bytes> + Unpin,
     B::Error: Into<BoxError>,
@@ -282,7 +351,12 @@ where
     loop {
         let frame = match tokio::time::timeout_at(deadline, body.frame()).await {
             Ok(f) => f,
-            Err(_) => return Ok(HeldBack::GaveUp(body.unread(frames), format!("not complete within {} s", HOLD_BACK_WAIT.as_secs()))),
+            Err(_) => {
+                return Ok(HeldBack::GaveUp(
+                    body.unread(frames),
+                    format!("not complete within {} s", HOLD_BACK_WAIT.as_secs()),
+                ));
+            }
         };
         match frame {
             Some(Ok(f)) => {
@@ -290,10 +364,19 @@ where
                 len += n;
                 frames.push_back(f);
                 if len > limit {
-                    return Ok(HeldBack::GaveUp(body.unread(frames), format!("larger than {} KiB", limit >> 10)));
+                    return Ok(HeldBack::GaveUp(
+                        body.unread(frames),
+                        format!("larger than {} KiB", limit >> 10),
+                    ));
                 }
                 if !held.add(n) {
-                    return Ok(HeldBack::GaveUp(body.unread(frames), format!("not held back: {} MiB are held back already", HOLD_BACK_BUDGET >> 20)));
+                    return Ok(HeldBack::GaveUp(
+                        body.unread(frames),
+                        format!(
+                            "not held back: {} MiB are held back already",
+                            HOLD_BACK_BUDGET >> 20
+                        ),
+                    ));
                 }
             }
             Some(Err(e)) => {
@@ -323,14 +406,24 @@ fn note_gave_up(live: &LiveSession, part: &str, why: &str) {
 }
 
 /// Entry point for every proxied request.
-pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Response<ProxyBody>, Infallible> {
+pub async fn handle(
+    ctx: Arc<ConnCtx>,
+    mut req: Request<Incoming>,
+) -> Result<Response<ProxyBody>, Infallible> {
     let shared = ctx.shared.clone();
     // On a reverse proxy port every request goes to the route's target; how the client
     // addressed Quena is kept for the response headers that name the target.
     let (url, reverse) = match &ctx.reverse {
         Some(r) => {
             let (url, routed) = r.upstream_url(req.uri());
-            (url, Some(ReverseOut { route: r.clone(), client_origin: crate::reverse::client_origin(&req, ctx.scheme, r.port), routed }))
+            (
+                url,
+                Some(ReverseOut {
+                    route: r.clone(),
+                    client_origin: crate::reverse::client_origin(&req, ctx.scheme, r.port),
+                    routed,
+                }),
+            )
         }
         None => {
             let Some(url) = absolute_url(&req, &ctx) else {
@@ -346,7 +439,10 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
     // Host remapping: without "keep host" the request is addressed to the target.
     let remapped = url.parse::<http::Uri>().ok().and_then(|u| {
         let https = matches!(u.scheme_str(), Some("https" | "wss"));
-        cfg.remap(u.host()?, u.port_u16().unwrap_or(if https { 443 } else { 80 }))
+        cfg.remap(
+            u.host()?,
+            u.port_u16().unwrap_or(if https { 443 } else { 80 }),
+        )
     });
     let url = match &remapped {
         Some(r) if !r.keep_host => crate::remap::rewrite_url(&url, r).unwrap_or(url),
@@ -355,13 +451,21 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
     let capture = shared.capture();
     let now = now_us();
     let h1 = is_h1(req.version());
-    let mut head = RequestHead { method: req.method().to_string(), url: url.clone(), version: version_of(req.version()), headers: record_headers(req.headers(), h1) };
+    let mut head = RequestHead {
+        method: req.method().to_string(),
+        url: url.clone(),
+        version: version_of(req.version()),
+        headers: record_headers(req.headers(), h1),
+    };
     if let Some(r) = &reverse {
         r.prepare_request(&mut head, &ctx, &req);
     }
     if let Some(r) = remapped.as_ref().filter(|r| !r.keep_host) {
         if head.headers.get("host").is_some() {
-            head.headers.set("host", r.authority(url.starts_with("https://") || url.starts_with("wss://")));
+            head.headers.set(
+                "host",
+                r.authority(url.starts_with("https://") || url.starts_with("wss://")),
+            );
         }
     }
     let process = ctx.process().await;
@@ -387,15 +491,26 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
             d.extra_flags.push((crate::reverse::FLAG.into(), v.clone()));
         }
         if let Some(r) = &remapped {
-            d.extra_flags.push((crate::remap::FLAG.into(), r.note.clone()));
+            d.extra_flags
+                .push((crate::remap::FLAG.into(), r.note.clone()));
         }
     });
     // Client gone (hyper drops this future), panic, or a forgotten path: end the session.
-    let mut guard = live.abort_on_drop("the client closed the connection before the session completed");
-    let view = SessionView { id: live.id, live: live.clone(), process: process.as_ref().map(|p| p.display()).unwrap_or_default(), client_ip };
+    let mut guard =
+        live.abort_on_drop("the client closed the connection before the session completed");
+    let view = SessionView {
+        id: live.id,
+        live: live.clone(),
+        process: process.as_ref().map(|p| p.display()).unwrap_or_default(),
+        client_ip,
+    };
     let hooks = shared.hooks();
     let upgrade_req = req.headers().get(http::header::UPGRADE).is_some() && h1;
-    let client_upgrade = if upgrade_req { Some(hyper::upgrade::on(&mut req)) } else { None };
+    let client_upgrade = if upgrade_req {
+        Some(hyper::upgrade::on(&mut req))
+    } else {
+        None
+    };
     let (_parts, incoming) = req.into_parts();
 
     // --- request body: stream through the tee, or buffer for the hook
@@ -408,7 +523,9 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
         let src = source.take().expect("request body");
         let r = match hooks.request_hold_limit(&view, &head) {
             Some(limit) => hold_back(&shared, src, limit).await,
-            None => buffer_body(&shared, src).await.map(|(b, a)| HeldBack::Complete(b, a)),
+            None => buffer_body(&shared, src)
+                .await
+                .map(|(b, a)| HeldBack::Complete(b, a)),
         };
         match r {
             Ok(HeldBack::Complete(b, _)) => {
@@ -427,7 +544,11 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
         }
     }
     let req_body_src: Option<ProxyBody> = if let Some(incoming) = source {
-        let writer = if headers_only(&cfg, &url_host(&url), head.headers.get("content-type")) { capture.bodies.writer_with_limit(0) } else { capture.bodies.writer() };
+        let writer = if headers_only(&cfg, &url_host(&url), head.headers.get("content-type")) {
+            capture.bodies.writer_with_limit(0)
+        } else {
+            capture.bodies.writer()
+        };
         live.set_request_body(writer.body().clone());
         let times = Arc::new(TeeTimes::default());
         let l2 = live.clone();
@@ -440,7 +561,9 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
                 let _hold = hold;
                 l2.set_request_body(b);
                 let last = t2.last.load(Ordering::Relaxed);
-                l2.update(|d| d.timers.client_done_request = Some(if last > 0 { last } else { now_us() }));
+                l2.update(|d| {
+                    d.timers.client_done_request = Some(if last > 0 { last } else { now_us() })
+                });
             }),
         );
         Some(Tee::new(incoming, shared.recorder.clone(), key, times).boxed())
@@ -449,7 +572,9 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
     };
 
     // --- request hook
-    let action = hooks.on_request(view.clone(), head.clone(), buffered_req.clone()).await;
+    let action = hooks
+        .on_request(view.clone(), head.clone(), buffered_req.clone())
+        .await;
     let (head, body): (RequestHead, ProxyBody) = match action {
         RequestAction::Abort => {
             live.update(|d| {
@@ -458,9 +583,16 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
             });
             live.finish();
             // Closing without a response: hyper turns an error into a connection reset.
-            return Ok(error_response(StatusCode::BAD_GATEWAY, "Request aborted by Quena rule"));
+            return Ok(error_response(
+                StatusCode::BAD_GATEWAY,
+                "Request aborted by Quena rule",
+            ));
         }
-        RequestAction::Respond { head: rh, body, delay_ms } => {
+        RequestAction::Respond {
+            head: rh,
+            body,
+            delay_ms,
+        } => {
             if delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             }
@@ -471,9 +603,20 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
                     while let Some(Ok(_)) = b.frame().await {}
                 });
             }
-            return Ok(respond_locally(&shared, &live, &view, rh, body, reverse.as_ref()));
+            return Ok(respond_locally(
+                &shared,
+                &live,
+                &view,
+                rh,
+                body,
+                reverse.as_ref(),
+            ));
         }
-        RequestAction::Forward { head: new_head, body: new_body, delay_ms } => {
+        RequestAction::Forward {
+            head: new_head,
+            body: new_body,
+            delay_ms,
+        } => {
             if delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             }
@@ -505,7 +648,8 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
     // --- upstream
     let upgrade = upgrade_req && client_upgrade.is_some();
     let host_only = url_host(&head.url);
-    let use_auth = !upgrade && cfg.auto_auth && (cfg.auth_applies(&host_only) || cfg.auto_auth_upstream);
+    let use_auth =
+        !upgrade && cfg.auto_auth && (cfg.auth_applies(&host_only) || cfg.auto_auth_upstream);
     let resp = if use_auth {
         // Buffer the request body so it can be replayed on the authenticated leg.
         match buffer_body(&shared, body).await {
@@ -514,7 +658,10 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
                 live.update(|d| d.summary.state = SessionState::AwaitingResponse);
                 let mut legs = 1u16;
                 let sent = now_us();
-                let r = crate::auth::send_with_auth(&shared, &ctx, &head, buffered, &mut |n| legs = legs.max(n as u16)).await;
+                let r = crate::auth::send_with_auth(&shared, &ctx, &head, buffered, &mut |n| {
+                    legs = legs.max(n as u16)
+                })
+                .await;
                 match r {
                     Ok(resp) => {
                         record_response_head(&live, &resp, sent, None);
@@ -545,7 +692,10 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
         match send_upstream(&shared, &live, &head, body, upgrade).await {
             Ok(r) => r,
             Err(e) => {
-                let msg = format!("The connection to '{}' failed.\nError: {e}", url_host(&head.url));
+                let msg = format!(
+                    "The connection to '{}' failed.\nError: {e}",
+                    url_host(&head.url)
+                );
                 let resp = error_response(StatusCode::BAD_GATEWAY, &msg);
                 record_synthetic_response(&shared, &live, &resp, msg.clone());
                 return Ok(resp);
@@ -559,7 +709,16 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
             return Ok(crate::tunnel::websocket(&shared, &live, resp, cu));
         }
     }
-    Ok(deliver_response(&shared, &live, &view, &head, resp, &mut guard, reverse.as_ref()).await)
+    Ok(deliver_response(
+        &shared,
+        &live,
+        &view,
+        &head,
+        resp,
+        &mut guard,
+        reverse.as_ref(),
+    )
+    .await)
 }
 
 /// Reverse proxy handling of one request: the route and how the client addressed Quena.
@@ -574,7 +733,11 @@ impl ReverseOut {
     /// Host and forwarding headers of the request sent to the target.
     fn prepare_request(&self, head: &mut RequestHead, ctx: &ConnCtx, req: &Request<Incoming>) {
         let route = &self.route;
-        let client_host = self.client_origin.split_once("://").map(|(_, h)| h.to_string()).unwrap_or_default();
+        let client_host = self
+            .client_origin
+            .split_once("://")
+            .map(|(_, h)| h.to_string())
+            .unwrap_or_default();
         // Names as the client's HTTP version records them (Title-Case for HTTP/1).
         let h1 = is_h1(req.version());
         let name = |n: &str| if h1 { title_case(n) } else { n.to_string() };
@@ -584,7 +747,8 @@ impl ReverseOut {
                 head.headers.push(name("host"), client_host.clone());
             }
         } else if head.headers.get("host").is_some() {
-            head.headers.set("host", self.routed.target.authority.clone());
+            head.headers
+                .set("host", self.routed.target.authority.clone());
         }
         if route.forwarded_headers {
             let ip = ctx.client_addr.ip().to_canonical().to_string();
@@ -592,7 +756,11 @@ impl ReverseOut {
                 Some(prev) => format!("{prev}, {ip}"),
                 None => ip,
             };
-            for (n, v) in [("x-forwarded-for", xff), ("x-forwarded-proto", ctx.scheme.to_string()), ("x-forwarded-host", client_host)] {
+            for (n, v) in [
+                ("x-forwarded-for", xff),
+                ("x-forwarded-proto", ctx.scheme.to_string()),
+                ("x-forwarded-host", client_host),
+            ] {
                 head.headers.remove(n);
                 head.headers.push(name(n), v);
             }
@@ -601,12 +769,16 @@ impl ReverseOut {
 
     /// Point response headers that name the target back to Quena; note it in the session.
     fn apply(&self, live: &LiveSession, headers: &mut http::HeaderMap) {
-        let notes = self.route.rewrite_response(headers, &self.client_origin, &self.routed);
+        let notes = self
+            .route
+            .rewrite_response(headers, &self.client_origin, &self.routed);
         if !notes.is_empty() {
             let text = notes.join("; ");
             live.update(move |d| {
-                d.extra_flags.retain(|(k, _)| k != crate::reverse::REWRITE_FLAG);
-                d.extra_flags.push((crate::reverse::REWRITE_FLAG.into(), text));
+                d.extra_flags
+                    .retain(|(k, _)| k != crate::reverse::REWRITE_FLAG);
+                d.extra_flags
+                    .push((crate::reverse::REWRITE_FLAG.into(), text));
             });
         }
     }
@@ -620,7 +792,11 @@ pub(crate) fn url_host_pub(url: &str) -> String {
     url_host(url)
 }
 
-pub(crate) fn to_header_map_pub(h: &Headers, skip_hop: bool, keep_upgrade: bool) -> http::HeaderMap {
+pub(crate) fn to_header_map_pub(
+    h: &Headers,
+    skip_hop: bool,
+    keep_upgrade: bool,
+) -> http::HeaderMap {
     to_header_map(h, skip_hop, keep_upgrade)
 }
 
@@ -632,7 +808,10 @@ pub(crate) async fn send_upstream(
     body: ProxyBody,
     upgrade: bool,
 ) -> Result<Response<Incoming>, String> {
-    let uri: http::Uri = head.url.parse().map_err(|e| format!("invalid URL {}: {e}", head.url))?;
+    let uri: http::Uri = head
+        .url
+        .parse()
+        .map_err(|e| format!("invalid URL {}: {e}", head.url))?;
     let mut req = Request::builder()
         .method(http::Method::from_bytes(head.method.as_bytes()).map_err(|e| e.to_string())?)
         .uri(uri)
@@ -649,7 +828,12 @@ pub(crate) async fn send_upstream(
     let sent = now_us();
     let result = match tokio::time::timeout(RESPONSE_HEAD_TIMEOUT, up.client.request(req)).await {
         Ok(r) => r,
-        Err(_) => return Err(format!("no response from the server within {} s", RESPONSE_HEAD_TIMEOUT.as_secs())),
+        Err(_) => {
+            return Err(format!(
+                "no response from the server within {} s",
+                RESPONSE_HEAD_TIMEOUT.as_secs()
+            ));
+        }
     };
     // Connection metadata (also available on errors after connecting).
     let mut ext = http::Extensions::new();
@@ -671,7 +855,12 @@ pub(crate) async fn send_upstream(
 }
 
 /// Record an upstream response head + connection timings into the session.
-pub(crate) fn record_response_head(live: &Arc<LiveSession>, resp: &Response<Incoming>, sent: i64, info: Option<&ConnInfo>) {
+pub(crate) fn record_response_head(
+    live: &Arc<LiveSession>,
+    resp: &Response<Incoming>,
+    sent: i64,
+    info: Option<&ConnInfo>,
+) {
     let got = now_us();
     let h1 = is_h1(resp.version());
     let reason = resp
@@ -679,7 +868,12 @@ pub(crate) fn record_response_head(live: &Arc<LiveSession>, resp: &Response<Inco
         .get::<hyper::ext::ReasonPhrase>()
         .map(|r| String::from_utf8_lossy(r.as_bytes()).into_owned())
         .unwrap_or_else(|| resp.status().canonical_reason().unwrap_or("").to_string());
-    let rh = ResponseHead { status: resp.status().as_u16(), reason, version: version_of(resp.version()), headers: record_headers(resp.headers(), h1) };
+    let rh = ResponseHead {
+        status: resp.status().as_u16(),
+        reason,
+        version: version_of(resp.version()),
+        headers: record_headers(resp.headers(), h1),
+    };
     let info = info.cloned();
     live.update(move |d| {
         if let Some(i) = &info {
@@ -691,7 +885,11 @@ pub(crate) fn record_response_head(live: &Arc<LiveSession>, resp: &Response<Inco
             if !reused {
                 d.timers.dns_ms = Some(i.dns_ms);
                 d.timers.tcp_connect_ms = Some(i.tcp_ms);
-                d.timers.tls_handshake_ms = if i.tls.is_some() { Some(i.tls_ms) } else { None };
+                d.timers.tls_handshake_ms = if i.tls.is_some() {
+                    Some(i.tls_ms)
+                } else {
+                    None
+                };
                 d.timers.server_connect_start = Some(i.connect_start);
                 d.timers.server_connected = Some(i.connected_at);
             }
@@ -721,7 +919,9 @@ async fn deliver_response(
     // Head-only script hook — runs in both streaming and buffering modes, but only
     // when a script is actually active (avoids per-response clones otherwise).
     match if hooks.wants_response_head(view) {
-        hooks.on_response_head(view.clone(), resp_head.clone()).await
+        hooks
+            .on_response_head(view.clone(), resp_head.clone())
+            .await
     } else {
         ResponseHeadAction::Continue
     } {
@@ -756,7 +956,10 @@ async fn deliver_response(
     };
     let mut mode = hooks.response_mode(view, req_head, &resp_head);
     // Event streams never end; buffering them would only stall the client.
-    let endless = resp_head.headers.get("content-type").is_some_and(|ct| ct.to_ascii_lowercase().starts_with("text/event-stream"));
+    let endless = resp_head
+        .headers
+        .get("content-type")
+        .is_some_and(|ct| ct.to_ascii_lowercase().starts_with("text/event-stream"));
     let mut source = Some(Prefixed::new(incoming));
     let mut held = None;
     if mode == Mode::Buffer
@@ -791,7 +994,10 @@ async fn deliver_response(
         live.set_response_body(body.clone());
         live.update(|d| d.timers.server_done_response = Some(now_us()));
         let (head, body) = if mode == Mode::Buffer {
-            match hooks.on_response(view.clone(), resp_head.clone(), body.clone()).await {
+            match hooks
+                .on_response(view.clone(), resp_head.clone(), body.clone())
+                .await
+            {
                 ResponseAction::Continue => (resp_head, body),
                 ResponseAction::Replace { head, body: nb } => {
                     let b = nb.unwrap_or(body);
@@ -812,12 +1018,17 @@ async fn deliver_response(
             (resp_head, body)
         };
         let len = body.len();
-        let mut out = build_client_response(&head, throttle(StoredStream::new(body).boxed()), Some(len));
+        let mut out =
+            build_client_response(&head, throttle(StoredStream::new(body).boxed()), Some(len));
         if let Some(r) = reverse {
             r.apply(live, out.headers_mut());
         }
         live.update(|d| {
-            d.summary.state = if aborted { SessionState::Aborted } else { SessionState::Done };
+            d.summary.state = if aborted {
+                SessionState::Aborted
+            } else {
+                SessionState::Done
+            };
             d.timers.client_begin_response = Some(now_us());
             d.timers.client_done_response = Some(now_us());
         });
@@ -828,14 +1039,22 @@ async fn deliver_response(
     // Streaming.
     let capture = shared.capture();
     let ct = resp_head.headers.get("content-type").map(|s| s.to_string());
-    let writer = if headers_only(&cfg, &url_host(&req_head.url), ct.as_deref()) { capture.bodies.writer_with_limit(0) } else { capture.bodies.writer() };
+    let writer = if headers_only(&cfg, &url_host(&req_head.url), ct.as_deref()) {
+        capture.bodies.writer_with_limit(0)
+    } else {
+        capture.bodies.writer()
+    };
     live.set_response_body(writer.body().clone());
     let times = Arc::new(TeeTimes::default());
     let l2 = live.clone();
     let t2 = times.clone();
     let hooks2 = hooks.clone();
     let view2 = view.clone();
-    let expected = parts.headers.get(http::header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
+    let expected = parts
+        .headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok());
     let hold = live.hold();
     let key = shared.recorder.open(
         live.id,
@@ -899,13 +1118,18 @@ fn strip_hop_by_hop(h: &mut http::HeaderMap) {
     }
 }
 
-pub(crate) fn build_client_response(head: &ResponseHead, body: ProxyBody, len: Option<u64>) -> Response<ProxyBody> {
+pub(crate) fn build_client_response(
+    head: &ResponseHead,
+    body: ProxyBody,
+    len: Option<u64>,
+) -> Response<ProxyBody> {
     let mut r = Response::new(body);
     *r.status_mut() = StatusCode::from_u16(head.status).unwrap_or(StatusCode::OK);
     *r.headers_mut() = to_header_map(&head.headers, true, false);
     if let Some(len) = len {
         if !(head.status == 204 || head.status == 304 || (100..200).contains(&head.status)) {
-            r.headers_mut().insert(http::header::CONTENT_LENGTH, HeaderValue::from(len));
+            r.headers_mut()
+                .insert(http::header::CONTENT_LENGTH, HeaderValue::from(len));
         }
     }
     if !head.reason.is_empty() && Some(head.reason.as_str()) != r.status().canonical_reason() {
@@ -916,12 +1140,23 @@ pub(crate) fn build_client_response(head: &ResponseHead, body: ProxyBody, len: O
     r
 }
 
-fn respond_locally(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &SessionView, head: ResponseHead, body: StoredBody, reverse: Option<&ReverseOut>) -> Response<ProxyBody> {
+fn respond_locally(
+    shared: &Arc<Shared>,
+    live: &Arc<LiveSession>,
+    view: &SessionView,
+    head: ResponseHead,
+    body: StoredBody,
+    reverse: Option<&ReverseOut>,
+) -> Response<ProxyBody> {
     // A HEAD response announces the length of the body a GET would get (a recorded
     // Content-Length); it never has a body of its own, so 0 would be wrong.
     let head_request = live.detail().request.method.eq_ignore_ascii_case("HEAD");
     let len = body.len();
-    let out_len = if head_request && len == 0 && head.headers.get("content-length").is_some() { None } else { Some(len) };
+    let out_len = if head_request && len == 0 && head.headers.get("content-length").is_some() {
+        None
+    } else {
+        Some(len)
+    };
     let mut out = build_client_response(&head, StoredStream::new(body.clone()).boxed(), out_len);
     if let Some(r) = reverse {
         r.apply(live, out.headers_mut());
@@ -942,7 +1177,12 @@ fn respond_locally(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &Session
     out
 }
 
-fn record_synthetic_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, resp: &Response<ProxyBody>, error: String) {
+fn record_synthetic_response(
+    shared: &Arc<Shared>,
+    live: &Arc<LiveSession>,
+    resp: &Response<ProxyBody>,
+    error: String,
+) {
     let head = ResponseHead {
         status: resp.status().as_u16(),
         reason: resp.status().canonical_reason().unwrap_or("").into(),
@@ -983,17 +1223,31 @@ pub struct ExecuteOptions {
 }
 
 /// Issue a request from Quena (Composer/Replay) and record it as a new session.
-pub async fn execute(shared: Arc<Shared>, head: RequestHead, body: StoredBody, opts: ExecuteOptions) -> SessionId {
+pub async fn execute(
+    shared: Arc<Shared>,
+    head: RequestHead,
+    body: StoredBody,
+    opts: ExecuteOptions,
+) -> SessionId {
     execute_with(shared, head, body, opts, |_| {}).await
 }
 
 /// Like [`execute`], calling `started` with the session id as soon as the session exists.
-pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBody, opts: ExecuteOptions, started: impl FnOnce(SessionId) + Send) -> SessionId {
+pub async fn execute_with(
+    shared: Arc<Shared>,
+    head: RequestHead,
+    body: StoredBody,
+    opts: ExecuteOptions,
+    started: impl FnOnce(SessionId) + Send,
+) -> SessionId {
     let capture = shared.capture();
     let now = now_us();
     let live = capture.begin(SessionKind::Http, |d| {
         d.request = head.clone();
-        d.process = Some(ProcessInfo { pid: std::process::id(), name: "quena".into() });
+        d.process = Some(ProcessInfo {
+            pid: std::process::id(),
+            name: "quena".into(),
+        });
         d.timers.client_begin_request = Some(now);
         d.timers.got_request_headers = Some(now);
         d.timers.client_done_request = Some(now);
@@ -1008,10 +1262,18 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
     let mut guard = live.abort_on_drop("the request was cancelled before it completed");
     let id = live.id;
     started(id);
-    let view = SessionView { id, live: live.clone(), process: "quena".into(), client_ip: String::new() };
+    let view = SessionView {
+        id,
+        live: live.clone(),
+        process: "quena".into(),
+        client_ip: String::new(),
+    };
     let hooks = shared.hooks();
     let (head, body) = if opts.hooks {
-        match hooks.on_request(view.clone(), head.clone(), Some(body.clone())).await {
+        match hooks
+            .on_request(view.clone(), head.clone(), Some(body.clone()))
+            .await
+        {
             RequestAction::Abort => {
                 finish_error(&live, "aborted by rule");
                 return id;
@@ -1020,7 +1282,11 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
                 let _ = respond_locally(&shared, &live, &view, rh, body, None);
                 return id;
             }
-            RequestAction::Forward { head: h, body: b, delay_ms } => {
+            RequestAction::Forward {
+                head: h,
+                body: b,
+                delay_ms,
+            } => {
                 if delay_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 }
@@ -1030,7 +1296,15 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
     } else {
         (head, body)
     };
-    match send_upstream(&shared, &live, &head, StoredStream::new(body).boxed(), false).await {
+    match send_upstream(
+        &shared,
+        &live,
+        &head,
+        StoredStream::new(body).boxed(),
+        false,
+    )
+    .await
+    {
         Ok(resp) => {
             let r = deliver_response(&shared, &live, &view, &head, resp, &mut guard, None).await;
             // Consume the body so it gets recorded.
@@ -1042,7 +1316,10 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
             }
         }
         Err(e) => {
-            let msg = format!("The connection to '{}' failed.\nError: {e}", url_host(&head.url));
+            let msg = format!(
+                "The connection to '{}' failed.\nError: {e}",
+                url_host(&head.url)
+            );
             let resp = error_response(StatusCode::BAD_GATEWAY, &msg);
             record_synthetic_response(&shared, &live, &resp, msg);
         }

@@ -16,11 +16,15 @@ pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
 pub type ProxyBody = BoxBody<Bytes, BoxError>;
 
 pub fn full(b: impl Into<Bytes>) -> ProxyBody {
-    http_body_util::Full::new(b.into()).map_err(|e| match e {}).boxed()
+    http_body_util::Full::new(b.into())
+        .map_err(|e| match e {})
+        .boxed()
 }
 
 pub fn empty() -> ProxyBody {
-    http_body_util::Empty::<Bytes>::new().map_err(|e| match e {}).boxed()
+    http_body_util::Empty::<Bytes>::new()
+        .map_err(|e| match e {})
+        .boxed()
 }
 
 /// A body some of whose frames were read already (a hold-back that gave up): replays them,
@@ -33,12 +37,20 @@ pub struct Prefixed<B> {
 
 impl<B> Prefixed<B> {
     pub fn new(inner: B) -> Self {
-        Prefixed { head: Default::default(), head_len: 0, inner }
+        Prefixed {
+            head: Default::default(),
+            head_len: 0,
+            inner,
+        }
     }
     /// Put frames read from this body back in front of it.
     pub(crate) fn unread(mut self, mut frames: std::collections::VecDeque<Frame<Bytes>>) -> Self {
         frames.extend(self.head.drain(..));
-        self.head_len = frames.iter().filter_map(|f| f.data_ref()).map(|d| d.len() as u64).sum();
+        self.head_len = frames
+            .iter()
+            .filter_map(|f| f.data_ref())
+            .map(|d| d.len() as u64)
+            .sum();
         self.head = frames;
         self
     }
@@ -52,7 +64,10 @@ where
     type Data = Bytes;
     type Error = BoxError;
 
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = &mut *self;
         if let Some(f) = this.head.pop_front() {
             if let Some(d) = f.data_ref() {
@@ -60,7 +75,9 @@ where
             }
             return Poll::Ready(Some(Ok(f)));
         }
-        Pin::new(&mut this.inner).poll_frame(cx).map(|o| o.map(|r| r.map_err(Into::into)))
+        Pin::new(&mut this.inner)
+            .poll_frame(cx)
+            .map(|o| o.map(|r| r.map_err(Into::into)))
     }
 
     fn is_end_stream(&self) -> bool {
@@ -96,7 +113,13 @@ pub struct Tee<B> {
 
 impl<B> Tee<B> {
     pub fn new(inner: B, rec: Recorder, key: RecKey, times: Arc<TeeTimes>) -> Self {
-        Tee { inner, rec, key, times, done: false }
+        Tee {
+            inner,
+            rec,
+            key,
+            times,
+            done: false,
+        }
     }
 }
 
@@ -108,14 +131,22 @@ where
     type Data = Bytes;
     type Error = BoxError;
 
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = &mut *self;
         match Pin::new(&mut this.inner).poll_frame(cx) {
             Poll::Ready(Some(Ok(frame))) => {
                 if let Some(d) = frame.data_ref() {
                     if !d.is_empty() {
                         let now = quena_model::now_us();
-                        let _ = this.times.first.compare_exchange(0, now, Ordering::Relaxed, Ordering::Relaxed);
+                        let _ = this.times.first.compare_exchange(
+                            0,
+                            now,
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                        );
                         this.times.last.store(now, Ordering::Relaxed);
                         this.rec.chunk(this.key, d.clone());
                     }
@@ -139,7 +170,12 @@ where
                 if !this.done {
                     this.done = true;
                     let now = quena_model::now_us();
-                    let _ = this.times.first.compare_exchange(0, now, Ordering::Relaxed, Ordering::Relaxed);
+                    let _ = this.times.first.compare_exchange(
+                        0,
+                        now,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    );
                     this.times.last.store(now, Ordering::Relaxed);
                     this.rec.end(this.key, false);
                 }
@@ -181,7 +217,13 @@ pub struct Throttle<B> {
 
 impl<B> Throttle<B> {
     pub fn new(inner: B, bytes_per_sec: u64) -> Self {
-        Throttle { inner, bytes_per_sec: bytes_per_sec.max(1), start: std::time::Instant::now(), sent: 0, delay: None }
+        Throttle {
+            inner,
+            bytes_per_sec: bytes_per_sec.max(1),
+            start: std::time::Instant::now(),
+            sent: 0,
+            delay: None,
+        }
     }
 }
 
@@ -193,7 +235,10 @@ where
     type Data = Bytes;
     type Error = BoxError;
 
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = &mut *self;
         // Honour a pending pacing delay before pulling the next frame.
         if let Some(d) = this.delay.as_mut() {
@@ -231,8 +276,6 @@ where
     }
 }
 
-
-
 /// Streams a stored body (used for buffered responses, replay and AutoResponder files).
 pub struct StoredStream {
     body: StoredBody,
@@ -244,7 +287,12 @@ pub struct StoredStream {
 impl StoredStream {
     pub fn new(body: StoredBody) -> Self {
         let end = body.len();
-        StoredStream { body, pos: 0, end, task: None }
+        StoredStream {
+            body,
+            pos: 0,
+            end,
+            task: None,
+        }
     }
 }
 
@@ -252,7 +300,10 @@ impl Body for StoredStream {
     type Data = Bytes;
     type Error = BoxError;
 
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
         let this = &mut *self;
         loop {
             if let Some(t) = this.task.as_mut() {
@@ -286,7 +337,6 @@ impl Body for StoredStream {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,7 +346,10 @@ mod tests {
     impl Body for Chunks {
         type Data = Bytes;
         type Error = BoxError;
-        fn poll_frame(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
+        fn poll_frame(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
             match self.0.pop_front() {
                 Some(b) => Poll::Ready(Some(Ok(Frame::data(b)))),
                 None => Poll::Ready(None),
@@ -307,7 +360,8 @@ mod tests {
     #[tokio::test]
     async fn throttle_paces_to_target_rate() {
         // 10 KiB at 100_000 B/s should take ~0.1s of (paused, virtual) time.
-        let chunks: std::collections::VecDeque<Bytes> = (0..10).map(|_| Bytes::from(vec![0u8; 1024])).collect();
+        let chunks: std::collections::VecDeque<Bytes> =
+            (0..10).map(|_| Bytes::from(vec![0u8; 1024])).collect();
         let mut body = Throttle::new(Chunks(chunks), 100_000);
         let start = std::time::Instant::now();
         let mut total = 0usize;
@@ -325,13 +379,17 @@ mod tests {
         let elapsed = start.elapsed();
         assert_eq!(total, 10 * 1024);
         // At 100 KB/s, 10 KiB needs ~102ms; allow generous slack around the paced value.
-        assert!(elapsed >= std::time::Duration::from_millis(80), "throttle did not pace: {elapsed:?}");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(80),
+            "throttle did not pace: {elapsed:?}"
+        );
     }
 
     #[tokio::test]
     async fn zero_rate_disabled_via_new_guard() {
         // Throttle::new clamps to >=1 B/s; a huge rate imposes no meaningful delay.
-        let chunks: std::collections::VecDeque<Bytes> = (0..4).map(|_| Bytes::from(vec![0u8; 1024])).collect();
+        let chunks: std::collections::VecDeque<Bytes> =
+            (0..4).map(|_| Bytes::from(vec![0u8; 1024])).collect();
         let mut body = Throttle::new(Chunks(chunks), u64::MAX);
         let start = std::time::Instant::now();
         while let Some(r) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {

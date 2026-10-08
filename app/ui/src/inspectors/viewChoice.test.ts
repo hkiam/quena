@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { BodyInfo, Detail } from "../api";
-import { bodyViews, sectionOf, sectionViews, viewFamily } from "./viewChoice";
+import { bodyViews, defaultView, sectionOf, sectionViews, viewFamily } from "./viewChoice";
+import { msgpackCandidate } from "./MsgpackView";
+import { grpcCandidate } from "./GrpcView";
 
 const REQUEST = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"];
 const RESPONSE = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"];
@@ -88,5 +90,27 @@ describe("family", () => {
     expect(viewFamily(detail({ contentType: "text/xml", shape: "xml" }), "response", [], [])).toBe("xml");
     expect(viewFamily(detail({ contentType: null, shape: "xml" }), "response", [], [])).toBe("xml");
     expect(viewFamily(detail({ contentType: null, shape: null }), "response", [], [])).toBe("unknown");
+  });
+});
+
+describe("gRPC and MessagePack", () => {
+  const withType = (ct: string) =>
+    ({ ...detail({ contentType: ct, isText: false }), response: { status: 200, headers: [["Content-Type", ct]] } }) as unknown as Detail;
+  it("recognises the content types", () => {
+    expect(msgpackCandidate(withType("application/msgpack"), "response")).toBe(true);
+    expect(msgpackCandidate(withType("application/vnd.msgpack"), "response")).toBe(true);
+    expect(msgpackCandidate(withType("application/x-msgpack"), "response")).toBe(true);
+    expect(msgpackCandidate(withType("application/json"), "response")).toBe(false);
+    expect(grpcCandidate(withType("application/grpc+proto"), "response")).toBe(true);
+    expect(grpcCandidate(withType("application/x-protobuf"), "response")).toBe(true);
+    expect(grpcCandidate(withType("application/msgpack"), "response")).toBe(false);
+  });
+  it("the special view comes first and is the default", () => {
+    const d = withType("application/msgpack");
+    expect(viewFamily(d, "response", ["msgpack"], [])).toBe("msgpack");
+    expect(shown(d, ["msgpack"])[0]).toBe("msgpack");
+    expect(defaultView("msgpack", "response", [...RESPONSE, "msgpack"])).toBe("msgpack");
+    expect(viewFamily(withType("application/grpc"), "response", ["grpc"], [])).toBe("grpc");
+    expect(shown(withType("application/grpc"), ["grpc"])[0]).toBe("grpc");
   });
 });

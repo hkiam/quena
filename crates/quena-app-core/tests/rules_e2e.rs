@@ -24,7 +24,12 @@ fn echo_server() -> u16 {
                     head.push_str(&line);
                 }
                 let mut s = s;
-                let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", head.len(), head);
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    head.len(),
+                    head
+                );
             });
         }
     });
@@ -35,7 +40,10 @@ fn curl(proxy: &str, url: &str) -> std::thread::JoinHandle<String> {
     let proxy = proxy.to_string();
     let url = url.to_string();
     std::thread::spawn(move || {
-        let o = Command::new("curl").args(["-sS", "--max-time", "20", "-x", &proxy, &url]).output().unwrap();
+        let o = Command::new("curl")
+            .args(["-sS", "--max-time", "20", "-x", &proxy, &url])
+            .output()
+            .unwrap();
         String::from_utf8_lossy(&o.stdout).into_owned()
     })
 }
@@ -48,11 +56,20 @@ fn autoresponder_and_breakpoints() {
         r#"{"proxy":{"port":18866,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}}"#,
     )
     .unwrap();
-    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let core = AppCore::new(
+        Paths::at(dir.path().to_path_buf()),
+        quena_app_core::logbuf::LogBuffer::new(100),
+    )
+    .unwrap();
     let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap();
     core.set_proxy_engine(engine.clone());
     core.start_capture().unwrap();
-    let addr = engine.proxy.listen_addrs().into_iter().find(|a| a.is_ipv4()).unwrap();
+    let addr = engine
+        .proxy
+        .listen_addrs()
+        .into_iter()
+        .find(|a| a.is_ipv4())
+        .unwrap();
     let proxy = format!("http://{addr}");
     let port = echo_server();
     let rules = core.rules.clone().unwrap();
@@ -67,25 +84,60 @@ fn autoresponder_and_breakpoints() {
                 unmatched_passthrough: true,
                 enable_latency: false,
                 rules: vec![
-                    Rule { match_: "blocked".into(), action: "*404".into(), ..Default::default() },
-                    Rule { match_: "regex:/api/(\\w+)$".into(), action: file.to_string_lossy().into_owned(), ..Default::default() },
-                    Rule { match_: "METHOD:GET /redirect".into(), action: "*redir:http://example.invalid/new".into(), ..Default::default() },
+                    Rule {
+                        match_: "blocked".into(),
+                        action: "*404".into(),
+                        ..Default::default()
+                    },
+                    Rule {
+                        match_: "regex:/api/(\\w+)$".into(),
+                        action: file.to_string_lossy().into_owned(),
+                        ..Default::default()
+                    },
+                    Rule {
+                        match_: "METHOD:GET /redirect".into(),
+                        action: "*redir:http://example.invalid/new".into(),
+                        ..Default::default()
+                    },
                 ],
             },
             true,
         )
         .unwrap();
-    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/blocked")).join().unwrap();
+    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/blocked"))
+        .join()
+        .unwrap();
     assert!(out.contains("Mock Rules: 404"), "{out}");
-    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/api/users")).join().unwrap();
+    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/api/users"))
+        .join()
+        .unwrap();
     assert_eq!(out, r#"{"mocked":true}"#);
-    let o = Command::new("curl").args(["-sS", "-o", if cfg!(windows) { "NUL" } else { "/dev/null" }, "-w", "%{http_code} %{redirect_url}", "-x", &proxy, &format!("http://127.0.0.1:{port}/redirect")]).output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&o.stdout), "307 http://example.invalid/new");
-    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/passthrough")).join().unwrap();
+    let o = Command::new("curl")
+        .args([
+            "-sS",
+            "-o",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+            "-w",
+            "%{http_code} %{redirect_url}",
+            "-x",
+            &proxy,
+            &format!("http://127.0.0.1:{port}/redirect"),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout),
+        "307 http://example.invalid/new"
+    );
+    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/passthrough"))
+        .join()
+        .unwrap();
     assert!(out.starts_with("GET /passthrough HTTP/1.1"), "{out}");
     assert!(rules.autoresponder().rules[0].hits >= 1);
     file.set_extension("x");
-    rules.set_autoresponder(AutoResponderState::default(), true).unwrap();
+    rules
+        .set_autoresponder(AutoResponderState::default(), true)
+        .unwrap();
 
     // --- Breakpoint before request: edit the head, then continue
     let r = core.quickexec("bpu /hold");
@@ -102,8 +154,22 @@ fn autoresponder_and_breakpoints() {
     };
     assert_eq!(paused[0].phase, "request");
     let id = paused[0].id;
-    let head = format!("GET http://127.0.0.1:{port}/hold HTTP/1.1\nHost: 127.0.0.1:{port}\nX-Tampered: yes\n");
-    rules.resume(id, Resume { action: "breakOnResponse".into(), head_text: Some(head), body_text: None, body_charset: None, body_file: None, status: None }).unwrap();
+    let head = format!(
+        "GET http://127.0.0.1:{port}/hold HTTP/1.1\nHost: 127.0.0.1:{port}\nX-Tampered: yes\n"
+    );
+    rules
+        .resume(
+            id,
+            Resume {
+                action: "breakOnResponse".into(),
+                head_text: Some(head),
+                body_text: None,
+                body_charset: None,
+                body_file: None,
+                status: None,
+            },
+        )
+        .unwrap();
     // Now paused at the response.
     let t = Instant::now();
     let p = loop {
@@ -111,11 +177,24 @@ fn autoresponder_and_breakpoints() {
         if let Some(x) = p.into_iter().find(|x| x.phase == "response") {
             break x;
         }
-        assert!(t.elapsed() < Duration::from_secs(10), "response breakpoint not hit");
+        assert!(
+            t.elapsed() < Duration::from_secs(10),
+            "response breakpoint not hit"
+        );
         std::thread::sleep(Duration::from_millis(20));
     };
     rules
-        .resume(p.id, Resume { action: "continue".into(), head_text: None, body_text: Some("tampered response".into()), body_charset: None, body_file: None, status: None })
+        .resume(
+            p.id,
+            Resume {
+                action: "continue".into(),
+                head_text: None,
+                body_text: Some("tampered response".into()),
+                body_charset: None,
+                body_file: None,
+                status: None,
+            },
+        )
         .unwrap();
     let out = h.join().unwrap();
     assert_eq!(out, "tampered response");
@@ -148,11 +227,20 @@ fn scripting_through_proxy() {
         r#"{"proxy":{"port":18868,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}}"#,
     )
     .unwrap();
-    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let core = AppCore::new(
+        Paths::at(dir.path().to_path_buf()),
+        quena_app_core::logbuf::LogBuffer::new(100),
+    )
+    .unwrap();
     let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap();
     core.set_proxy_engine(engine.clone());
     core.start_capture().unwrap();
-    let addr = engine.proxy.listen_addrs().into_iter().find(|a| a.is_ipv4()).unwrap();
+    let addr = engine
+        .proxy
+        .listen_addrs()
+        .into_iter()
+        .find(|a| a.is_ipv4())
+        .unwrap();
     let proxy = format!("http://{addr}");
     let port = echo_server();
     let rules = core.rules.clone().unwrap();
@@ -169,41 +257,85 @@ fn scripting_through_proxy() {
     "#
     .replace("__PORT__", &port.to_string());
 
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     rt.block_on(async {
         rules.set_script(script).await.expect("script compiles");
-        rules.set_script_enabled(true).await.expect("script enabled");
+        rules
+            .set_script_enabled(true)
+            .await
+            .expect("script enabled");
     });
     assert!(rules.script_active());
 
     // 1. Request header rewrite reaches the upstream (echo returns the request head),
     //    and the response carries the script-added header.
     let o = Command::new("curl")
-        .args(["-sS", "-i", "--max-time", "20", "-x", &proxy, &format!("http://127.0.0.1:{port}/echo")])
+        .args([
+            "-sS",
+            "-i",
+            "--max-time",
+            "20",
+            "-x",
+            &proxy,
+            &format!("http://127.0.0.1:{port}/echo"),
+        ])
         .output()
         .unwrap();
     let full = String::from_utf8_lossy(&o.stdout);
-    assert!(full.to_lowercase().contains("x-script: 1"), "response header not rewritten:\n{full}");
-    assert!(full.to_lowercase().contains("x-quena: yes"), "request header not rewritten (echoed body):\n{full}");
+    assert!(
+        full.to_lowercase().contains("x-script: 1"),
+        "response header not rewritten:\n{full}"
+    );
+    assert!(
+        full.to_lowercase().contains("x-quena: yes"),
+        "request header not rewritten (echoed body):\n{full}"
+    );
 
     // 2. Local respond() short-circuits the upstream.
-    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/mock")).join().unwrap();
+    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/mock"))
+        .join()
+        .unwrap();
     assert_eq!(out, "mocked-by-script");
 
     // 3. redirect() rewrites the target; the echoed request path is /moved.
-    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/redir")).join().unwrap();
-    assert!(out.starts_with("GET /moved "), "redirect not applied:\n{out}");
+    let out = curl(&proxy, &format!("http://127.0.0.1:{port}/redir"))
+        .join()
+        .unwrap();
+    assert!(
+        out.starts_with("GET /moved "),
+        "redirect not applied:\n{out}"
+    );
 
     core.shutdown();
 }
 
 /// `curl --path-as-is` through the proxy → (status, content type, body).
 fn fetch(proxy: &str, url: &str) -> (u16, String, String) {
-    let o = Command::new("curl").args(["-sS", "--path-as-is", "--max-time", "20", "-x", proxy, "-w", "\n@@%{http_code}|%{content_type}", url]).output().unwrap();
+    let o = Command::new("curl")
+        .args([
+            "-sS",
+            "--path-as-is",
+            "--max-time",
+            "20",
+            "-x",
+            proxy,
+            "-w",
+            "\n@@%{http_code}|%{content_type}",
+            url,
+        ])
+        .output()
+        .unwrap();
     let out = String::from_utf8_lossy(&o.stdout).into_owned();
     let (body, meta) = out.rsplit_once("\n@@").unwrap_or((&out, "0|"));
     let (code, ct) = meta.split_once('|').unwrap_or((meta, ""));
-    (code.trim().parse().unwrap_or(0), ct.trim().to_string(), body.to_string())
+    (
+        code.trim().parse().unwrap_or(0),
+        ct.trim().to_string(),
+        body.to_string(),
+    )
 }
 
 /// The captured session whose URL (as listed) is `url`.
@@ -211,10 +343,17 @@ fn session_for(core: &AppCore, url: &str) -> quena_model::SessionDetail {
     let cap = core.capture();
     let t = Instant::now();
     loop {
-        if let Some(d) = (1..500).rev().filter_map(|id| cap.detail(id)).find(|d| d.summary.full_url() == url) {
+        if let Some(d) = (1..500)
+            .rev()
+            .filter_map(|id| cap.detail(id))
+            .find(|d| d.summary.full_url() == url)
+        {
             return d;
         }
-        assert!(t.elapsed() < Duration::from_secs(10), "no session for {url}");
+        assert!(
+            t.elapsed() < Duration::from_secs(10),
+            "no session for {url}"
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
 }
@@ -228,11 +367,20 @@ fn map_remote_and_map_local() {
         r#"{"proxy":{"port":18872,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}}"#,
     )
     .unwrap();
-    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let core = AppCore::new(
+        Paths::at(dir.path().to_path_buf()),
+        quena_app_core::logbuf::LogBuffer::new(100),
+    )
+    .unwrap();
     let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap();
     core.set_proxy_engine(engine.clone());
     core.start_capture().unwrap();
-    let addr = engine.proxy.listen_addrs().into_iter().find(|a| a.is_ipv4()).unwrap();
+    let addr = engine
+        .proxy
+        .listen_addrs()
+        .into_iter()
+        .find(|a| a.is_ipv4())
+        .unwrap();
     let proxy = format!("http://{addr}");
     let port = echo_server();
     let rules = core.rules.clone().unwrap();
@@ -256,12 +404,36 @@ fn map_remote_and_map_local() {
                 unmatched_passthrough: true,
                 enable_latency: false,
                 rules: vec![
-                    Rule { match_: "prefix:http://prod.invalid/api/".into(), action: format!("http://127.0.0.1:{port}/v2/"), ..Default::default() },
-                    Rule { match_: "prefix:http://bare.invalid".into(), action: format!("http://127.0.0.1:{port}"), ..Default::default() },
-                    Rule { match_: r"regex:^http://old\.invalid/(.*)$".into(), action: format!("http://127.0.0.1:{port}/new/$1"), ..Default::default() },
-                    Rule { match_: "prefix:http://local.invalid/static/".into(), action: format!("dir:{}", site.display()), ..Default::default() },
-                    Rule { match_: "prefix:http://creds.invalid".into(), action: format!("http://127.0.0.1:{port}/c/ *nocreds"), ..Default::default() },
-                    Rule { match_: "prefix:http://keep.invalid".into(), action: format!("http://127.0.0.1:{port}/k/"), ..Default::default() },
+                    Rule {
+                        match_: "prefix:http://prod.invalid/api/".into(),
+                        action: format!("http://127.0.0.1:{port}/v2/"),
+                        ..Default::default()
+                    },
+                    Rule {
+                        match_: "prefix:http://bare.invalid".into(),
+                        action: format!("http://127.0.0.1:{port}"),
+                        ..Default::default()
+                    },
+                    Rule {
+                        match_: r"regex:^http://old\.invalid/(.*)$".into(),
+                        action: format!("http://127.0.0.1:{port}/new/$1"),
+                        ..Default::default()
+                    },
+                    Rule {
+                        match_: "prefix:http://local.invalid/static/".into(),
+                        action: format!("dir:{}", site.display()),
+                        ..Default::default()
+                    },
+                    Rule {
+                        match_: "prefix:http://creds.invalid".into(),
+                        action: format!("http://127.0.0.1:{port}/c/ *nocreds"),
+                        ..Default::default()
+                    },
+                    Rule {
+                        match_: "prefix:http://keep.invalid".into(),
+                        action: format!("http://127.0.0.1:{port}/k/"),
+                        ..Default::default()
+                    },
                 ],
             },
             true,
@@ -272,13 +444,26 @@ fn map_remote_and_map_local() {
     let from = "http://prod.invalid/api/users/7?q=a%20b&x=1";
     let (code, _, out) = fetch(&proxy, from);
     assert_eq!(code, 200, "{out}");
-    assert!(out.starts_with("GET /v2/users/7?q=a%20b&x=1 HTTP/1.1"), "{out}");
-    assert!(out.to_ascii_lowercase().contains(&format!("host: 127.0.0.1:{port}")), "{out}");
+    assert!(
+        out.starts_with("GET /v2/users/7?q=a%20b&x=1 HTTP/1.1"),
+        "{out}"
+    );
+    assert!(
+        out.to_ascii_lowercase()
+            .contains(&format!("host: 127.0.0.1:{port}")),
+        "{out}"
+    );
     // The session shows the target; the comment and flags keep the original URL.
     let to = format!("http://127.0.0.1:{port}/v2/users/7?q=a%20b&x=1");
     let d = session_for(&core, &to);
     assert_eq!(d.summary.comment, format!("Mapped from {from}"));
-    assert!(d.extra_flags.iter().any(|(k, v)| k == "x-quena-mapped-from" && v == from), "{:?}", d.extra_flags);
+    assert!(
+        d.extra_flags
+            .iter()
+            .any(|(k, v)| k == "x-quena-mapped-from" && v == from),
+        "{:?}",
+        d.extra_flags
+    );
     assert!(d.summary.has_flag(quena_model::flags::TAMPERED));
     // A bare origin maps onto a bare origin.
     let (_, _, out) = fetch(&proxy, "http://bare.invalid/deep/path?k=v");
@@ -291,17 +476,36 @@ fn map_remote_and_map_local() {
     // without the modifier forward them as before.
     let with_creds = |url: &str| {
         let o = Command::new("curl")
-            .args(["-sS", "--max-time", "20", "-x", &proxy, "-H", "Cookie: sid=1", "-H", "Authorization: Bearer t0k", "-H", "X-Other: y", url])
+            .args([
+                "-sS",
+                "--max-time",
+                "20",
+                "-x",
+                &proxy,
+                "-H",
+                "Cookie: sid=1",
+                "-H",
+                "Authorization: Bearer t0k",
+                "-H",
+                "X-Other: y",
+                url,
+            ])
             .output()
             .unwrap();
         String::from_utf8_lossy(&o.stdout).to_ascii_lowercase()
     };
     let out = with_creds("http://creds.invalid/a?b=1");
     assert!(out.starts_with("get /c/a?b=1 http/1.1"), "{out}");
-    assert!(!out.contains("cookie:") && !out.contains("authorization:"), "{out}");
+    assert!(
+        !out.contains("cookie:") && !out.contains("authorization:"),
+        "{out}"
+    );
     assert!(out.contains("x-other: y"), "{out}");
     let out = with_creds("http://keep.invalid/a");
-    assert!(out.contains("cookie: sid=1") && out.contains("authorization: bearer t0k"), "{out}");
+    assert!(
+        out.contains("cookie: sid=1") && out.contains("authorization: bearer t0k"),
+        "{out}"
+    );
     // An origin-only prefix does not match a longer host.
     let (code, _, out) = fetch(&proxy, "http://creds.invalid.evil.invalid/");
     assert!(code != 200 && !out.starts_with("GET /c/"), "{code} {out}");
@@ -313,7 +517,18 @@ fn map_remote_and_map_local() {
         .map(|_| {
             let proxy = proxy.clone();
             std::thread::spawn(move || {
-                Command::new("curl").args(["-sS", "--max-time", "60", "-x", &proxy, "http://local.invalid/static/big.bin"]).output().unwrap().stdout
+                Command::new("curl")
+                    .args([
+                        "-sS",
+                        "--max-time",
+                        "60",
+                        "-x",
+                        &proxy,
+                        "http://local.invalid/static/big.bin",
+                    ])
+                    .output()
+                    .unwrap()
+                    .stdout
             })
         })
         .collect();
@@ -326,7 +541,10 @@ fn map_remote_and_map_local() {
 
     // --- Map Local: files, index.html, Content-Type, 404.
     let (code, ct, out) = fetch(&proxy, "http://local.invalid/static/a/b.json?v=3");
-    assert_eq!((code, ct.as_str(), out.as_str()), (200, "application/json", r#"{"b":1}"#));
+    assert_eq!(
+        (code, ct.as_str(), out.as_str()),
+        (200, "application/json", r#"{"b":1}"#)
+    );
     let (code, ct, out) = fetch(&proxy, "http://local.invalid/static/");
     assert_eq!((code, out.as_str()), (200, "<h1>home</h1>"));
     assert!(ct.starts_with("text/html"), "{ct}");
@@ -338,7 +556,11 @@ fn map_remote_and_map_local() {
     assert_eq!(code, 404, "{out}");
     assert!(out.contains("Map Local: no file /missing.txt"), "{out}");
     let d = session_for(&core, "http://local.invalid/static/a/b.json?v=3");
-    assert!(d.summary.comment.starts_with("Mapped to local file "), "{}", d.summary.comment);
+    assert!(
+        d.summary.comment.starts_with("Mapped to local file "),
+        "{}",
+        d.summary.comment
+    );
 
     // --- Map Local never leaves the folder.
     for url in [
@@ -353,7 +575,10 @@ fn map_remote_and_map_local() {
         "http://local.invalid/static/link.txt",
     ] {
         let (code, _, out) = fetch(&proxy, url);
-        assert!(!out.contains("TOP-SECRET") && !out.contains("root:"), "{url} leaked: {out}");
+        assert!(
+            !out.contains("TOP-SECRET") && !out.contains("root:"),
+            "{url} leaked: {out}"
+        );
         assert!(code == 403 || code == 404, "{url}: {code} {out}");
     }
     let (code, _, _) = fetch(&proxy, "http://local.invalid/static/../secret.txt");

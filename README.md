@@ -75,7 +75,8 @@ Quena is an independent, open-source take on this kind of tool, with its own des
   WireMock) to test the frontend without its backend.
 - **Powerful.** Breakpoints and tampering, mock rules, replay, JavaScript rules,
   WASM plugins, enterprise authentication (NTLM/Kerberos), PAC, mTLS, bandwidth simulation,
-  and inspectors for WebSocket, SSE, gRPC, SOAP, OData and MTOM.
+  and inspectors for WebSocket, SSE, gRPC (with `.proto` or server reflection), MessagePack,
+  SOAP, OData and MTOM.
 - **Fast, even when traffic is not friendly.** Hundreds of thousands of sessions and
   multi-gigabyte response bodies with constant memory; the UI never waits on the core.
 - **Local and private by design.** Everything stays on your machine. The root certificate is
@@ -229,8 +230,9 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 ### Inspect
 - Headers, Text, Pretty, Form Data, Hex, Auth, Cookies,
   Raw, JSON, XML, Caching, Image, Preview, Encoding
-- Auto-detected inspectors: **WebSocket**, **SSE**, **gRPC / Protobuf**
-  (schemaless), **Multipart / MTOM**, **SOAP**, **Atom / OData**
+- Auto-detected inspectors: **WebSocket**, **SSE**, **gRPC / gRPC-Web / Protobuf**
+  (field names from `.proto` files or server reflection, schemaless otherwise),
+  **MessagePack**, **Multipart / MTOM**, **SOAP**, **Atom / OData**
 - **Fast Infoset** (SOAP, OData, EDMX) via bundled plugin
 - Transparent gzip / deflate / brotli / zstd decoding, with bomb protection
 - Large-body viewer: open a multi-GB body instantly, search it, save ranges

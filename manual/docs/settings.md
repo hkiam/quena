@@ -75,6 +75,7 @@ See [Automatic authentication](authentication.md).
 | *Headers only for hosts* | empty | Record only headers for these hosts. |
 | *Headers only for content types* | empty | Record only headers for these types, e.g. `video/; audio/`. |
 | *Lossless recording (forwarding waits for the disk)* | off | Normally a recorder that falls behind truncates the recording instead of slowing traffic down; with this on, forwarding waits. |
+| *Protobuf schemas* | none | `.proto` files and folders, import paths, and whether the *gRPC* view may fetch a schema from the server (server reflection). See [gRPC and Protobuf with a schema](inspect.md#grpc-and-protobuf-with-a-schema). |
 
 ## AI agents (MCP)
 
@@ -85,7 +86,8 @@ their file folder and the token — see [AI agents (MCP)](mcp.md#turn-it-on).
 
 Quena keeps its settings, the capture database, the root certificate, mock rules
 (`autoresponder.json`), rewrite rules (`rewrite.json`), the rules script (`rules.js`), your
-plugins (`plugins`), the plugin cache (`plugin-cache`) and, unless set elsewhere, the folder
+plugins (`plugins`), the plugin cache (`plugin-cache`), schemas fetched from gRPC servers
+(`protobuf-reflection`) and, unless set elsewhere, the folder
 for AI agents' files (`mcp-files`) in one folder:
 
 | Platform | Default location |

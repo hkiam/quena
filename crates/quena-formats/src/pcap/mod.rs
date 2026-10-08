@@ -22,7 +22,10 @@ pub use keylog::KeyLog;
 
 use crate::{FormatError, Progress, Result};
 use quena_body::{Body, BodyWriter};
-use quena_model::{ConnectionInfo, HttpVersion, Micros, RequestHead, ResponseHead, SessionDetail, SessionId, SessionKind, SessionState, TlsInfo, flags};
+use quena_model::{
+    ConnectionInfo, HttpVersion, Micros, RequestHead, ResponseHead, SessionDetail, SessionId,
+    SessionKind, SessionState, TlsInfo, flags,
+};
 use quena_store::Capture;
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -40,7 +43,11 @@ const SERVER: usize = 1;
 const MAX_SNIFF: usize = 64 << 10;
 
 fn side_name(side: usize) -> &'static str {
-    if side == CLIENT { "request" } else { "response" }
+    if side == CLIENT {
+        "request"
+    } else {
+        "response"
+    }
 }
 
 fn peer_name(side: usize) -> &'static str {
@@ -52,7 +59,11 @@ fn host_of(a: &SocketAddr, default_port: u16) -> String {
         IpAddr::V6(v6) => format!("[{v6}]"),
         IpAddr::V4(v4) => v4.to_string(),
     };
-    if a.port() == default_port { ip } else { format!("{ip}:{}", a.port()) }
+    if a.port() == default_port {
+        ip
+    } else {
+        format!("{ip}:{}", a.port())
+    }
 }
 
 /// What the importer counted besides sessions; reported in the log.
@@ -242,17 +253,27 @@ impl Cx<'_> {
         d.summary.client_ip = c.client.ip().to_canonical().to_string();
         if ex.kind == SessionKind::Tunnel {
             let [up, down] = ex.bytes;
-            d.extra_flags.push(("x-tunnel-bytes".into(), format!("{up} up / {down} down")));
+            d.extra_flags
+                .push(("x-tunnel-bytes".into(), format!("{up} up / {down} down")));
             d.summary.custom = format!("↑{up} ↓{down}");
         }
         d.extra_flags.extend(ex.extra_flags);
         d.request = ex.req;
         d.response = ex.resp;
-        d.summary.state = if ex.error.is_some() { SessionState::Aborted } else { SessionState::Done };
+        d.summary.state = if ex.error.is_some() {
+            SessionState::Aborted
+        } else {
+            SessionState::Done
+        };
         d.error = ex.error;
         d.summary.flags |= flags::IMPORTED;
         d.summary.started_at = start;
-        self.out.push(Built { key: (start, c.id, ex.seq), d, req, resp });
+        self.out.push(Built {
+            key: (start, c.id, ex.seq),
+            d,
+            req,
+            resp,
+        });
     }
 }
 
@@ -286,13 +307,28 @@ struct Tunnel {
 impl Tunnel {
     fn new(ex: Exchange, direct: bool, connect: bool) -> Tunnel {
         // The decrypted bytes start at a message boundary, like a connection with a handshake.
-        let sniff = Sniff { had_syn: true, ..Sniff::default() };
-        Tunnel { ex, direct, connect, inside: Inside::Unknown, inner: Box::new((Proto::Sniff, sniff)), cut: [false; 2] }
+        let sniff = Sniff {
+            had_syn: true,
+            ..Sniff::default()
+        };
+        Tunnel {
+            ex,
+            direct,
+            connect,
+            inside: Inside::Unknown,
+            inner: Box::new((Proto::Sniff, sniff)),
+            cut: [false; 2],
+        }
     }
 
     fn direct(cx: &mut Cx, ts: Micros) -> Tunnel {
         let url = host_of(&cx.conn.server, 0);
-        let req = RequestHead { method: "CONNECT".into(), url, version: HttpVersion::Http11, headers: Default::default() };
+        let req = RequestHead {
+            method: "CONNECT".into(),
+            url,
+            version: HttpVersion::Http11,
+            headers: Default::default(),
+        };
         // Not numbered: once decrypted, the sessions inside are the connection's first ones.
         let mut ex = Exchange::numbered(cx, req, ts, ts, 0);
         ex.kind = SessionKind::Tunnel;
@@ -313,7 +349,9 @@ impl Tunnel {
             self.ex.start[SERVER] = Some(ts);
         }
         if matches!(self.inside, Inside::Unknown) {
-            self.inside = if side == CLIENT && (tls::looks_like_tls(data) || (data.len() < 3 && data.first() == Some(&0x16))) {
+            self.inside = if side == CLIENT
+                && (tls::looks_like_tls(data) || (data.len() < 3 && data.first() == Some(&0x16)))
+            {
                 Inside::Tls(Box::default())
             } else if self.connect {
                 cx.conn.target = Some(self.ex.req.url.clone());
@@ -328,11 +366,15 @@ impl Tunnel {
                 for plain in t.feed(side, data, cx.keys) {
                     if cx.conn.tls.is_none() {
                         cx.conn.tls = Some(t.info.clone());
-                        cx.conn.tls_handshake_ms = self.ex.start[CLIENT].map(|s| ((ts - s).max(0) / 1000) as u32);
+                        cx.conn.tls_handshake_ms =
+                            self.ex.start[CLIENT].map(|s| ((ts - s).max(0) / 1000) as u32);
                         cx.conn.target = if self.connect {
                             Some(self.ex.req.url.clone())
                         } else {
-                            t.info.sni.as_ref().map(|sni| format!("{sni}:{}", cx.conn.server.port()))
+                            t.info
+                                .sni
+                                .as_ref()
+                                .map(|sni| format!("{sni}:{}", cx.conn.server.port()))
                         };
                     }
                     Conn::data(proto, sniff, side, &plain, ts, ts, cx);
@@ -363,7 +405,9 @@ impl Tunnel {
             return;
         }
         self.cut[side] = true;
-        let why = t.broken.clone().unwrap_or_else(|| "the rest of the encrypted connection could not be decrypted".into());
+        let why = t.broken.clone().unwrap_or_else(|| {
+            "the rest of the encrypted connection could not be decrypted".into()
+        });
         Conn::cut(&mut self.inner.0, side, &why, ts, cx);
     }
 
@@ -385,12 +429,18 @@ impl Tunnel {
                 tlsconn::Keys::Missing => cx.stats.tls_no_keys += 1,
                 tlsconn::Keys::Unsupported(what) => {
                     cx.stats.tls_unsupported += 1;
-                    self.ex.extra_flags.push(("x-quena-not-decrypted".into(), format!("{what} cannot be decrypted")));
+                    self.ex.extra_flags.push((
+                        "x-quena-not-decrypted".into(),
+                        format!("{what} cannot be decrypted"),
+                    ));
                 }
                 tlsconn::Keys::Pending => {}
             }
             if t.skipped > 0 {
-                self.ex.fail(format!("{} early data record(s) (0-RTT) were not decrypted", t.skipped));
+                self.ex.fail(format!(
+                    "{} early data record(s) (0-RTT) were not decrypted",
+                    t.skipped
+                ));
             }
             if let Some(why) = &t.broken {
                 self.ex.fail(why.clone());
@@ -402,7 +452,11 @@ impl Tunnel {
             }
             self.ex.tls = Some(t.info);
             // Kept when decryption stopped or skipped records: it says why.
-            if self.direct && read_inside && t.keys == tlsconn::Keys::Found && self.ex.error.is_none() {
+            if self.direct
+                && read_inside
+                && t.keys == tlsconn::Keys::Found
+                && self.ex.error.is_none()
+            {
                 self.ex.discard = true;
             }
         }
@@ -448,9 +502,14 @@ struct Conn {
 
 /// What the start of one side's bytes says about who sent them.
 fn sent_by_client(p: &[u8]) -> Option<bool> {
-    if h1::looks_like_request(p) == Some(true) || p.starts_with(b"PRI * HTTP/2") || (tls::looks_like_tls(p) && p.get(5) == Some(&1)) {
+    if h1::looks_like_request(p) == Some(true)
+        || p.starts_with(b"PRI * HTTP/2")
+        || (tls::looks_like_tls(p) && p.get(5) == Some(&1))
+    {
         Some(true)
-    } else if h1::looks_like_response(p) == Some(true) || (tls::looks_like_tls(p) && p.get(5) == Some(&2)) {
+    } else if h1::looks_like_response(p) == Some(true)
+        || (tls::looks_like_tls(p) && p.get(5) == Some(&2))
+    {
         Some(false)
     } else {
         None
@@ -467,7 +526,18 @@ struct Global<'a> {
 impl Conn {
     fn new(a: SocketAddr, b: SocketAddr, id: u64, ts: Micros) -> Conn {
         Conn {
-            info: ConnInfo { id, client: a, server: b, syn: None, synack: None, first: ts, exchanges: 0, tls: None, tls_handshake_ms: None, target: None },
+            info: ConnInfo {
+                id,
+                client: a,
+                server: b,
+                syn: None,
+                synack: None,
+                first: ts,
+                exchanges: 0,
+                tls: None,
+                tls_handshake_ms: None,
+                target: None,
+            },
             halves: Default::default(),
             a,
             a_client: None,
@@ -486,13 +556,21 @@ impl Conn {
             return;
         }
         self.a_client = Some(a_client);
-        let (c, s) = if a_client { (self.a, other) } else { (other, self.a) };
+        let (c, s) = if a_client {
+            (self.a, other)
+        } else {
+            (other, self.a)
+        };
         self.info.client = c;
         self.info.server = s;
     }
 
     fn side(&self, endpoint: usize) -> usize {
-        if (endpoint == 0) == self.a_client.unwrap_or(true) { CLIENT } else { SERVER }
+        if (endpoint == 0) == self.a_client.unwrap_or(true) {
+            CLIENT
+        } else {
+            SERVER
+        }
     }
 
     fn has_data(&self) -> bool {
@@ -543,9 +621,17 @@ impl Conn {
     }
 
     fn event(&mut self, side: usize, ev: tcp::Ev, ts: Micros, g: &mut Global) {
-        let mut cx = Cx { cap: g.cap, keys: &g.keys, conn: &mut self.info, stats: &mut g.stats, out: &mut g.out };
+        let mut cx = Cx {
+            cap: g.cap,
+            keys: &g.keys,
+            conn: &mut self.info,
+            stats: &mut g.stats,
+            out: &mut g.out,
+        };
         match ev {
-            tcp::Ev::Data(d) => Self::data(&mut self.proto, &mut self.sniff, side, &d, ts, ts, &mut cx),
+            tcp::Ev::Data(d) => {
+                Self::data(&mut self.proto, &mut self.sniff, side, &d, ts, ts, &mut cx)
+            }
             tcp::Ev::Gap(n) => {
                 cx.stats.gaps += 1;
                 Self::gap(&mut self.proto, &mut self.sniff, side, n, ts, &mut cx);
@@ -591,12 +677,22 @@ impl Conn {
 
     /// `first`: when the first of the bytes `d` arrived; `ts`: the current packet.
     #[allow(clippy::too_many_arguments)]
-    fn data(proto: &mut Proto, sniff: &mut Sniff, side: usize, d: &[u8], first: Micros, ts: Micros, cx: &mut Cx) {
+    fn data(
+        proto: &mut Proto,
+        sniff: &mut Sniff,
+        side: usize,
+        d: &[u8],
+        first: Micros,
+        ts: Micros,
+        cx: &mut Cx,
+    ) {
         match proto {
             Proto::Sniff => {
                 sniff.buf[side].extend_from_slice(d);
                 sniff.ts[side].get_or_insert(first);
-                let Some(p) = detect(sniff, cx, ts) else { return };
+                let Some(p) = detect(sniff, cx, ts) else {
+                    return;
+                };
                 *proto = p;
                 let bufs = std::mem::take(&mut sniff.buf);
                 let gaps = std::mem::take(&mut sniff.gap);
@@ -642,8 +738,19 @@ impl Conn {
                 self.event(side, ev, ts, g);
             }
         }
-        let mut cx = Cx { cap: g.cap, keys: &g.keys, conn: &mut self.info, stats: &mut g.stats, out: &mut g.out };
-        Self::close(std::mem::replace(&mut self.proto, Proto::Closed), &self.sniff, ts, &mut cx);
+        let mut cx = Cx {
+            cap: g.cap,
+            keys: &g.keys,
+            conn: &mut self.info,
+            stats: &mut g.stats,
+            out: &mut g.out,
+        };
+        Self::close(
+            std::mem::replace(&mut self.proto, Proto::Closed),
+            &self.sniff,
+            ts,
+            &mut cx,
+        );
         self.sniff = Sniff::default();
         self.closed = true;
     }
@@ -672,7 +779,9 @@ fn detect(sniff: &Sniff, cx: &mut Cx, ts: Micros) -> Option<Proto> {
         return match h1::looks_like_response(s) {
             Some(true) => Some(Proto::H1(Default::default())),
             // Picked up in the middle of a long response: HTTP/1 from its next message on.
-            _ if s.len() > MAX_SNIFF && (!sniff.had_syn || sniff.gap[SERVER] > 0) => Some(Proto::H1(Default::default())),
+            _ if s.len() > MAX_SNIFF && (!sniff.had_syn || sniff.gap[SERVER] > 0) => {
+                Some(Proto::H1(Default::default()))
+            }
             _ if s.len() > MAX_SNIFF => Some(Proto::Other),
             _ => None,
         };
@@ -691,7 +800,9 @@ fn detect(sniff: &Sniff, cx: &mut Cx, ts: Micros) -> Option<Proto> {
         Some(true) => Some(Proto::H1(Default::default())),
         None => None,
         // Picked up mid-connection: TLS by its port, HTTP/1 from its next message on.
-        Some(false) if mid && cx.conn.server.port() == 443 => Some(Proto::Tunnel(Box::new(Tunnel::direct(cx, start)))),
+        Some(false) if mid && cx.conn.server.port() == 443 => {
+            Some(Proto::Tunnel(Box::new(Tunnel::direct(cx, start))))
+        }
         Some(false) if mid => Some(Proto::H1(Default::default())),
         Some(false) => Some(Proto::Other),
     }
@@ -712,7 +823,11 @@ impl<R: Read> Read for Counting<R> {
 }
 
 fn read_err(e: io::Error) -> FormatError {
-    if e.kind() == io::ErrorKind::InvalidData { FormatError::Invalid(e.to_string()) } else { FormatError::Io(e) }
+    if e.kind() == io::ErrorKind::InvalidData {
+        FormatError::Invalid(e.to_string())
+    } else {
+        FormatError::Io(e)
+    }
 }
 
 /// Largest key log file read.
@@ -731,7 +846,10 @@ fn read_key_log(path: &Path, max: u64) -> io::Result<(Vec<u8>, bool)> {
     let mut text = Vec::new();
     f.take(max).read_to_end(&mut text)?;
     if cut {
-        let line = text.iter().position(|b| *b == b'\n').map_or(text.len(), |p| p + 1);
+        let line = text
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(text.len(), |p| p + 1);
         text.drain(..line);
     }
     Ok((text, cut))
@@ -763,10 +881,18 @@ pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<S
 }
 
 /// Import a pcap or pcapng file, decrypting TLS with the given key logs.
-pub fn import_with(cap: &Arc<Capture>, path: &Path, opts: &PcapOptions, p: &dyn Progress) -> Result<PcapReport> {
+pub fn import_with(
+    cap: &Arc<Capture>,
+    path: &Path,
+    opts: &PcapOptions,
+    p: &dyn Progress,
+) -> Result<PcapReport> {
     let total = std::fs::metadata(path)?.len();
     let read = Rc::new(Cell::new(0));
-    let src = Counting { inner: BufReader::with_capacity(1 << 20, File::open(path)?), n: read.clone() };
+    let src = Counting {
+        inner: BufReader::with_capacity(1 << 20, File::open(path)?),
+        n: read.clone(),
+    };
     let mut reader = file::Reader::new(src).map_err(read_err)?;
     let mut keys = KeyLog::default();
     for k in &opts.keylogs {
@@ -780,11 +906,20 @@ pub fn import_with(cap: &Arc<Capture>, path: &Path, opts: &PcapOptions, p: &dyn 
             Err(e) => tracing::warn!(target: "quena", "TLS key log {}: {e}", k.display()),
         }
     }
-    let mut g = Global { cap, keys, stats: Stats::default(), out: Vec::new() };
+    let mut g = Global {
+        cap,
+        keys,
+        stats: Stats::default(),
+        out: Vec::new(),
+    };
     let mut conns: HashMap<(SocketAddr, SocketAddr), Conn> = HashMap::new();
     let mut last = 0;
     // Nothing is inserted: the bodies stored so far go again, also those of open connections.
-    let discard = |g: &mut Global, conns: HashMap<(SocketAddr, SocketAddr), Conn>, last: Micros, err: FormatError| -> Result<PcapReport> {
+    let discard = |g: &mut Global,
+                   conns: HashMap<(SocketAddr, SocketAddr), Conn>,
+                   last: Micros,
+                   err: FormatError|
+     -> Result<PcapReport> {
         for mut c in conns.into_values() {
             c.finish(last, g);
         }
@@ -835,14 +970,20 @@ pub fn import_with(cap: &Arc<Capture>, path: &Path, opts: &PcapOptions, p: &dyn 
         if (seg.payload.len() as u32) < seg.len {
             g.stats.cut += 1;
         }
-        let key = if seg.src <= seg.dst { (seg.src, seg.dst) } else { (seg.dst, seg.src) };
+        let key = if seg.src <= seg.dst {
+            (seg.src, seg.dst)
+        } else {
+            (seg.dst, seg.src)
+        };
         // A new connection on the same addresses and ports: the old one is over.
         if seg.syn
             && !seg.ack
             && let Some(c) = conns.get_mut(&key)
         {
             let e = c.endpoint(seg.src);
-            if c.halves[e].isn != Some(seg.seq) && (c.closed || c.has_data() || c.halves[e].isn.is_some()) {
+            if c.halves[e].isn != Some(seg.seq)
+                && (c.closed || c.has_data() || c.halves[e].isn.is_some())
+            {
                 c.finish(pkt.ts, &mut g);
                 conns.remove(&key);
             }
@@ -863,7 +1004,11 @@ pub fn import_with(cap: &Arc<Capture>, path: &Path, opts: &PcapOptions, p: &dyn 
         c.finish(last, &mut g);
     }
     g.out.sort_by_key(|b| b.key);
-    let ids: Vec<SessionId> = g.out.drain(..).map(|b| cap.insert(b.d, b.req, b.resp)).collect();
+    let ids: Vec<SessionId> = g
+        .out
+        .drain(..)
+        .map(|b| cap.insert(b.d, b.req, b.resp))
+        .collect();
     p.progress(total, total);
     let s = &g.stats;
     let mut notes = Vec::new();
@@ -871,10 +1016,16 @@ pub fn import_with(cap: &Arc<Capture>, path: &Path, opts: &PcapOptions, p: &dyn 
         notes.push(format!("{} TLS connection(s) decrypted", s.tls_decrypted));
     }
     if s.tls_no_keys > 0 {
-        notes.push(format!("{} TLS connection(s) without secrets in the key log, shown as tunnels", s.tls_no_keys));
+        notes.push(format!(
+            "{} TLS connection(s) without secrets in the key log, shown as tunnels",
+            s.tls_no_keys
+        ));
     }
     if s.tls_unsupported > 0 {
-        notes.push(format!("{} TLS connection(s) with a version or cipher suite that cannot be decrypted", s.tls_unsupported));
+        notes.push(format!(
+            "{} TLS connection(s) with a version or cipher suite that cannot be decrypted",
+            s.tls_unsupported
+        ));
     }
     if s.gaps > 0 {
         notes.push(format!("{} place(s) where packets are missing", s.gaps));
@@ -889,10 +1040,16 @@ pub fn import_with(cap: &Arc<Capture>, path: &Path, opts: &PcapOptions, p: &dyn 
         notes.push(format!("{} IP fragment(s) skipped", s.fragments));
     }
     if s.unknown_link > 0 {
-        notes.push(format!("{} packet(s) of an unsupported link type", s.unknown_link));
+        notes.push(format!(
+            "{} packet(s) of an unsupported link type",
+            s.unknown_link
+        ));
     }
     if s.cut > 0 {
-        notes.push(format!("{} packet(s) cut short by the capture's snapshot length", s.cut));
+        notes.push(format!(
+            "{} packet(s) cut short by the capture's snapshot length",
+            s.cut
+        ));
     }
     if s.truncated {
         notes.push("the file ends in the middle of a packet".into());
@@ -900,12 +1057,24 @@ pub fn import_with(cap: &Arc<Capture>, path: &Path, opts: &PcapOptions, p: &dyn 
     if let Some(e) = &s.corrupt {
         notes.push(format!("reading stopped at a damaged block ({e})"));
     }
-    let notes = if notes.is_empty() { String::new() } else { format!(": {}", notes.join(", ")) };
+    let notes = if notes.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", notes.join(", "))
+    };
     tracing::info!(target: "quena", "packet capture {}: {} packet(s), {} TCP connection(s), {} session(s){notes}", path.display(), s.packets, s.connections, ids.len());
     if ids.is_empty() {
-        return Err(FormatError::Invalid(format!("no HTTP traffic found in {} packet(s){notes}", s.packets)));
+        return Err(FormatError::Invalid(format!(
+            "no HTTP traffic found in {} packet(s){notes}",
+            s.packets
+        )));
     }
-    Ok(PcapReport { ids, tls: s.tls_conns, decrypted: s.tls_decrypted, no_keys: s.tls_no_keys })
+    Ok(PcapReport {
+        ids,
+        tls: s.tls_conns,
+        decrypted: s.tls_decrypted,
+        no_keys: s.tls_no_keys,
+    })
 }
 
 #[cfg(test)]

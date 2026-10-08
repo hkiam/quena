@@ -53,9 +53,14 @@ impl AppCore {
     /// Parse WebSocket frames `[start, start+count)` from the log.
     pub fn ws_frames(&self, id: SessionId, start: u64, count: usize) -> WsMessages {
         let cap = self.capture();
-        let Some((_, body)) = cap.bodies_of(id) else { return WsMessages::default() };
+        let Some((_, body)) = cap.bodies_of(id) else {
+            return WsMessages::default();
+        };
         let total_len = body.len();
-        let mut out = WsMessages { complete: body.is_complete(), ..Default::default() };
+        let mut out = WsMessages {
+            complete: body.is_complete(),
+            ..Default::default()
+        };
         let mut pos = 0u64;
         let mut seq = 0u64;
         let mut header = [0u8; RECORD_HEAD];
@@ -63,7 +68,17 @@ impl AppCore {
             if body.read_at(pos, &mut header).unwrap_or(0) < RECORD_HEAD {
                 break;
             }
-            let Some(wslog::Head { dir, opcode, fin, ts_us: time, len, .. }) = wslog::Head::parse(&header) else { break };
+            let Some(wslog::Head {
+                dir,
+                opcode,
+                fin,
+                ts_us: time,
+                len,
+                ..
+            }) = wslog::Head::parse(&header)
+            else {
+                break;
+            };
             let payload_off = pos + RECORD_HEAD as u64;
             if seq >= start && out.frames.len() < count {
                 let take = (len as usize).min(PREVIEW);
@@ -71,7 +86,16 @@ impl AppCore {
                 let (text, preview) = if opcode == 0x1 || (opcode == 0x8 && len >= 2) {
                     (Some(String::from_utf8_lossy(&data).into_owned()), None)
                 } else if opcode == 0x2 || opcode == 0x9 || opcode == 0xa {
-                    (None, Some(data.iter().take(64).map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")))
+                    (
+                        None,
+                        Some(
+                            data.iter()
+                                .take(64)
+                                .map(|b| format!("{b:02x}"))
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        ),
+                    )
                 } else {
                     (None, None)
                 };
@@ -114,7 +138,11 @@ mod tests {
     fn parse_frames() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("settings.json"), "{}").unwrap();
-        let core = AppCore::new(Paths::at(dir.path().to_path_buf()), crate::logbuf::LogBuffer::new(10)).unwrap();
+        let core = AppCore::new(
+            Paths::at(dir.path().to_path_buf()),
+            crate::logbuf::LogBuffer::new(10),
+        )
+        .unwrap();
         let cap = core.capture();
         let mut log = rec(0, 1, b"hello", 100);
         log.extend(rec(1, 1, b"{\"tick\":1}", 200));

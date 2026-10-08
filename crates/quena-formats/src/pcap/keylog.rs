@@ -25,7 +25,10 @@ fn hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) || s.is_empty() {
         return None;
     }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 impl KeyLog {
@@ -40,9 +43,17 @@ impl KeyLog {
     pub fn add(&mut self, text: &[u8]) {
         for line in String::from_utf8_lossy(text).lines() {
             let mut p = line.split_ascii_whitespace();
-            let (Some(label), Some(random), Some(secret), None) = (p.next(), p.next(), p.next(), p.next()) else { continue };
-            let (Some(random), Some(secret)) = (hex(random), hex(secret)) else { continue };
-            let Ok(random) = <[u8; 32]>::try_from(random.as_slice()) else { continue };
+            let (Some(label), Some(random), Some(secret), None) =
+                (p.next(), p.next(), p.next(), p.next())
+            else {
+                continue;
+            };
+            let (Some(random), Some(secret)) = (hex(random), hex(secret)) else {
+                continue;
+            };
+            let Ok(random) = <[u8; 32]>::try_from(random.as_slice()) else {
+                continue;
+            };
             let slot = match label {
                 "CLIENT_RANDOM" => {
                     self.by_random.entry(random).or_default().master = Some(secret);
@@ -55,7 +66,11 @@ impl KeyLog {
                 _ => continue,
             };
             let s = self.by_random.entry(random).or_default();
-            let list = if slot.1 { &mut s.handshake } else { &mut s.traffic };
+            let list = if slot.1 {
+                &mut s.handshake
+            } else {
+                &mut s.traffic
+            };
             list[slot.0] = Some(secret);
         }
     }
@@ -93,7 +108,10 @@ mod tests {
         );
         let k = KeyLog::parse(text.as_bytes());
         assert_eq!(k.len(), 2);
-        assert_eq!(k.get(&[1; 32]).unwrap().master.as_deref(), Some(&[0xab; 48][..]));
+        assert_eq!(
+            k.get(&[1; 32]).unwrap().master.as_deref(),
+            Some(&[0xab; 48][..])
+        );
         let s = k.get(&[2; 32]).unwrap();
         assert_eq!(s.handshake[0].as_deref(), Some(&[0xaa, 0xbb][..]));
         assert_eq!(s.traffic[1].as_deref(), Some(&[0xcc, 0xdd][..]));

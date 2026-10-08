@@ -35,8 +35,21 @@ tokio.workspace = true
 quick-xml = "0.38"
 serde_json_path = "0.7"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+# Protobuf with schemas (.proto files, gRPC server reflection) and MessagePack bodies.
+prost = "0.14"
+prost-types = "0.14"
+prost-reflect = "0.16"
+protox = { version = "0.10", default-features = false }
+rmpv = "1"
+base64 = "0.22"
+http = "1"
 
 [dev-dependencies]
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["server", "server-auto", "tokio", "http1", "http2"] }
+http-body = "1"
+http-body-util = "0.1"
+bytes = "1"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
 brotli.workspace = true
 tempfile.workspace = true

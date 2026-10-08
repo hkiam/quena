@@ -1,6 +1,6 @@
 //! WebSocket frame recording: pump forwards raw bytes and logs unmasked frames.
 
-use quena_proxy::wsframe::{pump, record, DIR_CLIENT, DIR_SERVER, FrameLog, FrameReader};
+use quena_proxy::wsframe::{DIR_CLIENT, DIR_SERVER, FrameLog, FrameReader, pump, record};
 use tokio::io::duplex;
 
 fn text_frame(payload: &[u8], masked: bool) -> Vec<u8> {
@@ -30,7 +30,12 @@ async fn pump_forwards_and_logs() {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
     let queued = std::sync::atomic::AtomicUsize::new(0);
     let last = std::sync::atomic::AtomicI64::new(0);
-    let log = FrameLog { tx: &tx, queued: &queued, budget: 1 << 20, last: &last };
+    let log = FrameLog {
+        tx: &tx,
+        queued: &queued,
+        budget: 1 << 20,
+        last: &last,
+    };
     let (total, err) = pump(src_r, dst_w, DIR_CLIENT, &log).await;
     drop(tx);
     assert_eq!(total, input.len() as u64);
@@ -53,7 +58,12 @@ async fn pump_forwards_and_logs() {
 #[test]
 fn record_roundtrip() {
     use quena_model::wslog::Frame;
-    let f = Frame { fin: true, rsv: 0, opcode: 0x2, payload: vec![1, 2, 3] };
+    let f = Frame {
+        fin: true,
+        rsv: 0,
+        opcode: 0x2,
+        payload: vec![1, 2, 3],
+    };
     let r = record(DIR_SERVER, &f, 12345);
     assert_eq!(r[0], DIR_SERVER);
     assert_eq!(r[1], 0x2);

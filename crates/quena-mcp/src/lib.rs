@@ -129,23 +129,37 @@ impl McpService {
 
 fn start(core: &Arc<AppCore>, port: u16) -> Result<Running> {
     // Bind here, synchronously, so a port in use is reported to the caller.
-    let listener = std::net::TcpListener::bind(("127.0.0.1", port)).with_context(|| format!("listen on 127.0.0.1:{port}"))?;
+    let listener = std::net::TcpListener::bind(("127.0.0.1", port))
+        .with_context(|| format!("listen on 127.0.0.1:{port}"))?;
     listener.set_nonblocking(true)?;
     let addr = listener.local_addr()?;
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
     let weak = Arc::downgrade(core);
-    let thread = std::thread::Builder::new().name("quena-mcp".into()).spawn(move || {
-        // Its own runtime: agent calls never compete with the proxy's workers.
-        let rt = match tokio::runtime::Builder::new_multi_thread().worker_threads(1).max_blocking_threads(4).thread_name("quena-mcp").enable_all().build() {
-            Ok(rt) => rt,
-            Err(e) => {
-                tracing::error!(target: "quena", "MCP runtime: {e}");
-                return;
-            }
-        };
-        rt.block_on(http::serve(listener, weak, stop_rx));
-        // A tool call still running (a long wait) must not hold up a restart.
-        rt.shutdown_timeout(std::time::Duration::from_secs(2));
-    })?;
-    Ok(Running { port, addr, stop: Some(stop_tx), thread: Some(thread) })
+    let thread = std::thread::Builder::new()
+        .name("quena-mcp".into())
+        .spawn(move || {
+            // Its own runtime: agent calls never compete with the proxy's workers.
+            let rt = match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .max_blocking_threads(4)
+                .thread_name("quena-mcp")
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::error!(target: "quena", "MCP runtime: {e}");
+                    return;
+                }
+            };
+            rt.block_on(http::serve(listener, weak, stop_rx));
+            // A tool call still running (a long wait) must not hold up a restart.
+            rt.shutdown_timeout(std::time::Duration::from_secs(2));
+        })?;
+    Ok(Running {
+        port,
+        addr,
+        stop: Some(stop_tx),
+        thread: Some(thread),
+    })
 }

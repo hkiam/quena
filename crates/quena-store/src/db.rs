@@ -36,7 +36,9 @@ pub(crate) fn encode(d: &SessionDetail) -> std::result::Result<Vec<u8>, rmp_serd
 }
 
 pub(crate) fn decode(b: &[u8]) -> Option<SessionDetail> {
-    rmp_serde::from_slice(b).map_err(|e| tracing::warn!("corrupt session row: {e}")).ok()
+    rmp_serde::from_slice(b)
+        .map_err(|e| tracing::warn!("corrupt session row: {e}"))
+        .ok()
 }
 
 impl Db {
@@ -52,8 +54,15 @@ impl Db {
         let (tx, rx) = crossbeam_channel::unbounded();
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let p2 = pending.clone();
-        std::thread::Builder::new().name("quena-db".into()).spawn(move || writer(w, rx, p2)).expect("spawn db writer");
-        Ok(Db { tx, reader: Mutex::new(r), pending })
+        std::thread::Builder::new()
+            .name("quena-db".into())
+            .spawn(move || writer(w, rx, p2))
+            .expect("spawn db writer");
+        Ok(Db {
+            tx,
+            reader: Mutex::new(r),
+            pending,
+        })
     }
 
     pub fn put(&self, d: Arc<SessionDetail>) {
@@ -95,8 +104,13 @@ impl Db {
             return Ok(p.as_ref().map(|d| (**d).clone()));
         }
         let c = self.reader.lock();
-        let row: Option<Vec<u8>> =
-            c.query_row("SELECT detail FROM sessions WHERE id = ?1", params![id as i64], |r| r.get(0)).optional()?;
+        let row: Option<Vec<u8>> = c
+            .query_row(
+                "SELECT detail FROM sessions WHERE id = ?1",
+                params![id as i64],
+                |r| r.get(0),
+            )
+            .optional()?;
         Ok(row.and_then(|b| decode(&b)))
     }
 
@@ -157,12 +171,14 @@ enum Change {
 fn apply(c: &mut Connection, changes: &[Change]) -> rusqlite::Result<()> {
     let tx = c.transaction()?;
     {
-        let mut put = tx.prepare_cached("INSERT OR REPLACE INTO sessions (id, detail) VALUES (?1, ?2)")?;
+        let mut put =
+            tx.prepare_cached("INSERT OR REPLACE INTO sessions (id, detail) VALUES (?1, ?2)")?;
         let mut del = tx.prepare_cached("DELETE FROM sessions WHERE id = ?1")?;
         for ch in changes {
             match ch {
                 Change::Put(d) => {
-                    let b = encode(d).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                    let b = encode(d)
+                        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                     put.execute(params![d.summary.id as i64, b])?;
                 }
                 Change::Delete(id) => {
@@ -179,7 +195,10 @@ fn apply(c: &mut Connection, changes: &[Change]) -> rusqlite::Result<()> {
 
 /// Drop changes superseded by a later change of the same id (or a later clear).
 fn compact(changes: Vec<Change>) -> Vec<Change> {
-    let start = changes.iter().rposition(|c| matches!(c, Change::Clear)).unwrap_or(0);
+    let start = changes
+        .iter()
+        .rposition(|c| matches!(c, Change::Clear))
+        .unwrap_or(0);
     let mut seen = std::collections::HashSet::new();
     let mut out: Vec<Change> = changes
         .into_iter()
@@ -221,7 +240,11 @@ fn settle(pending: &Mutex<HashMap<SessionId, Option<Arc<SessionDetail>>>>, done:
 const RETRY_DELAY: Duration = Duration::from_millis(500);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
-fn writer(mut c: Connection, rx: Receiver<Op>, pending: Arc<Mutex<HashMap<SessionId, Option<Arc<SessionDetail>>>>>) {
+fn writer(
+    mut c: Connection,
+    rx: Receiver<Op>,
+    pending: Arc<Mutex<HashMap<SessionId, Option<Arc<SessionDetail>>>>>,
+) {
     let mut batch: Vec<Op> = Vec::new();
     // Changes of failed writes; they stay readable from `pending` meanwhile.
     let mut retry: Vec<Change> = Vec::new();
@@ -234,7 +257,9 @@ fn writer(mut c: Connection, rx: Receiver<Op>, pending: Arc<Mutex<HashMap<Sessio
                 Err(_) => return,
             }
         } else {
-            let delay = RETRY_DELAY.saturating_mul(1 << failures.min(6)).min(MAX_RETRY_DELAY);
+            let delay = RETRY_DELAY
+                .saturating_mul(1 << failures.min(6))
+                .min(MAX_RETRY_DELAY);
             match rx.recv_timeout(delay) {
                 Ok(op) => batch.push(op),
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
@@ -243,7 +268,10 @@ fn writer(mut c: Connection, rx: Receiver<Op>, pending: Arc<Mutex<HashMap<Sessio
         }
         // Collect a batch (≤ 2000 ops or 50 ms).
         let deadline = std::time::Instant::now() + Duration::from_millis(50);
-        while !batch.is_empty() && batch.len() < 2000 && !matches!(batch.last(), Some(Op::Flush(_) | Op::Close(_))) {
+        while !batch.is_empty()
+            && batch.len() < 2000
+            && !matches!(batch.last(), Some(Op::Flush(_) | Op::Close(_)))
+        {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             match rx.recv_timeout(left) {
                 Ok(op) => batch.push(op),
@@ -271,7 +299,11 @@ fn writer(mut c: Connection, rx: Receiver<Op>, pending: Arc<Mutex<HashMap<Sessio
                 Err(e) => {
                     failures += 1;
                     let changes = compact(changes);
-                    tracing::error!(changes = changes.len(), attempt = failures, "session db write failed, keeping the changes in memory: {e}");
+                    tracing::error!(
+                        changes = changes.len(),
+                        attempt = failures,
+                        "session db write failed, keeping the changes in memory: {e}"
+                    );
                     // After repeated failures, isolate rows that fail on their own (e.g. too
                     // big) so they don't block everything else; they stay in `pending`.
                     if failures >= 3 {
@@ -287,7 +319,10 @@ fn writer(mut c: Connection, rx: Receiver<Op>, pending: Arc<Mutex<HashMap<Sessio
                         }
                         if ok > 0 {
                             if !failed.is_empty() {
-                                tracing::error!(rows = failed.len(), "session rows cannot be written; kept in memory for this run only");
+                                tracing::error!(
+                                    rows = failed.len(),
+                                    "session rows cannot be written; kept in memory for this run only"
+                                );
                             }
                             failures = 0;
                         } else {
@@ -304,7 +339,10 @@ fn writer(mut c: Connection, rx: Receiver<Op>, pending: Arc<Mutex<HashMap<Sessio
         }
         if close.is_some() || disconnected {
             if !retry.is_empty() {
-                tracing::error!(changes = retry.len(), "session db closed with unwritten changes");
+                tracing::error!(
+                    changes = retry.len(),
+                    "session db closed with unwritten changes"
+                );
             }
             drop(c);
             if let Some(a) = close {
@@ -331,9 +369,14 @@ mod tests {
         db.put(Arc::new(d));
         db.flush();
         let c = Connection::open(&path).unwrap();
-        c.execute("INSERT INTO sessions (id, detail) VALUES (2, x'c1c1c1')", []).unwrap();
+        c.execute(
+            "INSERT INTO sessions (id, detail) VALUES (2, x'c1c1c1')",
+            [],
+        )
+        .unwrap();
         // Garbage msgpack and a wrong column type.
-        c.execute("INSERT INTO sessions (id, detail) VALUES (4, 42)", []).unwrap();
+        c.execute("INSERT INTO sessions (id, detail) VALUES (4, 42)", [])
+            .unwrap();
         let mut ids = vec![];
         db.for_each(|d| ids.push(d.summary.id)).unwrap();
         assert_eq!(ids, vec![1, 3]);
@@ -351,7 +394,10 @@ mod tests {
         d.summary.id = 7;
         db.put(Arc::new(d));
         db.flush();
-        assert!(db.get(7).unwrap().is_some(), "entry lost after a failed write");
+        assert!(
+            db.get(7).unwrap().is_some(),
+            "entry lost after a failed write"
+        );
         c.execute_batch("DROP TRIGGER nope;").unwrap();
         // Retried on the next round.
         let t0 = std::time::Instant::now();
@@ -374,7 +420,10 @@ mod tests {
         drop(Db::open(&empty.join("session.sqlite")).unwrap());
         let found = crate::find_recoverable(root.path());
         assert!(found.is_empty());
-        assert!(bad.join("session.sqlite").exists(), "damaged capture was deleted");
+        assert!(
+            bad.join("session.sqlite").exists(),
+            "damaged capture was deleted"
+        );
         assert!(!empty.exists(), "empty capture should be cleaned up");
     }
 }

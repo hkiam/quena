@@ -83,12 +83,21 @@ fn head_end(b: &[u8]) -> Option<usize> {
 
 fn request_line_ok(l: &str) -> bool {
     let mut p = l.split(' ');
-    let (Some(m), Some(t), Some(v), None) = (p.next(), p.next(), p.next(), p.next()) else { return false };
-    !m.is_empty() && m.len() <= 24 && m.bytes().all(method_char) && !t.is_empty() && (v == "HTTP/1.1" || v == "HTTP/1.0")
+    let (Some(m), Some(t), Some(v), None) = (p.next(), p.next(), p.next(), p.next()) else {
+        return false;
+    };
+    !m.is_empty()
+        && m.len() <= 24
+        && m.bytes().all(method_char)
+        && !t.is_empty()
+        && (v == "HTTP/1.1" || v == "HTTP/1.0")
 }
 
 fn status_line_ok(l: &str) -> bool {
-    l.starts_with("HTTP/1.") && l.as_bytes().get(8) == Some(&b' ') && l.len() >= 12 && l.as_bytes()[9..12].iter().all(u8::is_ascii_digit)
+    l.starts_with("HTTP/1.")
+        && l.as_bytes().get(8) == Some(&b' ')
+        && l.len() >= 12
+        && l.as_bytes()[9..12].iter().all(u8::is_ascii_digit)
 }
 
 fn method_char(b: u8) -> bool {
@@ -103,7 +112,9 @@ pub fn looks_like_request(b: &[u8]) -> Option<bool> {
         return Some(request_line_ok(&line));
     }
     let method = b.iter().take_while(|c| method_char(**c)).count();
-    let plausible = b.len() <= MAX_LINE && (1..=24).contains(&method.max(b.len().min(1))) && (method == b.len() || (method > 0 && b[method] == b' '));
+    let plausible = b.len() <= MAX_LINE
+        && (1..=24).contains(&method.max(b.len().min(1)))
+        && (method == b.len() || (method > 0 && b[method] == b' '));
     if plausible { None } else { Some(false) }
 }
 
@@ -119,7 +130,11 @@ pub fn looks_like_response(b: &[u8]) -> Option<bool> {
 
 /// Drop bytes up to the next line that starts a message of this side. True if found.
 fn resync(buf: &mut Vec<u8>, side: usize) -> bool {
-    let check = if side == CLIENT { looks_like_request } else { looks_like_response };
+    let check = if side == CLIENT {
+        looks_like_request
+    } else {
+        looks_like_response
+    };
     for i in 0..buf.len() {
         if i > 0 && buf[i - 1] != b'\n' {
             continue;
@@ -144,12 +159,21 @@ fn body_left(h: &quena_model::Headers) -> Left {
     if raw::is_chunked(h) {
         Left::Chunked(Chunk::Size)
     } else {
-        Left::Len(h.get("content-length").and_then(|v| v.trim().parse().ok()).unwrap_or(0))
+        Left::Len(
+            h.get("content-length")
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0),
+        )
     }
 }
 
 /// Consume body bytes from `buf`. `Ok(true)`: the body is complete.
-fn take_body(buf: &mut Vec<u8>, left: &mut Left, ex: &mut Exchange, side: usize) -> Result<bool, String> {
+fn take_body(
+    buf: &mut Vec<u8>,
+    left: &mut Left,
+    ex: &mut Exchange,
+    side: usize,
+) -> Result<bool, String> {
     loop {
         match left {
             Left::Len(rem) => {
@@ -167,13 +191,28 @@ fn take_body(buf: &mut Vec<u8>, left: &mut Left, ex: &mut Exchange, side: usize)
             Left::Chunked(c) => match c {
                 Chunk::Size => {
                     let Some(p) = buf.iter().position(|b| *b == b'\n') else {
-                        return if buf.len() > MAX_LINE { Err("chunk size line too long".into()) } else { Ok(false) };
+                        return if buf.len() > MAX_LINE {
+                            Err("chunk size line too long".into())
+                        } else {
+                            Ok(false)
+                        };
                     };
                     let line = String::from_utf8_lossy(&buf[..p]);
-                    let size = line.trim().split(';').next().unwrap_or("").trim().to_string();
-                    let size = u64::from_str_radix(&size, 16).map_err(|_| format!("bad chunk size {size:?}"))?;
+                    let size = line
+                        .trim()
+                        .split(';')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let size = u64::from_str_radix(&size, 16)
+                        .map_err(|_| format!("bad chunk size {size:?}"))?;
                     buf.drain(..p + 1);
-                    *c = if size == 0 { Chunk::Trailer } else { Chunk::Data(size) };
+                    *c = if size == 0 {
+                        Chunk::Trailer
+                    } else {
+                        Chunk::Data(size)
+                    };
                 }
                 Chunk::Data(rem) => {
                     let n = (*rem).min(buf.len() as u64) as usize;
@@ -199,7 +238,11 @@ fn take_body(buf: &mut Vec<u8>, left: &mut Left, ex: &mut Exchange, side: usize)
                 }
                 Chunk::Trailer => {
                     let Some(p) = buf.iter().position(|b| *b == b'\n') else {
-                        return if buf.len() > MAX_LINE { Err("trailer line too long".into()) } else { Ok(false) };
+                        return if buf.len() > MAX_LINE {
+                            Err("trailer line too long".into())
+                        } else {
+                            Ok(false)
+                        };
                     };
                     let empty = buf[..p].iter().all(|b| *b == b'\r');
                     buf.drain(..p + 1);
@@ -215,7 +258,14 @@ fn take_body(buf: &mut Vec<u8>, left: &mut Left, ex: &mut Exchange, side: usize)
 impl H1 {
     /// `first`: when the first of these bytes arrived (earlier than `ts` for bytes collected
     /// before the protocol was known).
-    pub fn data(&mut self, side: usize, data: &[u8], first: Micros, ts: Micros, cx: &mut Cx) -> Option<Upgraded> {
+    pub fn data(
+        &mut self,
+        side: usize,
+        data: &[u8],
+        first: Micros,
+        ts: Micros,
+        cx: &mut Cx,
+    ) -> Option<Upgraded> {
         let s = &mut self.sides[side];
         if s.buf.is_empty() {
             s.start = Some(first);
@@ -264,23 +314,39 @@ impl H1 {
                         break;
                     }
                     let s = &mut self.sides[side];
-                    let lead = s.buf.iter().take_while(|b| **b == b'\r' || **b == b'\n').count();
+                    let lead = s
+                        .buf
+                        .iter()
+                        .take_while(|b| **b == b'\r' || **b == b'\n')
+                        .count();
                     s.buf.drain(..lead);
                     if s.buf.is_empty() {
                         break;
                     }
                     let Some(end) = head_end(&s.buf) else {
-                        if s.buf.len() > MAX_HEAD || s.buf.first().is_some_and(|b| !b.is_ascii_uppercase()) {
+                        if s.buf.len() > MAX_HEAD
+                            || s.buf.first().is_some_and(|b| !b.is_ascii_uppercase())
+                        {
                             s.st = St::Resync;
                             continue;
                         }
                         break;
                     };
                     let parsed = raw::read_head(&mut &s.buf[..end]).ok().flatten();
-                    let ok = parsed.as_ref().is_some_and(|(first, _)| if side == CLIENT { request_line_ok(first) } else { status_line_ok(first) });
+                    let ok = parsed.as_ref().is_some_and(|(first, _)| {
+                        if side == CLIENT {
+                            request_line_ok(first)
+                        } else {
+                            status_line_ok(first)
+                        }
+                    });
                     if !ok {
                         // Not a message start: skip this line and look for the next one.
-                        let nl = s.buf.iter().position(|b| *b == b'\n').map_or(s.buf.len(), |p| p + 1);
+                        let nl = s
+                            .buf
+                            .iter()
+                            .position(|b| *b == b'\n')
+                            .map_or(s.buf.len(), |p| p + 1);
                         s.buf.drain(..nl);
                         s.st = St::Resync;
                         continue;
@@ -300,19 +366,44 @@ impl H1 {
         None
     }
 
-    fn request(&mut self, first: String, headers: quena_model::Headers, start: Micros, ts: Micros, cx: &mut Cx) {
+    fn request(
+        &mut self,
+        first: String,
+        headers: quena_model::Headers,
+        start: Micros,
+        ts: Micros,
+        cx: &mut Cx,
+    ) {
         let (method, target, version) = raw::parse_request_line(&first);
         let connect = method.eq_ignore_ascii_case("CONNECT");
         let url = if connect || target.contains("://") {
             target
         } else {
-            let host = headers.get("host").map(str::to_string).unwrap_or_else(|| cx.conn.server_host());
-            let path = if target.starts_with('/') { target } else { format!("/{target}") };
+            let host = headers
+                .get("host")
+                .map(str::to_string)
+                .unwrap_or_else(|| cx.conn.server_host());
+            let path = if target.starts_with('/') {
+                target
+            } else {
+                format!("/{target}")
+            };
             format!("{}://{host}{path}", cx.conn.scheme())
         };
-        let upgrade = headers.get("upgrade").is_some() && headers.has_token("connection", "upgrade");
+        let upgrade =
+            headers.get("upgrade").is_some() && headers.has_token("connection", "upgrade");
         let left = body_left(&headers);
-        let mut ex = Exchange::new(cx, RequestHead { method, url, version, headers }, start, ts);
+        let mut ex = Exchange::new(
+            cx,
+            RequestHead {
+                method,
+                url,
+                version,
+                headers,
+            },
+            start,
+            ts,
+        );
         if connect {
             ex.kind = SessionKind::Tunnel;
         }
@@ -324,7 +415,14 @@ impl H1 {
         self.ex.push_back(ex);
     }
 
-    fn response(&mut self, first: String, headers: quena_model::Headers, start: Micros, ts: Micros, cx: &mut Cx) -> Option<Upgraded> {
+    fn response(
+        &mut self,
+        first: String,
+        headers: quena_model::Headers,
+        start: Micros,
+        ts: Micros,
+        cx: &mut Cx,
+    ) -> Option<Upgraded> {
         let (version, status, reason) = raw::parse_status_line(&first);
         let idx = match self.ex.iter().position(|e| e.end[SERVER].is_none()) {
             Some(i) => i,
@@ -345,7 +443,12 @@ impl H1 {
         let ex = &mut self.ex[idx];
         let connect = ex.req.method.eq_ignore_ascii_case("CONNECT");
         let switch = if status == 101 {
-            let proto = headers.get("upgrade").or(ex.req.headers.get("upgrade")).unwrap_or("").trim().to_ascii_lowercase();
+            let proto = headers
+                .get("upgrade")
+                .or(ex.req.headers.get("upgrade"))
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
             Some(match proto.as_str() {
                 "websocket" => Switch::WebSocket,
                 "h2c" => Switch::H2c,
@@ -356,7 +459,11 @@ impl H1 {
         } else {
             None
         };
-        let no_body = ex.req.method.eq_ignore_ascii_case("HEAD") || status == 204 || status == 304 || switch.is_some() || (connect && (200..300).contains(&status));
+        let no_body = ex.req.method.eq_ignore_ascii_case("HEAD")
+            || status == 204
+            || status == 304
+            || switch.is_some()
+            || (connect && (200..300).contains(&status));
         let left = if no_body {
             Left::Len(0)
         } else if raw::is_chunked(&headers) || headers.get("content-length").is_some() {
@@ -364,7 +471,12 @@ impl H1 {
         } else {
             Left::Close
         };
-        ex.resp = Some(ResponseHead { status, reason, version, headers });
+        ex.resp = Some(ResponseHead {
+            status,
+            reason,
+            version,
+            headers,
+        });
         ex.start[SERVER] = Some(start);
         ex.head[SERVER] = Some(ts);
         if let Some(to) = switch {
@@ -374,9 +486,17 @@ impl H1 {
                 ex.discard = false;
                 let (method, url) = match to {
                     Switch::Tunnel => ("CONNECT", cx.conn.server.to_string()),
-                    _ => ("GET", format!("{}://{}/", cx.conn.scheme(), cx.conn.server_host())),
+                    _ => (
+                        "GET",
+                        format!("{}://{}/", cx.conn.scheme(), cx.conn.server_host()),
+                    ),
                 };
-                ex.req = RequestHead { method: method.into(), url, version: HttpVersion::Http11, headers: Default::default() };
+                ex.req = RequestHead {
+                    method: method.into(),
+                    url,
+                    version: HttpVersion::Http11,
+                    headers: Default::default(),
+                };
                 ex.fail("the request is not in the capture".into());
             } else if !held {
                 ex.fail("the connection switched protocols before the request was complete".into());
@@ -390,7 +510,10 @@ impl H1 {
                 }
                 cx.emit(e);
             }
-            let rest = [std::mem::take(&mut self.sides[CLIENT].buf), std::mem::take(&mut self.sides[SERVER].buf)];
+            let rest = [
+                std::mem::take(&mut self.sides[CLIENT].buf),
+                std::mem::take(&mut self.sides[SERVER].buf),
+            ];
             return Some(Upgraded { to, ex, rest });
         }
         match left {
@@ -410,7 +533,11 @@ impl H1 {
 
     /// Emit exchanges from the front that are complete.
     fn emit_done(&mut self, cx: &mut Cx) {
-        while self.ex.front().is_some_and(|e| e.end[CLIENT].is_some() && e.end[SERVER].is_some()) {
+        while self
+            .ex
+            .front()
+            .is_some_and(|e| e.end[CLIENT].is_some() && e.end[SERVER].is_some())
+        {
             cx.emit(self.ex.pop_front().unwrap());
         }
     }
@@ -422,7 +549,10 @@ impl H1 {
         self.sides[side].st = match (st, ex) {
             (St::Body(Left::Len(rem)), Some(ex)) if n <= rem => {
                 ex.bodies[side].add_dropped(n);
-                ex.fail(format!("{n} bytes of the {} body are missing in the capture", side_name(side)));
+                ex.fail(format!(
+                    "{n} bytes of the {} body are missing in the capture",
+                    side_name(side)
+                ));
                 if rem == n {
                     ex.end[side] = Some(ts);
                     St::Head
@@ -432,11 +562,17 @@ impl H1 {
             }
             (St::Body(Left::Close), Some(ex)) => {
                 ex.bodies[side].add_dropped(n);
-                ex.fail(format!("{n} bytes of the {} body are missing in the capture", side_name(side)));
+                ex.fail(format!(
+                    "{n} bytes of the {} body are missing in the capture",
+                    side_name(side)
+                ));
                 St::Body(Left::Close)
             }
             (St::Body(_), Some(ex)) => {
-                ex.fail(format!("the {} is incomplete: {n} bytes are missing in the capture", side_name(side)));
+                ex.fail(format!(
+                    "the {} is incomplete: {n} bytes are missing in the capture",
+                    side_name(side)
+                ));
                 ex.end[side] = Some(ts);
                 St::Resync
             }
@@ -445,7 +581,9 @@ impl H1 {
             (St::Head, ex) => {
                 if side == SERVER {
                     if let Some(ex) = ex {
-                        ex.fail(format!("the response is missing in the capture ({n} bytes lost)"));
+                        ex.fail(format!(
+                            "the response is missing in the capture ({n} bytes lost)"
+                        ));
                         ex.end[SERVER] = Some(ts);
                     }
                 } else {
@@ -499,7 +637,10 @@ impl H1 {
             && let Some(ex) = self.ex.iter_mut().find(|e| e.end[side].is_none())
         {
             if !matches!(left, Left::Close) {
-                ex.fail(format!("the connection closed before the {} was complete", side_name(side)));
+                ex.fail(format!(
+                    "the connection closed before the {} was complete",
+                    side_name(side)
+                ));
             }
             ex.end[side] = Some(ts);
         }
@@ -519,4 +660,3 @@ impl H1 {
         }
     }
 }
-

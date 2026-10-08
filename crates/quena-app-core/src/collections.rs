@@ -60,7 +60,9 @@ pub struct HttpWritten {
 }
 
 fn dir_of(path: &Path) -> PathBuf {
-    path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
+    path.parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn read(path: &Path) -> Result<http_file::HttpFile> {
@@ -69,12 +71,21 @@ fn read(path: &Path) -> Result<http_file::HttpFile> {
 }
 
 fn selected(r: &http_file::RawRequest, names: &[String]) -> bool {
-    names.is_empty() || names.iter().any(|n| r.name.as_deref() == Some(n.as_str()) || n.strip_prefix("line:").and_then(|l| l.parse().ok()) == Some(r.line))
+    names.is_empty()
+        || names.iter().any(|n| {
+            r.name.as_deref() == Some(n.as_str())
+                || n.strip_prefix("line:").and_then(|l| l.parse().ok()) == Some(r.line)
+        })
 }
 
 impl AppCore {
     /// The requests of a `.http` file, resolved with environment `env`.
-    pub fn http_requests(&self, path: &Path, env: Option<&str>, access: &Access) -> Result<HttpListing> {
+    pub fn http_requests(
+        &self,
+        path: &Path,
+        env: Option<&str>,
+        access: &Access,
+    ) -> Result<HttpListing> {
         let f = read(path)?;
         let dir = dir_of(path);
         let vars = http_file::load_environment(&dir, env).map_err(|e| anyhow!(e))?;
@@ -82,46 +93,94 @@ impl AppCore {
             .requests
             .iter()
             .map(|r| match http_file::resolve(&f, r, &vars, &dir, access) {
-                Ok(x) => HttpEntry { name: x.name, line: x.line, method: x.method, url: x.url, error: None },
-                Err(e) => HttpEntry { name: r.name.clone(), line: r.line, method: r.method.clone(), url: r.url.clone(), error: Some(e) },
+                Ok(x) => HttpEntry {
+                    name: x.name,
+                    line: x.line,
+                    method: x.method,
+                    url: x.url,
+                    error: None,
+                },
+                Err(e) => HttpEntry {
+                    name: r.name.clone(),
+                    line: r.line,
+                    method: r.method.clone(),
+                    url: r.url.clone(),
+                    error: Some(e),
+                },
             })
             .collect();
-        Ok(HttpListing { environments: http_file::environments(&dir).map_err(|e| anyhow!(e))?, requests, warnings: f.warnings })
+        Ok(HttpListing {
+            environments: http_file::environments(&dir).map_err(|e| anyhow!(e))?,
+            requests,
+            warnings: f.warnings,
+        })
     }
 
     /// Send the requests of a `.http` file one after the other (all, or those named in
     /// `names`: `@name`/`###` titles or `line:N`), each waiting up to `wait` for its response.
-    pub fn run_http_file(self: &Arc<Self>, path: &Path, env: Option<&str>, names: &[String], wait: Duration, access: &Access) -> Result<Vec<HttpRunResult>> {
+    pub fn run_http_file(
+        self: &Arc<Self>,
+        path: &Path,
+        env: Option<&str>,
+        names: &[String],
+        wait: Duration,
+        access: &Access,
+    ) -> Result<Vec<HttpRunResult>> {
         let f = read(path)?;
         let dir = dir_of(path);
         let vars = http_file::load_environment(&dir, env).map_err(|e| anyhow!(e))?;
         let chosen: Vec<_> = f.requests.iter().filter(|r| selected(r, names)).collect();
         if chosen.is_empty() {
-            bail!("no requests{} in {}", if names.is_empty() { String::new() } else { format!(" named {}", names.join(", ")) }, path.display());
+            bail!(
+                "no requests{} in {}",
+                if names.is_empty() {
+                    String::new()
+                } else {
+                    format!(" named {}", names.join(", "))
+                },
+                path.display()
+            );
         }
         let mut out = Vec::new();
         for raw in chosen {
-            let mut res = HttpRunResult { name: raw.name.clone(), line: raw.line, method: raw.method.clone(), url: raw.url.clone(), session: None, status: None, duration_ms: None, pending: false, error: None };
-            let sent = http_file::resolve(&f, raw, &vars, &dir, access).map_err(|e| anyhow!(e)).and_then(|r| {
-                res.url = r.url.clone();
-                let (body, body_file) = match r.body {
-                    Body::None => (String::new(), None),
-                    Body::Text(t) => (t, None),
-                    Body::File(p) => (String::new(), Some(p.to_string_lossy().into_owned())),
-                };
-                self.compose(ComposeRequest {
-                    method: r.method,
-                    url: r.url,
-                    version: None,
-                    headers: r.headers.iter().map(|(n, v)| format!("{n}: {v}")).collect::<Vec<_>>().join("\n"),
-                    body,
-                    body_charset: None,
-                    body_from_session: None,
-                    body_file,
-                    fix_content_length: true,
-                    breakpoint: false,
-                })
-            });
+            let mut res = HttpRunResult {
+                name: raw.name.clone(),
+                line: raw.line,
+                method: raw.method.clone(),
+                url: raw.url.clone(),
+                session: None,
+                status: None,
+                duration_ms: None,
+                pending: false,
+                error: None,
+            };
+            let sent = http_file::resolve(&f, raw, &vars, &dir, access)
+                .map_err(|e| anyhow!(e))
+                .and_then(|r| {
+                    res.url = r.url.clone();
+                    let (body, body_file) = match r.body {
+                        Body::None => (String::new(), None),
+                        Body::Text(t) => (t, None),
+                        Body::File(p) => (String::new(), Some(p.to_string_lossy().into_owned())),
+                    };
+                    self.compose(ComposeRequest {
+                        method: r.method,
+                        url: r.url,
+                        version: None,
+                        headers: r
+                            .headers
+                            .iter()
+                            .map(|(n, v)| format!("{n}: {v}"))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        body,
+                        body_charset: None,
+                        body_from_session: None,
+                        body_file,
+                        fix_content_length: true,
+                        breakpoint: false,
+                    })
+                });
             match sent {
                 Ok(id) => {
                     res.session = Some(id);
@@ -147,7 +206,13 @@ impl AppCore {
     ///
     /// With `redact`, credentials and secret values are replaced first (the sanitizer's
     /// `credentials` preset) and no private environment file is written.
-    pub fn sessions_to_http(&self, ids: &[SessionId], path: &Path, overwrite: bool, redact: bool) -> Result<HttpWritten> {
+    pub fn sessions_to_http(
+        &self,
+        ids: &[SessionId],
+        path: &Path,
+        overwrite: bool,
+        redact: bool,
+    ) -> Result<HttpWritten> {
         if path.exists() && !overwrite {
             bail!("{} exists", path.display());
         }
@@ -161,41 +226,98 @@ impl AppCore {
         });
         for id in ids {
             let Some(d) = cap.detail(*id) else { continue };
-            if d.summary.kind == quena_model::SessionKind::Tunnel || d.request.method.eq_ignore_ascii_case("CONNECT") {
+            if d.summary.kind == quena_model::SessionKind::Tunnel
+                || d.request.method.eq_ignore_ascii_case("CONNECT")
+            {
                 continue;
             }
             if let Some(san) = san.as_mut() {
-                let Some((req, resp)) = cap.bodies_of(*id) else { continue };
+                let Some((req, resp)) = cap.bodies_of(*id) else {
+                    continue;
+                };
                 let s = san.session(&d, &req, &resp);
-                let text = (!s.request.is_empty()).then(|| String::from_utf8_lossy(&s.request).into_owned());
+                let text = (!s.request.is_empty())
+                    .then(|| String::from_utf8_lossy(&s.request).into_owned());
                 let (body, omitted) = match text {
                     Some(t) if t.len() <= MAX_WRITTEN_BODY && !t.contains('\0') => (Some(t), None),
-                    Some(_) => (None, Some(format!("{} bytes, binary or larger than {} KiB", req.len(), MAX_WRITTEN_BODY >> 10))),
+                    Some(_) => (
+                        None,
+                        Some(format!(
+                            "{} bytes, binary or larger than {} KiB",
+                            req.len(),
+                            MAX_WRITTEN_BODY >> 10
+                        )),
+                    ),
                     None => (None, None),
                 };
-                reqs.push(Captured { comment: format!("#{id} {} {}", s.detail.request.method, s.detail.request.url), method: s.detail.request.method.clone(), url: s.detail.request.url.clone(), headers: s.detail.request.headers.0.clone(), body, omitted });
+                reqs.push(Captured {
+                    comment: format!("#{id} {} {}", s.detail.request.method, s.detail.request.url),
+                    method: s.detail.request.method.clone(),
+                    url: s.detail.request.url.clone(),
+                    headers: s.detail.request.headers.0.clone(),
+                    body,
+                    omitted,
+                });
                 continue;
             }
             let (body, omitted) = match cap.bodies_of(*id) {
                 Some((b, _)) if b.is_empty() => (None, None),
                 Some((b, _)) => {
-                    let ce = d.request.headers.get("content-encoding").map(str::trim).filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("identity"));
+                    let ce = d
+                        .request
+                        .headers
+                        .get("content-encoding")
+                        .map(str::trim)
+                        .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("identity"));
                     let decoded = match ce {
-                        Some(ce) => quena_body::decode::decode_prefix(&b, ce, MAX_WRITTEN_BODY + 1, &quena_body::decode::NoProgress).map_err(|e| format!("cannot decode {ce}: {e}")),
-                        None => b.read_range(0, MAX_WRITTEN_BODY + 1).map_err(|e| e.to_string()),
+                        Some(ce) => quena_body::decode::decode_prefix(
+                            &b,
+                            ce,
+                            MAX_WRITTEN_BODY + 1,
+                            &quena_body::decode::NoProgress,
+                        )
+                        .map_err(|e| format!("cannot decode {ce}: {e}")),
+                        None => b
+                            .read_range(0, MAX_WRITTEN_BODY + 1)
+                            .map_err(|e| e.to_string()),
                     };
                     let bytes = decoded.unwrap_or_default();
                     let ct = d.request.headers.get("content-type");
-                    let textual = ct.map(crate::dto::is_textual_type).unwrap_or_else(|| crate::dto::sniff_text(&bytes[..bytes.len().min(1024)]));
+                    let textual = ct
+                        .map(crate::dto::is_textual_type)
+                        .unwrap_or_else(|| crate::dto::sniff_text(&bytes[..bytes.len().min(1024)]));
                     if bytes.is_empty() {
-                        (None, Some(format!("{} bytes that could not be read or decoded", b.len())))
+                        (
+                            None,
+                            Some(format!(
+                                "{} bytes that could not be read or decoded",
+                                b.len()
+                            )),
+                        )
                     } else if !textual {
                         (None, Some(format!("binary, {} bytes", b.len())))
                     } else if bytes.len() > MAX_WRITTEN_BODY {
-                        (None, Some(format!("{} bytes, larger than {} KiB", b.len(), MAX_WRITTEN_BODY >> 10)))
+                        (
+                            None,
+                            Some(format!(
+                                "{} bytes, larger than {} KiB",
+                                b.len(),
+                                MAX_WRITTEN_BODY >> 10
+                            )),
+                        )
                     } else {
                         let det = quena_body::charset::detect(ct, &bytes);
-                        (Some(quena_body::charset::decode(&bytes[det.bom_len.min(bytes.len())..], det.encoding).0.into_owned()), None)
+                        (
+                            Some(
+                                quena_body::charset::decode(
+                                    &bytes[det.bom_len.min(bytes.len())..],
+                                    det.encoding,
+                                )
+                                .0
+                                .into_owned(),
+                            ),
+                            None,
+                        )
                     }
                 }
                 None => (None, None),
@@ -205,7 +327,14 @@ impl AppCore {
                 // Sent decoded; the original coding would no longer match.
                 headers.retain(|(n, _)| !n.eq_ignore_ascii_case("content-encoding"));
             }
-            reqs.push(Captured { comment: format!("#{id} {} {}", d.request.method, d.summary.full_url()), method: d.request.method.clone(), url: d.summary.full_url(), headers, body, omitted });
+            reqs.push(Captured {
+                comment: format!("#{id} {} {}", d.request.method, d.summary.full_url()),
+                method: d.request.method.clone(),
+                url: d.summary.full_url(),
+                headers,
+                body,
+                omitted,
+            });
         }
         if reqs.is_empty() {
             bail!("no HTTP requests among the sessions");
@@ -217,13 +346,18 @@ impl AppCore {
         let dir = dir_of(path);
         // Read (and check) the environment files first, so nothing is written half.
         let mut envs = Vec::new();
-        for (file, vars) in [(http_file::ENV_FILE, public), (http_file::PRIVATE_ENV_FILE, private)] {
+        for (file, vars) in [
+            (http_file::ENV_FILE, public),
+            (http_file::PRIVATE_ENV_FILE, private),
+        ] {
             if vars.is_empty() {
                 continue;
             }
             let p = dir.join(file);
             let mut all: serde_json::Map<String, serde_json::Value> = match std::fs::read(&p) {
-                Ok(b) => serde_json::from_slice(&b).with_context(|| format!("{} is not a JSON object; nothing written", p.display()))?,
+                Ok(b) => serde_json::from_slice(&b).with_context(|| {
+                    format!("{} is not a JSON object; nothing written", p.display())
+                })?,
                 Err(_) => Default::default(),
             };
             all.insert("captured".into(), serde_json::to_value(vars)?);
@@ -235,6 +369,11 @@ impl AppCore {
             std::fs::write(&p, serde_json::to_vec_pretty(&all)?)?;
             env_files.push(p.display().to_string());
         }
-        Ok(HttpWritten { path: path.display().to_string(), requests: reqs.len(), env_files, secrets_redacted: redact })
+        Ok(HttpWritten {
+            path: path.display().to_string(),
+            requests: reqs.len(),
+            env_files,
+            secrets_redacted: redact,
+        })
     }
 }

@@ -1,6 +1,8 @@
 //! Raw HTTP/1 message heads and chunked transfer coding.
 
-use quena_model::{Headers, RequestHead, ResponseHead, HttpVersion, latin1_to_string, string_to_latin1};
+use quena_model::{
+    Headers, HttpVersion, RequestHead, ResponseHead, latin1_to_string, string_to_latin1,
+};
 use std::io::{self, BufRead, Read, Write};
 
 const MAX_HEAD: usize = 1 << 20;
@@ -16,13 +18,23 @@ pub fn read_head<R: BufRead>(r: &mut R) -> io::Result<Option<(String, Headers)>>
     loop {
         line.clear();
         // Bounded read: a huge "line" without newline must not be buffered whole.
-        let n = r.by_ref().take((MAX_HEAD - total) as u64 + 1).read_until(b'\n', &mut line)?;
+        let n = r
+            .by_ref()
+            .take((MAX_HEAD - total) as u64 + 1)
+            .read_until(b'\n', &mut line)?;
         if n == 0 {
-            return Ok(if first.is_empty() { None } else { Some((first, headers)) });
+            return Ok(if first.is_empty() {
+                None
+            } else {
+                Some((first, headers))
+            });
         }
         total += n;
         if total > MAX_HEAD {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "message head too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "message head too large",
+            ));
         }
         while line.last().is_some_and(|b| *b == b'\n' || *b == b'\r') {
             line.pop();
@@ -59,13 +71,19 @@ pub fn parse_request_line(line: &str) -> (String, String, HttpVersion) {
     let mut p = line.splitn(3, ' ');
     let m = p.next().unwrap_or("GET").to_string();
     let u = p.next().unwrap_or("/").to_string();
-    let v = p.next().and_then(HttpVersion::parse).unwrap_or(HttpVersion::Http11);
+    let v = p
+        .next()
+        .and_then(HttpVersion::parse)
+        .unwrap_or(HttpVersion::Http11);
     (m, u, v)
 }
 
 pub fn parse_status_line(line: &str) -> (HttpVersion, u16, String) {
     let mut p = line.splitn(3, ' ');
-    let v = p.next().and_then(HttpVersion::parse).unwrap_or(HttpVersion::Http11);
+    let v = p
+        .next()
+        .and_then(HttpVersion::parse)
+        .unwrap_or(HttpVersion::Http11);
     let s = p.next().and_then(|x| x.parse().ok()).unwrap_or(0);
     let r = p.next().unwrap_or("").to_string();
     (v, s, r)
@@ -107,7 +125,13 @@ pub fn write_request_head(w: &mut dyn Write, r: &RequestHead) -> io::Result<()> 
 }
 
 pub fn write_response_head(w: &mut dyn Write, r: &ResponseHead) -> io::Result<()> {
-    write!(w, "{} {} {}\r\n", wire_version(r.version), r.status, r.reason)?;
+    write!(
+        w,
+        "{} {} {}\r\n",
+        wire_version(r.version),
+        r.status,
+        r.reason
+    )?;
     write_headers(w, &r.headers)
 }
 
@@ -124,7 +148,11 @@ pub struct ChunkedReader<R> {
 
 impl<R: BufRead> ChunkedReader<R> {
     pub fn new(inner: R) -> Self {
-        ChunkedReader { inner, remaining: 0, done: false }
+        ChunkedReader {
+            inner,
+            remaining: 0,
+            done: false,
+        }
     }
 }
 
@@ -138,12 +166,21 @@ impl<R: BufRead> Read for ChunkedReader<R> {
             // Skip the CRLF that terminates the previous chunk.
             loop {
                 raw.clear();
-                if self.inner.by_ref().take(MAX_CHUNK_LINE).read_until(b'\n', &mut raw)? == 0 {
+                if self
+                    .inner
+                    .by_ref()
+                    .take(MAX_CHUNK_LINE)
+                    .read_until(b'\n', &mut raw)?
+                    == 0
+                {
                     self.done = true;
                     return Ok(0);
                 }
                 if raw.last() != Some(&b'\n') && raw.len() as u64 >= MAX_CHUNK_LINE {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "chunk size line too long"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "chunk size line too long",
+                    ));
                 }
                 if !raw.trim_ascii().is_empty() {
                     break;
@@ -151,7 +188,12 @@ impl<R: BufRead> Read for ChunkedReader<R> {
             }
             let line = String::from_utf8_lossy(&raw);
             let size = line.trim().split(';').next().unwrap_or("0");
-            self.remaining = u64::from_str_radix(size.trim(), 16).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("bad chunk size {size:?}")))?;
+            self.remaining = u64::from_str_radix(size.trim(), 16).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("bad chunk size {size:?}"),
+                )
+            })?;
             if self.remaining == 0 {
                 self.done = true;
                 return Ok(0);

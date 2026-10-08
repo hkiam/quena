@@ -15,7 +15,11 @@ impl Ws {
         ex.kind = SessionKind::WebSocket;
         // The response body becomes the message log: what the handshake response carried goes.
         ex.end[super::SERVER] = None;
-        Ws { ex, bufs: [Vec::new(), Vec::new()], broken: false }
+        Ws {
+            ex,
+            bufs: [Vec::new(), Vec::new()],
+            broken: false,
+        }
     }
 
     pub fn data(&mut self, side: usize, data: &[u8], ts: Micros) {
@@ -28,12 +32,16 @@ impl Ws {
         loop {
             match wslog::parse_frame(&buf[used..]) {
                 Ok(Some((frame, n))) => {
-                    self.ex.write(super::SERVER, &wslog::record(side as u8, &frame, ts));
+                    self.ex
+                        .write(super::SERVER, &wslog::record(side as u8, &frame, ts));
                     used += n;
                 }
                 Ok(None) => break,
                 Err(e) => {
-                    self.ex.fail(format!("{} frames: {e}; later frames are not shown", peer_name(side)));
+                    self.ex.fail(format!(
+                        "{} frames: {e}; later frames are not shown",
+                        peer_name(side)
+                    ));
                     self.broken = true;
                     break;
                 }
@@ -44,7 +52,10 @@ impl Ws {
 
     pub fn gap(&mut self, side: usize, n: u64) {
         if !self.broken {
-            self.ex.fail(format!("{n} bytes of the {} frames are missing in the capture; later frames are not shown", peer_name(side)));
+            self.ex.fail(format!(
+                "{n} bytes of the {} frames are missing in the capture; later frames are not shown",
+                peer_name(side)
+            ));
             self.broken = true;
         }
     }

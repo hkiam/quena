@@ -76,7 +76,12 @@ impl JobState {
             done: self.done.load(Ordering::Relaxed),
             total: self.total.load(Ordering::Relaxed),
             error: self.error.lock().clone(),
-            elapsed_ms: started.map(|s| finished.unwrap_or_else(Instant::now).duration_since(s).as_millis() as u64),
+            elapsed_ms: started.map(|s| {
+                finished
+                    .unwrap_or_else(Instant::now)
+                    .duration_since(s)
+                    .as_millis() as u64
+            }),
         }
     }
 }
@@ -191,7 +196,14 @@ impl JobManager {
 
     /// Submit a job. If a job with the same key is queued or running, its id
     /// is returned instead (de-duplication).
-    pub fn submit<F>(&self, key: impl Into<String>, title: impl Into<String>, priority: Priority, visible: bool, f: F) -> JobId
+    pub fn submit<F>(
+        &self,
+        key: impl Into<String>,
+        title: impl Into<String>,
+        priority: Priority,
+        visible: bool,
+        f: F,
+    ) -> JobId
     where
         F: FnOnce(&JobCtx) -> Result<(), String> + Send + 'static,
     {
@@ -224,8 +236,15 @@ impl JobManager {
         reg.order.push(id);
         self.gc(&mut reg);
         drop(reg);
-        let task = Task { state, work: Box::new(f) };
-        let tx = if priority == Priority::Interactive { &self.hi } else { &self.lo };
+        let task = Task {
+            state,
+            work: Box::new(f),
+        };
+        let tx = if priority == Priority::Interactive {
+            &self.hi
+        } else {
+            &self.lo
+        };
         let _ = tx.send(task);
         self.generation.fetch_add(1, Ordering::Relaxed);
         id
@@ -236,7 +255,11 @@ impl JobManager {
             .order
             .iter()
             .copied()
-            .filter(|id| reg.jobs.get(id).is_some_and(|j| !matches!(j.status(), JobStatus::Queued | JobStatus::Running)))
+            .filter(|id| {
+                reg.jobs
+                    .get(id)
+                    .is_some_and(|j| !matches!(j.status(), JobStatus::Queued | JobStatus::Running))
+            })
             .collect();
         if finished.len() > self.keep_finished {
             let drop_n = finished.len() - self.keep_finished;
@@ -257,7 +280,10 @@ impl JobManager {
         let job = self.get(id).ok_or(WaitError::UnknownJob)?;
         let until = Instant::now().checked_add(timeout);
         loop {
-            if matches!(job.status(), JobStatus::Done | JobStatus::Failed | JobStatus::Cancelled) {
+            if matches!(
+                job.status(),
+                JobStatus::Done | JobStatus::Failed | JobStatus::Cancelled
+            ) {
                 return Ok(job.snapshot());
             }
             if until.is_some_and(|u| Instant::now() >= u) {
@@ -289,7 +315,9 @@ impl JobManager {
     /// Cancel all jobs whose key starts with `prefix` (e.g. "search:" on new input).
     pub fn cancel_prefix(&self, prefix: &str) {
         for j in self.reg.lock().jobs.values() {
-            if j.key.starts_with(prefix) && matches!(j.status(), JobStatus::Queued | JobStatus::Running) {
+            if j.key.starts_with(prefix)
+                && matches!(j.status(), JobStatus::Queued | JobStatus::Running)
+            {
                 j.cancel();
             }
         }
@@ -319,7 +347,12 @@ impl JobManager {
     }
 }
 
-fn worker(hi: Receiver<Task>, lo: Receiver<Task>, interactive_only: bool, generation: Arc<AtomicU64>) {
+fn worker(
+    hi: Receiver<Task>,
+    lo: Receiver<Task>,
+    interactive_only: bool,
+    generation: Arc<AtomicU64>,
+) {
     loop {
         // Prefer interactive work.
         let task = match hi.try_recv() {
@@ -378,7 +411,9 @@ mod tests {
     use super::*;
 
     fn wait(m: &JobManager, id: JobId) -> JobStatus {
-        m.wait(id, Duration::from_millis(2500)).expect("timeout").status
+        m.wait(id, Duration::from_millis(2500))
+            .expect("timeout")
+            .status
     }
 
     #[test]
@@ -396,18 +431,27 @@ mod tests {
     #[test]
     fn wait_unknown_timeout_and_unbounded() {
         let m = JobManager::new(1);
-        assert_eq!(m.wait(9999, Duration::from_millis(10)).unwrap_err(), WaitError::UnknownJob);
+        assert_eq!(
+            m.wait(9999, Duration::from_millis(10)).unwrap_err(),
+            WaitError::UnknownJob
+        );
         let slow = m.submit("slow", "t", Priority::Background, true, |ctx| {
             while !ctx.cancelled() {
                 std::thread::sleep(Duration::from_millis(5));
             }
             Ok(())
         });
-        assert_eq!(m.wait(slow, Duration::from_millis(30)).unwrap_err(), WaitError::Timeout);
+        assert_eq!(
+            m.wait(slow, Duration::from_millis(30)).unwrap_err(),
+            WaitError::Timeout
+        );
         m.cancel(slow);
         // A timeout beyond the clock's range is no deadline, not a panic.
         let quick = m.submit("quick", "t", Priority::Background, true, |_| Ok(()));
-        assert_eq!(m.wait(quick, Duration::MAX).unwrap().status, JobStatus::Done);
+        assert_eq!(
+            m.wait(quick, Duration::MAX).unwrap().status,
+            JobStatus::Done
+        );
     }
 
     #[test]

@@ -477,6 +477,8 @@ export interface Settings {
     /** TLS key log (SSLKEYLOGFILE) for decrypting packet captures; "" = none. */
     tlsKeyLogFile: string;
   };
+  /** Protobuf schemas for gRPC/protobuf bodies: .proto files or folders, import paths, server reflection. */
+  protobuf: { protoPaths: string[]; includePaths: string[]; reflection: boolean };
   bodies: {
     inlineLimitKb: number;
     maxRecordedBodyMb: number;
@@ -871,6 +873,10 @@ export interface PbField {
   kind: string;
   value: string;
   children: PbField[];
+  /** Field name from the schema. */
+  name?: string | null;
+  /** Message or enum type from the schema. */
+  typeName?: string | null;
 }
 export interface GrpcMessage {
   index: number;
@@ -878,12 +884,39 @@ export interface GrpcMessage {
   len: number;
   fields: PbField[];
   error: string | null;
+  truncated?: boolean;
+  /** Schema type the message was decoded with. */
+  messageType?: string | null;
 }
 export interface Grpc {
   isGrpc: boolean;
   messages: GrpcMessage[];
   status: string | null;
   statusMessage: string | null;
+  error: string | null;
+  truncated?: boolean;
+  /** `pkg.Service/Method` from the path. */
+  method?: string | null;
+  /** Where the schema came from, or why there is none. */
+  schema?: string | null;
+}
+export interface MpNode {
+  key: string | null;
+  kind: string;
+  value: string;
+  children: MpNode[];
+}
+export interface Msgpack {
+  values: MpNode[];
+  error: string | null;
+  truncated: boolean;
+}
+export interface SchemaStatus {
+  files: number;
+  messages: number;
+  services: string[];
+  messageTypes: string[];
+  reflected: string[];
   error: string | null;
 }
 
@@ -1039,7 +1072,10 @@ export const api = {
   pluginsReveal: () => invoke<void>("plugins_reveal"),
   saveBodyRange: (id: SessionId, part: Part, offset: number, len: number, path: string) =>
     invoke<number>("save_body_range", { id, part, offset, len, path }),
-  grpc: (id: SessionId, part: Part) => invoke<Grpc | null>("grpc", { id, part }),
+  grpc: (id: SessionId, part: Part, typeName?: string) => invoke<Grpc | null>("grpc", { id, part, typeName: typeName ?? null }),
+  msgpack: (id: SessionId, part: Part) => invoke<Msgpack | null>("msgpack", { id, part }),
+  protobufStatus: () => invoke<SchemaStatus>("protobuf_status"),
+  grpcReflect: (id: SessionId) => invoke<{ service: string; files: string[] }>("grpc_reflect", { id }),
   multipart: (id: SessionId, part: Part) => invoke<Multipart | null>("multipart", { id, part }),
   wsFrames: (id: SessionId, start: number, count: number) => invoke<WsMessages>("ws_frames", { id, start, count }),
   deviceInfo: () => invoke<DeviceInfo>("device_info"),

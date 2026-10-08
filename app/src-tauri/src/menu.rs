@@ -4,11 +4,16 @@
 //! Shortcuts that collide with text editing (Ctrl/Cmd+X, Del, R, M …) are
 //! handled in the web view when the session list has focus, not here.
 
-use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use crate::i18n::tr;
+use tauri::menu::{AboutMetadata, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Wry};
 
-fn item(app: &AppHandle, id: &str, text: &str, accel: Option<&str>) -> tauri::Result<MenuItem<Wry>> {
+fn item(
+    app: &AppHandle,
+    id: &str,
+    text: &str,
+    accel: Option<&str>,
+) -> tauri::Result<MenuItem<Wry>> {
     MenuItem::with_id(app, id, tr(text), true, accel)
 }
 
@@ -17,7 +22,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let about = PredefinedMenuItem::about(
         app,
         Some(tr("About Quena")),
-        Some(AboutMetadata { name: Some("Quena".into()), version: Some(env!("CARGO_PKG_VERSION").into()), copyright: Some("© 2026 Maik Hofmann".into()), ..Default::default() }),
+        Some(AboutMetadata {
+            name: Some("Quena".into()),
+            version: Some(env!("CARGO_PKG_VERSION").into()),
+            copyright: Some("© 2026 Maik Hofmann".into()),
+            ..Default::default()
+        }),
     )?;
 
     #[cfg(target_os = "macos")]
@@ -67,7 +77,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 &[
                     &item(app, "file.import-har", "HTTP Archive (HAR)…", None)?,
                     &item(app, "file.import-saz", "SAZ Archive…", None)?,
-                    &item(app, "file.import-pcap", "Packet Capture (pcap, pcapng)…", None)?,
+                    &item(
+                        app,
+                        "file.import-pcap",
+                        "Packet Capture (pcap, pcapng)…",
+                        None,
+                    )?,
                 ],
             )?,
             &Submenu::with_items(
@@ -78,7 +93,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                     &item(app, "file.export-har", "HTTP Archive (HAR)…", None)?,
                     &item(app, "file.export-saz", "SAZ Archive…", None)?,
                     &item(app, "file.export-curl", "cURL Script…", None)?,
-                    &item(app, "file.export-sanitized", "Sanitized for Sharing (SAZ/HAR)…", None)?,
+                    &item(
+                        app,
+                        "file.export-sanitized",
+                        "Sanitized for Sharing (SAZ/HAR)…",
+                        None,
+                    )?,
                     &item(app, "file.export-mocks", "Mocks…", None)?,
                 ],
             )?,
@@ -153,7 +173,14 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         tr("Capture"),
         true,
         &[
-            &CheckMenuItem::with_id(app, "file.capture", tr("Capture Traffic"), true, false, Some("F12"))?,
+            &CheckMenuItem::with_id(
+                app,
+                "file.capture",
+                tr("Capture Traffic"),
+                true,
+                false,
+                Some("F12"),
+            )?,
             &item(app, "tools.https", "HTTPS Settings…", None)?,
             &item(app, "tools.connect-device", "Connect Device…", None)?,
             &item(app, "tools.reverse-proxy", "Reverse Proxy…", None)?,
@@ -174,7 +201,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "view.autoresponder", "Mock Rules", None)?,
             &item(app, "rules.customize", "Rules Script…", Some("CmdOrCtrl+R"))?,
             &sep()?,
-            &item(app, "rules.auto-auth", "Enable Automatic Authentication", None)?,
+            &item(
+                app,
+                "rules.auto-auth",
+                "Enable Automatic Authentication",
+                None,
+            )?,
         ],
     )?;
 
@@ -198,7 +230,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         true,
         &[
             &item(app, "view.palette", "Command Palette…", Some("CmdOrCtrl+K"))?,
-            &item(app, "view.minimize-to-quickexec", "Focus Command Field", Some("Alt+Q"))?,
+            &item(
+                app,
+                "view.minimize-to-quickexec",
+                "Focus Command Field",
+                Some("Alt+Q"),
+            )?,
             &sep()?,
             &item(app, "view.inspectors", "Inspect", Some("F8"))?,
             &item(app, "view.composer", "Composer", None)?,
@@ -228,7 +265,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "view.tearoff", "Tear off Inspectors", None)?,
             &sep()?,
             &item(app, "view.jobs", "Jobs", None)?,
-            &item(app, "dev.overlay", "Performance Overlay", Some("CmdOrCtrl+Shift+P"))?,
+            &item(
+                app,
+                "dev.overlay",
+                "Performance Overlay",
+                Some("CmdOrCtrl+Shift+P"),
+            )?,
             // Mock data and reloading the UI are for developing Quena: debug builds only.
             #[cfg(debug_assertions)]
             &sep()?,
@@ -241,7 +283,12 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                     &item(app, "dev.mock-1k", "Generate 1,000 mock sessions", None)?,
                     &item(app, "dev.mock-100k", "Generate 100,000 mock sessions", None)?,
                     &item(app, "dev.mock-500k", "Generate 500,000 mock sessions", None)?,
-                    &item(app, "dev.mock-stream", "Mock traffic 5,000/s (continuous)", None)?,
+                    &item(
+                        app,
+                        "dev.mock-stream",
+                        "Mock traffic 5,000/s (continuous)",
+                        None,
+                    )?,
                     &item(app, "dev.mock-stop", "Stop mock traffic", None)?,
                     &sep()?,
                     &item(app, "dev.mock-big", "Generate large bodies (≈1.4 GB)", None)?,
@@ -260,14 +307,22 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         &[
             &item(app, "help.quickexec", "Command Syntax", None)?,
             &item(app, "help.shortcuts", "Keyboard Shortcuts", None)?,
-            &item(app, "help.coming-from", "Coming from Fiddler Classic…", None)?,
+            &item(
+                app,
+                "help.coming-from",
+                "Coming from Fiddler Classic…",
+                None,
+            )?,
             #[cfg(not(target_os = "macos"))]
             &about,
         ],
     )?;
 
     #[cfg(target_os = "macos")]
-    return Menu::with_items(app, &[&app_menu, &file, &edit, &capture, &view, &tools, &help]);
+    return Menu::with_items(
+        app,
+        &[&app_menu, &file, &edit, &capture, &view, &tools, &help],
+    );
     #[cfg(not(target_os = "macos"))]
     Menu::with_items(app, &[&file, &edit, &capture, &view, &tools, &help])
 }

@@ -17,19 +17,30 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 fn run(cmd: &str, args: &[&str]) -> Result<String> {
-    let out = Command::new(cmd).args(args).stdin(Stdio::null()).output().map_err(|e| PlatformError::Command(format!("{cmd}: {e}")))?;
+    let out = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| PlatformError::Command(format!("{cmd}: {e}")))?;
     if !out.status.success() {
-        return Err(PlatformError::Command(format!("{cmd} {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim())));
+        return Err(PlatformError::Command(format!(
+            "{cmd} {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 fn has(cmd: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(cmd).is_file()))
+    std::env::var_os("PATH")
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| d.join(cmd).is_file()))
 }
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 // ---------------------------------------------------------------- proxy
@@ -37,11 +48,15 @@ fn home() -> PathBuf {
 const GNOME: &str = "org.gnome.system.proxy";
 
 fn gnome_available() -> bool {
-    has("gsettings") && run("gsettings", &["list-keys", GNOME]).is_ok_and(|o| o.lines().any(|l| l.trim() == "mode"))
+    has("gsettings")
+        && run("gsettings", &["list-keys", GNOME])
+            .is_ok_and(|o| o.lines().any(|l| l.trim() == "mode"))
 }
 
 fn gget(schema: &str, key: &str) -> Option<String> {
-    run("gsettings", &["get", schema, key]).ok().map(|s| s.trim().to_string())
+    run("gsettings", &["get", schema, key])
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 fn gset(schema: &str, key: &str, value: &str) -> Result<()> {
@@ -60,11 +75,22 @@ fn parse_str_array(v: &str) -> Vec<String> {
     let v = v.trim();
     let v = v.strip_prefix("@as ").unwrap_or(v);
     let inner = v.trim_start_matches('[').trim_end_matches(']');
-    inner.split(',').map(|s| s.trim().trim_matches('\'').to_string()).filter(|s| !s.is_empty()).collect()
+    inner
+        .split(',')
+        .map(|s| s.trim().trim_matches('\'').to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn str_array(items: &[String]) -> String {
-    format!("[{}]", items.iter().map(|s| format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'"))).collect::<Vec<_>>().join(", "))
+    format!(
+        "[{}]",
+        items
+            .iter()
+            .map(|s| format!("'{}'", s.replace('\\', "\\\\").replace('\'', "\\'")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -82,7 +108,11 @@ fn gnome_read() -> Option<GnomeState> {
     if !gnome_available() {
         return None;
     }
-    let port = |s: &str| gget(s, "port").and_then(|p| p.trim().parse().ok()).unwrap_or(0);
+    let port = |s: &str| {
+        gget(s, "port")
+            .and_then(|p| p.trim().parse().ok())
+            .unwrap_or(0)
+    };
     Some(GnomeState {
         mode: unquote(&gget(GNOME, "mode")?),
         http_host: unquote(&gget(&format!("{GNOME}.http"), "host").unwrap_or_default()),
@@ -95,9 +125,17 @@ fn gnome_read() -> Option<GnomeState> {
 }
 
 fn gnome_apply(s: &GnomeState) -> Result<()> {
-    gset(&format!("{GNOME}.http"), "host", &format!("'{}'", s.http_host))?;
+    gset(
+        &format!("{GNOME}.http"),
+        "host",
+        &format!("'{}'", s.http_host),
+    )?;
     gset(&format!("{GNOME}.http"), "port", &s.http_port.to_string())?;
-    gset(&format!("{GNOME}.https"), "host", &format!("'{}'", s.https_host))?;
+    gset(
+        &format!("{GNOME}.https"),
+        "host",
+        &format!("'{}'", s.https_host),
+    )?;
     gset(&format!("{GNOME}.https"), "port", &s.https_port.to_string())?;
     gset(GNOME, "ignore-hosts", &s.ignore_hosts)?;
     gset(GNOME, "autoconfig-url", &format!("'{}'", s.autoconfig_url))?;
@@ -107,16 +145,23 @@ fn gnome_apply(s: &GnomeState) -> Result<()> {
 
 /// KDE keeps proxy settings in `~/.config/kioslaverc`, group `[Proxy Settings]`.
 fn kde_rc() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".config")).join("kioslaverc")
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home().join(".config"))
+        .join("kioslaverc")
 }
 
 fn kde_active() -> bool {
-    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_ascii_uppercase();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_ascii_uppercase();
     desktop.contains("KDE") || kde_rc().exists()
 }
 
 fn kwrite_tool() -> Option<&'static str> {
-    ["kwriteconfig6", "kwriteconfig5"].into_iter().find(|t| has(t))
+    ["kwriteconfig6", "kwriteconfig5"]
+        .into_iter()
+        .find(|t| has(t))
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -125,10 +170,18 @@ struct KdeState {
     keys: Vec<(String, Option<String>)>,
 }
 
-const KDE_KEYS: [&str; 5] = ["ProxyType", "httpProxy", "httpsProxy", "NoProxyFor", "Proxy Config Script"];
+const KDE_KEYS: [&str; 5] = [
+    "ProxyType",
+    "httpProxy",
+    "httpsProxy",
+    "NoProxyFor",
+    "Proxy Config Script",
+];
 
 fn kde_read_group() -> HashMap<String, String> {
-    let Ok(text) = std::fs::read_to_string(kde_rc()) else { return HashMap::new() };
+    let Ok(text) = std::fs::read_to_string(kde_rc()) else {
+        return HashMap::new();
+    };
     let mut out = HashMap::new();
     let mut in_group = false;
     for line in text.lines() {
@@ -151,7 +204,12 @@ fn kde_read() -> Option<KdeState> {
         return None;
     }
     let g = kde_read_group();
-    Some(KdeState { keys: KDE_KEYS.iter().map(|k| (k.to_string(), g.get(*k).cloned())).collect() })
+    Some(KdeState {
+        keys: KDE_KEYS
+            .iter()
+            .map(|k| (k.to_string(), g.get(*k).cloned()))
+            .collect(),
+    })
 }
 
 fn kde_write(key: &str, value: Option<&str>) -> Result<()> {
@@ -159,27 +217,58 @@ fn kde_write(key: &str, value: Option<&str>) -> Result<()> {
     let rc = kde_rc();
     let rc = rc.to_string_lossy();
     match value {
-        Some(v) => run(tool, &["--file", &rc, "--group", "Proxy Settings", "--key", key, v]).map(|_| ()),
-        None => run(tool, &["--file", &rc, "--group", "Proxy Settings", "--key", key, "--delete"]).map(|_| ()),
+        Some(v) => run(
+            tool,
+            &["--file", &rc, "--group", "Proxy Settings", "--key", key, v],
+        )
+        .map(|_| ()),
+        None => run(
+            tool,
+            &[
+                "--file",
+                &rc,
+                "--group",
+                "Proxy Settings",
+                "--key",
+                key,
+                "--delete",
+            ],
+        )
+        .map(|_| ()),
     }
 }
 
 fn kde_notify() {
     // Running KIO workers and Plasma pick up the change on this signal.
-    let _ = run("dbus-send", &["--type=signal", "/KIO/Scheduler", "org.kde.KIO.Scheduler.reparseSlaveConfiguration", "string:"]);
+    let _ = run(
+        "dbus-send",
+        &[
+            "--type=signal",
+            "/KIO/Scheduler",
+            "org.kde.KIO.Scheduler.reparseSlaveConfiguration",
+            "string:",
+        ],
+    );
 }
 
 /// "http://host:port", "http://host port" or "host:port" → (host, port).
 fn parse_kde_proxy(v: &str) -> Option<(String, u16)> {
     let v = v.trim();
     let rest = v.split_once("://").map(|(_, r)| r).unwrap_or(v);
-    let (host, port) = if let Some((h, p)) = rest.split_once(' ') { (h, p) } else { rest.rsplit_once(':')? };
+    let (host, port) = if let Some((h, p)) = rest.split_once(' ') {
+        (h, p)
+    } else {
+        rest.rsplit_once(':')?
+    };
     let port: u16 = port.trim().trim_end_matches('/').parse().ok()?;
     (!host.is_empty() && port != 0).then(|| (host.trim_end_matches('/').to_string(), port))
 }
 
 fn env_proxy(names: &[&str]) -> Option<(String, u16)> {
-    names.iter().find_map(|n| std::env::var(n).ok()).and_then(|v| parse_kde_proxy(&v))
+    names
+        .iter()
+        .find_map(|n| std::env::var(n).ok())
+        .and_then(|v| parse_kde_proxy(&v))
 }
 
 pub fn system_proxy() -> Result<SystemProxy> {
@@ -187,8 +276,10 @@ pub fn system_proxy() -> Result<SystemProxy> {
     if let Some(g) = gnome_read().filter(|_| !kde_active()) {
         match g.mode.as_str() {
             "manual" => {
-                p.http = (!g.http_host.is_empty() && g.http_port != 0).then(|| (g.http_host.clone(), g.http_port));
-                p.https = (!g.https_host.is_empty() && g.https_port != 0).then(|| (g.https_host.clone(), g.https_port));
+                p.http = (!g.http_host.is_empty() && g.http_port != 0)
+                    .then(|| (g.http_host.clone(), g.http_port));
+                p.https = (!g.https_host.is_empty() && g.https_port != 0)
+                    .then(|| (g.https_host.clone(), g.https_port));
                 p.exceptions = parse_str_array(&g.ignore_hosts);
             }
             "auto" => {
@@ -208,9 +299,22 @@ pub fn system_proxy() -> Result<SystemProxy> {
             Some("1") => {
                 p.http = g.get("httpProxy").and_then(|v| parse_kde_proxy(v));
                 p.https = g.get("httpsProxy").and_then(|v| parse_kde_proxy(v));
-                p.exceptions = g.get("NoProxyFor").map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default();
+                p.exceptions = g
+                    .get("NoProxyFor")
+                    .map(|v| {
+                        v.split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
             }
-            Some("2") => p.pac_url = g.get("Proxy Config Script").cloned().filter(|s| !s.is_empty()),
+            Some("2") => {
+                p.pac_url = g
+                    .get("Proxy Config Script")
+                    .cloned()
+                    .filter(|s| !s.is_empty())
+            }
             Some("3") => p.auto_discovery = true,
             Some("4") => {
                 p.http = env_proxy(&["http_proxy", "HTTP_PROXY"]);
@@ -223,7 +327,15 @@ pub fn system_proxy() -> Result<SystemProxy> {
     // No desktop settings: what command-line tools of this session use.
     p.http = env_proxy(&["http_proxy", "HTTP_PROXY"]);
     p.https = env_proxy(&["https_proxy", "HTTPS_PROXY"]);
-    p.exceptions = std::env::var("no_proxy").or_else(|_| std::env::var("NO_PROXY")).map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default();
+    p.exceptions = std::env::var("no_proxy")
+        .or_else(|_| std::env::var("NO_PROXY"))
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(p)
 }
 
@@ -258,10 +370,18 @@ pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<(
     }
     // Keep an existing backup (e.g. after a crash) – it holds the original state.
     if !backup.exists() {
-        let b = Backup { port, gnome: gnome.clone(), kde: kde.clone() };
+        let b = Backup {
+            port,
+            gnome: gnome.clone(),
+            kde: kde.clone(),
+        };
         crate::write_atomic(backup, &serde_json::to_vec_pretty(&b).expect("backup json"))?;
     }
-    let mut ignore = vec!["localhost".to_string(), "127.0.0.0/8".to_string(), "::1".to_string()];
+    let mut ignore = vec![
+        "localhost".to_string(),
+        "127.0.0.0/8".to_string(),
+        "::1".to_string(),
+    ];
     ignore.extend(bypass.iter().map(|b| cidr(b)));
     if gnome.is_some() {
         gnome_apply(&GnomeState {
@@ -291,7 +411,9 @@ fn points_here(host: &str, port: u16, ours: Option<u16>) -> bool {
 }
 
 pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
-    let Ok(data) = std::fs::read(backup) else { return Ok(false) };
+    let Ok(data) = std::fs::read(backup) else {
+        return Ok(false);
+    };
     let b: Backup = match serde_json::from_slice(&data) {
         Ok(b) => b,
         Err(e) => {
@@ -305,7 +427,11 @@ pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
             }
             if kde_active() {
                 let g = kde_read_group();
-                if g.get("ProxyType").map(|s| s.as_str()) == Some("1") && g.get("httpProxy").and_then(|v| parse_kde_proxy(v)).is_some_and(|(h, p)| points_here(&h, p, None)) {
+                if g.get("ProxyType").map(|s| s.as_str()) == Some("1")
+                    && g.get("httpProxy")
+                        .and_then(|v| parse_kde_proxy(v))
+                        .is_some_and(|(h, p)| points_here(&h, p, None))
+                {
                     let _ = kde_write("ProxyType", Some("0"));
                     kde_notify();
                 }
@@ -327,7 +453,16 @@ pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
     if let Some(k) = b.kde {
         for (key, value) in &k.keys {
             let value = match (key.as_str(), value.as_deref()) {
-                ("ProxyType", Some("1")) if k.keys.iter().any(|(k2, v)| k2 == "httpProxy" && v.as_deref().and_then(parse_kde_proxy).is_some_and(|(h, p)| points_here(&h, p, Some(b.port)))) => Some("0"),
+                ("ProxyType", Some("1"))
+                    if k.keys.iter().any(|(k2, v)| {
+                        k2 == "httpProxy"
+                            && v.as_deref()
+                                .and_then(parse_kde_proxy)
+                                .is_some_and(|(h, p)| points_here(&h, p, Some(b.port)))
+                    }) =>
+                {
+                    Some("0")
+                }
                 (_, v) => v,
             };
             if let Err(e) = kde_write(key, value) {
@@ -359,11 +494,26 @@ fn nss_dbs(create_default: bool) -> Vec<PathBuf> {
     if chrome.join("cert9.db").exists() {
         dbs.push(chrome);
     } else if create_default && has("certutil") {
-        if std::fs::create_dir_all(&chrome).is_ok() && run("certutil", &["-N", "--empty-password", "-d", &format!("sql:{}", chrome.display())]).is_ok() {
+        if std::fs::create_dir_all(&chrome).is_ok()
+            && run(
+                "certutil",
+                &[
+                    "-N",
+                    "--empty-password",
+                    "-d",
+                    &format!("sql:{}", chrome.display()),
+                ],
+            )
+            .is_ok()
+        {
             dbs.push(chrome);
         }
     }
-    for base in [".mozilla/firefox", "snap/firefox/common/.mozilla/firefox", ".var/app/org.mozilla.firefox/.mozilla/firefox"] {
+    for base in [
+        ".mozilla/firefox",
+        "snap/firefox/common/.mozilla/firefox",
+        ".var/app/org.mozilla.firefox/.mozilla/firefox",
+    ] {
         if let Ok(rd) = std::fs::read_dir(h.join(base)) {
             for e in rd.flatten() {
                 let p = e.path();
@@ -377,13 +527,28 @@ fn nss_dbs(create_default: bool) -> Vec<PathBuf> {
 }
 
 fn pem_body(pem: &str) -> String {
-    pem.lines().filter(|l| !l.starts_with("-----")).map(|l| l.trim()).collect()
+    pem.lines()
+        .filter(|l| !l.starts_with("-----"))
+        .map(|l| l.trim())
+        .collect()
 }
 
 fn nss_contains(db: &Path, cert_body: &str) -> bool {
-    run("certutil", &["-d", &format!("sql:{}", db.display()), "-L", "-n", NSS_NICK, "-a"]).is_ok_and(|out| {
+    run(
+        "certutil",
+        &[
+            "-d",
+            &format!("sql:{}", db.display()),
+            "-L",
+            "-n",
+            NSS_NICK,
+            "-a",
+        ],
+    )
+    .is_ok_and(|out| {
         // All certificates under the nickname, PEM concatenated.
-        out.split("-----END CERTIFICATE-----").any(|c| pem_body(c) == cert_body)
+        out.split("-----END CERTIFICATE-----")
+            .any(|c| pem_body(c) == cert_body)
     })
 }
 
@@ -392,15 +557,23 @@ fn system_store() -> Option<(&'static str, &'static str)> {
     [
         ("/usr/local/share/ca-certificates", "update-ca-certificates"), // Debian, Ubuntu
         ("/etc/pki/ca-trust/source/anchors", "update-ca-trust"),        // Fedora, RHEL
-        ("/etc/ca-certificates/trust-source/anchors", "update-ca-trust"), // Arch
+        (
+            "/etc/ca-certificates/trust-source/anchors",
+            "update-ca-trust",
+        ), // Arch
         ("/usr/share/pki/trust/anchors", "update-ca-certificates"),     // openSUSE
     ]
     .into_iter()
-    .find(|(dir, tool)| Path::new(dir).is_dir() && (has(tool) || Path::new("/usr/sbin").join(tool).exists()))
+    .find(|(dir, tool)| {
+        Path::new(dir).is_dir() && (has(tool) || Path::new("/usr/sbin").join(tool).exists())
+    })
 }
 
 fn system_has(cert_body: &str) -> bool {
-    system_store().is_some_and(|(dir, _)| std::fs::read_to_string(Path::new(dir).join(SYSTEM_CERT_NAME)).is_ok_and(|p| pem_body(&p) == cert_body))
+    system_store().is_some_and(|(dir, _)| {
+        std::fs::read_to_string(Path::new(dir).join(SYSTEM_CERT_NAME))
+            .is_ok_and(|p| pem_body(&p) == cert_body)
+    })
 }
 
 /// Run `script` as root via polkit (the desktop asks for the password, like macOS does).
@@ -425,7 +598,20 @@ pub fn install_root_ca(cert: &Path) -> Result<()> {
                 done.push(db.display().to_string());
                 continue;
             }
-            match run("certutil", &["-d", &format!("sql:{}", db.display()), "-A", "-t", "C,,", "-n", NSS_NICK, "-i", &cert.to_string_lossy()]) {
+            match run(
+                "certutil",
+                &[
+                    "-d",
+                    &format!("sql:{}", db.display()),
+                    "-A",
+                    "-t",
+                    "C,,",
+                    "-n",
+                    NSS_NICK,
+                    "-i",
+                    &cert.to_string_lossy(),
+                ],
+            ) {
                 Ok(_) => done.push(db.display().to_string()),
                 Err(e) => errors.push(e.to_string()),
             }
@@ -435,7 +621,12 @@ pub fn install_root_ca(cert: &Path) -> Result<()> {
     }
     if let Some((dir, tool)) = system_store() {
         if !system_has(&body) {
-            let script = format!("cp {} {} && chmod 644 {} && {tool}", sh_quote(&cert.to_string_lossy()), sh_quote(&format!("{dir}/{SYSTEM_CERT_NAME}")), sh_quote(&format!("{dir}/{SYSTEM_CERT_NAME}")));
+            let script = format!(
+                "cp {} {} && chmod 644 {} && {tool}",
+                sh_quote(&cert.to_string_lossy()),
+                sh_quote(&format!("{dir}/{SYSTEM_CERT_NAME}")),
+                sh_quote(&format!("{dir}/{SYSTEM_CERT_NAME}"))
+            );
             match pkexec_sh(&script) {
                 Ok(()) => done.push("system trust store".into()),
                 Err(e) => errors.push(format!("system trust store: {e}")),
@@ -457,7 +648,12 @@ pub fn remove_root_ca(_cert: &Path, _sha1: &str) -> Result<()> {
         for db in nss_dbs(false) {
             // Remove every certificate stored under our nickname (older CAs included).
             for _ in 0..16 {
-                if run("certutil", &["-d", &format!("sql:{}", db.display()), "-D", "-n", NSS_NICK]).is_err() {
+                if run(
+                    "certutil",
+                    &["-d", &format!("sql:{}", db.display()), "-D", "-n", NSS_NICK],
+                )
+                .is_err()
+                {
                     break;
                 }
             }
@@ -466,28 +662,45 @@ pub fn remove_root_ca(_cert: &Path, _sha1: &str) -> Result<()> {
     if let Some((dir, tool)) = system_store() {
         let file = format!("{dir}/{SYSTEM_CERT_NAME}");
         if Path::new(&file).exists() {
-            pkexec_sh(&format!("rm -f {} && {tool} --fresh 2>/dev/null || {tool}", sh_quote(&file)))?;
+            pkexec_sh(&format!(
+                "rm -f {} && {tool} --fresh 2>/dev/null || {tool}",
+                sh_quote(&file)
+            ))?;
         }
     }
     Ok(())
 }
 
 pub fn is_root_ca_trusted(cert: &Path) -> bool {
-    let Ok(pem) = std::fs::read_to_string(cert) else { return false };
+    let Ok(pem) = std::fs::read_to_string(cert) else {
+        return false;
+    };
     let body = pem_body(&pem);
-    (has("certutil") && nss_dbs(false).iter().any(|db| nss_contains(db, &body))) || system_has(&body)
+    (has("certutil") && nss_dbs(false).iter().any(|db| nss_contains(db, &body)))
+        || system_has(&body)
 }
 
 pub fn open(target: &str) -> Result<()> {
     // xdg-open may stay around while the handler starts; don't wait for it.
-    Command::new("xdg-open").arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ()).map_err(|e| PlatformError::Command(format!("xdg-open: {e}")))
+    Command::new("xdg-open")
+        .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| PlatformError::Command(format!("xdg-open: {e}")))
 }
 
 /// `file://` URI of an absolute path, percent-encoded (spaces, `%`, `#`, non-ASCII; a `,`
 /// would split dbus-send's array argument).
 fn file_uri(path: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
-    let abs = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
     let mut uri = String::from("file://");
     for &b in abs.as_os_str().as_bytes() {
         if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
@@ -504,12 +717,24 @@ pub fn reveal(path: &Path) -> Result<()> {
     let uri = file_uri(path);
     let shown = run(
         "dbus-send",
-        &["--session", "--print-reply", "--dest=org.freedesktop.FileManager1", "/org/freedesktop/FileManager1", "org.freedesktop.FileManager1.ShowItems", &format!("array:string:{uri}"), "string:"],
+        &[
+            "--session",
+            "--print-reply",
+            "--dest=org.freedesktop.FileManager1",
+            "/org/freedesktop/FileManager1",
+            "org.freedesktop.FileManager1.ShowItems",
+            &format!("array:string:{uri}"),
+            "string:",
+        ],
     );
     if shown.is_ok() {
         return Ok(());
     }
-    let dir = if path.is_dir() { path } else { path.parent().unwrap_or(path) };
+    let dir = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
     open(&dir.to_string_lossy())
 }
 
@@ -527,14 +752,24 @@ fn hex(b: &[u8]) -> String {
 }
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).filter_map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect()
+    (0..s.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 pub fn secure_set(account: &str, secret: &[u8]) -> Result<()> {
     if has("secret-tool") {
         // The value goes through stdin, never into argv or a file.
         let child = Command::new("secret-tool")
-            .args(["store", "--label=Quena credentials", "service", crate::secure::SERVICE, "account", account])
+            .args([
+                "store",
+                "--label=Quena credentials",
+                "service",
+                crate::secure::SERVICE,
+                "account",
+                account,
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -561,7 +796,16 @@ pub fn secure_get(account: &str) -> Result<Option<Vec<u8>>> {
     if !has("secret-tool") {
         return Ok(None);
     }
-    match run("secret-tool", &["lookup", "service", crate::secure::SERVICE, "account", account]) {
+    match run(
+        "secret-tool",
+        &[
+            "lookup",
+            "service",
+            crate::secure::SERVICE,
+            "account",
+            account,
+        ],
+    ) {
         Ok(out) => {
             let v = out.trim_end_matches('\n');
             if v.is_empty() {
@@ -579,7 +823,16 @@ pub fn secure_get(account: &str) -> Result<Option<Vec<u8>>> {
 pub fn secure_delete(account: &str) -> Result<()> {
     mem().lock().remove(account);
     if has("secret-tool") {
-        let _ = run("secret-tool", &["clear", "service", crate::secure::SERVICE, "account", account]);
+        let _ = run(
+            "secret-tool",
+            &[
+                "clear",
+                "service",
+                crate::secure::SERVICE,
+                "account",
+                account,
+            ],
+        );
     }
     Ok(())
 }
@@ -597,11 +850,16 @@ pub fn local_addresses() -> Vec<(String, String)> {
         let mut cur = ifap;
         while !cur.is_null() {
             let ifa = &*cur;
-            if !ifa.ifa_addr.is_null() && (*ifa.ifa_addr).sa_family as i32 == libc::AF_INET && ifa.ifa_flags & libc::IFF_UP as u32 != 0 {
+            if !ifa.ifa_addr.is_null()
+                && (*ifa.ifa_addr).sa_family as i32 == libc::AF_INET
+                && ifa.ifa_flags & libc::IFF_UP as u32 != 0
+            {
                 let sin = &*(ifa.ifa_addr as *const libc::sockaddr_in);
                 let ip = std::net::Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
                 if !ip.is_loopback() && !ip.is_link_local() {
-                    let name = std::ffi::CStr::from_ptr(ifa.ifa_name).to_string_lossy().into_owned();
+                    let name = std::ffi::CStr::from_ptr(ifa.ifa_name)
+                        .to_string_lossy()
+                        .into_owned();
                     res.push((name, ip.to_string()));
                 }
             }
@@ -629,7 +887,9 @@ struct Cache {
 
 impl Default for ProcessLookup {
     fn default() -> Self {
-        ProcessLookup { cache: Mutex::new(Cache::default()) }
+        ProcessLookup {
+            cache: Mutex::new(Cache::default()),
+        }
     }
 }
 
@@ -640,8 +900,13 @@ fn parse_proc_tcp(table: &str, proxy_port: u16, out: &mut HashMap<u64, u16>) {
         if f.len() < 10 {
             continue;
         }
-        let port = |addr: &str| addr.rsplit_once(':').and_then(|(_, p)| u16::from_str_radix(p, 16).ok());
-        let (Some(lport), Some(rport)) = (port(f[1]), port(f[2])) else { continue };
+        let port = |addr: &str| {
+            addr.rsplit_once(':')
+                .and_then(|(_, p)| u16::from_str_radix(p, 16).ok())
+        };
+        let (Some(lport), Some(rport)) = (port(f[1]), port(f[2])) else {
+            continue;
+        };
         if rport != proxy_port {
             continue;
         }
@@ -670,7 +935,8 @@ impl ProcessLookup {
         for attempt in 0..2 {
             let scanned = {
                 let c = self.cache.lock();
-                c.last_scan.is_some_and(|t| t.elapsed() < Duration::from_millis(40))
+                c.last_scan
+                    .is_some_and(|t| t.elapsed() < Duration::from_millis(40))
             };
             if scanned && attempt == 0 {
                 std::thread::sleep(Duration::from_millis(40));
@@ -698,16 +964,27 @@ impl ProcessLookup {
             let me = std::process::id();
             if let Ok(procs) = std::fs::read_dir("/proc") {
                 'pids: for p in procs.flatten() {
-                    let Some(pid) = p.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
+                    let Some(pid) = p.file_name().to_str().and_then(|s| s.parse::<u32>().ok())
+                    else {
+                        continue;
+                    };
                     if pid == me {
                         continue;
                     }
                     // Other users' processes are not readable; skip them silently.
-                    let Ok(fds) = std::fs::read_dir(p.path().join("fd")) else { continue };
+                    let Ok(fds) = std::fs::read_dir(p.path().join("fd")) else {
+                        continue;
+                    };
                     for fd in fds.flatten() {
-                        let Ok(link) = std::fs::read_link(fd.path()) else { continue };
+                        let Ok(link) = std::fs::read_link(fd.path()) else {
+                            continue;
+                        };
                         let l = link.to_string_lossy();
-                        if let Some(n) = l.strip_prefix("socket:[").and_then(|r| r.strip_suffix(']')).and_then(|n| n.parse::<u64>().ok()) {
+                        if let Some(n) = l
+                            .strip_prefix("socket:[")
+                            .and_then(|r| r.strip_suffix(']'))
+                            .and_then(|n| n.parse::<u64>().ok())
+                        {
                             if let Some(port) = inodes.remove(&n) {
                                 found.push((port, pid));
                                 if inodes.is_empty() {
@@ -727,7 +1004,8 @@ impl ProcessLookup {
             }
         }
         // Forget old entries (ports are reused).
-        c.by_port.retain(|_, (_, t)| now.duration_since(*t) < Duration::from_secs(120));
+        c.by_port
+            .retain(|_, (_, t)| now.duration_since(*t) < Duration::from_secs(120));
         if c.names.len() > 4096 {
             c.names.clear();
         }
@@ -739,10 +1017,15 @@ fn process_name(pid: u32) -> String {
     // The executable's file name ("chrome", "firefox", "curl"); `comm` is cut at 15 bytes.
     if let Ok(exe) = std::fs::read_link(format!("/proc/{pid}/exe")) {
         if let Some(f) = exe.file_name() {
-            return f.to_string_lossy().trim_end_matches(" (deleted)").to_string();
+            return f
+                .to_string_lossy()
+                .trim_end_matches(" (deleted)")
+                .to_string();
         }
     }
-    std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|s| s.trim().to_string()).unwrap_or_else(|_| format!("pid{pid}"))
+    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| format!("pid{pid}"))
 }
 
 #[cfg(test)]
@@ -751,7 +1034,10 @@ mod tests {
 
     #[test]
     fn file_uri_is_percent_encoded() {
-        assert_eq!(file_uri(Path::new("/tmp/a b,c#%ä.saz")), "file:///tmp/a%20b%2Cc%23%25%C3%A4.saz");
+        assert_eq!(
+            file_uri(Path::new("/tmp/a b,c#%ä.saz")),
+            "file:///tmp/a%20b%2Cc%23%25%C3%A4.saz"
+        );
     }
 
     #[test]
@@ -765,11 +1051,23 @@ mod tests {
 
     #[test]
     fn kde_and_gsettings_values() {
-        assert_eq!(parse_kde_proxy("http://proxy.corp:8080"), Some(("proxy.corp".into(), 8080)));
-        assert_eq!(parse_kde_proxy("http://proxy.corp 8080"), Some(("proxy.corp".into(), 8080)));
-        assert_eq!(parse_kde_proxy("127.0.0.1:8866/"), Some(("127.0.0.1".into(), 8866)));
+        assert_eq!(
+            parse_kde_proxy("http://proxy.corp:8080"),
+            Some(("proxy.corp".into(), 8080))
+        );
+        assert_eq!(
+            parse_kde_proxy("http://proxy.corp 8080"),
+            Some(("proxy.corp".into(), 8080))
+        );
+        assert_eq!(
+            parse_kde_proxy("127.0.0.1:8866/"),
+            Some(("127.0.0.1".into(), 8866))
+        );
         assert_eq!(parse_kde_proxy("garbage"), None);
-        assert_eq!(parse_str_array("['localhost', '127.0.0.0/8', '::1']"), vec!["localhost", "127.0.0.0/8", "::1"]);
+        assert_eq!(
+            parse_str_array("['localhost', '127.0.0.0/8', '::1']"),
+            vec!["localhost", "127.0.0.0/8", "::1"]
+        );
         assert_eq!(parse_str_array("@as []"), Vec::<String>::new());
         assert_eq!(unquote("'manual'"), "manual");
         assert_eq!(str_array(&["a".into(), "it's".into()]), "['a', 'it\\'s']");
@@ -817,7 +1115,11 @@ mod tests {
         let p = system_proxy().unwrap();
         assert_eq!(p.http, Some(("127.0.0.1".into(), 8866)));
         assert!(p.points_to(8866));
-        assert!(p.exceptions.contains(&"169.254.0.0/16".to_string()), "{:?}", p.exceptions);
+        assert!(
+            p.exceptions.contains(&"169.254.0.0/16".to_string()),
+            "{:?}",
+            p.exceptions
+        );
         assert!(restore_system_proxy(&backup).unwrap());
         let p = system_proxy().unwrap();
         assert_eq!(p.pac_url.as_deref(), Some("http://wpad.example/wpad.dat"));
@@ -846,14 +1148,29 @@ mod tests {
         let key = d.join("k.pem");
         let crt = d.join("c.pem");
         let ok = Command::new("openssl")
-            .args(["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=Quena Test Root", "-keyout"])
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=Quena Test Root",
+                "-keyout",
+            ])
             .arg(&key)
             .arg("-out")
             .arg(&crt)
             .args(["-addext", "basicConstraints=critical,CA:TRUE"])
             .output()
             .unwrap();
-        assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+        assert!(
+            ok.status.success(),
+            "{}",
+            String::from_utf8_lossy(&ok.stderr)
+        );
         std::fs::read_to_string(crt).unwrap()
     }
 }

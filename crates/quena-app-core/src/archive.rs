@@ -1,11 +1,11 @@
 //! Load/Save archives (SAZ, HAR) and load packet captures as background jobs.
 
 use crate::AppCore;
+use crate::sanitize::{RedactionLog, SanitizeExportSettings, SanitizeOptions, Sanitizer};
 use anyhow::{Result, anyhow};
 use quena_formats::har::HarOptions;
 use quena_jobs::{JobCtx, JobId, Priority};
 use quena_model::SessionId;
-use crate::sanitize::{RedactionLog, SanitizeExportSettings, SanitizeOptions, Sanitizer};
 use quena_store::Capture;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,7 +32,10 @@ pub enum ArchiveFormat {
 
 /// Can [`AppCore::import_archive`] load this file (by its extension)?
 pub fn importable(path: &std::path::Path) -> bool {
-    matches!(format_of(path), Some(ArchiveFormat::Saz | ArchiveFormat::Har | ArchiveFormat::Pcap))
+    matches!(
+        format_of(path),
+        Some(ArchiveFormat::Saz | ArchiveFormat::Har | ArchiveFormat::Pcap)
+    )
 }
 
 /// Is this a packet capture (by its extension)?
@@ -52,22 +55,49 @@ fn format_of(path: &std::path::Path) -> Option<ArchiveFormat> {
 
 impl AppCore {
     /// Export sessions (empty = all in view order).
-    pub fn export_archive(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>) -> Result<JobId> {
-        let format = format.or_else(|| format_of(&path)).ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
+    pub fn export_archive(
+        self: &Arc<Self>,
+        ids: Vec<SessionId>,
+        path: PathBuf,
+        format: Option<ArchiveFormat>,
+    ) -> Result<JobId> {
+        let format = format
+            .or_else(|| format_of(&path))
+            .ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
         let cap = self.capture();
-        let ids = if ids.is_empty() { cap.index.find(|_| true) } else { ids };
+        let ids = if ids.is_empty() {
+            cap.index.find(|_| true)
+        } else {
+            ids
+        };
         let title = format!("Saving {} session(s) to {}", ids.len(), path.display());
-        Ok(self.jobs.submit(format!("export:{}", path.display()), title, Priority::Background, true, move |ctx| {
-            let n = match format {
-                ArchiveFormat::Saz => quena_formats::saz::export(&cap, &ids, &path, &P(ctx)),
-                ArchiveFormat::Har => quena_formats::har::export(&cap, &ids, &path, &HarOptions::default(), &P(ctx)),
-                ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("use Copy → As cURL".into())),
-                ArchiveFormat::Pcap => Err(quena_formats::FormatError::Invalid("sessions cannot be saved as a packet capture".into())),
-            }
-            .map_err(|e| e.to_string())?;
-            tracing::info!(target: "quena", "saved {n} session(s) to {}", path.display());
-            Ok(())
-        }))
+        Ok(self.jobs.submit(
+            format!("export:{}", path.display()),
+            title,
+            Priority::Background,
+            true,
+            move |ctx| {
+                let n = match format {
+                    ArchiveFormat::Saz => quena_formats::saz::export(&cap, &ids, &path, &P(ctx)),
+                    ArchiveFormat::Har => quena_formats::har::export(
+                        &cap,
+                        &ids,
+                        &path,
+                        &HarOptions::default(),
+                        &P(ctx),
+                    ),
+                    ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid(
+                        "use Copy → As cURL".into(),
+                    )),
+                    ArchiveFormat::Pcap => Err(quena_formats::FormatError::Invalid(
+                        "sessions cannot be saved as a packet capture".into(),
+                    )),
+                }
+                .map_err(|e| e.to_string())?;
+                tracing::info!(target: "quena", "saved {n} session(s) to {}", path.display());
+                Ok(())
+            },
+        ))
     }
 
     /// Export a sanitized copy of sessions (empty = all in view order): each session is
@@ -76,32 +106,67 @@ impl AppCore {
     /// SAZ, `log.comment` and `log._quenaRedaction` in the HAR). The options are remembered
     /// in the settings; when the job is done, the event `export-sanitized` carries
     /// [`SanitizedExport`].
-    pub fn export_sanitized(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>, opts: SanitizeOptions) -> Result<JobId> {
+    pub fn export_sanitized(
+        self: &Arc<Self>,
+        ids: Vec<SessionId>,
+        path: PathBuf,
+        format: Option<ArchiveFormat>,
+        opts: SanitizeOptions,
+    ) -> Result<JobId> {
         self.export_sanitized_as(ids, path, format, opts, true)
     }
 
     /// A sanitized export for another client (MCP): the user's remembered options stay, and
     /// the UI shows no redaction log.
-    pub fn export_sanitized_quietly(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, opts: SanitizeOptions) -> Result<JobId> {
+    pub fn export_sanitized_quietly(
+        self: &Arc<Self>,
+        ids: Vec<SessionId>,
+        path: PathBuf,
+        opts: SanitizeOptions,
+    ) -> Result<JobId> {
         self.export_sanitized_as(ids, path, None, opts, false)
     }
 
-    fn export_sanitized_as(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>, opts: SanitizeOptions, ui: bool) -> Result<JobId> {
-        let format = format.or_else(|| format_of(&path)).ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
+    fn export_sanitized_as(
+        self: &Arc<Self>,
+        ids: Vec<SessionId>,
+        path: PathBuf,
+        format: Option<ArchiveFormat>,
+        opts: SanitizeOptions,
+        ui: bool,
+    ) -> Result<JobId> {
+        let format = format
+            .or_else(|| format_of(&path))
+            .ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
         if matches!(format, ArchiveFormat::Curl | ArchiveFormat::Pcap) {
             return Err(anyhow!("a sanitized export is a .saz or .har file"));
         }
         opts.validate().map_err(|e| anyhow!(e))?;
         if ui {
             let mut s = self.settings.write();
-            s.sanitize = SanitizeExportSettings { options: opts.clone(), format: if format == ArchiveFormat::Har { "har".into() } else { "saz".into() } };
+            s.sanitize = SanitizeExportSettings {
+                options: opts.clone(),
+                format: if format == ArchiveFormat::Har {
+                    "har".into()
+                } else {
+                    "saz".into()
+                },
+            };
             if let Err(e) = s.save(&self.paths.settings) {
                 tracing::warn!("settings not saved: {e}");
             }
         }
         let cap = self.capture();
-        let ids = if ids.is_empty() { cap.index.find(|_| true) } else { ids };
-        let title = format!("Saving {} sanitized session(s) to {}", ids.len(), path.display());
+        let ids = if ids.is_empty() {
+            cap.index.find(|_| true)
+        } else {
+            ids
+        };
+        let title = format!(
+            "Saving {} sanitized session(s) to {}",
+            ids.len(),
+            path.display()
+        );
         let tmp_root = self.paths.data.join("sanitize-tmp");
         let body_cfg = self.settings().bodies.to_config();
         let core = self.clone();
@@ -127,13 +192,24 @@ impl AppCore {
     /// (event `pcap-import`), removed once this one succeeded — only if session numbering is
     /// still `numbering`, so the ids still name those sessions. A dropped file's temporary
     /// copy goes once nothing is left to decrypt.
-    pub fn import_capture(self: &Arc<Self>, path: PathBuf, name: Option<String>, keylogs: Vec<PathBuf>, replace: Vec<SessionId>, numbering: Option<u64>) -> Result<JobId> {
+    pub fn import_capture(
+        self: &Arc<Self>,
+        path: PathBuf,
+        name: Option<String>,
+        keylogs: Vec<PathBuf>,
+        replace: Vec<SessionId>,
+        numbering: Option<u64>,
+    ) -> Result<JobId> {
         if format_of(&path) != Some(ArchiveFormat::Pcap) {
             return Err(anyhow!("{}: not a packet capture", path.display()));
         }
         // A temporary copy only if it really lies in the drop folder (no `..` detours).
         let drop_dir = std::fs::canonicalize(self.paths.data.join("dropped")).ok();
-        let dropped = drop_dir.is_some() && std::fs::canonicalize(&path).ok().and_then(|p| p.parent().map(Path::to_path_buf)) == drop_dir;
+        let dropped = drop_dir.is_some()
+            && std::fs::canonicalize(&path)
+                .ok()
+                .and_then(|p| p.parent().map(Path::to_path_buf))
+                == drop_dir;
         let name = name.unwrap_or_else(|| path.display().to_string());
         let replace = match numbering {
             Some(n) if n == self.capture().numbering() => replace,
@@ -149,9 +225,17 @@ impl AppCore {
         if !setting.trim().is_empty() {
             v.push(PathBuf::from(setting.trim()));
         }
-        if let (Some(dir), Some(stem), Some(name)) = (capture.parent(), capture.file_stem(), capture.file_name()) {
+        if let (Some(dir), Some(stem), Some(name)) =
+            (capture.parent(), capture.file_stem(), capture.file_name())
+        {
             let (stem, name) = (stem.to_string_lossy(), name.to_string_lossy());
-            for n in [format!("{name}.keys"), format!("{stem}.keys"), format!("{stem}.keylog"), "sslkeylog.log".into(), "sslkeys.log".into()] {
+            for n in [
+                format!("{name}.keys"),
+                format!("{stem}.keys"),
+                format!("{stem}.keylog"),
+                "sslkeylog.log".into(),
+                "sslkeys.log".into(),
+            ] {
                 let p = dir.join(n);
                 if p.is_file() && !v.contains(&p) {
                     v.push(p);
@@ -161,70 +245,113 @@ impl AppCore {
         v
     }
 
-    fn import_file(self: &Arc<Self>, path: PathBuf, name: String, remove_after: bool, extra_keylogs: Vec<PathBuf>, replace: Vec<SessionId>) -> Result<JobId> {
-        let format = format_of(&path).ok_or_else(|| anyhow!("unknown archive type (use .saz, .har, .pcap or .pcapng)"))?;
+    fn import_file(
+        self: &Arc<Self>,
+        path: PathBuf,
+        name: String,
+        remove_after: bool,
+        extra_keylogs: Vec<PathBuf>,
+        replace: Vec<SessionId>,
+    ) -> Result<JobId> {
+        let format = format_of(&path)
+            .ok_or_else(|| anyhow!("unknown archive type (use .saz, .har, .pcap or .pcapng)"))?;
         let cap = self.capture();
         let title = format!("Loading {name}");
-        let mut keylogs = if format == ArchiveFormat::Pcap { self.key_logs_for(&path) } else { Vec::new() };
+        let mut keylogs = if format == ArchiveFormat::Pcap {
+            self.key_logs_for(&path)
+        } else {
+            Vec::new()
+        };
         keylogs.extend(extra_keylogs);
         let core = self.clone();
         let numbering = cap.numbering();
         // A temporary copy goes away with the job: after the import, when it fails or panics,
         // and also when the job is cancelled before it starts (the closure is then dropped).
         let remove = remove_after.then(|| RemoveOnDrop(Some(path.clone())));
-        Ok(self.jobs.submit(format!("import:{}", path.display()), title, Priority::Background, true, move |ctx| {
-            let mut remove = remove;
-            let ids = match format {
-                ArchiveFormat::Saz => quena_formats::saz::import(&cap, &path, &P(ctx)),
-                ArchiveFormat::Har => quena_formats::har::import(&cap, &path, &P(ctx)),
-                ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("cannot import cURL scripts".into())),
-                ArchiveFormat::Pcap => quena_formats::pcap::import_with(&cap, &path, &quena_formats::pcap::PcapOptions { keylogs }, &P(ctx)).map(|r| {
-                    // Still the capture and numbering the ids were taken from (checked when
-                    // the import was asked for; Remove All or another capture may have come since).
-                    if !replace.is_empty() && Arc::ptr_eq(&core.capture(), &cap) && cap.numbering() == numbering {
-                        core.remove(replace);
-                    }
-                    if r.no_keys > 0
-                        && let Some(kept) = remove.as_mut().and_then(|rm| rm.0.take())
-                    {
-                        // Kept for an import with a key log, for an hour.
-                        keep_for(kept, KEEP_DROPPED);
-                    }
-                    core.emit(
-                        "pcap-import",
-                        CaptureImport {
-                            path: path.display().to_string(),
-                            name: name.clone(),
-                            sessions: r.ids.len(),
-                            tls: r.tls,
-                            decrypted: r.decrypted,
-                            no_keys: r.no_keys,
-                            ids: r.ids.clone(),
-                            numbering: cap.numbering(),
-                        },
-                    );
-                    r.ids
-                }),
-            };
-            let ids = ids.map_err(|e| e.to_string())?;
-            tracing::info!(target: "quena", "loaded {} session(s) from {name}", ids.len());
-            Ok(())
-        }))
+        Ok(self.jobs.submit(
+            format!("import:{}", path.display()),
+            title,
+            Priority::Background,
+            true,
+            move |ctx| {
+                let mut remove = remove;
+                let ids = match format {
+                    ArchiveFormat::Saz => quena_formats::saz::import(&cap, &path, &P(ctx)),
+                    ArchiveFormat::Har => quena_formats::har::import(&cap, &path, &P(ctx)),
+                    ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid(
+                        "cannot import cURL scripts".into(),
+                    )),
+                    ArchiveFormat::Pcap => quena_formats::pcap::import_with(
+                        &cap,
+                        &path,
+                        &quena_formats::pcap::PcapOptions { keylogs },
+                        &P(ctx),
+                    )
+                    .map(|r| {
+                        // Still the capture and numbering the ids were taken from (checked when
+                        // the import was asked for; Remove All or another capture may have come since).
+                        if !replace.is_empty()
+                            && Arc::ptr_eq(&core.capture(), &cap)
+                            && cap.numbering() == numbering
+                        {
+                            core.remove(replace);
+                        }
+                        if r.no_keys > 0
+                            && let Some(kept) = remove.as_mut().and_then(|rm| rm.0.take())
+                        {
+                            // Kept for an import with a key log, for an hour.
+                            keep_for(kept, KEEP_DROPPED);
+                        }
+                        core.emit(
+                            "pcap-import",
+                            CaptureImport {
+                                path: path.display().to_string(),
+                                name: name.clone(),
+                                sessions: r.ids.len(),
+                                tls: r.tls,
+                                decrypted: r.decrypted,
+                                no_keys: r.no_keys,
+                                ids: r.ids.clone(),
+                                numbering: cap.numbering(),
+                            },
+                        );
+                        r.ids
+                    }),
+                };
+                let ids = ids.map_err(|e| e.to_string())?;
+                tracing::info!(target: "quena", "loaded {} session(s) from {name}", ids.len());
+                Ok(())
+            },
+        ))
     }
 
     /// Receive a file dropped onto the window, in chunks: the webview has the file's bytes but
     /// not its path. `offset` must continue the chunks received so far; the last chunk starts
     /// the import, and the temporary copy is removed once it is loaded.
-    pub fn drop_chunk(self: &Arc<Self>, id: &str, name: &str, offset: u64, data: &[u8], last: bool) -> Result<Option<JobId>> {
+    pub fn drop_chunk(
+        self: &Arc<Self>,
+        id: &str,
+        name: &str,
+        offset: u64,
+        data: &[u8],
+        last: bool,
+    ) -> Result<Option<JobId>> {
         use std::io::Write;
-        if id.is_empty() || id.len() > 64 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        if id.is_empty()
+            || id.len() > 64
+            || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
             return Err(anyhow!("invalid drop id"));
         }
         let ext = match format_of(std::path::Path::new(name)) {
             Some(ArchiveFormat::Saz) => "saz",
             Some(ArchiveFormat::Har) => "har",
             Some(ArchiveFormat::Pcap) => "pcapng",
-            _ => return Err(anyhow!("{name}: not an archive (use .saz, .har, .pcap or .pcapng)")),
+            _ => {
+                return Err(anyhow!(
+                    "{name}: not an archive (use .saz, .har, .pcap or .pcapng)"
+                ));
+            }
         };
         let dir = self.paths.data.join("dropped");
         std::fs::create_dir_all(&dir)?;
@@ -232,11 +359,18 @@ impl AppCore {
         let end = offset.saturating_add(data.len() as u64);
         if end > MAX_DROP_BYTES {
             let _ = std::fs::remove_file(&path);
-            return Err(anyhow!("{name}: larger than {} GiB, open it with File → Load Archive instead", MAX_DROP_BYTES >> 30));
+            return Err(anyhow!(
+                "{name}: larger than {} GiB, open it with File → Load Archive instead",
+                MAX_DROP_BYTES >> 30
+            ));
         }
-        if quena_body::free_space(&dir).is_some_and(|free| free < data.len() as u64 + MIN_FREE_BYTES) {
+        if quena_body::free_space(&dir)
+            .is_some_and(|free| free < data.len() as u64 + MIN_FREE_BYTES)
+        {
             let _ = std::fs::remove_file(&path);
-            return Err(anyhow!("{name}: not enough free disk space for a copy of the dropped file"));
+            return Err(anyhow!(
+                "{name}: not enough free disk space for a copy of the dropped file"
+            ));
         }
         let mut f = if offset == 0 {
             clean_stale(&dir);
@@ -247,7 +381,9 @@ impl AppCore {
             if have != offset {
                 drop(f);
                 let _ = std::fs::remove_file(&path);
-                return Err(anyhow!("{name}: chunk at {offset} does not follow {have} bytes"));
+                return Err(anyhow!(
+                    "{name}: chunk at {offset} does not follow {have} bytes"
+                ));
             }
             f
         };
@@ -260,7 +396,8 @@ impl AppCore {
         if !last {
             return Ok(None);
         }
-        self.import_file(path, name.to_string(), true, Vec::new(), Vec::new()).map(Some)
+        self.import_file(path, name.to_string(), true, Vec::new(), Vec::new())
+            .map(Some)
     }
 }
 
@@ -287,10 +424,12 @@ const KEEP_DROPPED: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// Delete a temporary file after `after` (if it is still there).
 fn keep_for(path: PathBuf, after: std::time::Duration) {
-    let spawned = std::thread::Builder::new().name("quena-drop-expiry".into()).spawn(move || {
-        std::thread::sleep(after);
-        let _ = std::fs::remove_file(&path);
-    });
+    let spawned = std::thread::Builder::new()
+        .name("quena-drop-expiry".into())
+        .spawn(move || {
+            std::thread::sleep(after);
+            let _ = std::fs::remove_file(&path);
+        });
     if let Err(e) = spawned {
         tracing::warn!("dropped capture kept until the next start: {e}");
     }
@@ -346,7 +485,10 @@ pub fn sanitized_export(
 ) -> Result<RedactionLog> {
     // Copies left behind by a crash: nothing to recover there.
     remove_older_dirs(tmp_root, std::time::Duration::from_secs(3600));
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let tmp_dir = tmp_root.join(format!("{}-{nanos}", std::process::id()));
     let tmp = TempCapture(Some(Capture::open(&tmp_dir, body_cfg, true)?), tmp_dir);
     let mut z = Sanitizer::new(opts);
@@ -367,12 +509,17 @@ pub fn sanitized_export(
                 }
                 done.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let Some(d) = cap.detail(*id) else { continue };
-                let Some((req, resp)) = cap.bodies_of(*id) else { continue };
+                let Some((req, resp)) = cap.bodies_of(*id) else {
+                    continue;
+                };
                 let s = z.session(&d, &req, &resp);
                 if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                     return None;
                 }
-                let (rb, sb) = (tmp_cap.bodies.store_bytes(&s.request), tmp_cap.bodies.store_bytes(&s.response));
+                let (rb, sb) = (
+                    tmp_cap.bodies.store_bytes(&s.request),
+                    tmp_cap.bodies.store_bytes(&s.response),
+                );
                 copied.push(tmp_cap.insert(s.detail, rb, sb));
             }
             Some((copied, z))
@@ -381,12 +528,17 @@ pub fn sanitized_export(
             if p.cancelled() {
                 cancel.store(true, std::sync::atomic::Ordering::Relaxed);
             }
-            p.progress(done.load(std::sync::atomic::Ordering::Relaxed).saturating_sub(1), total);
+            p.progress(
+                done.load(std::sync::atomic::Ordering::Relaxed)
+                    .saturating_sub(1),
+                total,
+            );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         worker.join()
     });
-    let Some((copied, z)) = result.map_err(|_| anyhow!("sanitizing failed (internal error)"))? else {
+    let Some((copied, z)) = result.map_err(|_| anyhow!("sanitizing failed (internal error)"))?
+    else {
         return Err(anyhow!("cancelled"));
     };
     if p.cancelled() {
@@ -407,22 +559,41 @@ pub fn sanitized_export(
     match format {
         ArchiveFormat::Saz => {
             let text = log.to_text();
-            quena_formats::saz::export_with(tmp.cap(), &copied, path, &[("QUENA-REDACTION.txt", text.as_bytes())], &half)?;
+            quena_formats::saz::export_with(
+                tmp.cap(),
+                &copied,
+                path,
+                &[("QUENA-REDACTION.txt", text.as_bytes())],
+                &half,
+            )?;
         }
         ArchiveFormat::Har => {
-            let o = HarOptions { comment: Some(log.summary_line()), extra: vec![("_quenaRedaction".into(), serde_json::to_value(&log)?)], ..HarOptions::default() };
+            let o = HarOptions {
+                comment: Some(log.summary_line()),
+                extra: vec![("_quenaRedaction".into(), serde_json::to_value(&log)?)],
+                ..HarOptions::default()
+            };
             quena_formats::har::export(tmp.cap(), &copied, path, &o, &half)?;
         }
-        ArchiveFormat::Curl | ArchiveFormat::Pcap => return Err(anyhow!("a sanitized export is a .saz or .har file")),
+        ArchiveFormat::Curl | ArchiveFormat::Pcap => {
+            return Err(anyhow!("a sanitized export is a .saz or .har file"));
+        }
     }
     p.progress(total, total);
     Ok(log)
 }
 
 fn remove_older_dirs(dir: &std::path::Path, age: std::time::Duration) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
-        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a > age);
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|a| a > age);
         if old && e.file_type().is_ok_and(|t| t.is_dir()) {
             let _ = std::fs::remove_dir_all(e.path());
         }
@@ -454,13 +625,23 @@ fn clean_stale(dir: &std::path::Path) {
 /// app quit, crashes). Only files not written for a minute, so a transfer that another running
 /// instance is receiving right now is left alone.
 pub(crate) fn clean_dropped_at_startup(data_dir: &std::path::Path) {
-    remove_older(&data_dir.join("dropped"), std::time::Duration::from_secs(60));
+    remove_older(
+        &data_dir.join("dropped"),
+        std::time::Duration::from_secs(60),
+    );
 }
 
 fn remove_older(dir: &std::path::Path, age: std::time::Duration) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.flatten() {
-        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a > age);
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|a| a > age);
         if old && e.file_type().is_ok_and(|t| t.is_file()) {
             let _ = std::fs::remove_file(e.path());
         }

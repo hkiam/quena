@@ -17,7 +17,11 @@ pub fn search(
     if needle.is_empty() {
         return Ok(0);
     }
-    let needle: Vec<u8> = if ignore_case { needle.to_ascii_lowercase() } else { needle.to_vec() };
+    let needle: Vec<u8> = if ignore_case {
+        needle.to_ascii_lowercase()
+    } else {
+        needle.to_vec()
+    };
     let finder = memchr::memmem::Finder::new(&needle);
     let overlap = needle.len() - 1;
     let mut buf = vec![0u8; (1 << 20) + overlap];

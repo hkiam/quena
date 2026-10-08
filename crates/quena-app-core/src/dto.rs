@@ -44,10 +44,16 @@ pub struct QuickExecResult {
 
 impl QuickExecResult {
     pub fn msg(m: impl Into<String>) -> Self {
-        QuickExecResult { message: Some(m.into()), ..Default::default() }
+        QuickExecResult {
+            message: Some(m.into()),
+            ..Default::default()
+        }
     }
     pub fn error(m: impl Into<String>) -> Self {
-        QuickExecResult { error: Some(m.into()), ..Default::default() }
+        QuickExecResult {
+            error: Some(m.into()),
+            ..Default::default()
+        }
     }
 }
 
@@ -109,7 +115,12 @@ pub struct CharsetDto {
 
 impl From<&quena_body::charset::Detected> for CharsetDto {
     fn from(d: &quena_body::charset::Detected) -> Self {
-        CharsetDto { name: d.name().to_string(), source: d.source.as_str().to_string(), header: d.header.clone(), document: d.document.clone() }
+        CharsetDto {
+            name: d.name().to_string(),
+            source: d.source.as_str().to_string(),
+            header: d.header.clone(),
+            document: d.document.clone(),
+        }
     }
 }
 
@@ -154,7 +165,9 @@ pub fn sniff_text(sample: &[u8]) -> bool {
     }
     let printable = sample
         .iter()
-        .filter(|&&b| b == b'\n' || b == b'\r' || b == b'\t' || (0x20..0x7f).contains(&b) || b >= 0x80)
+        .filter(|&&b| {
+            b == b'\n' || b == b'\r' || b == b'\t' || (0x20..0x7f).contains(&b) || b >= 0x80
+        })
         .count();
     printable * 100 / sample.len() >= 95
 }
@@ -162,9 +175,15 @@ pub fn sniff_text(sample: &[u8]) -> bool {
 /// Bytes of a text body looked at to tell its shape.
 const SHAPE_PREFIX: usize = 8 << 10;
 
-const SOAP_NS: &[&str] = &["http://schemas.xmlsoap.org/soap/envelope/", "http://www.w3.org/2003/05/soap-envelope"];
+const SOAP_NS: &[&str] = &[
+    "http://schemas.xmlsoap.org/soap/envelope/",
+    "http://www.w3.org/2003/05/soap-envelope",
+];
 const ATOM_NS: &str = "http://www.w3.org/2005/Atom";
-const EDMX_NS: &[&str] = &["http://schemas.microsoft.com/ado/2007/06/edmx", "http://docs.oasis-open.org/odata/ns/edmx"];
+const EDMX_NS: &[&str] = &[
+    "http://schemas.microsoft.com/ado/2007/06/edmx",
+    "http://docs.oasis-open.org/odata/ns/edmx",
+];
 
 /// The kind of a text from its start, whatever the Content-Type claims:
 /// `json`, `odata-json`, `soap`, `atom` (Atom feed or entry), `edmx` (OData metadata),
@@ -233,16 +252,27 @@ fn xml_root(mut t: &str) -> Option<(&str, &str)> {
             });
             // Without the end of the start tag (cut off), what is there is still checked.
             let tag = end.map(|(i, _)| &r[..i]).unwrap_or(r);
-            let name_end = tag.find(|c: char| c.is_whitespace() || c == '/').unwrap_or(tag.len());
+            let name_end = tag
+                .find(|c: char| c.is_whitespace() || c == '/')
+                .unwrap_or(tag.len());
             let name = &tag[..name_end];
-            return (!name.is_empty() && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')).then_some((name, tag));
+            return (!name.is_empty()
+                && name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphabetic() || c == '_'))
+            .then_some((name, tag));
         }
     }
 }
 
 /// The namespace bound to `prefix` (`""`: the default namespace) in a start tag.
 fn xml_namespace<'a>(tag: &'a str, prefix: &str) -> Option<&'a str> {
-    let attr = if prefix.is_empty() { "xmlns".to_string() } else { format!("xmlns:{prefix}") };
+    let attr = if prefix.is_empty() {
+        "xmlns".to_string()
+    } else {
+        format!("xmlns:{prefix}")
+    };
     let mut rest = tag;
     while let Some(i) = rest.find(&attr) {
         let before_ok = i == 0 || rest[..i].ends_with(|c: char| c.is_whitespace());
@@ -251,7 +281,9 @@ fn xml_namespace<'a>(tag: &'a str, prefix: &str) -> Option<&'a str> {
         if !before_ok {
             continue;
         }
-        let Some(v) = after.strip_prefix('=') else { continue };
+        let Some(v) = after.strip_prefix('=') else {
+            continue;
+        };
         let v = v.trim_start();
         let q = v.chars().next()?;
         if q != '"' && q != '\'' {
@@ -270,7 +302,13 @@ impl BodyInfo {
         let encoded = variant_applies(&spec, Variant::Decoded);
         let is_text = match &ct {
             Some(c) if is_textual_type(c) => true,
-            Some(c) if c.starts_with("image/") || c.starts_with("video/") || c.starts_with("audio/") => false,
+            Some(c)
+                if c.starts_with("image/")
+                    || c.starts_with("video/")
+                    || c.starts_with("audio/") =>
+            {
+                false
+            }
             _ if encoded => false,
             _ => sniff_text(&body.read_range(0, 1024).unwrap_or_default()),
         };
@@ -282,10 +320,12 @@ impl BodyInfo {
             variants.push(Variant::Pretty);
         }
         let (charset, shape) = if is_text {
-            let prefix = quena_body::text::decoded_prefix(body, &spec, quena_body::text::DETECT_PREFIX);
+            let prefix =
+                quena_body::text::decoded_prefix(body, &spec, quena_body::text::DETECT_PREFIX);
             let det = quena_body::charset::detect(spec.content_type.as_deref(), &prefix);
             let head = &prefix[det.bom_len.min(prefix.len())..];
-            let head = quena_body::charset::decode(&head[..head.len().min(SHAPE_PREFIX)], det.encoding).0;
+            let head =
+                quena_body::charset::decode(&head[..head.len().min(SHAPE_PREFIX)], det.encoding).0;
             (Some(CharsetDto::from(&det)), shape_of(&head))
         } else {
             (None, None)
@@ -329,7 +369,10 @@ impl DetailDto {
         let empty = Headers::default();
         DetailDto {
             request_body: BodyInfo::build(req, &d.request.headers),
-            response_body: BodyInfo::build(resp, d.response.as_ref().map(|r| &r.headers).unwrap_or(&empty)),
+            response_body: BodyInfo::build(
+                resp,
+                d.response.as_ref().map(|r| &r.headers).unwrap_or(&empty),
+            ),
             summary: d.summary,
             request: d.request,
             response: d.response,
@@ -390,7 +433,12 @@ mod tests {
     use std::io::Write;
 
     fn info(store: &std::sync::Arc<BodyStore>, bytes: &[u8], headers: &[(&str, &str)]) -> BodyInfo {
-        let h = Headers(headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
+        let h = Headers(
+            headers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
         BodyInfo::build(&store.store_bytes(bytes), &h)
     }
 
@@ -402,22 +450,85 @@ mod tests {
         // Header charset, on a gzip body: determined on the decoded bytes.
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         gz.write_all(b"Gr\xfc\xdfe").unwrap();
-        let i = info(&store, &gz.finish().unwrap(), &[("Content-Type", "text/plain; charset=ISO-8859-1"), ("Content-Encoding", "gzip")]);
-        assert_eq!(cs(i), Some(("windows-1252".into(), "header".into(), Some("ISO-8859-1".into()), None)));
+        let i = info(
+            &store,
+            &gz.finish().unwrap(),
+            &[
+                ("Content-Type", "text/plain; charset=ISO-8859-1"),
+                ("Content-Encoding", "gzip"),
+            ],
+        );
+        assert_eq!(
+            cs(i),
+            Some((
+                "windows-1252".into(),
+                "header".into(),
+                Some("ISO-8859-1".into()),
+                None
+            ))
+        );
         // XML declaration.
-        let i = info(&store, b"<?xml version=\"1.0\" encoding=\"ISO-8859-15\"?><a>\xa4</a>", &[("Content-Type", "application/xml")]);
-        assert_eq!(cs(i), Some(("ISO-8859-15".into(), "document".into(), None, Some("ISO-8859-15".into()))));
+        let i = info(
+            &store,
+            b"<?xml version=\"1.0\" encoding=\"ISO-8859-15\"?><a>\xa4</a>",
+            &[("Content-Type", "application/xml")],
+        );
+        assert_eq!(
+            cs(i),
+            Some((
+                "ISO-8859-15".into(),
+                "document".into(),
+                None,
+                Some("ISO-8859-15".into())
+            ))
+        );
         // BOM.
-        let i = info(&store, &[0xFF, 0xFE, b'a', 0], &[("Content-Type", "text/plain")]);
-        assert_eq!(cs(i).map(|c| (c.0, c.1)), Some(("UTF-16LE".into(), "bom".into())));
+        let i = info(
+            &store,
+            &[0xFF, 0xFE, b'a', 0],
+            &[("Content-Type", "text/plain")],
+        );
+        assert_eq!(
+            cs(i).map(|c| (c.0, c.1)),
+            Some(("UTF-16LE".into(), "bom".into()))
+        );
         // Default: valid UTF-8, else windows-1252.
-        assert_eq!(cs(info(&store, "Grüße".as_bytes(), &[("Content-Type", "text/plain")])).map(|c| c.0), Some("UTF-8".into()));
-        assert_eq!(cs(info(&store, b"Gr\xfc\xdfe", &[("Content-Type", "text/plain")])).map(|c| c.0), Some("windows-1252".into()));
+        assert_eq!(
+            cs(info(
+                &store,
+                "Grüße".as_bytes(),
+                &[("Content-Type", "text/plain")]
+            ))
+            .map(|c| c.0),
+            Some("UTF-8".into())
+        );
+        assert_eq!(
+            cs(info(
+                &store,
+                b"Gr\xfc\xdfe",
+                &[("Content-Type", "text/plain")]
+            ))
+            .map(|c| c.0),
+            Some("windows-1252".into())
+        );
         // Binary bodies have none.
-        assert_eq!(cs(info(&store, b"\x89PNG\r\n", &[("Content-Type", "image/png")])), None);
+        assert_eq!(
+            cs(info(
+                &store,
+                b"\x89PNG\r\n",
+                &[("Content-Type", "image/png")]
+            )),
+            None
+        );
         // Serialised for the UI without empty fields.
-        let j = serde_json::to_value(info(&store, b"{}", &[("Content-Type", "application/json")]).charset).unwrap();
-        assert_eq!(j, serde_json::json!({ "name": "UTF-8", "source": "default" }));
+        let j = serde_json::to_value(
+            info(&store, b"{}", &[("Content-Type", "application/json")]).charset,
+        )
+        .unwrap();
+        assert_eq!(
+            j,
+            serde_json::json!({ "name": "UTF-8", "source": "default" })
+        );
     }
 
     #[test]
@@ -425,20 +536,45 @@ mod tests {
         let s = shape_of;
         assert_eq!(s(" \n{\"a\":1}"), Some("json"));
         assert_eq!(s("\u{feff}[1,2]"), Some("json"));
-        assert_eq!(s("{\"@odata.context\":\"$metadata#X\",\"value\":[]}"), Some("odata-json"));
+        assert_eq!(
+            s("{\"@odata.context\":\"$metadata#X\",\"value\":[]}"),
+            Some("odata-json")
+        );
         assert_eq!(s("{ \"d\" : {\"results\":[]}}"), Some("odata-json"));
         assert_eq!(s("{\"data\":1}"), Some("json"));
         let soap11 = r#"<?xml version="1.0"?><!-- c --><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body/></soap:Envelope>"#;
         assert_eq!(s(soap11), Some("soap"));
-        assert_eq!(s(r#"<env:Envelope xmlns:env='http://www.w3.org/2003/05/soap-envelope'>"#), Some("soap"));
+        assert_eq!(
+            s(r#"<env:Envelope xmlns:env='http://www.w3.org/2003/05/soap-envelope'>"#),
+            Some("soap")
+        );
         // An Envelope in another namespace is plain XML.
         assert_eq!(s(r#"<Envelope xmlns="urn:x"><a/></Envelope>"#), Some("xml"));
-        assert_eq!(s(r#"<feed xml:base="x" xmlns="http://www.w3.org/2005/Atom" xmlns:m="m"><entry/></feed>"#), Some("atom"));
-        assert_eq!(s(r#"<a:entry xmlns:a="http://www.w3.org/2005/Atom">"#), Some("atom"));
-        assert_eq!(s(r#"<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">"#), Some("edmx"));
-        assert_eq!(s(r#"<?xml version="1.0"?><!DOCTYPE note [<!ENTITY a "b">]><note><to>x</to></note>"#), Some("xml"));
+        assert_eq!(
+            s(
+                r#"<feed xml:base="x" xmlns="http://www.w3.org/2005/Atom" xmlns:m="m"><entry/></feed>"#
+            ),
+            Some("atom")
+        );
+        assert_eq!(
+            s(r#"<a:entry xmlns:a="http://www.w3.org/2005/Atom">"#),
+            Some("atom")
+        );
+        assert_eq!(
+            s(r#"<edmx:Edmx Version="4.0" xmlns:edmx="http://docs.oasis-open.org/odata/ns/edmx">"#),
+            Some("edmx")
+        );
+        assert_eq!(
+            s(r#"<?xml version="1.0"?><!DOCTYPE note [<!ENTITY a "b">]><note><to>x</to></note>"#),
+            Some("xml")
+        );
         // Cut off inside the start tag: still judged.
-        assert_eq!(s(r#"<soap:Envelope a="1" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" b="lon"#), Some("soap"));
+        assert_eq!(
+            s(
+                r#"<soap:Envelope a="1" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" b="lon"#
+            ),
+            Some("soap")
+        );
         assert_eq!(s("<!DOCTYPE html><html>"), Some("html"));
         assert_eq!(s("<html lang=de>"), Some("html"));
         assert_eq!(s("hello"), None);
@@ -451,17 +587,41 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = BodyStore::open(dir.path(), BodyConfig::default()).unwrap();
         // Plain XML sent as text/xml is not SOAP.
-        assert_eq!(info(&store, b"<note/>", &[("Content-Type", "text/xml")]).shape, Some("xml"));
+        assert_eq!(
+            info(&store, b"<note/>", &[("Content-Type", "text/xml")]).shape,
+            Some("xml")
+        );
         // Decoded first.
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-        gz.write_all(b"<feed xmlns=\"http://www.w3.org/2005/Atom\"/>").unwrap();
-        assert_eq!(info(&store, &gz.finish().unwrap(), &[("Content-Type", "application/xml"), ("Content-Encoding", "gzip")]).shape, Some("atom"));
+        gz.write_all(b"<feed xmlns=\"http://www.w3.org/2005/Atom\"/>")
+            .unwrap();
+        assert_eq!(
+            info(
+                &store,
+                &gz.finish().unwrap(),
+                &[
+                    ("Content-Type", "application/xml"),
+                    ("Content-Encoding", "gzip")
+                ]
+            )
+            .shape,
+            Some("atom")
+        );
         // UTF-16 with BOM.
         let mut u16 = vec![0xFF, 0xFE];
         u16.extend("{\"a\":1}".encode_utf16().flat_map(|c| c.to_le_bytes()));
-        assert_eq!(info(&store, &u16, &[("Content-Type", "application/json")]).shape, Some("json"));
+        assert_eq!(
+            info(&store, &u16, &[("Content-Type", "application/json")]).shape,
+            Some("json")
+        );
         // JSON sent as text/plain is still JSON; binary has no shape.
-        assert_eq!(info(&store, b"[1]", &[("Content-Type", "text/plain")]).shape, Some("json"));
-        assert_eq!(info(&store, b"\x89PNG\r\n", &[("Content-Type", "image/png")]).shape, None);
+        assert_eq!(
+            info(&store, b"[1]", &[("Content-Type", "text/plain")]).shape,
+            Some("json")
+        );
+        assert_eq!(
+            info(&store, b"\x89PNG\r\n", &[("Content-Type", "image/png")]).shape,
+            None
+        );
     }
 }

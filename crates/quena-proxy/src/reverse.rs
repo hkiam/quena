@@ -6,9 +6,9 @@
 //! get a certificate from the Quena root CA; cleartext HTTP/2 (h2c, gRPC without TLS) is
 //! recognised by its preface.
 
+use crate::ProxyConfig;
 use crate::conn::{Prefixed, serve_decrypted, serve_h1};
 use crate::forward::ConnCtx;
-use crate::ProxyConfig;
 use http::HeaderValue;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use serde::{Deserialize, Serialize};
@@ -47,7 +47,11 @@ pub struct Target {
 impl Target {
     pub fn parse(url: &str) -> Result<Target, String> {
         let (scheme, authority, base_path) = parse_target(url)?;
-        Ok(Target { scheme, authority, base_path })
+        Ok(Target {
+            scheme,
+            authority,
+            base_path,
+        })
     }
     /// `scheme://authority`.
     pub fn origin(&self) -> String {
@@ -81,7 +85,10 @@ impl PathRoute {
         if p.is_empty() {
             return true;
         }
-        path == p || path.strip_prefix(p).is_some_and(|rest| rest.starts_with('/'))
+        path == p
+            || path
+                .strip_prefix(p)
+                .is_some_and(|rest| rest.starts_with('/'))
     }
 }
 
@@ -127,9 +134,13 @@ pub fn parse_target(url: &str) -> Result<(&'static str, String, String), String>
     } else if let Some(r) = url.strip_prefix("http://") {
         ("http", r)
     } else if url.contains("://") {
-        return Err(format!("{url}: only http:// and https:// targets are supported"));
+        return Err(format!(
+            "{url}: only http:// and https:// targets are supported"
+        ));
     } else {
-        return Err(format!("{url}: the target needs a scheme (http:// or https://)"));
+        return Err(format!(
+            "{url}: the target needs a scheme (http:// or https://)"
+        ));
     };
     let (authority, path) = match rest.find(['/', '?', '#']) {
         Some(i) => (&rest[..i], &rest[i..]),
@@ -147,7 +158,12 @@ pub fn parse_target(url: &str) -> Result<(&'static str, String, String), String>
         Some(p) if p == default => uri.host().to_string(),
         _ => uri.as_str().to_ascii_lowercase(),
     };
-    let path = path.split(['?', '#']).next().unwrap_or("").trim_end_matches('/').to_string();
+    let path = path
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/')
+        .to_string();
     Ok((scheme, authority, path))
 }
 
@@ -174,20 +190,42 @@ impl ReverseRoute {
     /// anyway: only its path and query count), and where it went.
     pub fn upstream_url(&self, uri: &http::Uri) -> (String, Routed) {
         let path = uri.path();
-        let path = if path.starts_with('/') { path.to_string() } else { format!("/{path}") };
+        let path = if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("/{path}")
+        };
         let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
-        let best = self.paths.iter().filter(|r| r.matches(&path)).max_by_key(|r| r.prefix.trim_end_matches('/').len());
+        let best = self
+            .paths
+            .iter()
+            .filter(|r| r.matches(&path))
+            .max_by_key(|r| r.prefix.trim_end_matches('/').len());
         let (target, mount, rest) = match best {
             Some(r) if r.strip_prefix => {
                 let p = r.prefix.trim_end_matches('/');
                 let rest = &path[p.len()..];
-                (&r.target, p.to_string(), if rest.is_empty() { "/".to_string() } else { rest.to_string() })
+                (
+                    &r.target,
+                    p.to_string(),
+                    if rest.is_empty() {
+                        "/".to_string()
+                    } else {
+                        rest.to_string()
+                    },
+                )
             }
             Some(r) => (&r.target, String::new(), path),
             None => (&self.target, String::new(), path),
         };
         let url = format!("{}{}{rest}{query}", target.origin(), target.base_path);
-        (url, Routed { target: target.clone(), mount })
+        (
+            url,
+            Routed {
+                target: target.clone(),
+                mount,
+            },
+        )
     }
 
     /// Whether the route accepts this client address.
@@ -198,22 +236,39 @@ impl ReverseRoute {
     /// Change response headers for the client (see [`ReverseRoute::rewrite_location`],
     /// [`ReverseRoute::rewrite_cookie_domain`]). `client_origin` is how the client
     /// addressed Quena (`http://localhost:8080`). Returns what was changed.
-    pub fn rewrite_response(&self, headers: &mut http::HeaderMap, client_origin: &str, routed: &Routed) -> Vec<String> {
+    pub fn rewrite_response(
+        &self,
+        headers: &mut http::HeaderMap,
+        client_origin: &str,
+        routed: &Routed,
+    ) -> Vec<String> {
         let mut notes = Vec::new();
         if self.rewrite_location {
             for name in [http::header::LOCATION, http::header::CONTENT_LOCATION] {
-                let Some(v) = headers.get(&name).and_then(|v| v.to_str().ok()) else { continue };
+                let Some(v) = headers.get(&name).and_then(|v| v.to_str().ok()) else {
+                    continue;
+                };
                 if let Some(new) = client_location(v, client_origin, routed) {
                     if let Ok(hv) = HeaderValue::from_str(&new) {
-                        notes.push(format!("{}: {v} → {new}", crate::util::title_case(name.as_str())));
+                        notes.push(format!(
+                            "{}: {v} → {new}",
+                            crate::util::title_case(name.as_str())
+                        ));
                         headers.insert(name, hv);
                     }
                 }
             }
         }
         if self.rewrite_cookie_domain {
-            let cookies: Vec<HeaderValue> = headers.get_all(http::header::SET_COOKIE).iter().cloned().collect();
-            if cookies.iter().any(|c| c.to_str().is_ok_and(|s| cookie_domain(s).is_some())) {
+            let cookies: Vec<HeaderValue> = headers
+                .get_all(http::header::SET_COOKIE)
+                .iter()
+                .cloned()
+                .collect();
+            if cookies
+                .iter()
+                .any(|c| c.to_str().is_ok_and(|s| cookie_domain(s).is_some()))
+            {
                 headers.remove(http::header::SET_COOKIE);
                 for c in cookies {
                     let out = match c.to_str() {
@@ -244,19 +299,30 @@ fn client_location(v: &str, client_origin: &str, routed: &Routed) -> Option<Stri
         if target.base_path.is_empty() && mount.is_empty() {
             return None;
         }
-        let rest = if target.base_path.is_empty() { v } else { strip_base(v, &target.base_path)? };
+        let rest = if target.base_path.is_empty() {
+            v
+        } else {
+            strip_base(v, &target.base_path)?
+        };
         let out = format!("{mount}{rest}");
         return (out != v).then_some(out);
     }
     let lower = v.to_ascii_lowercase();
-    let origins = [target.origin(), format!("{}:{}", target.origin(), target.default_port())];
+    let origins = [
+        target.origin(),
+        format!("{}:{}", target.origin(), target.default_port()),
+    ];
     for o in &origins {
         if let Some(rest) = lower.strip_prefix(o.as_str()) {
             if !(rest.is_empty() || rest.starts_with(['/', '?', '#'])) {
                 continue;
             }
             let rest = &v[o.len()..];
-            let rest = if target.base_path.is_empty() { Some(rest) } else { strip_base(rest, &target.base_path) }?;
+            let rest = if target.base_path.is_empty() {
+                Some(rest)
+            } else {
+                strip_base(rest, &target.base_path)
+            }?;
             let rest = if rest.is_empty() { "/" } else { rest };
             return Some(format!("{client_origin}{mount}{rest}"));
         }
@@ -279,7 +345,9 @@ fn strip_base<'a>(path: &'a str, base: &str) -> Option<&'a str> {
 fn cookie_domain(cookie: &str) -> Option<String> {
     cookie.split(';').skip(1).find_map(|a| {
         let (k, v) = a.split_once('=')?;
-        k.trim().eq_ignore_ascii_case("domain").then(|| v.trim().to_string())
+        k.trim()
+            .eq_ignore_ascii_case("domain")
+            .then(|| v.trim().to_string())
     })
 }
 
@@ -287,7 +355,9 @@ fn strip_cookie_domain(cookie: &str) -> String {
     let mut parts = cookie.split(';');
     let mut out = parts.next().unwrap_or("").to_string();
     for a in parts {
-        let is_domain = a.split_once('=').is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case("domain"));
+        let is_domain = a
+            .split_once('=')
+            .is_some_and(|(k, _)| k.trim().eq_ignore_ascii_case("domain"));
         if !is_domain {
             out.push(';');
             out.push_str(a);
@@ -310,7 +380,11 @@ pub(crate) async fn serve(ctx: Arc<ConnCtx>, mut stream: TcpStream) {
     let mut buf = [0u8; 64];
     let read = tokio::time::timeout(FIRST_BYTES_TIMEOUT, async {
         loop {
-            let want = if first.first() == Some(&H2_PREFACE[0]) { H2_PREFACE.len() } else { 1 };
+            let want = if first.first() == Some(&H2_PREFACE[0]) {
+                H2_PREFACE.len()
+            } else {
+                1
+            };
             if first.len() >= want || (!first.is_empty() && !H2_PREFACE.starts_with(&first)) {
                 return Ok(());
             }
@@ -331,7 +405,10 @@ pub(crate) async fn serve(ctx: Arc<ConnCtx>, mut stream: TcpStream) {
         (true, ClientProtocol::Auto | ClientProtocol::Https) => serve_tls(ctx, io).await,
         (false, ClientProtocol::Https) => {
             tracing::warn!(target: "quena::proxy", "reverse proxy {} (port {}): {} sent plain HTTP, but the entry expects HTTPS", route.name, route.port, ctx.client_addr);
-            let msg = format!("This Quena reverse proxy port expects HTTPS: use https://…:{}/\n", route.port);
+            let msg = format!(
+                "This Quena reverse proxy port expects HTTPS: use https://…:{}/\n",
+                route.port
+            );
             let mut io = io;
             let _ = tokio::io::AsyncWriteExt::write_all(
                 &mut io,
@@ -381,7 +458,12 @@ async fn serve_tls(ctx: Arc<ConnCtx>, io: Prefixed<TcpStream>) {
         reverse: Some(route),
         via: ctx.via.clone(),
     });
-    serve_decrypted(inner, accepted.stream, accepted.info.alpn.as_deref() == Some("h2")).await;
+    serve_decrypted(
+        inner,
+        accepted.stream,
+        accepted.info.alpn.as_deref() == Some("h2"),
+    )
+    .await;
 }
 
 async fn serve_h2c(ctx: Arc<ConnCtx>, io: Prefixed<TcpStream>) {
@@ -414,7 +496,12 @@ pub(crate) fn client_origin<B>(req: &http::Request<B>, scheme: &str, port: u16) 
         .uri()
         .authority()
         .map(|a| a.to_string())
-        .or_else(|| req.headers().get(http::header::HOST).and_then(|h| h.to_str().ok()).map(|s| s.to_string()))
+        .or_else(|| {
+            req.headers()
+                .get(http::header::HOST)
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.to_string())
+        })
         .unwrap_or_else(|| format!("localhost:{port}"));
     format!("{scheme}://{authority}")
 }
@@ -441,7 +528,11 @@ mod tests {
     }
 
     fn path(prefix: &str, target: &str, strip: bool) -> PathRoute {
-        PathRoute { prefix: prefix.into(), target: Target::parse(target).unwrap(), strip_prefix: strip }
+        PathRoute {
+            prefix: prefix.into(),
+            target: Target::parse(target).unwrap(),
+            strip_prefix: strip,
+        }
     }
 
     fn url(r: &ReverseRoute, u: &str) -> String {
@@ -450,10 +541,22 @@ mod tests {
 
     #[test]
     fn targets_are_parsed() {
-        assert_eq!(parse_target("https://api.example.com").unwrap(), ("https", "api.example.com".into(), "".into()));
-        assert_eq!(parse_target("https://api.example.com:443/v1/").unwrap(), ("https", "api.example.com".into(), "/v1".into()));
-        assert_eq!(parse_target("http://LOCALHOST:3000/a/b?x=1").unwrap(), ("http", "localhost:3000".into(), "/a/b".into()));
-        assert_eq!(parse_target("http://[::1]:8080").unwrap(), ("http", "[::1]:8080".into(), "".into()));
+        assert_eq!(
+            parse_target("https://api.example.com").unwrap(),
+            ("https", "api.example.com".into(), "".into())
+        );
+        assert_eq!(
+            parse_target("https://api.example.com:443/v1/").unwrap(),
+            ("https", "api.example.com".into(), "/v1".into())
+        );
+        assert_eq!(
+            parse_target("http://LOCALHOST:3000/a/b?x=1").unwrap(),
+            ("http", "localhost:3000".into(), "/a/b".into())
+        );
+        assert_eq!(
+            parse_target("http://[::1]:8080").unwrap(),
+            ("http", "[::1]:8080".into(), "".into())
+        );
         assert!(parse_target("api.example.com").is_err());
         assert!(parse_target("ftp://x").is_err());
         assert!(parse_target("https://").is_err());
@@ -466,8 +569,14 @@ mod tests {
     #[test]
     fn upstream_url_adds_the_base_path() {
         let r = route("https://api.example.com/v1");
-        assert_eq!(url(&r, "/users?id=2"), "https://api.example.com/v1/users?id=2");
-        assert_eq!(url(&r, "http://localhost:8080/x"), "https://api.example.com/v1/x");
+        assert_eq!(
+            url(&r, "/users?id=2"),
+            "https://api.example.com/v1/users?id=2"
+        );
+        assert_eq!(
+            url(&r, "http://localhost:8080/x"),
+            "https://api.example.com/v1/x"
+        );
         let r = route("http://localhost:3000");
         assert_eq!(url(&r, "/"), "http://localhost:3000/");
     }
@@ -475,7 +584,11 @@ mod tests {
     #[test]
     fn the_longest_path_prefix_wins() {
         let mut r = route("http://web:3000");
-        r.paths = vec![path("/api", "http://api:8000", false), path("/api/v2/", "http://v2:9000/base", true), path("/auth", "https://sso.example.com", true)];
+        r.paths = vec![
+            path("/api", "http://api:8000", false),
+            path("/api/v2/", "http://v2:9000/base", true),
+            path("/auth", "https://sso.example.com", true),
+        ];
         assert_eq!(url(&r, "/index.html"), "http://web:3000/index.html");
         assert_eq!(url(&r, "/api/users?x=1"), "http://api:8000/api/users?x=1");
         assert_eq!(url(&r, "/api"), "http://api:8000/api");
@@ -497,8 +610,14 @@ mod tests {
     #[test]
     fn locations_point_back_to_the_client() {
         let r = route("https://api.example.com/v1");
-        assert_eq!(loc(&r, "/", "https://api.example.com/v1/login?a=1").as_deref(), Some("http://localhost:8080/login?a=1"));
-        assert_eq!(loc(&r, "/", "https://API.example.com:443/v1").as_deref(), Some("http://localhost:8080/"));
+        assert_eq!(
+            loc(&r, "/", "https://api.example.com/v1/login?a=1").as_deref(),
+            Some("http://localhost:8080/login?a=1")
+        );
+        assert_eq!(
+            loc(&r, "/", "https://API.example.com:443/v1").as_deref(),
+            Some("http://localhost:8080/")
+        );
         assert_eq!(loc(&r, "/", "/v1/next").as_deref(), Some("/next"));
         // Outside the base path, another host or a look-alike host: unchanged.
         assert_eq!(loc(&r, "/", "https://api.example.com/other"), None);
@@ -506,7 +625,10 @@ mod tests {
         assert_eq!(loc(&r, "/", "https://api.example.com.evil/v1/x"), None);
         assert_eq!(loc(&r, "/", "/other"), None);
         let r = route("http://localhost:3000");
-        assert_eq!(loc(&r, "/", "http://localhost:3000/a").as_deref(), Some("http://localhost:8080/a"));
+        assert_eq!(
+            loc(&r, "/", "http://localhost:3000/a").as_deref(),
+            Some("http://localhost:8080/a")
+        );
         assert_eq!(loc(&r, "/", "/a"), None);
     }
 
@@ -514,10 +636,19 @@ mod tests {
     fn locations_of_a_stripped_path_route_keep_its_prefix() {
         let mut r = route("http://web:3000");
         r.paths = vec![path("/auth", "https://sso.example.com", true)];
-        assert_eq!(loc(&r, "/auth/login", "https://sso.example.com/done").as_deref(), Some("http://localhost:8080/auth/done"));
-        assert_eq!(loc(&r, "/auth/login", "/done").as_deref(), Some("/auth/done"));
+        assert_eq!(
+            loc(&r, "/auth/login", "https://sso.example.com/done").as_deref(),
+            Some("http://localhost:8080/auth/done")
+        );
+        assert_eq!(
+            loc(&r, "/auth/login", "/done").as_deref(),
+            Some("/auth/done")
+        );
         // The default target is not affected.
-        assert_eq!(loc(&r, "/x", "http://web:3000/y").as_deref(), Some("http://localhost:8080/y"));
+        assert_eq!(
+            loc(&r, "/x", "http://web:3000/y").as_deref(),
+            Some("http://localhost:8080/y")
+        );
     }
 
     #[test]
@@ -525,13 +656,29 @@ mod tests {
         let r = route("https://api.example.com");
         let (_, routed) = r.upstream_url(&"/".parse().unwrap());
         let mut h = http::HeaderMap::new();
-        h.append(http::header::SET_COOKIE, HeaderValue::from_static("a=1; Domain=.example.com; Path=/; HttpOnly"));
-        h.append(http::header::SET_COOKIE, HeaderValue::from_static("b=2; Path=/"));
-        h.insert(http::header::LOCATION, HeaderValue::from_static("https://api.example.com/x"));
+        h.append(
+            http::header::SET_COOKIE,
+            HeaderValue::from_static("a=1; Domain=.example.com; Path=/; HttpOnly"),
+        );
+        h.append(
+            http::header::SET_COOKIE,
+            HeaderValue::from_static("b=2; Path=/"),
+        );
+        h.insert(
+            http::header::LOCATION,
+            HeaderValue::from_static("https://api.example.com/x"),
+        );
         let notes = r.rewrite_response(&mut h, "http://localhost:8080", &routed);
-        let cookies: Vec<_> = h.get_all(http::header::SET_COOKIE).iter().map(|v| v.to_str().unwrap().to_string()).collect();
+        let cookies: Vec<_> = h
+            .get_all(http::header::SET_COOKIE)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect();
         assert_eq!(cookies, vec!["a=1; Path=/; HttpOnly", "b=2; Path=/"]);
-        assert_eq!(h.get(http::header::LOCATION).unwrap(), "http://localhost:8080/x");
+        assert_eq!(
+            h.get(http::header::LOCATION).unwrap(),
+            "http://localhost:8080/x"
+        );
         assert_eq!(notes.len(), 2, "{notes:?}");
     }
 }

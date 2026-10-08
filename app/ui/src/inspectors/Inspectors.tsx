@@ -17,6 +17,7 @@ import { WebSocketView } from "./WebSocketView";
 import { SseView } from "./SseView";
 import { MultipartView, multipartCandidate } from "./MultipartView";
 import { GrpcView, grpcCandidate } from "./GrpcView";
+import { MsgpackView, msgpackCandidate } from "./MsgpackView";
 import { ViewTabs } from "./ViewTabs";
 import { bodyItems } from "./inspectMenus";
 import { openMenu, withSelection } from "../components/contextMenus";
@@ -50,6 +51,7 @@ const TITLES: Record<string, string> = {
   sse: "SSE",
   multipart: t("Parts"),
   grpc: "gRPC",
+  msgpack: "MessagePack",
 };
 
 /** Grouped tabs: titles of the sections, and of views where the section names the context. */
@@ -227,7 +229,8 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   const isSse = part === "response" && (detail?.responseBody.contentType ?? "").toLowerCase().includes("text/event-stream");
   const mp = detail ? multipartCandidate(detail, part) : false;
   const grpc = detail ? grpcCandidate(detail, part) : false;
-  const special = [isWs ? "websocket" : "", isSse ? "sse" : "", grpc ? "grpc" : "", mp ? "multipart" : "", soap ? "soap" : "", atom ? "atom" : ""].filter(Boolean);
+  const msgpack = detail ? msgpackCandidate(detail, part) : false;
+  const special = [isWs ? "websocket" : "", isSse ? "sse" : "", grpc ? "grpc" : "", msgpack ? "msgpack" : "", mp ? "multipart" : "", soap ? "soap" : "", atom ? "atom" : ""].filter(Boolean);
   const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...special, ...pluginTabs.map((t) => t.key)];
   const family = detail ? viewFamily(detail, part, special, pluginTabs.map((t) => t.key)) : null;
   const memoKey = family ? `${part}:${family}` : null;
@@ -319,6 +322,9 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
       case "grpc":
         content = <GrpcView detail={detail} part={part} />;
         break;
+      case "msgpack":
+        content = <MsgpackView detail={detail} part={part} />;
+        break;
       case "multipart":
         content = <MultipartView detail={detail} part={part} />;
         break;
@@ -409,7 +415,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         onContextMenu={(e) => {
           // Views without a menu of their own (Hex, Image, Raw …): the body's, if it has one.
           // (Not for views of a part of the body: parts, frames, events, messages.)
-          if (e.nativeEvent.defaultPrevented || !detail || tamper || !["body", "raw"].includes(sectionOf(tab)) || ["multipart", "websocket", "sse", "grpc"].includes(tab)) return;
+          if (e.nativeEvent.defaultPrevented || !detail || tamper || !["body", "raw"].includes(sectionOf(tab)) || ["multipart", "websocket", "sse", "grpc", "msgpack"].includes(tab)) return;
           openMenu(e, withSelection(bodyItems(detail, part), e.target as Element));
         }}
       >

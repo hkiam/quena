@@ -66,18 +66,31 @@ const MAX_BOUNDARY: usize = 70;
 pub fn parse(body: &Body, content_type: &str) -> Multipart {
     let mut out = Multipart::default();
     let ct = content_type.to_ascii_lowercase();
-    out.subtype = ct.split(';').next().unwrap_or("").trim().strip_prefix("multipart/").unwrap_or("").to_string();
+    out.subtype = ct
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .strip_prefix("multipart/")
+        .unwrap_or("")
+        .to_string();
     let Some(boundary) = param(content_type, "boundary") else {
         out.error = Some("no boundary parameter in Content-Type".into());
         return out;
     };
     if boundary.is_empty() || boundary.len() > MAX_BOUNDARY {
-        out.error = Some(format!("invalid boundary ({} characters, RFC 2046 allows 1–{MAX_BOUNDARY}); not parsed as multipart", boundary.len()));
+        out.error = Some(format!(
+            "invalid boundary ({} characters, RFC 2046 allows 1–{MAX_BOUNDARY}); not parsed as multipart",
+            boundary.len()
+        ));
         return out;
     }
     out.boundary = boundary.to_string();
     out.root_type = param(content_type, "type").unwrap_or("").to_string();
-    out.start = param(content_type, "start").unwrap_or("").trim_matches(['<', '>']).to_string();
+    out.start = param(content_type, "start")
+        .unwrap_or("")
+        .trim_matches(['<', '>'])
+        .to_string();
     let delim = format!("--{boundary}");
     let total = body.len();
 
@@ -90,7 +103,9 @@ pub fn parse(body: &Body, content_type: &str) -> Multipart {
     let finder = memchr_find(needle.as_bytes());
     let mut boundaries: Vec<u64> = Vec::new();
     // Check if body starts with the boundary (no preceding CRLF).
-    let head = body.read_range(0, needle_start.len() + 2).unwrap_or_default();
+    let head = body
+        .read_range(0, needle_start.len() + 2)
+        .unwrap_or_default();
     if head.starts_with(needle_start.as_bytes()) {
         boundaries.push(0);
     }
@@ -141,7 +156,11 @@ pub fn parse(body: &Body, content_type: &str) -> Multipart {
         let _ = body_end;
         let h = Headers(headers.clone());
         let ct = h.get("content-type").unwrap_or("text/plain").to_string();
-        let cid = h.get("content-id").unwrap_or("").trim_matches(['<', '>']).to_string();
+        let cid = h
+            .get("content-id")
+            .unwrap_or("")
+            .trim_matches(['<', '>'])
+            .to_string();
         let cd = h.get("content-disposition").unwrap_or("");
         let name = disp_param(cd, "name");
         let filename = disp_param(cd, "filename");
@@ -149,12 +168,21 @@ pub fn parse(body: &Body, content_type: &str) -> Multipart {
         let part_len = plen.saturating_sub(2); // strip trailing CRLF that precedes the next boundary
         let is_text = is_textual(&ct);
         let detected = is_text.then(|| {
-            let sample = body.read_range(body_start, quena_body::text::DETECT_PREFIX.min(part_len as usize)).unwrap_or_default();
+            let sample = body
+                .read_range(
+                    body_start,
+                    quena_body::text::DETECT_PREFIX.min(part_len as usize),
+                )
+                .unwrap_or_default();
             quena_body::charset::detect(Some(&ct), &sample)
         });
         let preview = detected.as_ref().map(|d| {
-            let data = body.read_range(body_start, PREVIEW.min(part_len as usize)).unwrap_or_default();
-            quena_body::charset::decode(&data, d.encoding).0.into_owned()
+            let data = body
+                .read_range(body_start, PREVIEW.min(part_len as usize))
+                .unwrap_or_default();
+            quena_body::charset::decode(&data, d.encoding)
+                .0
+                .into_owned()
         });
         out.parts.push(Part {
             index: idx,
@@ -179,7 +207,11 @@ pub fn parse(body: &Body, content_type: &str) -> Multipart {
 
 fn is_textual(ct: &str) -> bool {
     let ct = ct.to_ascii_lowercase();
-    ct.starts_with("text/") || ct.contains("xml") || ct.contains("json") || ct.contains("soap") || ct.contains("x-www-form-urlencoded")
+    ct.starts_with("text/")
+        || ct.contains("xml")
+        || ct.contains("json")
+        || ct.contains("soap")
+        || ct.contains("x-www-form-urlencoded")
 }
 
 fn disp_param(cd: &str, name: &str) -> String {
@@ -213,7 +245,12 @@ fn read_part_headers(body: &Body, start: u64) -> (Vec<(String, String)>, u64) {
         return (Vec::new(), start + 1);
     }
     // headers end at the first blank line
-    let end = chunk.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4).or_else(|| chunk.windows(2).position(|w| w == b"\n\n").map(|i| i + 2)).unwrap_or(chunk.len());
+    let end = chunk
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|i| i + 4)
+        .or_else(|| chunk.windows(2).position(|w| w == b"\n\n").map(|i| i + 2))
+        .unwrap_or(chunk.len());
     let text = String::from_utf8_lossy(&chunk[..end.saturating_sub(if end >= 2 { 2 } else { 0 })]);
     let mut headers = Vec::new();
     for line in text.split('\n') {
@@ -233,12 +270,15 @@ struct Find {
     needle: Vec<u8>,
 }
 fn memchr_find(needle: &[u8]) -> Find {
-    Find { needle: needle.to_vec() }
+    Find {
+        needle: needle.to_vec(),
+    }
 }
 impl Find {
     fn iter<'a>(&'a self, hay: &'a [u8]) -> impl Iterator<Item = usize> + 'a {
         let n = &self.needle;
-        (0..hay.len().saturating_sub(n.len() - 1)).filter(move |&i| &hay[i..i + n.len()] == n.as_slice())
+        (0..hay.len().saturating_sub(n.len() - 1))
+            .filter(move |&i| &hay[i..i + n.len()] == n.as_slice())
     }
 }
 
@@ -281,14 +321,28 @@ mod tests {
         assert_eq!(m.start, "root@quena");
         assert_eq!(m.parts.len(), 2);
         assert_eq!(m.parts[0].content_id, "root@quena");
-        assert!(m.parts[0].preview.as_ref().unwrap().contains("soap:Envelope"));
+        assert!(
+            m.parts[0]
+                .preview
+                .as_ref()
+                .unwrap()
+                .contains("soap:Envelope")
+        );
         assert_eq!(m.parts[1].content_type, "image/png");
         assert_eq!(m.parts[1].content_id, "img@quena");
         assert!(!m.parts[1].is_text);
-        assert_eq!(m.parts[0].charset.as_ref().map(|c| (c.name.as_str(), c.source.as_str())), Some(("UTF-8", "header")));
+        assert_eq!(
+            m.parts[0]
+                .charset
+                .as_ref()
+                .map(|c| (c.name.as_str(), c.source.as_str())),
+            Some(("UTF-8", "header"))
+        );
         assert!(m.parts[1].charset.is_none());
         // The image part body is exactly the bytes between headers and boundary.
-        let img = b.read_range(m.parts[1].offset, m.parts[1].len as usize).unwrap();
+        let img = b
+            .read_range(m.parts[1].offset, m.parts[1].len as usize)
+            .unwrap();
         assert_eq!(img, b"\x89PNG\r\n\x00\x01\x02BINARYDATA");
     }
 
@@ -314,9 +368,19 @@ mod tests {
         let b = store.store_bytes(&body);
         let m = parse(&b, "multipart/mixed; boundary=X");
         assert_eq!(m.parts[0].preview.as_deref(), Some("Grüße"));
-        assert_eq!(m.parts[0].charset.as_ref().map(|c| (c.name.as_str(), c.source.as_str(), c.header.as_deref())), Some(("windows-1252", "header", Some("ISO-8859-1"))));
+        assert_eq!(
+            m.parts[0].charset.as_ref().map(|c| (
+                c.name.as_str(),
+                c.source.as_str(),
+                c.header.as_deref()
+            )),
+            Some(("windows-1252", "header", Some("ISO-8859-1")))
+        );
         assert_eq!(m.parts[1].preview.as_deref(), Some("Grüße"));
-        assert_eq!(m.parts[1].charset.as_ref().map(|c| c.name.as_str()), Some("UTF-8"));
+        assert_eq!(
+            m.parts[1].charset.as_ref().map(|c| c.name.as_str()),
+            Some("UTF-8")
+        );
     }
 
     #[test]

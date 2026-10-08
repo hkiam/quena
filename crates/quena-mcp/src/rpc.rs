@@ -32,7 +32,9 @@ pub fn handle_message(core: &Arc<AppCore>, msg: Value) -> Option<Value> {
     let id = msg.get("id").cloned();
     let Some(method) = msg.get("method").and_then(|m| m.as_str()) else {
         // A response to a server request (we send none) or garbage.
-        return id.filter(|_| msg.get("result").is_none() && msg.get("error").is_none()).map(|id| error_response(id, -32600, "invalid request"));
+        return id
+            .filter(|_| msg.get("result").is_none() && msg.get("error").is_none())
+            .map(|id| error_response(id, -32600, "invalid request"));
     };
     let Some(id) = id else {
         // Notifications (`notifications/initialized`, `notifications/cancelled` …) need no answer.
@@ -42,8 +44,15 @@ pub fn handle_message(core: &Arc<AppCore>, msg: Value) -> Option<Value> {
     let access = core.settings().mcp.access;
     Some(match method {
         "initialize" => {
-            let asked = params.get("protocolVersion").and_then(|v| v.as_str()).unwrap_or("");
-            let version = PROTOCOL_VERSIONS.iter().find(|v| **v == asked).copied().unwrap_or(PROTOCOL_VERSIONS[0]);
+            let asked = params
+                .get("protocolVersion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let version = PROTOCOL_VERSIONS
+                .iter()
+                .find(|v| **v == asked)
+                .copied()
+                .unwrap_or(PROTOCOL_VERSIONS[0]);
             result_response(
                 id,
                 json!({
@@ -60,7 +69,10 @@ pub fn handle_message(core: &Arc<AppCore>, msg: Value) -> Option<Value> {
             let Some(name) = params.get("name").and_then(|n| n.as_str()) else {
                 return Some(error_response(id, -32602, "missing tool name"));
             };
-            let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             match crate::tools::call(core, access, name, args) {
                 Some(r) => result_response(id, r),
                 None => error_response(id, -32602, &format!("unknown tool: {name}")),

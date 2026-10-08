@@ -68,11 +68,20 @@ impl Detected {
 
 /// Lower-case `type/subtype` of a Content-Type.
 fn mime(content_type: Option<&str>) -> String {
-    content_type.unwrap_or("").split(';').next().unwrap_or("").trim().to_ascii_lowercase()
+    content_type
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
 }
 
 pub fn is_json(mime: &str) -> bool {
-    mime == "application/json" || mime.ends_with("+json") || mime == "text/json" || mime.ends_with("/json")
+    mime == "application/json"
+        || mime.ends_with("+json")
+        || mime == "text/json"
+        || mime.ends_with("/json")
 }
 
 pub fn is_xml(mime: &str) -> bool {
@@ -91,7 +100,12 @@ pub fn is_textual(content_type: Option<&str>) -> bool {
         || is_xml(&m)
         || matches!(
             m.as_str(),
-            "application/javascript" | "application/x-javascript" | "application/ecmascript" | "application/x-www-form-urlencoded" | "application/graphql" | "image/svg+xml"
+            "application/javascript"
+                | "application/x-javascript"
+                | "application/ecmascript"
+                | "application/x-www-form-urlencoded"
+                | "application/graphql"
+                | "image/svg+xml"
         )
 }
 
@@ -134,7 +148,11 @@ fn attr_value<'a>(orig: &'a str, lower: &str, name: &str) -> Option<&'a str> {
     };
     let end = match q {
         Some(c) => body.find(c)?,
-        None => body.find(|c: char| c.is_whitespace() || c == '>' || c == ';' || c == '"' || c == '\'' || c == '/').unwrap_or(body.len()),
+        None => body
+            .find(|c: char| {
+                c.is_whitespace() || c == '>' || c == ';' || c == '"' || c == '\'' || c == '/'
+            })
+            .unwrap_or(body.len()),
     };
     let v = body[..end].trim();
     (!v.is_empty()).then_some(v)
@@ -145,9 +163,15 @@ fn attr_value<'a>(orig: &'a str, lower: &str, name: &str) -> Option<&'a str> {
 fn ascii_window(bytes: &[u8]) -> String {
     let b = &bytes[..bytes.len().min(PRESCAN)];
     // `<\0?\0` or `\0<\0?`: an XML declaration in UTF-16 without BOM.
-    let utf16 = b.len() >= 4 && ((b[1] == 0 && b[3] == 0 && b[0] != 0) || (b[0] == 0 && b[2] == 0 && b[1] != 0));
-    let it: Box<dyn Iterator<Item = u8>> = if utf16 { Box::new(b.iter().copied().filter(|&c| c != 0)) } else { Box::new(b.iter().copied()) };
-    it.map(|c| if c.is_ascii() { c as char } else { '?' }).collect()
+    let utf16 = b.len() >= 4
+        && ((b[1] == 0 && b[3] == 0 && b[0] != 0) || (b[0] == 0 && b[2] == 0 && b[1] != 0));
+    let it: Box<dyn Iterator<Item = u8>> = if utf16 {
+        Box::new(b.iter().copied().filter(|&c| c != 0))
+    } else {
+        Box::new(b.iter().copied())
+    };
+    it.map(|c| if c.is_ascii() { c as char } else { '?' })
+        .collect()
 }
 
 /// `encoding` of an XML declaration at the start (`<?xml version="1.0" encoding="…"?>`).
@@ -170,7 +194,10 @@ pub fn html_declared(bytes: &[u8]) -> Option<String> {
     let mut from = 0;
     while let Some(i) = lower[from..].find("<meta") {
         let start = from + i;
-        let end = lower[start..].find('>').map(|e| start + e).unwrap_or(lower.len());
+        let end = lower[start..]
+            .find('>')
+            .map(|e| start + e)
+            .unwrap_or(lower.len());
         let (tag, tag_l) = (&text[start..end], &lower[start..end]);
         if let Some(v) = attr_value(tag, tag_l, "charset") {
             return Some(v.to_string());
@@ -216,7 +243,14 @@ pub fn detect(content_type: Option<&str>, prefix: &[u8]) -> Detected {
         None
     };
     let bom = bom(prefix);
-    let mut d = Detected { encoding: UTF_8, source: Source::Default, header: header.clone(), document: document.clone(), bom: bom.map(|b| b.0), bom_len: bom.map(|b| b.1).unwrap_or(0) };
+    let mut d = Detected {
+        encoding: UTF_8,
+        source: Source::Default,
+        header: header.clone(),
+        document: document.clone(),
+        bom: bom.map(|b| b.0),
+        bom_len: bom.map(|b| b.1).unwrap_or(0),
+    };
     if let Some((e, _)) = bom {
         d.encoding = e;
         d.source = Source::Bom;
@@ -231,7 +265,11 @@ pub fn detect(content_type: Option<&str>, prefix: &[u8]) -> Detected {
     }
     if let Some(e) = document.as_deref().and_then(for_label) {
         // An ASCII-compatible declaration inside a document cannot really be UTF-16.
-        d.encoding = if e == UTF_16LE || e == UTF_16BE { json_utf16(prefix).unwrap_or(UTF_8) } else { e };
+        d.encoding = if e == UTF_16LE || e == UTF_16BE {
+            json_utf16(prefix).unwrap_or(UTF_8)
+        } else {
+            e
+        };
         d.source = Source::Document;
         return d;
     }
@@ -241,7 +279,11 @@ pub fn detect(content_type: Option<&str>, prefix: &[u8]) -> Detected {
     }
     // Other text: UTF-8 if the bytes are valid UTF-8 (a multi-byte sequence cut at the end of
     // the prefix is fine), else the Western default.
-    d.encoding = if utf8_valid_prefix(prefix) { UTF_8 } else { WINDOWS_1252 };
+    d.encoding = if utf8_valid_prefix(prefix) {
+        UTF_8
+    } else {
+        WINDOWS_1252
+    };
     d
 }
 
@@ -323,8 +365,15 @@ pub fn facts(content_type: Option<&str>, prefix: &[u8]) -> TextFacts {
     let utf16 = d.encoding == UTF_16LE || d.encoding == UTF_16BE;
     let literal = literal_replacements(body, d.encoding);
     let produced = text.matches('\u{fffd}').count();
-    let errors = if had_errors { produced.saturating_sub(literal) } else { 0 };
-    let unknown = d.header.as_deref().is_some_and(|l| for_label(l).is_none()) || d.document.as_deref().is_some_and(|l| for_label(l).is_none());
+    let errors = if had_errors {
+        produced.saturating_sub(literal)
+    } else {
+        0
+    };
+    let unknown = d.header.as_deref().is_some_and(|l| for_label(l).is_none())
+        || d.document
+            .as_deref()
+            .is_some_and(|l| for_label(l).is_none());
     TextFacts {
         header: d.header.clone(),
         document: d.document.clone(),
@@ -337,8 +386,16 @@ pub fn facts(content_type: Option<&str>, prefix: &[u8]) -> TextFacts {
         utf8_valid: utf8_valid_prefix(prefix),
         decode_errors: errors as u32,
         replacement_chars: literal as u32,
-        double_encoded: if d.encoding == UTF_8 || utf16 { count_double_encoded(&text) } else { 0 },
-        nul_bytes: if utf16 { 0 } else { prefix.iter().filter(|&&b| b == 0).count() as u32 },
+        double_encoded: if d.encoding == UTF_8 || utf16 {
+            count_double_encoded(&text)
+        } else {
+            0
+        },
+        nul_bytes: if utf16 {
+            0
+        } else {
+            prefix.iter().filter(|&&b| b == 0).count() as u32
+        },
     }
 }
 
@@ -385,7 +442,9 @@ pub fn compressed_magic(prefix: &[u8]) -> Option<&'static str> {
         [0x28, 0xb5, 0x2f, 0xfd, ..] => Some("zstd"),
         // zlib: CM = 8, 32 K window, valid header checksum; only second bytes that never
         // occur in text (0x5e would be `x^`).
-        [0x78, b @ (0x01 | 0x9c | 0xda), ..] if (0x7800u16 | *b as u16).is_multiple_of(31) => Some("deflate"),
+        [0x78, b @ (0x01 | 0x9c | 0xda), ..] if (0x7800u16 | *b as u16).is_multiple_of(31) => {
+            Some("deflate")
+        }
         _ => None,
     }
 }
@@ -401,30 +460,66 @@ mod tests {
         assert_eq!((d.name(), d.source), ("windows-1252", Source::Header));
         assert_eq!(decode(latin1, d.encoding).0, "Grüße");
         // BOM beats the header.
-        let d = detect(Some("text/plain; charset=iso-8859-1"), b"\xEF\xBB\xBFGr\xc3\xbc\xc3\x9fe");
+        let d = detect(
+            Some("text/plain; charset=iso-8859-1"),
+            b"\xEF\xBB\xBFGr\xc3\xbc\xc3\x9fe",
+        );
         assert_eq!((d.name(), d.source, d.bom_len), ("UTF-8", Source::Bom, 3));
         // XML declaration without header charset.
         let x = b"<?xml version='1.0' encoding=\"ISO-8859-15\"?><a>\xa4</a>";
         let d = detect(Some("application/xml"), x);
-        assert_eq!((d.name(), d.source, d.document.as_deref()), ("ISO-8859-15", Source::Document, Some("ISO-8859-15")));
-        assert_eq!(decode(x, d.encoding).0, "<?xml version='1.0' encoding=\"ISO-8859-15\"?><a>€</a>");
+        assert_eq!(
+            (d.name(), d.source, d.document.as_deref()),
+            ("ISO-8859-15", Source::Document, Some("ISO-8859-15"))
+        );
+        assert_eq!(
+            decode(x, d.encoding).0,
+            "<?xml version='1.0' encoding=\"ISO-8859-15\"?><a>€</a>"
+        );
         // HTML meta.
         let h = b"<!doctype html><html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1252\"></head>\x80";
         assert_eq!(detect(Some("text/html"), h).source, Source::Document);
-        assert_eq!(detect(Some("text/html"), b"<meta charset=utf-8>").name(), "UTF-8");
+        assert_eq!(
+            detect(Some("text/html"), b"<meta charset=utf-8>").name(),
+            "UTF-8"
+        );
         // Defaults.
-        assert_eq!(detect(Some("application/json"), "{\"a\":\"ä\"}".as_bytes()).name(), "UTF-8");
-        assert_eq!(detect(Some("application/json"), b"{\0\"\0a\0\"\0").name(), "UTF-16LE");
-        assert_eq!(detect(Some("text/plain"), b"Gr\xfc\xdfe").name(), "windows-1252");
-        assert_eq!(detect(Some("text/plain"), "Grüße".as_bytes()).name(), "UTF-8");
+        assert_eq!(
+            detect(Some("application/json"), "{\"a\":\"ä\"}".as_bytes()).name(),
+            "UTF-8"
+        );
+        assert_eq!(
+            detect(Some("application/json"), b"{\0\"\0a\0\"\0").name(),
+            "UTF-16LE"
+        );
+        assert_eq!(
+            detect(Some("text/plain"), b"Gr\xfc\xdfe").name(),
+            "windows-1252"
+        );
+        assert_eq!(
+            detect(Some("text/plain"), "Grüße".as_bytes()).name(),
+            "UTF-8"
+        );
         assert_eq!(detect(None, "Grüße".as_bytes()).name(), "UTF-8");
         // latin1 labels are windows-1252 like in browsers; unknown labels fall through.
-        assert_eq!(detect(Some("text/plain; charset=\"latin1\""), b"x").name(), "windows-1252");
-        assert_eq!(detect(Some("text/plain; charset=bogus"), "ü".as_bytes()).source, Source::Default);
+        assert_eq!(
+            detect(Some("text/plain; charset=\"latin1\""), b"x").name(),
+            "windows-1252"
+        );
+        assert_eq!(
+            detect(Some("text/plain; charset=bogus"), "ü".as_bytes()).source,
+            Source::Default
+        );
         // UTF-16 XML without BOM.
-        let u16: Vec<u8> = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>".encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
+        let u16: Vec<u8> = "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>"
+            .encode_utf16()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
         let d = detect(Some("application/xml"), &u16);
-        assert_eq!((d.name(), d.document.as_deref()), ("UTF-16LE", Some("UTF-16")));
+        assert_eq!(
+            (d.name(), d.document.as_deref()),
+            ("UTF-16LE", Some("UTF-16"))
+        );
     }
 
     #[test]
@@ -432,40 +527,101 @@ mod tests {
         let s = "Grüße".as_bytes();
         assert!(utf8_valid_prefix(&s[..3])); // "Gr" + first byte of ü
         let f = facts(Some("text/plain; charset=utf-8"), &s[..3]);
-        assert_eq!((f.decode_errors, f.replacement_chars, f.utf8_valid), (0, 0, true));
+        assert_eq!(
+            (f.decode_errors, f.replacement_chars, f.utf8_valid),
+            (0, 0, true)
+        );
     }
 
     #[test]
     fn facts_find_problems() {
         // Declared UTF-8, bytes are Latin-1.
         let f = facts(Some("text/plain; charset=utf-8"), b"Gr\xfc\xdfe");
-        assert_eq!((f.effective.as_str(), f.utf8_valid, f.decode_errors), ("UTF-8", false, 2));
+        assert_eq!(
+            (f.effective.as_str(), f.utf8_valid, f.decode_errors),
+            ("UTF-8", false, 2)
+        );
         // Declared Latin-1, bytes are UTF-8.
         let f = facts(Some("text/plain; charset=iso-8859-1"), "Grüße".as_bytes());
-        assert!(f.utf8_valid && f.non_ascii && f.source == "header" && f.effective == "windows-1252");
+        assert!(
+            f.utf8_valid && f.non_ascii && f.source == "header" && f.effective == "windows-1252"
+        );
         // Double encoded UTF-8 ("Ã¼" for ü, "â€“" for –).
-        let f = facts(Some("application/json"), "{\"a\":\"GrÃ¼ÃŸe â€“ ok\"}".as_bytes());
+        let f = facts(
+            Some("application/json"),
+            "{\"a\":\"GrÃ¼ÃŸe â€“ ok\"}".as_bytes(),
+        );
         assert_eq!(f.double_encoded, 3);
-        assert_eq!(facts(Some("application/json"), "{\"a\":\"Grüße – ok, Ärger Äpfel\"}".as_bytes()).double_encoded, 0);
+        assert_eq!(
+            facts(
+                Some("application/json"),
+                "{\"a\":\"Grüße – ok, Ärger Äpfel\"}".as_bytes()
+            )
+            .double_encoded,
+            0
+        );
         // Real text with a letter before a quote is no double encoding.
-        assert_eq!(facts(Some("text/plain; charset=utf-8"), "„Fuß“ und „Maß“, Öl‚ Über—Ende".as_bytes()).double_encoded, 0);
-        assert_eq!(facts(Some("text/plain; charset=utf-8"), "FuÃŸ, SchÃ¶n, â€žQuoteâ€œ".as_bytes()).double_encoded, 4);
+        assert_eq!(
+            facts(
+                Some("text/plain; charset=utf-8"),
+                "„Fuß“ und „Maß“, Öl‚ Über—Ende".as_bytes()
+            )
+            .double_encoded,
+            0
+        );
+        assert_eq!(
+            facts(
+                Some("text/plain; charset=utf-8"),
+                "FuÃŸ, SchÃ¶n, â€žQuoteâ€œ".as_bytes()
+            )
+            .double_encoded,
+            4
+        );
         // Replacement characters in valid UTF-8.
-        let f = facts(Some("text/plain; charset=utf-8"), "Gr\u{fffd}\u{fffd}e".as_bytes());
+        let f = facts(
+            Some("text/plain; charset=utf-8"),
+            "Gr\u{fffd}\u{fffd}e".as_bytes(),
+        );
         assert_eq!((f.replacement_chars, f.decode_errors), (2, 0));
         // Unknown label, NUL bytes.
         let f = facts(Some("text/plain; charset=x-klingon"), b"a\0b");
         assert!(f.unknown_label && f.nul_bytes == 1);
         // UTF-16 with BOM is fine.
-        let u: Vec<u8> = [0xFF, 0xFE].into_iter().chain("Grüße".encode_utf16().flat_map(|c| c.to_le_bytes())).collect();
+        let u: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain("Grüße".encode_utf16().flat_map(|c| c.to_le_bytes()))
+            .collect();
         let f = facts(Some("text/plain"), &u);
-        assert_eq!((f.effective.as_str(), f.bom.as_deref(), f.decode_errors, f.nul_bytes), ("UTF-16LE", Some("UTF-16LE"), 0, 0));
+        assert_eq!(
+            (
+                f.effective.as_str(),
+                f.bom.as_deref(),
+                f.decode_errors,
+                f.nul_bytes
+            ),
+            ("UTF-16LE", Some("UTF-16LE"), 0, 0)
+        );
     }
 
     #[test]
     fn never_panics() {
-        for ct in [None, Some(""), Some("text/html; charset="), Some("application/xml;charset='"), Some(";;;charset")] {
-            for b in [&b""[..], b"<", b"<?xml", b"<?xml encoding=", b"<meta charset", b"\xff\xfe\x00", b"\x00\x00\x00", &[0xc3][..]] {
+        for ct in [
+            None,
+            Some(""),
+            Some("text/html; charset="),
+            Some("application/xml;charset='"),
+            Some(";;;charset"),
+        ] {
+            for b in [
+                &b""[..],
+                b"<",
+                b"<?xml",
+                b"<?xml encoding=",
+                b"<meta charset",
+                b"\xff\xfe\x00",
+                b"\x00\x00\x00",
+                &[0xc3][..],
+            ] {
                 let _ = detect(ct, b);
                 let _ = facts(ct, b);
             }

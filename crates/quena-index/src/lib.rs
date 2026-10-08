@@ -81,7 +81,10 @@ pub struct RowGroup {
 
 fn hash_str(s: &str, fold_case: bool) -> u64 {
     // FNV-1a; equal keys only need equal hashes (a collision merges two groups).
-    s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ if fold_case { b.to_ascii_lowercase() } else { b } as u64).wrapping_mul(0x0000_0100_0000_01b3))
+    s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ if fold_case { b.to_ascii_lowercase() } else { b } as u64)
+            .wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
@@ -102,7 +105,9 @@ fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
 /// comparator runs O(n log n) times — two `to_lowercase()` Strings per call made a
 /// 500k-row Host sort several seconds slow on Windows.
 fn cmp_ignore_ascii_case(a: &str, b: &str) -> Ordering {
-    a.bytes().map(|c| c.to_ascii_lowercase()).cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
+    a.bytes()
+        .map(|c| c.to_ascii_lowercase())
+        .cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
 }
 
 fn compare(a: &SessionSummary, b: &SessionSummary, c: Column) -> Ordering {
@@ -173,7 +178,9 @@ impl Inner {
 
     /// Place of a row's group: the first id of its group, or its own id when it has none.
     fn rank(&self, p: u32) -> SessionId {
-        self.key(p).and_then(|k| self.first.get(&k).copied()).unwrap_or(self.rows[p as usize].id)
+        self.key(p)
+            .and_then(|k| self.first.get(&k).copied())
+            .unwrap_or(self.rows[p as usize].id)
     }
 
     fn cmp_pos(&self, a: u32, b: u32) -> Ordering {
@@ -183,10 +190,18 @@ impl Inner {
             if ga != gb {
                 // Groups in the order of their first session (newest first for "# descending").
                 let o = ga.cmp(&gb);
-                return if self.sort.column == Column::Id && self.sort.descending { o.reverse() } else { o };
+                return if self.sort.column == Column::Id && self.sort.descending {
+                    o.reverse()
+                } else {
+                    o
+                };
             }
         }
-        let o = if self.sort.column == Column::Id { ra.id.cmp(&rb.id) } else { compare(ra, rb, self.sort.column) };
+        let o = if self.sort.column == Column::Id {
+            ra.id.cmp(&rb.id)
+        } else {
+            compare(ra, rb, self.sort.column)
+        };
         if self.sort.descending { o.reverse() } else { o }
     }
 
@@ -194,7 +209,9 @@ impl Inner {
     /// session stands for it).
     fn shown(&self, p: u32) -> bool {
         match self.key(p) {
-            Some(k) if self.collapsed.contains(&k) => self.first.get(&k) == Some(&self.rows[p as usize].id),
+            Some(k) if self.collapsed.contains(&k) => {
+                self.first.get(&k) == Some(&self.rows[p as usize].id)
+            }
             _ => true,
         }
     }
@@ -238,7 +255,9 @@ impl Inner {
 
     fn full_rebuild(&mut self) {
         let filter = self.filter.clone();
-        let mut view: Vec<u32> = (0..self.rows.len() as u32).filter(|&p| filter.matches(&self.rows[p as usize])).collect();
+        let mut view: Vec<u32> = (0..self.rows.len() as u32)
+            .filter(|&p| filter.matches(&self.rows[p as usize]))
+            .collect();
         if self.grouped() {
             let by = self.group;
             self.keys = self.rows.iter().map(|r| group_key(r, by)).collect();
@@ -248,7 +267,10 @@ impl Inner {
                 if let Some(k) = self.keys[p as usize] {
                     *self.counts.entry(k).or_default() += 1;
                     let id = self.rows[p as usize].id;
-                    self.first.entry(k).and_modify(|f| *f = (*f).min(id)).or_insert(id);
+                    self.first
+                        .entry(k)
+                        .and_modify(|f| *f = (*f).min(id))
+                        .or_insert(id);
                 }
             }
             self.collapsed.retain(|k| self.counts.contains_key(k));
@@ -286,7 +308,10 @@ impl Inner {
     /// [`SessionIndex::tick`] while grouped: few changes in place, else (or when a group's
     /// order changes) a rebuild.
     fn tick_grouped(&mut self, filter: &Arc<Filter>, new: Vec<u32>, upd: HashSet<u32>) -> bool {
-        let throttle = self.rows.len() > 100_000 && self.last_full_sort.is_some_and(|t| t.elapsed() < Duration::from_millis(500));
+        let throttle = self.rows.len() > 100_000
+            && self
+                .last_full_sort
+                .is_some_and(|t| t.elapsed() < Duration::from_millis(500));
         if new.len() + upd.len() > 256 {
             if throttle {
                 self.pending_new = new;
@@ -355,7 +380,9 @@ impl Inner {
     }
 
     fn insert_sorted(&mut self, p: u32) {
-        let idx = self.view.partition_point(|&q| self.cmp_pos(q, p) == Ordering::Less);
+        let idx = self
+            .view
+            .partition_point(|&q| self.cmp_pos(q, p) == Ordering::Less);
         self.view.insert(idx, p);
         self.in_view.insert(p);
     }
@@ -411,7 +438,9 @@ impl SessionIndex {
     /// Modify a row in place.
     pub fn update(&self, id: SessionId, f: impl FnOnce(&mut SessionSummary)) -> bool {
         let mut g = self.inner.write();
-        let Some(&p) = g.pos.get(&id) else { return false };
+        let Some(&p) = g.pos.get(&id) else {
+            return false;
+        };
         f(&mut g.rows[p as usize]);
         g.pending_upd.insert(p);
         true
@@ -452,7 +481,12 @@ impl SessionIndex {
             }
         }
         g.rows = kept;
-        let pos: HashMap<SessionId, u32> = g.rows.iter().enumerate().map(|(i, r)| (r.id, i as u32)).collect();
+        let pos: HashMap<SessionId, u32> = g
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (r.id, i as u32))
+            .collect();
         g.pos = pos;
         g.full_rebuild();
         g.version += 1;
@@ -465,7 +499,13 @@ impl SessionIndex {
         let mut g = self.inner.write();
         let ids = g.rows.iter().map(|r| r.id).collect();
         let (filter, sort, group) = (g.filter.clone(), g.sort, g.group);
-        *g = Inner { filter, sort, group, version: g.version + 1, ..Default::default() };
+        *g = Inner {
+            filter,
+            sort,
+            group,
+            version: g.version + 1,
+            ..Default::default()
+        };
         ids
     }
 
@@ -517,7 +557,8 @@ impl SessionIndex {
             let changes = new.len() + upd.len();
             if changes > 256 {
                 let throttle = g.rows.len() > 100_000
-                    && g.last_full_sort.is_some_and(|t| t.elapsed() < Duration::from_millis(500));
+                    && g.last_full_sort
+                        .is_some_and(|t| t.elapsed() < Duration::from_millis(500));
                 if throttle {
                     g.pending_new = new;
                     g.pending_upd = upd;
@@ -555,7 +596,10 @@ impl SessionIndex {
             }
         }
         let desc = g.sort.descending;
-        let mut new: Vec<u32> = new.into_iter().filter(|&p| filter.matches(&g.rows[p as usize])).collect();
+        let mut new: Vec<u32> = new
+            .into_iter()
+            .filter(|&p| filter.matches(&g.rows[p as usize]))
+            .collect();
         new.sort_unstable_by_key(|&p| g.rows[p as usize].id);
         for p in new {
             let id = g.rows[p as usize].id;
@@ -607,7 +651,10 @@ impl SessionIndex {
             version: g.version,
             total: g.view.len(),
             start,
-            rows: g.view[start..end].iter().map(|&p| g.rows[p as usize].clone()).collect(),
+            rows: g.view[start..end]
+                .iter()
+                .map(|&p| g.rows[p as usize].clone())
+                .collect(),
             groups,
         }
     }
@@ -648,7 +695,11 @@ impl SessionIndex {
     /// Collapse (or expand) all groups.
     pub fn collapse_all(&self, collapse: bool) {
         let mut g = self.inner.write();
-        g.collapsed = if collapse { g.counts.keys().copied().collect() } else { HashSet::new() };
+        g.collapsed = if collapse {
+            g.counts.keys().copied().collect()
+        } else {
+            HashSet::new()
+        };
         g.rebuild = true;
     }
 
@@ -656,9 +707,18 @@ impl SessionIndex {
     /// included; just the session when it has no group.
     pub fn group_ids(&self, id: SessionId) -> Vec<SessionId> {
         let g = self.inner.read();
-        let Some(&p) = g.pos.get(&id) else { return vec![] };
-        let Some(k) = g.key(p).filter(|_| g.grouped()) else { return vec![id] };
-        let mut ids: Vec<SessionId> = g.members.iter().filter(|&&q| g.key(q) == Some(k)).map(|&q| g.rows[q as usize].id).collect();
+        let Some(&p) = g.pos.get(&id) else {
+            return vec![];
+        };
+        let Some(k) = g.key(p).filter(|_| g.grouped()) else {
+            return vec![id];
+        };
+        let mut ids: Vec<SessionId> = g
+            .members
+            .iter()
+            .filter(|&&q| g.key(q) == Some(k))
+            .map(|&q| g.rows[q as usize].id)
+            .collect();
         ids.sort_unstable();
         ids
     }
@@ -667,7 +727,10 @@ impl SessionIndex {
     pub fn view_ids(&self, start: usize, count: usize) -> Vec<SessionId> {
         let g = self.inner.read();
         let end = (start + count).min(g.view.len());
-        g.view[start.min(end)..end].iter().map(|&p| g.rows[p as usize].id).collect()
+        g.view[start.min(end)..end]
+            .iter()
+            .map(|&p| g.rows[p as usize].id)
+            .collect()
     }
 
     /// View position of a session.
@@ -678,7 +741,9 @@ impl SessionIndex {
             return None;
         }
         if g.is_default_sort() {
-            let idx = g.view.partition_point(|&q| g.cmp_pos(q, p) == Ordering::Less);
+            let idx = g
+                .view
+                .partition_point(|&q| g.cmp_pos(q, p) == Ordering::Less);
             return (g.view.get(idx) == Some(&p)).then_some(idx);
         }
         g.view.iter().position(|&q| q == p)
@@ -687,7 +752,12 @@ impl SessionIndex {
     /// Ids in view order matching a predicate.
     pub fn find(&self, pred: impl Fn(&SessionSummary) -> bool) -> Vec<SessionId> {
         let g = self.inner.read();
-        g.view.iter().map(|&p| &g.rows[p as usize]).filter(|r| pred(r)).map(|r| r.id).collect()
+        g.view
+            .iter()
+            .map(|&p| &g.rows[p as usize])
+            .filter(|r| pred(r))
+            .map(|r| r.id)
+            .collect()
     }
 
     /// All ids (any order) matching a predicate, including hidden rows.
@@ -735,7 +805,12 @@ mod tests {
         // rebuilt the view directly and the list in the UI kept showing removed rows.
         let idx = SessionIndex::new();
         for id in 1..=4 {
-            idx.upsert(SessionSummary { id, host: "h".into(), url: "/".into(), ..Default::default() });
+            idx.upsert(SessionSummary {
+                id,
+                host: "h".into(),
+                url: "/".into(),
+                ..Default::default()
+            });
         }
         idx.tick();
         assert!(!idx.tick(), "nothing pending");
@@ -750,7 +825,14 @@ mod tests {
     use quena_query::FilterSettings;
 
     fn row(id: u64, status: u16, host: &str) -> SessionSummary {
-        SessionSummary { id, status, host: host.into(), url: "/".into(), protocol: "HTTP".into(), ..Default::default() }
+        SessionSummary {
+            id,
+            status,
+            host: host.into(),
+            url: "/".into(),
+            protocol: "HTTP".into(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -762,7 +844,12 @@ mod tests {
         assert!(idx.tick());
         assert_eq!(idx.view_ids(0, 10), vec![1, 2, 3]);
         idx.set_filter(
-            quena_query::Filter::compile(&FilterSettings { enabled: true, hide_success: true, ..Default::default() }).unwrap(),
+            quena_query::Filter::compile(&FilterSettings {
+                enabled: true,
+                hide_success: true,
+                ..Default::default()
+            })
+            .unwrap(),
         );
         idx.tick();
         assert_eq!(idx.view_ids(0, 10), vec![1]);
@@ -776,7 +863,10 @@ mod tests {
     fn sorted_incremental_matches_rebuild() {
         use rand::Rng;
         let idx = SessionIndex::new();
-        idx.set_sort(Sort { column: Column::Result, descending: true });
+        idx.set_sort(Sort {
+            column: Column::Result,
+            descending: true,
+        });
         let mut rng = rand::rng();
         for id in 1..=2000u64 {
             idx.upsert(row(id, rng.random_range(100..600), "h"));
@@ -790,7 +880,10 @@ mod tests {
         }
         idx.tick();
         let inc = idx.view_ids(0, 5000);
-        idx.set_sort(Sort { column: Column::Result, descending: true });
+        idx.set_sort(Sort {
+            column: Column::Result,
+            descending: true,
+        });
         idx.tick();
         let full = idx.view_ids(0, 5000);
         assert_eq!(inc, full);
@@ -801,10 +894,21 @@ mod tests {
     #[test]
     fn host_sort_incremental_matches_rebuild() {
         use rand::Rng;
-        let hosts = ["b.example", "A.example", "a.example", "B.Example", "c.test", "api.GitHub.com", "api.github.com"];
+        let hosts = [
+            "b.example",
+            "A.example",
+            "a.example",
+            "B.Example",
+            "c.test",
+            "api.GitHub.com",
+            "api.github.com",
+        ];
         for descending in [false, true] {
             let idx = SessionIndex::new();
-            idx.set_sort(Sort { column: Column::Host, descending });
+            idx.set_sort(Sort {
+                column: Column::Host,
+                descending,
+            });
             idx.tick();
             let mut rng = rand::rng();
             for id in 1..=1500u64 {
@@ -815,7 +919,10 @@ mod tests {
             }
             idx.tick();
             let inc = idx.view_ids(0, 5000);
-            idx.set_sort(Sort { column: Column::Host, descending });
+            idx.set_sort(Sort {
+                column: Column::Host,
+                descending,
+            });
             idx.tick(); // full keyed rebuild
             let full = idx.view_ids(0, 5000);
             assert_eq!(inc, full, "descending = {descending}");
@@ -851,7 +958,10 @@ mod tests {
         let w = idx.window(250_000, 60);
         let window = t.elapsed();
         assert_eq!(w.rows.len(), 60);
-        idx.set_sort(Sort { column: Column::Host, descending: false });
+        idx.set_sort(Sort {
+            column: Column::Host,
+            descending: false,
+        });
         let t = Instant::now();
         idx.tick();
         let sort = t.elapsed();
@@ -871,22 +981,44 @@ mod tests {
         assert_eq!(w.groups.len(), 60);
         let t = Instant::now();
         for id in 500_001..=500_100u64 {
-            idx.upsert(SessionSummary { conn: 1 + id / 6, ..row(id, 200, "host.example") });
+            idx.upsert(SessionSummary {
+                conn: 1 + id / 6,
+                ..row(id, 200, "host.example")
+            });
         }
         idx.tick();
         let live = t.elapsed();
-        eprintln!("ingest {ingest:?} window {window:?} sort {sort:?} group {group:?} grouped window {gwindow:?} 100 live {live:?}");
+        eprintln!(
+            "ingest {ingest:?} window {window:?} sort {sort:?} group {group:?} grouped window {gwindow:?} 100 live {live:?}"
+        );
         assert!(window < Duration::from_millis(5));
         assert!(gwindow < Duration::from_millis(5));
     }
 
     fn conn_row(id: u64, conn: u64, status: u16) -> SessionSummary {
-        SessionSummary { id, conn, status, host: "h".into(), url: format!("/{id}"), ..Default::default() }
+        SessionSummary {
+            id,
+            conn,
+            status,
+            host: "h".into(),
+            url: format!("/{id}"),
+            ..Default::default()
+        }
     }
 
     fn starts(idx: &SessionIndex) -> Vec<(u64, bool, u32)> {
         let w = idx.window(0, 100);
-        w.rows.iter().zip(&w.groups).map(|(r, g)| (r.id, g.as_ref().is_some_and(|g| g.start), g.as_ref().map_or(0, |g| g.size))).collect()
+        w.rows
+            .iter()
+            .zip(&w.groups)
+            .map(|(r, g)| {
+                (
+                    r.id,
+                    g.as_ref().is_some_and(|g| g.start),
+                    g.as_ref().map_or(0, |g| g.size),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -900,14 +1032,30 @@ mod tests {
         idx.set_group(GroupBy::Connection);
         idx.tick();
         assert_eq!(idx.view_ids(0, 10), vec![1, 3, 6, 2, 5, 4]);
-        assert_eq!(starts(&idx), vec![(1, true, 3), (3, false, 3), (6, false, 3), (2, true, 2), (5, false, 2), (4, false, 0)]);
+        assert_eq!(
+            starts(&idx),
+            vec![
+                (1, true, 3),
+                (3, false, 3),
+                (6, false, 3),
+                (2, true, 2),
+                (5, false, 2),
+                (4, false, 0)
+            ]
+        );
         assert_eq!(idx.window(4, 1).groups[0].as_ref().unwrap().first, 2);
         // Sorted inside each group; the groups keep their place.
-        idx.set_sort(Sort { column: Column::Url, descending: true });
+        idx.set_sort(Sort {
+            column: Column::Url,
+            descending: true,
+        });
         idx.tick();
         assert_eq!(idx.view_ids(0, 10), vec![6, 3, 1, 5, 2, 4]);
         // Newest groups first with "# descending".
-        idx.set_sort(Sort { column: Column::Id, descending: true });
+        idx.set_sort(Sort {
+            column: Column::Id,
+            descending: true,
+        });
         idx.tick();
         assert_eq!(idx.view_ids(0, 10), vec![4, 5, 2, 6, 3, 1]);
         idx.set_sort(Sort::default());
@@ -948,7 +1096,14 @@ mod tests {
         idx.tick();
         assert_eq!(idx.view_ids(0, 10), vec![1, 3, 5, 2, 4]);
         // A session that leaves the filter leaves its group; the first one moves the group.
-        idx.set_filter(quena_query::Filter::compile(&FilterSettings { enabled: true, hide_success: true, ..Default::default() }).unwrap());
+        idx.set_filter(
+            quena_query::Filter::compile(&FilterSettings {
+                enabled: true,
+                hide_success: true,
+                ..Default::default()
+            })
+            .unwrap(),
+        );
         idx.tick();
         assert!(idx.view_ids(0, 10).is_empty());
         idx.update(4, |r| r.status = 500);
@@ -972,8 +1127,19 @@ mod tests {
     #[test]
     fn groups_by_text_keys() {
         let idx = SessionIndex::new();
-        let r = |id: u64, host: &str, trace: &str| SessionSummary { id, host: host.into(), trace: trace.into(), url: "/".into(), ..Default::default() };
-        for x in [r(1, "A.example", "t1"), r(2, "b.example", "t2"), r(3, "a.example", "t1"), r(4, "b.example", "")] {
+        let r = |id: u64, host: &str, trace: &str| SessionSummary {
+            id,
+            host: host.into(),
+            trace: trace.into(),
+            url: "/".into(),
+            ..Default::default()
+        };
+        for x in [
+            r(1, "A.example", "t1"),
+            r(2, "b.example", "t2"),
+            r(3, "a.example", "t1"),
+            r(4, "b.example", ""),
+        ] {
             idx.upsert(x);
         }
         idx.set_group(GroupBy::Host);
@@ -983,7 +1149,10 @@ mod tests {
         idx.set_group(GroupBy::Trace);
         idx.tick();
         assert_eq!(idx.view_ids(0, 10), vec![1, 3, 2, 4]);
-        assert!(idx.window(3, 1).groups[0].is_none(), "no trace id, no group");
+        assert!(
+            idx.window(3, 1).groups[0].is_none(),
+            "no trace id, no group"
+        );
     }
 
     #[test]
@@ -992,11 +1161,22 @@ mod tests {
         let mut rng = rand::rng();
         let idx = SessionIndex::new();
         idx.set_group(GroupBy::Connection);
-        idx.set_filter(quena_query::Filter::compile(&FilterSettings { enabled: true, hide_success: true, ..Default::default() }).unwrap());
+        idx.set_filter(
+            quena_query::Filter::compile(&FilterSettings {
+                enabled: true,
+                hide_success: true,
+                ..Default::default()
+            })
+            .unwrap(),
+        );
         let mut next = 1u64;
         for round in 0..200 {
             for _ in 0..rng.random_range(0..5) {
-                idx.upsert(conn_row(next, rng.random_range(0..6), if rng.random_bool(0.5) { 200 } else { 500 }));
+                idx.upsert(conn_row(
+                    next,
+                    rng.random_range(0..6),
+                    if rng.random_bool(0.5) { 200 } else { 500 },
+                ));
                 next += 1;
             }
             for _ in 0..rng.random_range(0..4) {

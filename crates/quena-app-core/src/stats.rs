@@ -38,7 +38,10 @@ impl AppCore {
             st.sessions += 1;
             st.request_bytes += s.request_body_len;
             st.response_bytes += s.response_body_len;
-            st.first_request = Some(st.first_request.map_or(s.started_at, |f| f.min(s.started_at)));
+            st.first_request = Some(
+                st.first_request
+                    .map_or(s.started_at, |f| f.min(s.started_at)),
+            );
             if let Some(d) = s.duration_ms {
                 st.aggregate_ms += d as u64;
                 let end = s.started_at + d as i64 * 1000;
@@ -52,7 +55,11 @@ impl AppCore {
                 x if !x.is_final() => st.in_flight += 1,
                 _ => {}
             }
-            let ct = if s.content_type.is_empty() { "(none)".to_string() } else { s.content_type.clone() };
+            let ct = if s.content_type.is_empty() {
+                "(none)".to_string()
+            } else {
+                s.content_type.clone()
+            };
             let e = cts.entry(ct).or_default();
             e.0 += 1;
             e.1 += s.response_body_len;

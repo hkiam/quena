@@ -37,7 +37,11 @@ impl Headers {
     }
     pub fn set(&mut self, name: &str, value: impl Into<String>) {
         let value = value.into();
-        if let Some(pos) = self.0.iter().position(|(n, _)| n.eq_ignore_ascii_case(name)) {
+        if let Some(pos) = self
+            .0
+            .iter()
+            .position(|(n, _)| n.eq_ignore_ascii_case(name))
+        {
             self.0[pos].1 = value;
             let mut i = pos + 1;
             while i < self.0.len() {
@@ -105,6 +109,9 @@ mod tests {
         h.push("a", "2");
         h.push("B", "3");
         h.set("A", "x");
-        assert_eq!(h.0, vec![("A".into(), "x".into()), ("B".into(), "3".into())]);
+        assert_eq!(
+            h.0,
+            vec![("A".into(), "x".into()), ("B".into(), "3".into())]
+        );
     }
 }

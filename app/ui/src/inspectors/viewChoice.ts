@@ -6,13 +6,14 @@
 import type { Detail, Part } from "../api";
 
 /** Views that only make sense for particular content, shown right after Headers. */
-export const SPECIAL = ["websocket", "sse", "grpc", "multipart", "soap", "atom"];
+export const SPECIAL = ["websocket", "sse", "grpc", "msgpack", "multipart", "soap", "atom"];
 
 /** Kind of content a message carries, as far as picking a view is concerned. */
 export function viewFamily(detail: Detail, part: Part, special: string[], pluginKeys: string[]): string {
   if (special.includes("websocket")) return "websocket";
   if (special.includes("sse")) return "sse";
   if (special.includes("grpc")) return "grpc";
+  if (special.includes("msgpack")) return "msgpack";
   if (special.includes("multipart")) return "multipart";
   if (special.includes("soap")) return "soap";
   const info = part === "request" ? detail.requestBody : detail.responseBody;
@@ -44,6 +45,7 @@ export function defaultView(family: string, part: Part, tabs: string[]): string 
     case "websocket":
     case "sse":
     case "grpc":
+    case "msgpack":
     case "multipart":
     case "soap":
     case "atom":
@@ -102,7 +104,7 @@ export function sectionOf(view: string): Section {
 export type Fit = 0 | 1 | 2 | 3;
 
 /** Order of the body views at the same fit. */
-const BODY_ORDER = ["websocket", "sse", "soap", "atom", "grpc", "multipart", "plugin:", "imageview", "webforms", "syntaxview", "json", "xml", "webview", "textview", "hexview", "transformer"];
+const BODY_ORDER = ["websocket", "sse", "soap", "atom", "grpc", "msgpack", "multipart", "plugin:", "imageview", "webforms", "syntaxview", "json", "xml", "webview", "textview", "hexview", "transformer"];
 
 const orderOf = (v: string) => {
   const i = BODY_ORDER.indexOf(v.startsWith("plugin:") ? "plugin:" : v);

@@ -25,7 +25,10 @@ const CONTENT_TYPES: &str = r#"<?xml version="1.0" encoding="utf-8" ?>
 </Types>"#;
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn color_name(c: MarkColor) -> &'static str {
@@ -85,7 +88,12 @@ fn metadata(sid: usize, d: &SessionDetail) -> String {
         flags.push(("x-processinfo".into(), p.display()));
     }
     if let Some(a) = &d.connection.server_addr {
-        flags.push(("x-hostip".into(), a.rsplit_once(':').map(|(ip, _)| ip.trim_matches(['[', ']']).to_string()).unwrap_or_else(|| a.clone())));
+        flags.push((
+            "x-hostip".into(),
+            a.rsplit_once(':')
+                .map(|(ip, _)| ip.trim_matches(['[', ']']).to_string())
+                .unwrap_or_else(|| a.clone()),
+        ));
     }
     if let Some(c) = d.summary.color {
         flags.push(("ui-color".into(), color_name(c).into()));
@@ -104,7 +112,10 @@ fn metadata(sid: usize, d: &SessionDetail) -> String {
         flags.push(("https-client-sessionid".into(), "decrypted".into()));
     }
     if d.summary.state == SessionState::Aborted {
-        flags.push(("x-quena-aborted".into(), d.error.clone().unwrap_or_default()));
+        flags.push((
+            "x-quena-aborted".into(),
+            d.error.clone().unwrap_or_default(),
+        ));
     }
     if d.summary.has_flag(flags::AUTO_RESPONDED) {
         flags.push(("x-autoresponder".into(), "true".into()));
@@ -114,10 +125,16 @@ fn metadata(sid: usize, d: &SessionDetail) -> String {
             flags.push((k.clone(), v.clone()));
         }
     }
-    let bitflags = if d.summary.kind == SessionKind::Tunnel { 0x2000 } else { 0 };
+    let bitflags = if d.summary.kind == SessionKind::Tunnel {
+        0x2000
+    } else {
+        0
+    };
     let mut s = String::new();
     s.push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n");
-    s.push_str(&format!("<Session SID=\"{sid}\" BitFlags=\"{bitflags}\">\r\n"));
+    s.push_str(&format!(
+        "<Session SID=\"{sid}\" BitFlags=\"{bitflags}\">\r\n"
+    ));
     s.push_str(&format!(
         "  <SessionTimers ClientConnected=\"{}\" ClientBeginRequest=\"{}\" GotRequestHeaders=\"{}\" ClientDoneRequest=\"{}\" GatewayTime=\"{}\" DNSTime=\"{}\" TCPConnectTime=\"{}\" HTTPSHandshakeTime=\"{}\" ServerConnected=\"{}\" FiddlerBeginRequest=\"{}\" ServerGotRequest=\"{}\" ServerBeginResponse=\"{}\" GotResponseHeaders=\"{}\" ServerDoneResponse=\"{}\" ClientBeginResponse=\"{}\" ClientDoneResponse=\"{}\" />\r\n",
         to_dotnet(t.client_connected),
@@ -137,31 +154,57 @@ fn metadata(sid: usize, d: &SessionDetail) -> String {
         to_dotnet(t.client_begin_response),
         to_dotnet(t.client_done_response),
     ));
-    s.push_str(&format!("  <PipeInfo{} />\r\n", if d.connection.server_conn_reused { " Reused=\"true\"" } else { "" }));
+    s.push_str(&format!(
+        "  <PipeInfo{} />\r\n",
+        if d.connection.server_conn_reused {
+            " Reused=\"true\""
+        } else {
+            ""
+        }
+    ));
     s.push_str("  <SessionFlags>\r\n");
     for (k, v) in flags {
-        s.push_str(&format!("    <SessionFlag N=\"{}\" V=\"{}\" />\r\n", xml_escape(&k), xml_escape(&v)));
+        s.push_str(&format!(
+            "    <SessionFlag N=\"{}\" V=\"{}\" />\r\n",
+            xml_escape(&k),
+            xml_escape(&v)
+        ));
     }
     s.push_str("  </SessionFlags>\r\n</Session>");
     s
 }
 
 /// Export sessions to a SAZ file. Returns the number of sessions written.
-pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, p: &dyn Progress) -> Result<usize> {
+pub fn export(
+    cap: &Arc<Capture>,
+    ids: &[SessionId],
+    path: &Path,
+    p: &dyn Progress,
+) -> Result<usize> {
     export_with(cap, ids, path, &[], p)
 }
 
 /// [`export`] with extra files at the root of the archive (`(name, content)`, e.g. a
 /// redaction log); Fiddler ignores them.
-pub fn export_with(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, extra: &[(&str, &[u8])], p: &dyn Progress) -> Result<usize> {
+pub fn export_with(
+    cap: &Arc<Capture>,
+    ids: &[SessionId],
+    path: &Path,
+    extra: &[(&str, &[u8])],
+    p: &dyn Progress,
+) -> Result<usize> {
     let tmp = path.with_extension("saz.part");
     let file = BufWriter::with_capacity(1 << 20, File::create(&tmp)?);
     let mut zip = zip::ZipWriter::new(file);
-    let deflate = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).large_file(true);
+    let deflate = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .large_file(true);
     zip.start_file("[Content_Types].xml", deflate)?;
     zip.write_all(CONTENT_TYPES.as_bytes())?;
     let width = ids.len().to_string().len().max(2);
-    let mut index = String::from("<html><head><style>body,thead,td,a,p{font-family:verdana,sans-serif;font-size:10px;}</style></head><body><table cols=12><thead><tr><th>&nbsp;</th><th>#</th><th>Result</th><th>Protocol</th><th>Host</th><th>URL</th><th>Body</th><th>Caching</th><th>Content-Type</th><th>Process</th><th>Comments</th><th>Custom</th></tr></thead><tbody>");
+    let mut index = String::from(
+        "<html><head><style>body,thead,td,a,p{font-family:verdana,sans-serif;font-size:10px;}</style></head><body><table cols=12><thead><tr><th>&nbsp;</th><th>#</th><th>Result</th><th>Protocol</th><th>Host</th><th>URL</th><th>Body</th><th>Caching</th><th>Content-Type</th><th>Process</th><th>Comments</th><th>Custom</th></tr></thead><tbody>",
+    );
     let mut n = 0;
     for (i, id) in ids.iter().enumerate() {
         if p.cancelled() {
@@ -171,10 +214,20 @@ pub fn export_with(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, extra: &[
         }
         p.progress(i as u64, ids.len() as u64);
         let Some(d) = cap.detail(*id) else { continue };
-        let Some((req_body, resp_body)) = cap.bodies_of(*id) else { continue };
+        let Some((req_body, resp_body)) = cap.bodies_of(*id) else {
+            continue;
+        };
         let num = format!("{:0width$}", i + 1);
         // Bodies can be huge and are often already compressed – store large ones.
-        let opts = |len: u64| if len > 8 << 20 { SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored).large_file(true) } else { deflate };
+        let opts = |len: u64| {
+            if len > 8 << 20 {
+                SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored)
+                    .large_file(true)
+            } else {
+                deflate
+            }
+        };
         zip.start_file(format!("raw/{num}_c.txt"), opts(req_body.len()))?;
         raw::write_request_head(&mut zip, &d.request)?;
         write_body(&mut zip, &d.request.headers, &req_body, p)?;
@@ -234,18 +287,35 @@ fn read_meta(xml: &str, d: &mut SessionDetail) {
                 let attrs: BTreeMap<String, String> = e
                     .attributes()
                     .flatten()
-                    .map(|a| (String::from_utf8_lossy(a.key.as_ref()).into_owned(), a.unescape_value().map(|v| v.into_owned()).unwrap_or_default()))
+                    .map(|a| {
+                        (
+                            String::from_utf8_lossy(a.key.as_ref()).into_owned(),
+                            a.unescape_value()
+                                .map(|v| v.into_owned())
+                                .unwrap_or_default(),
+                        )
+                    })
                     .collect();
                 match name.as_ref() {
                     b"Session" => {
-                        if attrs.get("BitFlags").and_then(|b| b.parse::<u32>().ok()).is_some_and(|b| b & 0x2000 != 0) {
+                        if attrs
+                            .get("BitFlags")
+                            .and_then(|b| b.parse::<u32>().ok())
+                            .is_some_and(|b| b & 0x2000 != 0)
+                        {
                             d.summary.kind = SessionKind::Tunnel;
                         }
                     }
                     b"SessionTimers" => {
                         let t = &mut d.timers;
                         let g = |k: &str| attrs.get(k).and_then(|v| from_dotnet(v));
-                        let ms = |k: &str| attrs.get(k).and_then(|v| v.parse::<i64>().ok()).filter(|v| *v > 0).map(|v| v as u32);
+                        let ms = |k: &str| {
+                            attrs
+                                .get(k)
+                                .and_then(|v| v.parse::<i64>().ok())
+                                .filter(|v| *v > 0)
+                                .map(|v| v as u32)
+                        };
                         t.client_connected = g("ClientConnected");
                         t.client_begin_request = g("ClientBeginRequest");
                         t.got_request_headers = g("GotRequestHeaders");
@@ -264,18 +334,31 @@ fn read_meta(xml: &str, d: &mut SessionDetail) {
                         t.tls_handshake_ms = ms("HTTPSHandshakeTime");
                     }
                     b"PipeInfo" => {
-                        d.connection.server_conn_reused = attrs.get("Reused").is_some_and(|v| v == "true");
+                        d.connection.server_conn_reused =
+                            attrs.get("Reused").is_some_and(|v| v == "true");
                     }
                     b"SessionFlag" => {
-                        let (Some(n), Some(v)) = (attrs.get("N"), attrs.get("V")) else { continue };
+                        let (Some(n), Some(v)) = (attrs.get("N"), attrs.get("V")) else {
+                            continue;
+                        };
                         match n.to_ascii_lowercase().as_str() {
                             "x-processinfo" => {
-                                let (name, pid) = v.rsplit_once(':').map(|(a, b)| (a.to_string(), b.parse().unwrap_or(0))).unwrap_or((v.clone(), 0));
+                                let (name, pid) = v
+                                    .rsplit_once(':')
+                                    .map(|(a, b)| (a.to_string(), b.parse().unwrap_or(0)))
+                                    .unwrap_or((v.clone(), 0));
                                 d.process = Some(ProcessInfo { pid, name });
                             }
                             "x-clientip" => d.summary.client_ip = v.clone(),
                             "x-clientport" => {
-                                d.connection.client_addr = Some(format!("{}:{v}", if d.summary.client_ip.is_empty() { "?" } else { &d.summary.client_ip }))
+                                d.connection.client_addr = Some(format!(
+                                    "{}:{v}",
+                                    if d.summary.client_ip.is_empty() {
+                                        "?"
+                                    } else {
+                                        &d.summary.client_ip
+                                    }
+                                ))
                             }
                             "x-hostip" => d.connection.server_addr = Some(v.clone()),
                             "ui-color" => d.summary.color = MarkColor::parse(v),
@@ -315,12 +398,22 @@ const MAX_META: u64 = 1 << 20;
 
 /// Read a message (head + body) from a ZIP entry into the store. The body is
 /// recorded with the normal recording limit; reading stops once it truncates.
-fn read_message<R: Read>(cap: &Arc<Capture>, r: R, p: &dyn Progress) -> Result<Option<(String, Headers, Body)>> {
+fn read_message<R: Read>(
+    cap: &Arc<Capture>,
+    r: R,
+    p: &dyn Progress,
+) -> Result<Option<(String, Headers, Body)>> {
     let mut br = BufReader::with_capacity(256 * 1024, r);
-    let Some((first, headers)) = raw::read_head(&mut br)? else { return Ok(None) };
+    let Some((first, headers)) = raw::read_head(&mut br)? else {
+        return Ok(None);
+    };
     let mut w = cap.bodies.writer();
     let mut buf = vec![0u8; 1 << 20];
-    let mut src: Box<dyn Read> = if raw::is_chunked(&headers) { Box::new(ChunkedReader::new(br)) } else { Box::new(br) };
+    let mut src: Box<dyn Read> = if raw::is_chunked(&headers) {
+        Box::new(ChunkedReader::new(br))
+    } else {
+        Box::new(br)
+    };
     loop {
         if p.cancelled() {
             return Err(FormatError::Cancelled);
@@ -351,7 +444,12 @@ fn read_message<R: Read>(cap: &Arc<Capture>, r: R, p: &dyn Progress) -> Result<O
 }
 
 /// Read one session from its ZIP entries. `Ok(None)`: no usable request.
-fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchive<R>, e: &Entry, p: &dyn Progress) -> Result<Option<(SessionDetail, Body, Body)>> {
+fn read_session<R: Read + io::Seek>(
+    cap: &Arc<Capture>,
+    zip: &mut zip::ZipArchive<R>,
+    e: &Entry,
+    p: &dyn Progress,
+) -> Result<Option<(SessionDetail, Body, Body)>> {
     let Some(ci) = e.c else { return Ok(None) };
     let mut d = SessionDetail::default();
     let (req_first, req_headers, req_body) = match read_message(cap, zip.by_index(ci)?, p)? {
@@ -361,7 +459,11 @@ fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchiv
     let (method, url, version) = raw::parse_request_line(&req_first);
     let url = if url.starts_with('/') {
         let host = req_headers.get("host").unwrap_or("unknown");
-        let scheme = if host.ends_with(":443") { "https" } else { "http" };
+        let scheme = if host.ends_with(":443") {
+            "https"
+        } else {
+            "http"
+        };
         format!("{scheme}://{host}{url}")
     } else {
         url
@@ -369,14 +471,28 @@ fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchiv
     if method.eq_ignore_ascii_case("CONNECT") {
         d.summary.kind = SessionKind::Tunnel;
     }
-    d.request = RequestHead { method, url, version, headers: req_headers };
+    d.request = RequestHead {
+        method,
+        url,
+        version,
+        headers: req_headers,
+    };
     let mut resp_body = cap.bodies.store_bytes(&[]);
     // A broken response or metadata entry doesn't lose the request.
     if let Some(si) = e.s {
-        match zip.by_index(si).map_err(FormatError::from).and_then(|f| read_message(cap, f, p)) {
+        match zip
+            .by_index(si)
+            .map_err(FormatError::from)
+            .and_then(|f| read_message(cap, f, p))
+        {
             Ok(Some((first, headers, body))) => {
                 let (v, status, reason) = raw::parse_status_line(&first);
-                d.response = Some(ResponseHead { status, reason, version: v, headers });
+                d.response = Some(ResponseHead {
+                    status,
+                    reason,
+                    version: v,
+                    headers,
+                });
                 resp_body = body;
             }
             Ok(None) => {}
@@ -386,7 +502,11 @@ fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchiv
     }
     if let Some(mi) = e.m {
         let mut b = Vec::new();
-        match zip.by_index(mi).map_err(FormatError::from).and_then(|f| Ok(f.take(MAX_META).read_to_end(&mut b)?)) {
+        match zip
+            .by_index(mi)
+            .map_err(FormatError::from)
+            .and_then(|f| Ok(f.take(MAX_META).read_to_end(&mut b)?))
+        {
             Ok(_) => read_meta(&String::from_utf8_lossy(&b), &mut d),
             Err(err) => tracing::warn!("SAZ metadata entry unreadable: {err}"),
         }
@@ -410,8 +530,12 @@ pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<S
                 continue;
             }
         };
-        let Some(rest) = name.strip_prefix("raw/") else { continue };
-        let Some((num, kind)) = rest.rsplit_once('_') else { continue };
+        let Some(rest) = name.strip_prefix("raw/") else {
+            continue;
+        };
+        let Some((num, kind)) = rest.rsplit_once('_') else {
+            continue;
+        };
         let e = entries.entry(num.to_string()).or_default();
         match kind {
             "c.txt" => e.c = Some(i),
@@ -444,12 +568,20 @@ pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<S
             d.summary.state = SessionState::Done;
         }
         d.summary.flags |= flags::IMPORTED;
-        d.summary.started_at = d.timers.client_begin_request.or(d.timers.client_connected).unwrap_or_else(now_us);
+        d.summary.started_at = d
+            .timers
+            .client_begin_request
+            .or(d.timers.client_connected)
+            .unwrap_or_else(now_us);
         let id = cap.insert(d, req_body, resp_body);
         ids.push(id);
     }
     if skipped > 0 {
-        tracing::warn!(skipped, imported = ids.len(), "SAZ import: skipped unreadable entries");
+        tracing::warn!(
+            skipped,
+            imported = ids.len(),
+            "SAZ import: skipped unreadable entries"
+        );
     }
     p.progress(total, total);
     Ok(ids)
@@ -469,9 +601,13 @@ mod tests {
             let mut z = zip::ZipWriter::new(File::create(&path).unwrap());
             let o = SimpleFileOptions::default();
             z.start_file("raw/01_c.txt", o).unwrap();
-            z.write_all(b"GET http://a/ok HTTP/1.1\r\nHost: a\r\n\r\n").unwrap();
+            z.write_all(b"GET http://a/ok HTTP/1.1\r\nHost: a\r\n\r\n")
+                .unwrap();
             z.start_file("raw/01_s.txt", o).unwrap();
-            z.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nzz\r\n").unwrap();
+            z.write_all(
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\nzz\r\n",
+            )
+            .unwrap();
             z.start_file("raw/01_m.xml", o).unwrap();
             z.write_all(b"<Session><SessionFlags><SessionFlag N=\"ui-comments\" V=\"caf\xe9\" /></SessionFlags></Session>").unwrap();
             // Head without end: a 2 MB line.
@@ -481,7 +617,15 @@ mod tests {
             z.write_all(b"GET http://a/three HTTP/1.1\r\n\r\n").unwrap();
             z.finish().unwrap();
         }
-        let cap = Capture::open(dir.path().join("cap"), BodyConfig { max_recorded_body: 3, ..Default::default() }, true).unwrap();
+        let cap = Capture::open(
+            dir.path().join("cap"),
+            BodyConfig {
+                max_recorded_body: 3,
+                ..Default::default()
+            },
+            true,
+        )
+        .unwrap();
         let ids = import(&cap, &path, &NoProgress).unwrap();
         assert_eq!(ids.len(), 2);
         let d = cap.detail(ids[0]).unwrap();

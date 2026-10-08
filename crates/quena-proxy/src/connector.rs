@@ -47,7 +47,9 @@ pub struct MaybeTls {
 
 impl Connection for MaybeTls {
     fn connected(&self) -> Connected {
-        let mut c = Connected::new().proxy(self.proxied).extra(self.info.clone());
+        let mut c = Connected::new()
+            .proxy(self.proxied)
+            .extra(self.info.clone());
         if self.h2 {
             c = c.negotiated_h2();
         }
@@ -56,7 +58,11 @@ impl Connection for MaybeTls {
 }
 
 impl hyper::rt::Read for MaybeTls {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: hyper::rt::ReadBufCursor<'_>) -> Poll<std::io::Result<()>> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: hyper::rt::ReadBufCursor<'_>,
+    ) -> Poll<std::io::Result<()>> {
         match &mut self.get_mut().stream {
             Stream::Plain(s) => Pin::new(s).poll_read(cx, buf),
             Stream::Tls(s) => Pin::new(&mut **s).poll_read(cx, buf),
@@ -65,7 +71,11 @@ impl hyper::rt::Read for MaybeTls {
 }
 
 impl hyper::rt::Write for MaybeTls {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
         match &mut self.get_mut().stream {
             Stream::Plain(s) => Pin::new(s).poll_write(cx, buf),
             Stream::Tls(s) => Pin::new(&mut **s).poll_write(cx, buf),
@@ -83,7 +93,11 @@ impl hyper::rt::Write for MaybeTls {
             Stream::Tls(s) => Pin::new(&mut **s).poll_shutdown(cx),
         }
     }
-    fn poll_write_vectored(self: Pin<&mut Self>, cx: &mut Context<'_>, bufs: &[std::io::IoSlice<'_>]) -> Poll<std::io::Result<usize>> {
+    fn poll_write_vectored(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::io::Result<usize>> {
         match &mut self.get_mut().stream {
             Stream::Plain(s) => Pin::new(s).poll_write_vectored(cx, bufs),
             Stream::Tls(s) => Pin::new(&mut **s).poll_write_vectored(cx, bufs),
@@ -111,7 +125,8 @@ const PROXY_CONNECT_REPLY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Addresses Quena itself listens on (set by the proxy on start); used to refuse
 /// connections that would loop back into Quena.
-static SELF_ADDRS: parking_lot::RwLock<Vec<std::net::SocketAddr>> = parking_lot::RwLock::new(Vec::new());
+static SELF_ADDRS: parking_lot::RwLock<Vec<std::net::SocketAddr>> =
+    parking_lot::RwLock::new(Vec::new());
 
 pub(crate) fn add_self_addrs(addrs: &[std::net::SocketAddr]) {
     SELF_ADDRS.write().extend_from_slice(addrs);
@@ -132,23 +147,43 @@ pub(crate) fn is_self_addr(a: &std::net::SocketAddr) -> bool {
         return true;
     }
     let s = ip.to_string();
-    quena_platform::local_addresses().iter().any(|(_, l)| *l == s)
+    quena_platform::local_addresses()
+        .iter()
+        .any(|(_, l)| *l == s)
 }
 
 fn loop_error(host: &str, port: u16) -> std::io::Error {
-    std::io::Error::other(format!("{host}:{port} is Quena itself; refusing to forward the request to avoid a loop"))
+    std::io::Error::other(format!(
+        "{host}:{port} is Quena itself; refusing to forward the request to avoid a loop"
+    ))
 }
 
 /// Open a TCP connection with DNS/connect timing.
 pub async fn tcp_connect(host: &str, port: u16) -> std::io::Result<(TcpStream, u32, u32, String)> {
     let t0 = Instant::now();
-    let addrs: Vec<std::net::SocketAddr> = match tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host((host.trim_matches(['[', ']']), port))).await {
+    let addrs: Vec<std::net::SocketAddr> = match tokio::time::timeout(
+        DNS_TIMEOUT,
+        tokio::net::lookup_host((host.trim_matches(['[', ']']), port)),
+    )
+    .await
+    {
         Ok(r) => r?.collect(),
-        Err(_) => return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("DNS lookup for {host} timed out after {}s", DNS_TIMEOUT.as_secs()))),
+        Err(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "DNS lookup for {host} timed out after {}s",
+                    DNS_TIMEOUT.as_secs()
+                ),
+            ));
+        }
     };
     let dns_ms = t0.elapsed().as_millis() as u32;
     if addrs.is_empty() {
-        return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("no address for {host}")));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no address for {host}"),
+        ));
     }
     if addrs.iter().any(is_self_addr) {
         return Err(loop_error(host, port));
@@ -174,12 +209,21 @@ pub async fn tcp_connect(host: &str, port: u16) -> std::io::Result<(TcpStream, u
         if next < ordered.len() {
             let a = ordered[next];
             next += 1;
-            set.spawn(async move { (a, tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(a)).await) });
+            set.spawn(async move {
+                (
+                    a,
+                    tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(a)).await,
+                )
+            });
         }
         if set.is_empty() {
             break;
         }
-        let delay = if next < ordered.len() { Duration::from_millis(250) } else { CONNECT_TIMEOUT + Duration::from_secs(1) };
+        let delay = if next < ordered.len() {
+            Duration::from_millis(250)
+        } else {
+            CONNECT_TIMEOUT + Duration::from_secs(1)
+        };
         tokio::select! {
             r = set.join_next() => match r {
                 Some(Ok((a, Ok(Ok(s))))) => {
@@ -194,20 +238,40 @@ pub async fn tcp_connect(host: &str, port: u16) -> std::io::Result<(TcpStream, u
             _ = tokio::time::sleep(delay) => {}
         }
     }
-    Err(std::io::Error::other(format!("connect failed ({})", errors.join("; "))))
+    Err(std::io::Error::other(format!(
+        "connect failed ({})",
+        errors.join("; ")
+    )))
 }
 
 /// Establish a CONNECT tunnel through an upstream proxy.
 pub async fn connect_via_proxy(s: &mut TcpStream, host: &str, port: u16) -> std::io::Result<()> {
-    match tokio::time::timeout(PROXY_CONNECT_REPLY_TIMEOUT, connect_via_proxy_inner(s, host, port)).await {
+    match tokio::time::timeout(
+        PROXY_CONNECT_REPLY_TIMEOUT,
+        connect_via_proxy_inner(s, host, port),
+    )
+    .await
+    {
         Ok(r) => r,
-        Err(_) => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("upstream proxy did not answer the CONNECT within {}s", PROXY_CONNECT_REPLY_TIMEOUT.as_secs()))),
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!(
+                "upstream proxy did not answer the CONNECT within {}s",
+                PROXY_CONNECT_REPLY_TIMEOUT.as_secs()
+            ),
+        )),
     }
 }
 
 async fn connect_via_proxy_inner(s: &mut TcpStream, host: &str, port: u16) -> std::io::Result<()> {
-    let target = if host.contains(':') { format!("[{host}]:{port}") } else { format!("{host}:{port}") };
-    let req = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Connection: Keep-Alive\r\nUser-Agent: Quena\r\n\r\n");
+    let target = if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
+    let req = format!(
+        "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\nProxy-Connection: Keep-Alive\r\nUser-Agent: Quena\r\n\r\n"
+    );
     s.write_all(req.as_bytes()).await?;
     let mut buf = Vec::with_capacity(512);
     let mut b = [0u8; 1];
@@ -217,7 +281,10 @@ async fn connect_via_proxy_inner(s: &mut TcpStream, host: &str, port: u16) -> st
         }
         let n = s.read(&mut b).await?;
         if n == 0 {
-            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "upstream proxy closed the connection"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "upstream proxy closed the connection",
+            ));
         }
         buf.push(b[0]);
     }
@@ -225,18 +292,35 @@ async fn connect_via_proxy_inner(s: &mut TcpStream, host: &str, port: u16) -> st
     let status = head.split_whitespace().nth(1).unwrap_or("");
     if status != "200" {
         let line = head.lines().next().unwrap_or("").to_string();
-        return Err(std::io::Error::other(format!("upstream proxy refused CONNECT: {line}")));
+        return Err(std::io::Error::other(format!(
+            "upstream proxy refused CONNECT: {line}"
+        )));
     }
     Ok(())
 }
 
 pub fn tls_info(conn: &rustls::ClientConnection, sni: &str) -> TlsInfo {
     TlsInfo {
-        version: conn.protocol_version().map(|v| format!("{v:?}").replace('_', ".").replace("TLSv", "TLS ")).unwrap_or_default(),
-        cipher: conn.negotiated_cipher_suite().map(|c| format!("{:?}", c.suite())).unwrap_or_default(),
+        version: conn
+            .protocol_version()
+            .map(|v| format!("{v:?}").replace('_', ".").replace("TLSv", "TLS "))
+            .unwrap_or_default(),
+        cipher: conn
+            .negotiated_cipher_suite()
+            .map(|c| format!("{:?}", c.suite()))
+            .unwrap_or_default(),
         sni: Some(sni.to_string()),
-        alpn: conn.alpn_protocol().map(|a| String::from_utf8_lossy(a).into_owned()),
-        server_chain_pem: conn.peer_certificates().map(|c| c.iter().map(|d| quena_tls::der_to_pem(d.as_ref())).collect()).unwrap_or_default(),
+        alpn: conn
+            .alpn_protocol()
+            .map(|a| String::from_utf8_lossy(a).into_owned()),
+        server_chain_pem: conn
+            .peer_certificates()
+            .map(|c| {
+                c.iter()
+                    .map(|d| quena_tls::der_to_pem(d.as_ref()))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -254,17 +338,30 @@ impl tower_service::Service<Uri> for Connector {
         let tls = self.tls.clone();
         Box::pin(async move {
             let https = uri.scheme_str() == Some("https") || uri.scheme_str() == Some("wss");
-            let host = uri.host().ok_or("URI without host")?.trim_matches(['[', ']']).to_string();
+            let host = uri
+                .host()
+                .ok_or("URI without host")?
+                .trim_matches(['[', ']'])
+                .to_string();
             let port = uri.port_u16().unwrap_or(if https { 443 } else { 80 });
             let connect_start = quena_model::now_us();
             // Host remapping: the connection goes to the target, like a hosts-file entry
             // (so not through the upstream proxy); name checks stay with the original host.
             let remapped = cfg.remap(&host, port);
-            let (conn_host, conn_port) = remapped.as_ref().map(|r| (r.host.clone(), r.port)).unwrap_or_else(|| (host.clone(), port));
-            let upstream = if remapped.is_some() { None } else { crate::resolve_upstream(&cfg, format!("{host}:{port}")).await };
+            let (conn_host, conn_port) = remapped
+                .as_ref()
+                .map(|r| (r.host.clone(), r.port))
+                .unwrap_or_else(|| (host.clone(), port));
+            let upstream = if remapped.is_some() {
+                None
+            } else {
+                crate::resolve_upstream(&cfg, format!("{host}:{port}")).await
+            };
             let (mut tcp, dns_ms, tcp_ms, server_addr, gateway) = match &upstream {
                 Some((ph, pp)) => {
-                    let (s, d, t, a) = tcp_connect(ph, *pp).await.map_err(|e| format!("upstream proxy {ph}:{pp}: {e}"))?;
+                    let (s, d, t, a) = tcp_connect(ph, *pp)
+                        .await
+                        .map_err(|e| format!("upstream proxy {ph}:{pp}: {e}"))?;
                     (s, d, t, a, Some(format!("{ph}:{pp}")))
                 }
                 None => {
@@ -284,7 +381,12 @@ impl tower_service::Service<Uri> for Connector {
                 connected_at: quena_model::now_us(),
             };
             if !https {
-                return Ok(MaybeTls { stream: Stream::Plain(TokioIo::new(tcp)), proxied: upstream.is_some(), h2: false, info: info(0, None) });
+                return Ok(MaybeTls {
+                    stream: Stream::Plain(TokioIo::new(tcp)),
+                    proxied: upstream.is_some(),
+                    h2: false,
+                    info: info(0, None),
+                });
             }
             if upstream.is_some() {
                 connect_via_proxy(&mut tcp, &host, port).await?;
@@ -293,15 +395,23 @@ impl tower_service::Service<Uri> for Connector {
             let h2 = cfg.h2_host(&host);
             let config = tls.for_host(&host, cfg.insecure_host(&host), h2, quena_query::glob_match);
             let name = quena_tls::server_name(&host)?;
-            let s = tokio::time::timeout(CONNECT_TIMEOUT, tokio_rustls::TlsConnector::from(config).connect(name, tcp))
-                .await
-                .map_err(|_| "TLS handshake timed out")?
-                .map_err(|e| format!("TLS handshake with {host} failed: {e}"))?;
+            let s = tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                tokio_rustls::TlsConnector::from(config).connect(name, tcp),
+            )
+            .await
+            .map_err(|_| "TLS handshake timed out")?
+            .map_err(|e| format!("TLS handshake with {host} failed: {e}"))?;
             let tls_ms = t.elapsed().as_millis() as u32;
             let (_, conn) = s.get_ref();
             let negotiated_h2 = conn.alpn_protocol() == Some(b"h2");
             let ti = tls_info(conn, &host);
-            Ok(MaybeTls { stream: Stream::Tls(Box::new(TokioIo::new(s))), proxied: false, h2: negotiated_h2, info: info(tls_ms, Some(ti)) })
+            Ok(MaybeTls {
+                stream: Stream::Tls(Box::new(TokioIo::new(s))),
+                proxied: false,
+                h2: negotiated_h2,
+                info: info(tls_ms, Some(ti)),
+            })
         })
     }
 }

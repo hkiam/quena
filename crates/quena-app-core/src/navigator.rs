@@ -14,12 +14,20 @@ const MAX_GROUPS: usize = 5000;
 
 /// What the list is narrowed to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum NavScope {
     /// Sessions whose group key (see [`group_value`]) is `key`.
     Group { by: GroupBy, key: String },
     /// A node of the structure tree (see [`crate::structure::matches`]).
-    Path { host: String, path: String, exact: bool },
+    Path {
+        host: String,
+        path: String,
+        exact: bool,
+    },
 }
 
 /// The value a session is grouped by, as text (`None`: in no group). Connections are numbers.
@@ -40,13 +48,23 @@ pub fn group_value(s: &SessionSummary, by: GroupBy) -> Option<std::borrow::Cow<'
 impl NavScope {
     pub(crate) fn predicate(&self) -> Scope {
         match self.clone() {
-            NavScope::Group { by: GroupBy::Connection, key } => {
+            NavScope::Group {
+                by: GroupBy::Connection,
+                key,
+            } => {
                 let conn: u64 = key.parse().unwrap_or(u64::MAX);
                 Scope::new(move |s| s.conn == conn)
             }
-            NavScope::Group { by: GroupBy::Host, key } => Scope::new(move |s| s.host.eq_ignore_ascii_case(&key)),
-            NavScope::Group { by, key } => Scope::new(move |s| group_value(s, by).is_some_and(|v| v == key.as_str())),
-            NavScope::Path { host, path, exact } => Scope::new(move |s| crate::structure::matches(s, &host, &path, exact)),
+            NavScope::Group {
+                by: GroupBy::Host,
+                key,
+            } => Scope::new(move |s| s.host.eq_ignore_ascii_case(&key)),
+            NavScope::Group { by, key } => {
+                Scope::new(move |s| group_value(s, by).is_some_and(|v| v == key.as_str()))
+            }
+            NavScope::Path { host, path, exact } => {
+                Scope::new(move |s| crate::structure::matches(s, &host, &path, exact))
+            }
         }
     }
 }
@@ -135,7 +153,14 @@ impl AppCore {
                         GroupBy::Host => s.host.clone(),
                         _ => key.to_string(),
                     };
-                    order.push(NavGroup { key: key.to_string(), label, count: 0, errors: 0, bytes: 0, first: s.id });
+                    order.push(NavGroup {
+                        key: key.to_string(),
+                        label,
+                        count: 0,
+                        errors: 0,
+                        bytes: 0,
+                        first: s.id,
+                    });
                     at.insert(key.into_owned(), order.len() - 1);
                     order.len() - 1
                 }
@@ -147,7 +172,12 @@ impl AppCore {
             g.first = g.first.min(s.id);
         });
         order.sort_by_key(|g| g.first);
-        NavGroups { groups: order, total, ungrouped, truncated }
+        NavGroups {
+            groups: order,
+            total,
+            ungrouped,
+            truncated,
+        }
     }
 
     /// The compiled filters without the scope, and with it (for the index).

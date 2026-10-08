@@ -15,12 +15,30 @@ pub struct MockHandle {
 }
 
 const HOSTS: &[&str] = &[
-    "api.company.de", "service.company.de", "www.example.com", "cdn.example.net", "login.microsoftonline.com",
-    "graph.microsoft.com", "fonts.gstatic.com", "soap.example.com", "telemetry.vendor.io", "github.com",
-    "api.github.com", "registry.npmjs.org", "localhost:8080", "10.0.0.12:8443", "ws.chat.example",
+    "api.company.de",
+    "service.company.de",
+    "www.example.com",
+    "cdn.example.net",
+    "login.microsoftonline.com",
+    "graph.microsoft.com",
+    "fonts.gstatic.com",
+    "soap.example.com",
+    "telemetry.vendor.io",
+    "github.com",
+    "api.github.com",
+    "registry.npmjs.org",
+    "localhost:8080",
+    "10.0.0.12:8443",
+    "ws.chat.example",
 ];
 const PROCS: &[(&str, u32)] = &[
-    ("chrome", 4211), ("safari", 811), ("firefox", 2210), ("curl", 9921), ("Teams", 3120), ("java", 7781), ("node", 5512),
+    ("chrome", 4211),
+    ("safari", 811),
+    ("firefox", 2210),
+    ("curl", 9921),
+    ("Teams", 3120),
+    ("java", 7781),
+    ("node", 5512),
     ("dotnet", 6620),
 ];
 
@@ -73,10 +91,11 @@ fn body_for(kind: &Kind, rng: &mut impl Rng) -> (Vec<u8>, &'static str, Option<&
 
 /// 1x1 red PNG.
 const PNG: &[u8] = &[
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00,
-    0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
-    0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
-    0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+    0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+    0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
 
 fn random_session(rng: &mut impl Rng) -> (SessionDetail, Vec<u8>, Vec<u8>) {
@@ -97,25 +116,46 @@ fn random_session(rng: &mut impl Rng) -> (SessionDetail, Vec<u8>, Vec<u8>) {
     };
     let method = match kind {
         Kind::Soap => "POST",
-        _ => *["GET", "GET", "GET", "GET", "POST", "PUT", "DELETE", "OPTIONS"].choose(rng).unwrap(),
+        _ => *[
+            "GET", "GET", "GET", "GET", "POST", "PUT", "DELETE", "OPTIONS",
+        ]
+        .choose(rng)
+        .unwrap(),
     };
-    let status = *[200u16, 200, 200, 200, 200, 200, 204, 301, 302, 304, 400, 401, 403, 404, 500, 502, 503].choose(rng).unwrap();
+    let status = *[
+        200u16, 200, 200, 200, 200, 200, 204, 301, 302, 304, 400, 401, 403, 404, 500, 502, 503,
+    ]
+    .choose(rng)
+    .unwrap();
     let path = match kind {
         Kind::Soap => "/services/OrderService.svc".to_string(),
         Kind::Png => format!("/img/{}.png", rng.random_range(1..999)),
         Kind::Js => "/static/app.js".into(),
         Kind::Css => "/static/site.css".into(),
         Kind::Font => "/fonts/inter.woff2".into(),
-        _ => format!("/api/v{}/{}?page={}", rng.random_range(1..3), ["orders", "users", "login", "search", "items"].choose(rng).unwrap(), rng.random_range(1..50)),
+        _ => format!(
+            "/api/v{}/{}?page={}",
+            rng.random_range(1..3),
+            ["orders", "users", "login", "search", "items"]
+                .choose(rng)
+                .unwrap(),
+            rng.random_range(1..50)
+        ),
     };
     let url = format!("{}://{host}{path}", if https { "https" } else { "http" });
     let (req_body, req_ct) = if method == "POST" || method == "PUT" {
         if matches!(kind, Kind::Soap) {
             (br#"<?xml version="1.0"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><GetOrder xmlns="urn:orders"><id>4711</id></GetOrder></s:Body></s:Envelope>"#.to_vec(), "text/xml; charset=utf-8")
         } else if rng.random_bool(0.5) {
-            (b"user=alice&password=secret&remember=true".to_vec(), "application/x-www-form-urlencoded")
+            (
+                b"user=alice&password=secret&remember=true".to_vec(),
+                "application/x-www-form-urlencoded",
+            )
         } else {
-            (br#"{"query":"quena","limit":20}"#.to_vec(), "application/json")
+            (
+                br#"{"query":"quena","limit":20}"#.to_vec(),
+                "application/json",
+            )
         }
     } else {
         (Vec::new(), "")
@@ -147,15 +187,35 @@ fn random_session(rng: &mut impl Rng) -> (SessionDetail, Vec<u8>, Vec<u8>) {
         sh.push("Content-Encoding", ce);
     }
     sh.push("Content-Length", body.len().to_string());
-    sh.push("Cache-Control", *["no-cache", "max-age=3600", "private, max-age=0", "public, max-age=31536000"].choose(rng).unwrap());
+    sh.push(
+        "Cache-Control",
+        *[
+            "no-cache",
+            "max-age=3600",
+            "private, max-age=0",
+            "public, max-age=31536000",
+        ]
+        .choose(rng)
+        .unwrap(),
+    );
     if status == 301 || status == 302 {
         sh.push("Location", format!("https://{host}/new"));
     }
     let now = now_us();
     let dur = rng.random_range(2_000..900_000i64);
     let d = SessionDetail {
-        request: RequestHead { method: method.into(), url, version: HttpVersion::Http11, headers: rh },
-        response: Some(ResponseHead { status, reason: reason(status).into(), version: HttpVersion::Http11, headers: sh }),
+        request: RequestHead {
+            method: method.into(),
+            url,
+            version: HttpVersion::Http11,
+            headers: rh,
+        },
+        response: Some(ResponseHead {
+            status,
+            reason: reason(status).into(),
+            version: HttpVersion::Http11,
+            headers: sh,
+        }),
         timers: Timers {
             client_connected: Some(now - dur - 1000),
             client_begin_request: Some(now - dur),
@@ -167,11 +227,21 @@ fn random_session(rng: &mut impl Rng) -> (SessionDetail, Vec<u8>, Vec<u8>) {
             server_done_response: Some(now - 100),
             client_done_response: Some(now),
             tcp_connect_ms: Some(rng.random_range(1..40)),
-            tls_handshake_ms: if https { Some(rng.random_range(5..80)) } else { None },
+            tls_handshake_ms: if https {
+                Some(rng.random_range(5..80))
+            } else {
+                None
+            },
             ..Default::default()
         },
-        process: Some(ProcessInfo { pid, name: proc_name.into() }),
-        connection: ConnectionInfo { client_addr: Some(format!("127.0.0.1:{}", rng.random_range(50000..65000))), ..Default::default() },
+        process: Some(ProcessInfo {
+            pid,
+            name: proc_name.into(),
+        }),
+        connection: ConnectionInfo {
+            client_addr: Some(format!("127.0.0.1:{}", rng.random_range(50000..65000))),
+            ..Default::default()
+        },
         summary: SessionSummary {
             state: SessionState::Done,
             flags: if https { flags::DECRYPTED } else { 0 },
@@ -206,7 +276,9 @@ pub fn reason(status: u16) -> &'static str {
 pub fn start(core: &Arc<AppCore>, rate: u32, total: u64) {
     stop(core);
     let stop_flag = Arc::new(AtomicBool::new(false));
-    *core.mock.lock() = Some(MockHandle { stop: stop_flag.clone() });
+    *core.mock.lock() = Some(MockHandle {
+        stop: stop_flag.clone(),
+    });
     let weak = Arc::downgrade(core);
     std::thread::Builder::new()
         .name("quena-mock".into())
@@ -249,7 +321,10 @@ pub fn start(core: &Arc<AppCore>, rate: u32, total: u64) {
 
 fn spawn_streaming(cap: &Arc<quena_store::Capture>, rng: &mut impl Rng) {
     let (mut d, _, _) = random_session(rng);
-    d.request.url = format!("https://downloads.example.com/stream/{}.ndjson", rng.random_range(1..100));
+    d.request.url = format!(
+        "https://downloads.example.com/stream/{}.ndjson",
+        rng.random_range(1..100)
+    );
     d.request.method = "GET".into();
     if let Some(r) = d.response.as_mut() {
         r.status = 200;
@@ -276,7 +351,11 @@ fn spawn_streaming(cap: &Arc<quena_store::Capture>, rng: &mut impl Rng) {
         let end = Instant::now() + Duration::from_secs(secs);
         let mut i = 0u64;
         while Instant::now() < end {
-            let line = format!("{{\"seq\":{i},\"ts\":{},\"payload\":\"{}\"}}\n", now_us(), "x".repeat(200));
+            let line = format!(
+                "{{\"seq\":{i},\"ts\":{},\"payload\":\"{}\"}}\n",
+                now_us(),
+                "x".repeat(200)
+            );
             let _ = w.write(line.repeat(50).as_bytes());
             i += 1;
             std::thread::sleep(Duration::from_millis(50));
@@ -302,15 +381,38 @@ pub fn stop(core: &AppCore) {
 pub fn big_bodies(core: &Arc<AppCore>, scale: u64) {
     let scale = scale.max(1);
     let specs: Vec<(&str, &str, Option<&str>, u64)> = vec![
-        ("/export/orders.ndjson", "application/x-ndjson", None, 200 << 20),
-        ("/export/big-single-line.json", "application/json", None, 50 << 20),
-        ("/export/archive.ndjson.gz", "application/x-ndjson", Some("gzip"), 100 << 20),
-        ("/download/disk-image.bin", "application/octet-stream", None, 1 << 30),
+        (
+            "/export/orders.ndjson",
+            "application/x-ndjson",
+            None,
+            200 << 20,
+        ),
+        (
+            "/export/big-single-line.json",
+            "application/json",
+            None,
+            50 << 20,
+        ),
+        (
+            "/export/archive.ndjson.gz",
+            "application/x-ndjson",
+            Some("gzip"),
+            100 << 20,
+        ),
+        (
+            "/download/disk-image.bin",
+            "application/octet-stream",
+            None,
+            1 << 30,
+        ),
     ];
     for (path, ct, ce, size) in specs {
         let size = size * scale;
         let core2 = Arc::downgrade(core);
-        let title = format!("Generating mock body {path} ({})", crate::bodies::human(size));
+        let title = format!(
+            "Generating mock body {path} ({})",
+            crate::bodies::human(size)
+        );
         core.jobs.submit(format!("mockbig:{path}:{}", now_us()), title, Priority::Background, true, move |ctx| {
             let Some(core) = core2.upgrade() else { return Ok(()) };
             let cap = core.capture();

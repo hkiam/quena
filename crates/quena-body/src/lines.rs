@@ -136,7 +136,12 @@ impl LineIndex {
 
     pub fn info(&self) -> LineIndexInfo {
         let s = self.st.read();
-        LineIndexInfo { lines: s.lines, scanned: s.scanned, done: s.done, error: s.error.clone() }
+        LineIndexInfo {
+            lines: s.lines,
+            scanned: s.scanned,
+            done: s.done,
+            error: s.error.clone(),
+        }
     }
 
     /// Build the index for `body` (follows a growing body until complete).
@@ -211,7 +216,13 @@ impl LineIndex {
     /// Read `count` lines starting at `start`, decoded from `enc` (an ASCII-compatible charset;
     /// others are transcoded to UTF-8 before indexing). Malformed sequences become U+FFFD, a
     /// UTF-8 byte order mark at the start of the body is dropped.
-    pub fn read_lines_as(&self, body: &Body, start: u64, count: usize, enc: &'static encoding_rs::Encoding) -> Result<Vec<String>> {
+    pub fn read_lines_as(
+        &self,
+        body: &Body,
+        start: u64,
+        count: usize,
+        enc: &'static encoding_rs::Encoding,
+    ) -> Result<Vec<String>> {
         let finish_line = |v: Vec<u8>, first: bool| finish_line(v, first, enc);
         let (offset, first_line) = {
             let s = self.st.read();
@@ -242,7 +253,10 @@ impl LineIndex {
                     skip -= 1;
                 } else {
                     cur.extend_from_slice(&chunk[last..end]);
-                    out.push(finish_line(std::mem::take(&mut cur), start + out.len() as u64 == 0));
+                    out.push(finish_line(
+                        std::mem::take(&mut cur),
+                        start + out.len() as u64 == 0,
+                    ));
                 }
                 last = end;
                 out.len() < count
@@ -309,7 +323,11 @@ fn finish_line(mut v: Vec<u8>, first: bool, enc: &'static encoding_rs::Encoding)
             v.pop();
         }
     }
-    let bom = if first && enc == encoding_rs::UTF_8 && v.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
+    let bom = if first && enc == encoding_rs::UTF_8 && v.starts_with(b"\xEF\xBB\xBF") {
+        3
+    } else {
+        0
+    };
     crate::text::decode_piece(&v[bom..], enc)
 }
 
@@ -321,7 +339,10 @@ mod tests {
 
     fn body_of(data: &[u8]) -> (tempfile::TempDir, Body) {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = BodyConfig { inline_limit: 16, ..Default::default() };
+        let cfg = BodyConfig {
+            inline_limit: 16,
+            ..Default::default()
+        };
         let store = BodyStore::open(dir.path(), cfg).unwrap();
         let b = store.store_bytes(data);
         (dir, b)
@@ -351,8 +372,15 @@ mod tests {
         let (_d, b) = body_of(data);
         let idx = LineIndex::new();
         idx.build(&b, &NoProgress).unwrap();
-        assert_eq!(idx.read_lines(&b, 0, 5).unwrap(), vec!["line 1", "Gr\u{fffd}\u{fffd}e"]);
-        assert_eq!(idx.read_lines_as(&b, 1, 5, encoding_rs::WINDOWS_1252).unwrap(), vec!["Grüße"]);
+        assert_eq!(
+            idx.read_lines(&b, 0, 5).unwrap(),
+            vec!["line 1", "Gr\u{fffd}\u{fffd}e"]
+        );
+        assert_eq!(
+            idx.read_lines_as(&b, 1, 5, encoding_rs::WINDOWS_1252)
+                .unwrap(),
+            vec!["Grüße"]
+        );
     }
 
     #[test]

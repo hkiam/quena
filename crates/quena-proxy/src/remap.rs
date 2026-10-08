@@ -36,17 +36,26 @@ impl HostRemap {
     pub fn parse(pattern: &str, target: &str, keep_host: bool) -> Result<HostRemap, String> {
         let pattern = pattern.trim().to_ascii_lowercase();
         if pattern.is_empty() || pattern.contains(['/', ' ', ':']) && !pattern.starts_with('[') {
-            return Err(format!("{pattern}: a host name or pattern (no scheme, path or port)"));
+            return Err(format!(
+                "{pattern}: a host name or pattern (no scheme, path or port)"
+            ));
         }
         let target = target.trim();
         if target.is_empty() || target.contains(['/', ' ']) {
-            return Err(format!("{target}: a host name or address, optionally with :port"));
+            return Err(format!(
+                "{target}: a host name or address, optionally with :port"
+            ));
         }
         let (host, port) = split_target(target).ok_or_else(|| format!("{target}: invalid port"))?;
         if host.is_empty() {
             return Err(format!("{target}: the target needs a host or address"));
         }
-        Ok(HostRemap { pattern, host, port, keep_host })
+        Ok(HostRemap {
+            pattern,
+            host,
+            port,
+            keep_host,
+        })
     }
 
     fn matches(&self, host: &str) -> bool {
@@ -72,7 +81,10 @@ fn split_target(t: &str) -> Option<(String, Option<u16>)> {
     }
     match t.rsplit_once(':') {
         // A bare IPv6 address has several colons and no port.
-        Some((h, p)) if !h.contains(':') => Some((h.to_ascii_lowercase(), Some(p.parse().ok().filter(|p: &u16| *p != 0)?))),
+        Some((h, p)) if !h.contains(':') => Some((
+            h.to_ascii_lowercase(),
+            Some(p.parse().ok().filter(|p: &u16| *p != 0)?),
+        )),
         _ => Some((t.to_ascii_lowercase(), None)),
     }
 }
@@ -80,18 +92,34 @@ fn split_target(t: &str) -> Option<(String, Option<u16>)> {
 /// The rule for `host:port`, the most specific one when several match.
 pub fn lookup(rules: &[HostRemap], host: &str, port: u16) -> Option<Remapped> {
     let host = host.trim_matches(['[', ']']);
-    let r = rules.iter().filter(|r| r.matches(host)).max_by_key(|r| r.specificity())?;
+    let r = rules
+        .iter()
+        .filter(|r| r.matches(host))
+        .max_by_key(|r| r.specificity())?;
     let to_port = r.port.unwrap_or(port);
     let to = crate::util::join_host_port(&r.host, to_port);
-    Some(Remapped { host: r.host.clone(), port: to_port, keep_host: r.keep_host, note: format!("{} → {to}", crate::util::join_host_port(host, port)) })
+    Some(Remapped {
+        host: r.host.clone(),
+        port: to_port,
+        keep_host: r.keep_host,
+        note: format!("{} → {to}", crate::util::join_host_port(host, port)),
+    })
 }
 
 impl Remapped {
     /// `scheme://host[:port]` of the target, for rewriting a URL (default ports left out).
     pub fn authority(&self, https: bool) -> String {
         let default = if https { 443 } else { 80 };
-        let h = if self.host.contains(':') { format!("[{}]", self.host) } else { self.host.clone() };
-        if self.port == default { h } else { format!("{h}:{}", self.port) }
+        let h = if self.host.contains(':') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        if self.port == default {
+            h
+        } else {
+            format!("{h}:{}", self.port)
+        }
     }
 }
 
@@ -114,7 +142,10 @@ mod tests {
     #[test]
     fn targets_parse() {
         assert_eq!(split_target("10.0.0.5"), Some(("10.0.0.5".into(), None)));
-        assert_eq!(split_target("Staging.Example.com:8443"), Some(("staging.example.com".into(), Some(8443))));
+        assert_eq!(
+            split_target("Staging.Example.com:8443"),
+            Some(("staging.example.com".into(), Some(8443)))
+        );
         assert_eq!(split_target("[::1]:8080"), Some(("::1".into(), Some(8080))));
         assert_eq!(split_target("::1"), Some(("::1".into(), None)));
         assert_eq!(split_target("host:x"), None);
@@ -125,22 +156,46 @@ mod tests {
 
     #[test]
     fn the_most_specific_rule_wins() {
-        let rules = vec![rule("*.example.com", "10.0.0.1"), rule("api.example.com", "10.0.0.2:8443"), rule("other.org", "127.0.0.1")];
+        let rules = vec![
+            rule("*.example.com", "10.0.0.1"),
+            rule("api.example.com", "10.0.0.2:8443"),
+            rule("other.org", "127.0.0.1"),
+        ];
         let r = lookup(&rules, "api.example.com", 443).unwrap();
         assert_eq!((r.host.as_str(), r.port), ("10.0.0.2", 8443));
         assert_eq!(r.note, "api.example.com:443 → 10.0.0.2:8443");
         let r = lookup(&rules, "www.example.com", 80).unwrap();
         assert_eq!((r.host.as_str(), r.port), ("10.0.0.1", 80));
-        assert_eq!(lookup(&rules, "example.com", 443).unwrap().host, "10.0.0.1", "*.x also takes x");
+        assert_eq!(
+            lookup(&rules, "example.com", 443).unwrap().host,
+            "10.0.0.1",
+            "*.x also takes x"
+        );
         assert!(lookup(&rules, "example.org", 443).is_none());
     }
 
     #[test]
     fn urls_are_rewritten_to_the_target() {
-        let r = lookup(&[rule("api.example.com", "staging.example.com:8443")], "api.example.com", 443).unwrap();
-        assert_eq!(rewrite_url("https://api.example.com/v1?x=1", &r).unwrap(), "https://staging.example.com:8443/v1?x=1");
-        let r = lookup(&[rule("api.example.com", "10.0.0.5")], "api.example.com", 443).unwrap();
-        assert_eq!(rewrite_url("https://api.example.com:443/", &r).unwrap(), "https://10.0.0.5/");
+        let r = lookup(
+            &[rule("api.example.com", "staging.example.com:8443")],
+            "api.example.com",
+            443,
+        )
+        .unwrap();
+        assert_eq!(
+            rewrite_url("https://api.example.com/v1?x=1", &r).unwrap(),
+            "https://staging.example.com:8443/v1?x=1"
+        );
+        let r = lookup(
+            &[rule("api.example.com", "10.0.0.5")],
+            "api.example.com",
+            443,
+        )
+        .unwrap();
+        assert_eq!(
+            rewrite_url("https://api.example.com:443/", &r).unwrap(),
+            "https://10.0.0.5/"
+        );
         let r = lookup(&[rule("a", "::1")], "a", 80).unwrap();
         assert_eq!(rewrite_url("http://a/x", &r).unwrap(), "http://[::1]/x");
     }

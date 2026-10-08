@@ -6,7 +6,6 @@ pub mod archive;
 pub mod auth;
 pub mod bodies;
 pub mod collections;
-pub mod ws;
 pub mod compose;
 pub mod diagnostics;
 pub mod dto;
@@ -17,16 +16,19 @@ pub mod launch;
 pub mod logbuf;
 pub mod mock;
 pub mod mockgen;
-pub mod navigator;
+pub mod msgpack;
 pub mod multipart;
+pub mod navigator;
 pub mod pac;
 pub mod plugins;
+pub mod protobuf;
 pub mod rewrite;
 pub mod rules;
 pub mod sanitize;
 pub mod settings;
 pub mod stats;
 pub mod structure;
+pub mod ws;
 
 use anyhow::{Context, Result, anyhow};
 use dto::*;
@@ -94,7 +96,12 @@ impl Paths {
         Self::portable_dir().is_some_and(|d| d == self.data)
     }
     pub fn at(data: PathBuf) -> Paths {
-        Paths { captures: data.join("captures"), settings: data.join("settings.json"), plugin_cache: data.join("plugin-cache"), data }
+        Paths {
+            captures: data.join("captures"),
+            settings: data.join("settings.json"),
+            plugin_cache: data.join("plugin-cache"),
+            data,
+        }
     }
 }
 
@@ -142,6 +149,8 @@ pub struct AppCore {
     engine: RwLock<Option<Arc<dyn CaptureEngine>>>,
     pub(crate) proxy_engine: RwLock<Option<Arc<engine::ProxyEngine>>>,
     pub rules: Option<Arc<rules::Rules>>,
+    /// Protobuf schemas (`.proto` files, reflection), compiled when needed.
+    pub(crate) protobuf: protobuf::Schemas,
     pub(crate) plugin_host: RwLock<Option<Arc<quena_plugin_host::PluginHost>>>,
     /// Plugin loading has finished (successfully or not); see `plugins_ready`.
     pub(crate) plugins_done: std::sync::atomic::AtomicBool,
@@ -177,12 +186,18 @@ impl AppCore {
             paths,
             settings: RwLock::new(settings),
             capture: RwLock::new(capture),
-            jobs: JobManager::new(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 8)),
+            jobs: JobManager::new(
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+                    .clamp(2, 8),
+            ),
             log,
             sink: RwLock::new(None),
             engine: RwLock::new(None),
             proxy_engine: RwLock::new(None),
             rules: Some(rules),
+            protobuf: protobuf::Schemas::default(),
             plugin_host: RwLock::new(None),
             plugins_done: std::sync::atomic::AtomicBool::new(false),
             capture_switch: Mutex::new(()),
@@ -217,7 +232,11 @@ impl AppCore {
             now.second(),
             std::process::id()
         );
-        Ok(Capture::open(paths.captures.join(name), settings.bodies.to_config(), true)?)
+        Ok(Capture::open(
+            paths.captures.join(name),
+            settings.bodies.to_config(),
+            true,
+        )?)
     }
 
     pub fn set_sink(&self, sink: Arc<dyn EventSink>) {
@@ -320,7 +339,14 @@ impl AppCore {
                         l.refresh_sizes();
                     }
                     if cap.index.tick() {
-                        core.emit("list", ListEvent { version: cap.index.version(), total: cap.index.view_len(), count: cap.index.len() });
+                        core.emit(
+                            "list",
+                            ListEvent {
+                                version: cap.index.version(),
+                                total: cap.index.view_len(),
+                                count: cap.index.len(),
+                            },
+                        );
                     }
                     let g = core.jobs.generation();
                     if g != last_jobs_gen && last_jobs.elapsed() >= Duration::from_millis(100) {
@@ -348,7 +374,10 @@ impl AppCore {
                         if keep > 0 {
                             let ids = cap.index.ids_beyond(keep);
                             if !ids.is_empty() {
-                                let set: HashSet<SessionId> = ids.into_iter().filter(|id| cap.live(*id).is_none()).collect();
+                                let set: HashSet<SessionId> = ids
+                                    .into_iter()
+                                    .filter(|id| cap.live(*id).is_none())
+                                    .collect();
                                 cap.remove(&set);
                             }
                         }
@@ -477,7 +506,11 @@ impl AppCore {
             };
             if !fs.enabled {
                 // Only the QuickExec expression applies.
-                fs = FilterSettings { enabled: true, expression: fs.expression, ..Default::default() };
+                fs = FilterSettings {
+                    enabled: true,
+                    expression: fs.expression,
+                    ..Default::default()
+                };
             }
         }
         let f = Filter::compile(&fs).map_err(|e| anyhow!("filter: {e}"))?;
@@ -494,7 +527,14 @@ impl AppCore {
         let cap = self.capture();
         cap.clear();
         cap.reset_numbering();
-        self.emit("list", ListEvent { version: cap.index.version(), total: 0, count: 0 });
+        self.emit(
+            "list",
+            ListEvent {
+                version: cap.index.version(),
+                total: 0,
+                count: 0,
+            },
+        );
         // The report refers to session ids that restart now.
         self.diag_reset();
     }
@@ -502,7 +542,11 @@ impl AppCore {
     pub fn remove_except(&self, keep: Vec<SessionId>) {
         let cap = self.capture();
         let keep: HashSet<SessionId> = keep.into_iter().collect();
-        let ids: HashSet<SessionId> = cap.index.find_all(|s| !keep.contains(&s.id)).into_iter().collect();
+        let ids: HashSet<SessionId> = cap
+            .index
+            .find_all(|s| !keep.contains(&s.id))
+            .into_iter()
+            .collect();
         cap.remove(&ids);
     }
 
@@ -541,7 +585,11 @@ impl AppCore {
             Command::Select(e) => {
                 let ids = cap.index.find(|s| e.eval(s));
                 let n = ids.len();
-                QuickExecResult { select: Some(ids), message: Some(format!("{n} session(s) selected")), ..Default::default() }
+                QuickExecResult {
+                    select: Some(ids),
+                    message: Some(format!("{n} session(s) selected")),
+                    ..Default::default()
+                }
             }
             Command::Filter(expr) => {
                 *self.quick_filter.write() = expr.clone();
@@ -556,7 +604,8 @@ impl AppCore {
                 QuickExecResult::msg("All sessions removed")
             }
             Command::KeepOnly(e) => {
-                let ids: HashSet<SessionId> = cap.index.find_all(|s| !e.eval(s)).into_iter().collect();
+                let ids: HashSet<SessionId> =
+                    cap.index.find_all(|s| !e.eval(s)).into_iter().collect();
                 let n = ids.len();
                 cap.remove(&ids);
                 QuickExecResult::msg(format!("{n} session(s) removed"))
@@ -567,23 +616,41 @@ impl AppCore {
                 cap.remove(&ids);
                 QuickExecResult::msg(format!("{removed} session(s) removed"))
             }
-            Command::Help => QuickExecResult { message: Some(quickexec::HELP.into()), action: Some("help".into()), ..Default::default() },
-            Command::Dump => QuickExecResult { action: Some("dump".into()), ..Default::default() },
+            Command::Help => QuickExecResult {
+                message: Some(quickexec::HELP.into()),
+                action: Some("help".into()),
+                ..Default::default()
+            },
+            Command::Dump => QuickExecResult {
+                action: Some("dump".into()),
+                ..Default::default()
+            },
             Command::Capture(on) => {
-                let r = if on { self.start_capture() } else { self.stop_capture() };
+                let r = if on {
+                    self.start_capture()
+                } else {
+                    self.stop_capture()
+                };
                 match r {
-                    Ok(()) => QuickExecResult::msg(if on { "Capturing" } else { "Capture stopped" }),
+                    Ok(()) => {
+                        QuickExecResult::msg(if on { "Capturing" } else { "Capture stopped" })
+                    }
                     Err(e) => QuickExecResult::error(e.to_string()),
                 }
             }
-            Command::BreakRequest(t) | Command::BreakResponse(t) | Command::BreakStatus(t) | Command::BreakMethod(t)
+            Command::BreakRequest(t)
+            | Command::BreakResponse(t)
+            | Command::BreakStatus(t)
+            | Command::BreakMethod(t)
                 if self.rules.is_none() =>
             {
                 let _ = t;
                 QuickExecResult::error("breakpoints unavailable")
             }
             Command::BreakRequest(t) => self.set_bp(|b| b.request_url = target_text(&t), "bpu"),
-            Command::BreakResponse(t) => self.set_bp(|b| b.response_url = target_text(&t), "bpafter"),
+            Command::BreakResponse(t) => {
+                self.set_bp(|b| b.response_url = target_text(&t), "bpafter")
+            }
             Command::BreakStatus(t) => self.set_bp(
                 |b| {
                     b.status = match t {
@@ -610,10 +677,16 @@ impl AppCore {
     }
 
     fn set_bp(&self, f: impl FnOnce(&mut rules::BreakpointState), name: &str) -> QuickExecResult {
-        let Some(r) = &self.rules else { return QuickExecResult::error("breakpoints unavailable") };
+        let Some(r) = &self.rules else {
+            return QuickExecResult::error("breakpoints unavailable");
+        };
         r.update_breakpoints(f);
         let labels = r.breakpoints().labels();
-        QuickExecResult::msg(if labels.is_empty() { format!("{name}: breakpoints cleared") } else { format!("Breakpoints: {}", labels.join(", ")) })
+        QuickExecResult::msg(if labels.is_empty() {
+            format!("{name}: breakpoints cleared")
+        } else {
+            format!("Breakpoints: {}", labels.join(", "))
+        })
     }
 
     // ------------------------------------------------------------------ jobs
@@ -625,7 +698,10 @@ impl AppCore {
     /// Clean shutdown.
     pub fn shutdown(self: &Arc<Self>) {
         // Idempotent: window close, RunEvent::Exit and signals may all call this.
-        if self.shut_down.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        if self
+            .shut_down
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
             return;
         }
         let _ = self.stop_capture();
@@ -651,7 +727,14 @@ impl AppCore {
         let cap = self.capture();
         cap.index.set_group(*self.group.read());
         cap.index.tick();
-        self.emit("list", ListEvent { version: cap.index.version() + 1, total: cap.index.view_len(), count: cap.index.len() });
+        self.emit(
+            "list",
+            ListEvent {
+                version: cap.index.version() + 1,
+                total: cap.index.view_len(),
+                count: cap.index.len(),
+            },
+        );
         if let Some(e) = self.engine() {
             e.capture_changed(self);
         }
@@ -669,7 +752,10 @@ impl AppCore {
 
     pub fn recoverable_captures(&self) -> Vec<quena_store::RecoverableCapture> {
         let current = self.capture().dir.clone();
-        quena_store::find_recoverable(&self.paths.captures).into_iter().filter(|c| c.dir != current).collect()
+        quena_store::find_recoverable(&self.paths.captures)
+            .into_iter()
+            .filter(|c| c.dir != current)
+            .collect()
     }
 
     pub fn recover_capture(self: &Arc<Self>, dir: PathBuf) -> Result<()> {
@@ -692,8 +778,14 @@ impl AppCore {
 /// Copy a state file that failed to parse next to itself (`name.corrupt-<unix time>`), so a
 /// later save does not destroy the user's data. Returns the backup's file name.
 pub(crate) fn keep_corrupt(path: &std::path::Path) -> String {
-    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
     name.push(format!(".corrupt-{ts}"));
     let aside = path.with_file_name(&name);
     match std::fs::copy(path, &aside) {
@@ -705,9 +797,14 @@ pub(crate) fn keep_corrupt(path: &std::path::Path) -> String {
 pub fn init_tracing() -> Arc<LogBuffer> {
     use tracing_subscriber::prelude::*;
     let buf = LogBuffer::new(10_000);
-    let filter = tracing_subscriber::EnvFilter::try_from_env("QUENA_LOG").unwrap_or_else(|_| "info,quena=debug".into());
+    let filter = tracing_subscriber::EnvFilter::try_from_env("QUENA_LOG")
+        .unwrap_or_else(|_| "info,quena=debug".into());
     let _ = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr).with_filter(filter))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(filter),
+        )
         .with(logbuf::LogLayer(buf.clone()))
         .try_init();
     buf
@@ -718,7 +815,11 @@ impl AppCore {
     pub fn remove_where(&self, expr: &str) -> Result<usize> {
         let e = quena_query::expr::parse(expr).map_err(|e| anyhow!("{e}"))?;
         let cap = self.capture();
-        let ids: HashSet<SessionId> = cap.index.find_all(|s| e.eval(s) && cap.live(s.id).is_none()).into_iter().collect();
+        let ids: HashSet<SessionId> = cap
+            .index
+            .find_all(|s| e.eval(s) && cap.live(s.id).is_none())
+            .into_iter()
+            .collect();
         let n = ids.len();
         cap.remove(&ids);
         Ok(n)
@@ -727,13 +828,24 @@ impl AppCore {
     /// Summaries for a set of sessions (Timeline, copy …); at most 5000.
     pub fn summaries(&self, ids: &[SessionId]) -> Vec<quena_model::SessionSummary> {
         let cap = self.capture();
-        ids.iter().take(5000).filter_map(|id| cap.index.get(*id)).collect()
+        ids.iter()
+            .take(5000)
+            .filter_map(|id| cap.index.get(*id))
+            .collect()
     }
 
     /// Timers of sessions for the waterfall (at most 500).
     pub fn timers(&self, ids: &[SessionId]) -> Vec<SessionTimers> {
         let cap = self.capture();
-        ids.iter().take(500).filter_map(|id| cap.detail(*id).map(|d| SessionTimers { id: *id, timers: d.timers })).collect()
+        ids.iter()
+            .take(500)
+            .filter_map(|id| {
+                cap.detail(*id).map(|d| SessionTimers {
+                    id: *id,
+                    timers: d.timers,
+                })
+            })
+            .collect()
     }
 }
 
@@ -751,7 +863,11 @@ mod settings_tests {
     #[test]
     fn update_settings_keeps_the_sanitize_options_of_the_core() {
         let dir = tempfile::tempdir().unwrap();
-        let core = AppCore::new(Paths::at(dir.path().to_path_buf()), logbuf::LogBuffer::new(10)).unwrap();
+        let core = AppCore::new(
+            Paths::at(dir.path().to_path_buf()),
+            logbuf::LogBuffer::new(10),
+        )
+        .unwrap();
         // A UI copy taken before an export ...
         let stale = core.settings();
         // ... the export remembers its options ...

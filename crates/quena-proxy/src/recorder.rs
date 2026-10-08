@@ -14,9 +14,20 @@ pub type RecKey = u64;
 pub type OnDone = Box<dyn FnOnce(Body, bool) + Send>;
 
 enum Msg {
-    Open { key: RecKey, writer: BodyWriter, done: OnDone },
-    Chunk { key: RecKey, data: Bytes },
-    End { key: RecKey, dropped: u64, aborted: bool },
+    Open {
+        key: RecKey,
+        writer: BodyWriter,
+        done: OnDone,
+    },
+    Chunk {
+        key: RecKey,
+        data: Bytes,
+    },
+    End {
+        key: RecKey,
+        dropped: u64,
+        aborted: bool,
+    },
 }
 
 struct Inner {
@@ -34,10 +45,18 @@ impl Recorder {
         let mut workers = Vec::new();
         for i in 0..threads.max(1) {
             let (tx, rx) = crossbeam_channel::bounded::<Msg>(16 * 1024);
-            std::thread::Builder::new().name(format!("quena-rec-{i}")).spawn(move || worker(rx)).expect("spawn recorder");
+            std::thread::Builder::new()
+                .name(format!("quena-rec-{i}"))
+                .spawn(move || worker(rx))
+                .expect("spawn recorder");
             workers.push(tx);
         }
-        Recorder(Arc::new(Inner { workers, next: AtomicU64::new(1), lossless: AtomicBool::new(false), dropped: Default::default() }))
+        Recorder(Arc::new(Inner {
+            workers,
+            next: AtomicU64::new(1),
+            lossless: AtomicBool::new(false),
+            dropped: Default::default(),
+        }))
     }
 
     pub fn set_lossless(&self, on: bool) {
@@ -78,7 +97,11 @@ impl Recorder {
 
     pub fn end(&self, key: RecKey, aborted: bool) {
         let dropped = self.0.dropped.lock().remove(&key).unwrap_or(0);
-        let _ = self.tx(key).send(Msg::End { key, dropped, aborted });
+        let _ = self.tx(key).send(Msg::End {
+            key,
+            dropped,
+            aborted,
+        });
     }
 }
 
@@ -107,7 +130,11 @@ fn handle(open: &mut HashMap<RecKey, (BodyWriter, OnDone)>, m: Msg) {
                 }
             }
         }
-        Msg::End { key, dropped, aborted } => {
+        Msg::End {
+            key,
+            dropped,
+            aborted,
+        } => {
             if let Some((mut w, done)) = open.remove(&key) {
                 w.add_dropped(dropped);
                 let body = w.finish();

@@ -9,8 +9,8 @@ use quena_app_core::rewrite::{Op, Phase, RewriteRule};
 use quena_app_core::rules::{BreakpointState, Resume, Rule};
 use quena_app_core::sanitize::{BodyMode, SanitizeOptions, Sanitizer};
 use quena_app_core::settings::McpAccess;
-use quena_formats::http_file::Access;
 use quena_body::Body;
+use quena_formats::http_file::Access;
 use quena_model::{Headers, SessionDetail, SessionId, SessionSummary, flags};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -166,7 +166,12 @@ static TOOLS: &[Tool] = &[
         description: "The requests of a .http file (JetBrains HTTP Client / VS Code REST Client format) with variables resolved for an environment of http-client.env.json (and http-client.private.env.json) next to it; also lists the environments and parse warnings. `path` is relative to the agents' folder (see `status`) or inside it.",
         write: false,
         destructive: false,
-        schema: || req(json!({ "path": { "type": "string" }, "env": { "type": "string", "description": "Environment name" } }), &["path"]),
+        schema: || {
+            req(
+                json!({ "path": { "type": "string" }, "env": { "type": "string", "description": "Environment name" } }),
+                &["path"],
+            )
+        },
         run: list_http_requests,
     },
     Tool {
@@ -191,7 +196,11 @@ static TOOLS: &[Tool] = &[
         description: "Remove sessions from the capture: those matching `filter`, or all when no filter is given.",
         write: true,
         destructive: true,
-        schema: || obj(json!({ "filter": { "type": "string", "description": "Filter expression; omit to remove all" } })),
+        schema: || {
+            obj(
+                json!({ "filter": { "type": "string", "description": "Filter expression; omit to remove all" } }),
+            )
+        },
         run: clear_sessions,
     },
     Tool {
@@ -334,7 +343,11 @@ static TOOLS: &[Tool] = &[
         description: "Start an installed browser (Chrome, Edge, Brave, Vivaldi, Chromium, Firefox) with its own profile and Quena as proxy, without the system proxy; capturing starts if it is off. Without `kind`, lists the browsers found instead. Chromium browsers accept Quena's certificates in that profile; Firefox needs the root certificate trusted.",
         write: true,
         destructive: false,
-        schema: || obj(json!({ "kind": { "type": "string", "description": "chrome, edge, brave, vivaldi, chromium or firefox; omit to list" }, "url": { "type": "string" } })),
+        schema: || {
+            obj(
+                json!({ "kind": { "type": "string", "description": "chrome, edge, brave, vivaldi, chromium or firefox; omit to list" }, "url": { "type": "string" } }),
+            )
+        },
         run: launch_browser,
     },
     Tool {
@@ -408,7 +421,12 @@ static TOOLS: &[Tool] = &[
         description: "Create mock rules that answer the URLs of these sessions with their recorded responses.",
         write: true,
         destructive: false,
-        schema: || req(json!({ "ids": { "type": "array", "items": { "type": "integer" } }, "exact": { "type": "boolean", "description": "Match the exact URL (default true)" } }), &["ids"]),
+        schema: || {
+            req(
+                json!({ "ids": { "type": "array", "items": { "type": "integer" } }, "exact": { "type": "boolean", "description": "Match the exact URL (default true)" } }),
+                &["ids"],
+            )
+        },
         run: mock_from_sessions,
     },
     Tool {
@@ -451,7 +469,11 @@ static TOOLS: &[Tool] = &[
         description: "Switch all rewrite rules on or off, switch groups of rules off (`disabled_groups`, replaces the list), and set the largest body (KiB, default 4096) they change.",
         write: true,
         destructive: false,
-        schema: || obj(json!({ "enabled": { "type": "boolean" }, "max_body_kb": { "type": "integer" }, "disabled_groups": { "type": "array", "items": { "type": "string" } } })),
+        schema: || {
+            obj(
+                json!({ "enabled": { "type": "boolean" }, "max_body_kb": { "type": "integer" }, "disabled_groups": { "type": "array", "items": { "type": "string" } } }),
+            )
+        },
         run: set_rewrite_options,
     },
     Tool {
@@ -634,13 +656,17 @@ pub fn list(access: McpAccess) -> Vec<Value> {
 pub fn call(core: &Arc<AppCore>, access: McpAccess, name: &str, args: Value) -> Option<Value> {
     let tool = TOOLS.iter().find(|t| t.name == name)?;
     let r = if tool.write && access != McpAccess::Full {
-        Err(anyhow!("`{name}` changes Quena; the user has to grant full control in Quena → Options → MCP"))
+        Err(anyhow!(
+            "`{name}` changes Quena; the user has to grant full control in Quena → Options → MCP"
+        ))
     } else {
         (tool.run)(core, args)
     };
     Some(match r {
         Ok(v) => json!({ "content": [{ "type": "text", "text": v.to_string() }] }),
-        Err(e) => json!({ "content": [{ "type": "text", "text": format!("{e:#}") }], "isError": true }),
+        Err(e) => {
+            json!({ "content": [{ "type": "text", "text": format!("{e:#}") }], "isError": true })
+        }
     })
 }
 
@@ -667,7 +693,11 @@ fn flag_names(f: u32) -> Vec<&'static str> {
         (flags::SERVER_ABORTED, "serverAborted"),
         (flags::COMPOSED, "composed"),
     ];
-    NAMES.iter().filter(|(b, _)| f & b != 0).map(|(_, n)| *n).collect()
+    NAMES
+        .iter()
+        .filter(|(b, _)| f & b != 0)
+        .map(|(_, n)| *n)
+        .collect()
 }
 
 /// What leaves Quena. Unless the user allowed secrets, credentials, tokens, cookies and
@@ -686,7 +716,9 @@ impl View {
         let mut o = SanitizeOptions::preset("credentials").unwrap_or_default();
         o.bodies = BodyMode::Truncate;
         o.truncate_kib = u32::try_from((window >> 10) + 2).unwrap_or(u32::MAX);
-        View { red: Some(Sanitizer::new(o)) }
+        View {
+            red: Some(Sanitizer::new(o)),
+        }
     }
 
     fn redacts(&self) -> bool {
@@ -734,16 +766,36 @@ impl View {
 
     /// The session as it may be shown, with the first `window` (+1) bytes of each body
     /// without Content-Encoding (`decoded`), or raw when secrets may be shown.
-    fn session(&mut self, core: &AppCore, id: SessionId, window: usize, decoded: bool) -> Result<Shown> {
+    fn session(
+        &mut self,
+        core: &AppCore,
+        id: SessionId,
+        window: usize,
+        decoded: bool,
+    ) -> Result<Shown> {
         let cap = core.capture();
-        let d = cap.detail(id).ok_or_else(|| anyhow!("session #{id} not found"))?;
-        let (req, resp) = cap.bodies_of(id).ok_or_else(|| anyhow!("session #{id} not found"))?;
+        let d = cap
+            .detail(id)
+            .ok_or_else(|| anyhow!("session #{id} not found"))?;
+        let (req, resp) = cap
+            .bodies_of(id)
+            .ok_or_else(|| anyhow!("session #{id} not found"))?;
         let stored = (req.len(), resp.len());
-        let complete = (req.is_complete() && !req.is_truncated(), resp.is_complete() && !resp.is_truncated());
+        let complete = (
+            req.is_complete() && !req.is_truncated(),
+            resp.is_complete() && !resp.is_truncated(),
+        );
         let want = window.saturating_add(1);
         if let Some(r) = &mut self.red {
             let s = r.session(&d, &req, &resp);
-            return Ok(Shown { detail: s.detail, req: s.request, resp: s.response, stored, complete, decoded: true });
+            return Ok(Shown {
+                detail: s.detail,
+                req: s.request,
+                resp: s.response,
+                stored,
+                complete,
+                decoded: true,
+            });
         }
         let read = |b: &Body, h: &Headers| {
             if decoded {
@@ -754,8 +806,18 @@ impl View {
         };
         let empty = Headers::default();
         let req_bytes = read(&req, &d.request.headers);
-        let resp_bytes = read(&resp, d.response.as_ref().map(|r| &r.headers).unwrap_or(&empty));
-        Ok(Shown { detail: d, req: req_bytes, resp: resp_bytes, stored, complete, decoded })
+        let resp_bytes = read(
+            &resp,
+            d.response.as_ref().map(|r| &r.headers).unwrap_or(&empty),
+        );
+        Ok(Shown {
+            detail: d,
+            req: req_bytes,
+            resp: resp_bytes,
+            stored,
+            complete,
+            decoded,
+        })
     }
 }
 
@@ -789,9 +851,20 @@ fn headers_json(h: &Headers) -> Value {
 
 /// `max` bytes from `offset` of a body's leading `bytes` as text (or a description of a
 /// binary body).
-fn piece(bytes: &[u8], headers: &Headers, offset: usize, max: usize, stored: u64, complete: bool, decoded: bool) -> Value {
+fn piece(
+    bytes: &[u8],
+    headers: &Headers,
+    offset: usize,
+    max: usize,
+    stored: u64,
+    complete: bool,
+    decoded: bool,
+) -> Value {
     let ct = headers.get("content-type");
-    let encoded = !decoded && headers.get("content-encoding").is_some_and(|c| !c.trim().is_empty() && !c.eq_ignore_ascii_case("identity"));
+    let encoded = !decoded
+        && headers
+            .get("content-encoding")
+            .is_some_and(|c| !c.trim().is_empty() && !c.eq_ignore_ascii_case("identity"));
     let start = offset.min(bytes.len());
     let stop = start.saturating_add(max).min(bytes.len());
     let mut v = json!({ "storedLength": stored, "offset": start, "more": bytes.len() > stop });
@@ -812,17 +885,34 @@ fn piece(bytes: &[u8], headers: &Headers, offset: usize, max: usize, stored: u64
     let textual = !encoded
         && match ct {
             Some(c) if is_textual_type(c) => true,
-            Some(c) if c.starts_with("image/") || c.starts_with("video/") || c.starts_with("audio/") || c.starts_with("font/") => false,
+            Some(c)
+                if c.starts_with("image/")
+                    || c.starts_with("video/")
+                    || c.starts_with("audio/")
+                    || c.starts_with("font/") =>
+            {
+                false
+            }
             _ => sniff_text(sample),
         };
     if !textual {
         v["binary"] = json!(true);
         return v;
     }
-    let det = quena_body::charset::detect(ct, &bytes[..bytes.len().min(quena_body::text::DETECT_PREFIX)]);
-    let from = if start == 0 { det.bom_len.min(stop) } else { start };
+    let det = quena_body::charset::detect(
+        ct,
+        &bytes[..bytes.len().min(quena_body::text::DETECT_PREFIX)],
+    );
+    let from = if start == 0 {
+        det.bom_len.min(stop)
+    } else {
+        start
+    };
     v["charset"] = json!(det.name());
-    v["text"] = json!(quena_body::text::decode_piece(&bytes[from..stop], det.encoding));
+    v["text"] = json!(quena_body::text::decode_piece(
+        &bytes[from..stop],
+        det.encoding
+    ));
     v
 }
 
@@ -837,7 +927,9 @@ fn session_json(core: &AppCore, id: SessionId, bodies: bool, max: usize) -> Resu
         "connection": d.connection,
     });
     if view.redacts() {
-        v["redacted"] = json!("credentials, tokens and secret values are replaced (Quena → Options → AI agents)");
+        v["redacted"] = json!(
+            "credentials, tokens and secret values are replaced (Quena → Options → AI agents)"
+        );
     }
     if let Some(r) = &d.response {
         v["response"] = json!({ "status": r.status, "reason": r.reason, "version": r.version, "headers": headers_json(&r.headers) });
@@ -846,12 +938,34 @@ fn session_json(core: &AppCore, id: SessionId, bodies: bool, max: usize) -> Resu
         v["error"] = json!(e);
     }
     if !d.extra_flags.is_empty() {
-        v["notes"] = json!(d.extra_flags.iter().filter(|(k, _)| k.starts_with("x-quena")).map(|(k, v)| json!({ k: v })).collect::<Vec<_>>());
+        v["notes"] = json!(
+            d.extra_flags
+                .iter()
+                .filter(|(k, _)| k.starts_with("x-quena"))
+                .map(|(k, v)| json!({ k: v }))
+                .collect::<Vec<_>>()
+        );
     }
     if bodies {
-        v["request"]["body"] = piece(&s.req, &d.request.headers, 0, max, s.stored.0, s.complete.0, s.decoded);
+        v["request"]["body"] = piece(
+            &s.req,
+            &d.request.headers,
+            0,
+            max,
+            s.stored.0,
+            s.complete.0,
+            s.decoded,
+        );
         if let Some(r) = &d.response {
-            v["response"]["body"] = piece(&s.resp, &r.headers, 0, max, s.stored.1, s.complete.1, s.decoded);
+            v["response"]["body"] = piece(
+                &s.resp,
+                &r.headers,
+                0,
+                max,
+                s.stored.1,
+                s.complete.1,
+                s.decoded,
+            );
         }
     }
     Ok(v)
@@ -866,7 +980,9 @@ fn page(n: Option<usize>) -> usize {
 }
 
 fn rules(core: &AppCore) -> Result<&Arc<quena_app_core::rules::Rules>> {
-    core.rules.as_ref().ok_or_else(|| anyhow!("rules unavailable"))
+    core.rules
+        .as_ref()
+        .ok_or_else(|| anyhow!("rules unavailable"))
 }
 
 /// The folder agents may use, created when missing.
@@ -885,13 +1001,22 @@ fn inside(core: &AppCore, path: &str) -> Result<PathBuf> {
     let resolved = match p.canonicalize() {
         Ok(c) => c,
         Err(_) => {
-            let name = p.file_name().ok_or_else(|| anyhow!("{} names no file", p.display()))?;
+            let name = p
+                .file_name()
+                .ok_or_else(|| anyhow!("{} names no file", p.display()))?;
             let parent = p.parent().unwrap_or(&root);
-            parent.canonicalize().with_context(|| format!("folder {} does not exist", parent.display()))?.join(name)
+            parent
+                .canonicalize()
+                .with_context(|| format!("folder {} does not exist", parent.display()))?
+                .join(name)
         }
     };
     if !resolved.starts_with(&root) {
-        bail!("{} is outside the folder agents may use ({}); the user can change it in Quena → Options → AI agents", resolved.display(), root.display());
+        bail!(
+            "{} is outside the folder agents may use ({}); the user can change it in Quena → Options → AI agents",
+            resolved.display(),
+            root.display()
+        );
     }
     Ok(resolved)
 }
@@ -952,7 +1077,13 @@ fn list_sessions(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let total = ids.len();
     let cap = core.capture();
     let mut view = View::new(core, 0);
-    let rows: Vec<Value> = ids.iter().skip(a.offset.unwrap_or(0)).take(page(a.limit)).filter_map(|id| cap.index.get(*id)).map(|s| view.row(&s)).collect();
+    let rows: Vec<Value> = ids
+        .iter()
+        .skip(a.offset.unwrap_or(0))
+        .take(page(a.limit))
+        .filter_map(|id| cap.index.get(*id))
+        .map(|s| view.row(&s))
+        .collect();
     Ok(json!({ "total": total, "returned": rows.len(), "sessions": rows }))
 }
 
@@ -965,7 +1096,12 @@ struct SessionArgs {
 
 fn get_session(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: SessionArgs = args(a)?;
-    session_json(core, a.id, a.bodies.unwrap_or(true), body_limit(a.max_body_bytes))
+    session_json(
+        core,
+        a.id,
+        a.bodies.unwrap_or(true),
+        body_limit(a.max_body_bytes),
+    )
 }
 
 #[derive(Deserialize)]
@@ -981,19 +1117,44 @@ fn get_body(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: BodyArgs = args(a)?;
     let offset = a.offset.unwrap_or(0);
     if offset > MAX_OFFSET {
-        bail!("offset beyond {} MiB: export the session (export_archive) to read further", MAX_OFFSET >> 20);
+        bail!(
+            "offset beyond {} MiB: export the session (export_archive) to read further",
+            MAX_OFFSET >> 20
+        );
     }
     let len = body_limit(a.length);
     let mut view = View::new(core, offset as usize + len);
     let s = view.session(core, a.id, offset as usize + len, a.decoded.unwrap_or(true))?;
     let empty = Headers::default();
     let mut v = match a.part.as_str() {
-        "request" => piece(&s.req, &s.detail.request.headers, offset as usize, len, s.stored.0, s.complete.0, s.decoded),
-        "response" => piece(&s.resp, s.detail.response.as_ref().map(|r| &r.headers).unwrap_or(&empty), offset as usize, len, s.stored.1, s.complete.1, s.decoded),
+        "request" => piece(
+            &s.req,
+            &s.detail.request.headers,
+            offset as usize,
+            len,
+            s.stored.0,
+            s.complete.0,
+            s.decoded,
+        ),
+        "response" => piece(
+            &s.resp,
+            s.detail
+                .response
+                .as_ref()
+                .map(|r| &r.headers)
+                .unwrap_or(&empty),
+            offset as usize,
+            len,
+            s.stored.1,
+            s.complete.1,
+            s.decoded,
+        ),
         p => bail!("part must be request or response, not {p}"),
     };
     if view.redacts() && a.decoded == Some(false) {
-        v["note"] = json!("raw bytes are not available while secrets are redacted; this is the decoded body");
+        v["note"] = json!(
+            "raw bytes are not available while secrets are redacted; this is the decoded body"
+        );
     }
     Ok(v)
 }
@@ -1032,10 +1193,18 @@ fn search_sessions(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     if done.is_err() {
         core.cancel_job(job);
     }
-    let r = core.take_find_result(job).ok_or_else(|| anyhow!("search result gone"))?;
+    let r = core
+        .take_find_result(job)
+        .ok_or_else(|| anyhow!("search result gone"))?;
     let cap = core.capture();
     let mut view = View::new(core, 0);
-    let rows: Vec<Value> = r.ids.iter().take(page(a.limit)).filter_map(|id| cap.index.get(*id)).map(|s| view.row(&s)).collect();
+    let rows: Vec<Value> = r
+        .ids
+        .iter()
+        .take(page(a.limit))
+        .filter_map(|id| cap.index.get(*id))
+        .map(|s| view.row(&s))
+        .collect();
     Ok(json!({ "total": r.ids.len(), "complete": done.is_ok() && r.done, "sessions": rows }))
 }
 
@@ -1111,30 +1280,53 @@ fn preview_rewrite(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let mut rule = RewriteRule::default();
     a.rule.apply(&mut rule);
     const LIMIT: usize = 8 << 20;
-    let part = a.part.unwrap_or_else(|| if rule.phase == Phase::Request { "request".into() } else { "response".into() });
+    let part = a.part.unwrap_or_else(|| {
+        if rule.phase == Phase::Request {
+            "request".into()
+        } else {
+            "response".into()
+        }
+    });
     let s = View::new(core, LIMIT).session(core, a.id, LIMIT, true)?;
     let (bytes, headers) = match part.as_str() {
         "request" => (s.req, s.detail.request.headers.clone()),
-        "response" => (s.resp, s.detail.response.as_ref().map(|r| r.headers.clone()).unwrap_or_default()),
+        "response" => (
+            s.resp,
+            s.detail
+                .response
+                .as_ref()
+                .map(|r| r.headers.clone())
+                .unwrap_or_default(),
+        ),
         p => bail!("part must be request or response, not {p}"),
     };
     if bytes.len() > LIMIT {
         bail!("body larger than {} MiB", LIMIT >> 20);
     }
-    let det = quena_body::charset::detect(headers.get("content-type"), &bytes[..bytes.len().min(quena_body::text::DETECT_PREFIX)]);
-    let text = quena_body::charset::decode(&bytes[det.bom_len.min(bytes.len())..], det.encoding).0.into_owned();
+    let det = quena_body::charset::detect(
+        headers.get("content-type"),
+        &bytes[..bytes.len().min(quena_body::text::DETECT_PREFIX)],
+    );
+    let text = quena_body::charset::decode(&bytes[det.bom_len.min(bytes.len())..], det.encoding)
+        .0
+        .into_owned();
     let (out, notes) = rules(core)?.rewrite.preview(&rule, &text)?;
     let max = body_limit(a.max_body_bytes);
     let mut cut = out.len().min(max);
     while !out.is_char_boundary(cut) {
         cut -= 1;
     }
-    Ok(json!({ "changed": out != text, "notes": notes, "length": out.len(), "more": out.len() > cut, "text": &out[..cut] }))
+    Ok(
+        json!({ "changed": out != text, "notes": notes, "length": out.len(), "more": out.len() > cut, "text": &out[..cut] }),
+    )
 }
 
 /// `.http` files from agents: body files only from their folder, no process environment.
 fn http_access(root: &std::path::Path) -> Access<'_> {
-    Access { process_env: false, root: Some(root) }
+    Access {
+        process_env: false,
+        root: Some(root),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1146,7 +1338,11 @@ struct HttpListArgs {
 fn list_http_requests(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: HttpListArgs = args(a)?;
     let root = files_root(core)?;
-    let mut l = core.http_requests(&inside(core, &a.path)?, a.env.as_deref(), &http_access(&root))?;
+    let mut l = core.http_requests(
+        &inside(core, &a.path)?,
+        a.env.as_deref(),
+        &http_access(&root),
+    )?;
     let mut view = View::new(core, 0);
     for r in &mut l.requests {
         r.url = view.url(&r.url);
@@ -1167,7 +1363,13 @@ fn run_http_file(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: HttpRunArgs = args(a)?;
     let wait = Duration::from_millis(a.wait_ms.unwrap_or(30_000).min(300_000));
     let root = files_root(core)?;
-    let mut results = core.run_http_file(&inside(core, &a.path)?, a.env.as_deref(), &a.names, wait, &http_access(&root))?;
+    let mut results = core.run_http_file(
+        &inside(core, &a.path)?,
+        a.env.as_deref(),
+        &a.names,
+        wait,
+        &http_access(&root),
+    )?;
     let mut view = View::new(core, 0);
     for r in &mut results {
         r.url = view.url(&r.url);
@@ -1183,13 +1385,22 @@ fn sessions_to_http_file(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         _ => matching_ids(core, a.filter.as_deref(), 0)?,
     };
     let redact = !core.settings().mcp.include_secrets;
-    Ok(serde_json::to_value(core.sessions_to_http(&ids, &path, a.overwrite, redact)?)?)
+    Ok(serde_json::to_value(core.sessions_to_http(
+        &ids,
+        &path,
+        a.overwrite,
+        redact,
+    )?)?)
 }
 
 fn get_breakpoints(core: &Arc<AppCore>, _: Value) -> Result<Value> {
     let r = rules(core)?;
     let mut view = View::new(core, 0);
-    let paused: Vec<Value> = r.paused().into_iter().map(|p| json!({ "id": p.id, "phase": p.phase, "url": view.url(&p.url), "since": p.since })).collect();
+    let paused: Vec<Value> = r
+        .paused()
+        .into_iter()
+        .map(|p| json!({ "id": p.id, "phase": p.phase, "url": view.url(&p.url), "since": p.since }))
+        .collect();
     Ok(json!({ "breakpoints": r.breakpoints(), "paused": paused }))
 }
 
@@ -1202,7 +1413,11 @@ struct OnArgs {
 
 fn set_capture(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: OnArgs = args(a)?;
-    if a.on { core.start_capture()? } else { core.stop_capture()? }
+    if a.on {
+        core.start_capture()?
+    } else {
+        core.stop_capture()?
+    }
     Ok(json!({ "capturing": core.status().engine.capturing }))
 }
 
@@ -1233,7 +1448,12 @@ struct SendArgs {
 
 fn send_request(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: SendArgs = args(a)?;
-    let headers = a.headers.iter().map(|(n, v)| format!("{n}: {v}")).collect::<Vec<_>>().join("\n");
+    let headers = a
+        .headers
+        .iter()
+        .map(|(n, v)| format!("{n}: {v}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let id = core.compose(ComposeRequest {
         method: a.method,
         url: a.url,
@@ -1267,9 +1487,25 @@ struct ReplayArgs {
 
 fn replay_sessions(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: ReplayArgs = args(a)?;
-    let since = core.capture().index.find_all(|_| true).into_iter().max().unwrap_or(0);
-    let n = core.replay(a.ids, ReplayOptions { unconditional: a.unconditional, count: a.count.unwrap_or(1).clamp(1, 1000), breakpoint: false, sequential: a.sequential })?;
-    Ok(json!({ "started": n, "hint": format!("new sessions appear with ids above {since} (list_sessions since_id={since})") }))
+    let since = core
+        .capture()
+        .index
+        .find_all(|_| true)
+        .into_iter()
+        .max()
+        .unwrap_or(0);
+    let n = core.replay(
+        a.ids,
+        ReplayOptions {
+            unconditional: a.unconditional,
+            count: a.count.unwrap_or(1).clamp(1, 1000),
+            breakpoint: false,
+            sequential: a.sequential,
+        },
+    )?;
+    Ok(
+        json!({ "started": n, "hint": format!("new sessions appear with ids above {since} (list_sessions since_id={since})") }),
+    )
 }
 
 #[derive(Deserialize)]
@@ -1289,8 +1525,21 @@ struct AddRuleArgs {
 fn add_mock_rule(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: AddRuleArgs = args(a)?;
     check_action(core, &a.action)?;
-    let comment = if a.comment.is_empty() { "added by an MCP client".to_string() } else { a.comment };
-    let rule = Rule { id: 0, enabled: true, match_: a.match_, action: a.action, latency_ms: a.latency_ms, match_once: a.match_once, comment, hits: 0 };
+    let comment = if a.comment.is_empty() {
+        "added by an MCP client".to_string()
+    } else {
+        a.comment
+    };
+    let rule = Rule {
+        id: 0,
+        enabled: true,
+        match_: a.match_,
+        action: a.action,
+        latency_ms: a.latency_ms,
+        match_once: a.match_once,
+        comment,
+        hits: 0,
+    };
     let id = rules(core)?.add_rule(rule, a.position.as_deref() != Some("last"))?;
     Ok(json!({ "id": id }))
 }
@@ -1313,7 +1562,9 @@ fn update_mock_rule(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         check_action(core, action)?;
     }
     let found = rules(core)?.update_autoresponder(true, |s| {
-        let Some(r) = s.rules.iter_mut().find(|r| r.id == a.id) else { return false };
+        let Some(r) = s.rules.iter_mut().find(|r| r.id == a.id) else {
+            return false;
+        };
         if let Some(v) = a.enabled {
             r.enabled = v;
         }
@@ -1380,7 +1631,9 @@ fn set_mock_options(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         }
     })?;
     let s = r.autoresponder();
-    Ok(json!({ "enabled": s.enabled, "unmatchedPassthrough": s.unmatched_passthrough, "enableLatency": s.enable_latency }))
+    Ok(
+        json!({ "enabled": s.enabled, "unmatchedPassthrough": s.unmatched_passthrough, "enableLatency": s.enable_latency }),
+    )
 }
 
 fn remap_json(core: &AppCore) -> Value {
@@ -1415,10 +1668,19 @@ fn set_host_remap(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     }
     if a.id.is_some() || a.host.is_some() || a.target.is_some() {
         let i = match &a.id {
-            Some(id) => rm.entries.iter().position(|e| &e.id == id).ok_or_else(|| anyhow!("no host remapping entry {id}"))?,
+            Some(id) => rm
+                .entries
+                .iter()
+                .position(|e| &e.id == id)
+                .ok_or_else(|| anyhow!("no host remapping entry {id}"))?,
             None => {
-                let (Some(_), Some(_)) = (&a.host, &a.target) else { bail!("a new entry needs `host` and `target`") };
-                rm.entries.push(quena_app_core::settings::HostRemapEntry { id: format!("mcp-{}", quena_model::now_us()), ..Default::default() });
+                let (Some(_), Some(_)) = (&a.host, &a.target) else {
+                    bail!("a new entry needs `host` and `target`")
+                };
+                rm.entries.push(quena_app_core::settings::HostRemapEntry {
+                    id: format!("mcp-{}", quena_model::now_us()),
+                    ..Default::default()
+                });
                 if a.enabled_all.is_none() {
                     rm.enabled = true;
                 }
@@ -1467,7 +1729,9 @@ struct LaunchArgs {
 fn launch_browser(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: LaunchArgs = args(a)?;
     let Some(kind) = a.kind else {
-        return Ok(json!({ "browsers": core.browsers().iter().map(|b| json!({ "kind": b.kind, "name": b.name })).collect::<Vec<_>>() }));
+        return Ok(
+            json!({ "browsers": core.browsers().iter().map(|b| json!({ "kind": b.kind, "name": b.name })).collect::<Vec<_>>() }),
+        );
     };
     let b = core.launch_browser(&kind, a.url.as_deref())?;
     Ok(json!({ "started": b.name }))
@@ -1535,14 +1799,25 @@ fn set_reverse_proxy(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     if let Some(v) = a.enabled_all {
         rp.enabled = v;
     }
-    let touches_entry = a.id.is_some() || a.target.is_some() || a.listen_port.is_some() || a.paths.is_some();
+    let touches_entry =
+        a.id.is_some() || a.target.is_some() || a.listen_port.is_some() || a.paths.is_some();
     if touches_entry {
         let i = match &a.id {
-            Some(id) => rp.entries.iter().position(|e| &e.id == id).ok_or_else(|| anyhow!("no reverse proxy entry {id}"))?,
+            Some(id) => rp
+                .entries
+                .iter()
+                .position(|e| &e.id == id)
+                .ok_or_else(|| anyhow!("no reverse proxy entry {id}"))?,
             None => {
-                let (Some(_), Some(_)) = (&a.target, a.listen_port) else { bail!("a new entry needs `target` and `listen_port`") };
+                let (Some(_), Some(_)) = (&a.target, a.listen_port) else {
+                    bail!("a new entry needs `target` and `listen_port`")
+                };
                 let id = format!("mcp-{}", quena_model::now_us());
-                rp.entries.push(quena_app_core::settings::ReverseProxyEntry { id, ..Default::default() });
+                rp.entries
+                    .push(quena_app_core::settings::ReverseProxyEntry {
+                        id,
+                        ..Default::default()
+                    });
                 // Adding an entry means using it.
                 if a.enabled_all.is_none() {
                     rp.enabled = true;
@@ -1579,7 +1854,14 @@ fn set_reverse_proxy(core: &Arc<AppCore>, a: Value) -> Result<Value> {
             e.forwarded_headers = v;
         }
         if let Some(v) = a.paths {
-            e.paths = v.into_iter().map(|p| quena_app_core::settings::ReversePathEntry { prefix: p.prefix, target: p.target, strip_prefix: p.strip_prefix }).collect();
+            e.paths = v
+                .into_iter()
+                .map(|p| quena_app_core::settings::ReversePathEntry {
+                    prefix: p.prefix,
+                    target: p.target,
+                    strip_prefix: p.strip_prefix,
+                })
+                .collect();
         }
     }
     core.update_settings(s)?;
@@ -1651,7 +1933,10 @@ struct AddRewriteArgs {
 
 fn add_rewrite_rule(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: AddRewriteArgs = args(a)?;
-    let mut rule = RewriteRule { comment: "added by an MCP client".into(), ..Default::default() };
+    let mut rule = RewriteRule {
+        comment: "added by an MCP client".into(),
+        ..Default::default()
+    };
     a.rule.apply(&mut rule);
     let rw = &rules(core)?.rewrite;
     let id = rw.add(rule, a.position.as_deref() != Some("last"))?;
@@ -1673,7 +1958,9 @@ struct UpdateRewriteArgs {
 fn update_rewrite_rule(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: UpdateRewriteArgs = args(a)?;
     let found = rules(core)?.rewrite.update(|s| {
-        let Some(r) = s.rules.iter_mut().find(|r| r.id == a.id) else { return false };
+        let Some(r) = s.rules.iter_mut().find(|r| r.id == a.id) else {
+            return false;
+        };
         if let Some(v) = a.enabled {
             r.enabled = v;
         }
@@ -1734,7 +2021,9 @@ fn set_rewrite_options(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         }
     })?;
     let s = rw.state();
-    Ok(json!({ "enabled": s.enabled, "maxBodyKb": s.max_body_kb, "disabledGroups": s.disabled_groups }))
+    Ok(
+        json!({ "enabled": s.enabled, "maxBodyKb": s.max_body_kb, "disabledGroups": s.disabled_groups }),
+    )
 }
 
 #[derive(Deserialize)]
@@ -1792,10 +2081,23 @@ struct ResumeArgs {
 
 fn resume_session(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: ResumeArgs = args(a)?;
-    if !matches!(a.action.as_str(), "continue" | "breakOnResponse" | "abort" | "respond") {
+    if !matches!(
+        a.action.as_str(),
+        "continue" | "breakOnResponse" | "abort" | "respond"
+    ) {
         bail!("unknown action {}", a.action);
     }
-    rules(core)?.resume(a.id, Resume { action: a.action, head_text: a.head_text, body_text: a.body_text, body_charset: None, body_file: None, status: a.status })?;
+    rules(core)?.resume(
+        a.id,
+        Resume {
+            action: a.action,
+            head_text: a.head_text,
+            body_text: a.body_text,
+            body_charset: None,
+            body_file: None,
+            status: a.status,
+        },
+    )?;
     Ok(json!({ "resumed": a.id }))
 }
 
@@ -1816,7 +2118,10 @@ fn export_archive(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: ExportArgs = args(a)?;
     let path = inside(core, &a.path)?;
     if path.exists() && !a.overwrite {
-        bail!("{} exists (pass overwrite: true to replace it)", path.display());
+        bail!(
+            "{} exists (pass overwrite: true to replace it)",
+            path.display()
+        );
     }
     let ids = match a.ids {
         Some(ids) if !ids.is_empty() => ids,
@@ -1829,11 +2134,18 @@ fn export_archive(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     // The agent can read the file with its own tools: it gets the same redaction.
     let redact = !core.settings().mcp.include_secrets;
     let job = if redact {
-        core.export_sanitized_quietly(ids, path.clone(), SanitizeOptions::preset("credentials").unwrap_or_default())?
+        core.export_sanitized_quietly(
+            ids,
+            path.clone(),
+            SanitizeOptions::preset("credentials").unwrap_or_default(),
+        )?
     } else {
         core.export_archive(ids, path.clone(), None)?
     };
-    let info = core.jobs.wait(job, Duration::from_secs(600)).map_err(|e| anyhow!("export {e}"))?;
+    let info = core
+        .jobs
+        .wait(job, Duration::from_secs(600))
+        .map_err(|e| anyhow!("export {e}"))?;
     if let Some(e) = info.error {
         bail!("export failed: {e}");
     }
@@ -1847,10 +2159,20 @@ mod tests {
     #[test]
     fn read_only_marks_write_tools() {
         let ro = list(McpAccess::ReadOnly);
-        let desc = |name: &str| ro.iter().find(|t| t["name"] == name).unwrap()["description"].as_str().unwrap().to_string();
+        let desc = |name: &str| {
+            ro.iter().find(|t| t["name"] == name).unwrap()["description"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
         assert!(!desc("list_sessions").contains("Needs full control"));
         assert!(desc("send_request").starts_with("[Needs full control"));
-        assert!(!list(McpAccess::Full).iter().any(|t| t["description"].as_str().unwrap().contains("Needs full control")));
+        assert!(!list(McpAccess::Full).iter().any(|t| {
+            t["description"]
+                .as_str()
+                .unwrap()
+                .contains("Needs full control")
+        }));
         for t in TOOLS {
             let s = (t.schema)();
             assert_eq!(s["type"], "object", "{}", t.name);
@@ -1859,6 +2181,9 @@ mod tests {
 
     #[test]
     fn flags_by_name() {
-        assert_eq!(flag_names(flags::TAMPERED | flags::COMPOSED), vec!["tampered", "composed"]);
+        assert_eq!(
+            flag_names(flags::TAMPERED | flags::COMPOSED),
+            vec!["tampered", "composed"]
+        );
     }
 }

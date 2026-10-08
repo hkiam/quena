@@ -84,7 +84,12 @@ pub fn install_panic_hook(data: &std::path::Path) {
     }));
 }
 
-pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, system_bypass: &[String], pac: Option<Arc<dyn UpstreamResolver>>) -> ProxyConfig {
+pub fn proxy_config(
+    s: &Settings,
+    detected: Option<(String, u16)>,
+    system_bypass: &[String],
+    pac: Option<Arc<dyn UpstreamResolver>>,
+) -> ProxyConfig {
     let mut upstream_bypass = split_list(&s.proxy.upstream_bypass);
     let upstream = if !s.proxy.manual_upstream.trim().is_empty() {
         let (h, p) = split_host_port(s.proxy.manual_upstream.trim(), 8080);
@@ -93,7 +98,12 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, system_bypass
         // Hosts the system proxy's exceptions sent direct go direct from Quena too (Quena
         // sets its own, shorter exceptions, so it now sees these hosts).
         if detected.is_some() {
-            upstream_bypass.extend(system_bypass.iter().map(|b| b.trim().to_string()).filter(|b| !b.is_empty()));
+            upstream_bypass.extend(
+                system_bypass
+                    .iter()
+                    .map(|b| b.trim().to_string())
+                    .filter(|b| !b.is_empty()),
+            );
         }
         detected
     } else {
@@ -131,7 +141,11 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, system_bypass
         reverse: s
             .reverse_proxy
             .active()
-            .filter_map(|e| e.to_route().map_err(|err| tracing::warn!(target: "quena", "reverse proxy {err}")).ok())
+            .filter_map(|e| {
+                e.to_route()
+                    .map_err(|err| tracing::warn!(target: "quena", "reverse proxy {err}"))
+                    .ok()
+            })
             .collect(),
         socks: s.socks.to_port(),
         transparent: s.transparent.to_port(),
@@ -141,7 +155,10 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, system_bypass
 
 fn parse_prefer(s: &str) -> Vec<quena_proxy::Scheme> {
     let mut out = Vec::new();
-    for t in s.split([';', ',', ' ']).map(|t| t.trim().to_ascii_lowercase()) {
+    for t in s
+        .split([';', ',', ' '])
+        .map(|t| t.trim().to_ascii_lowercase())
+    {
         match t.as_str() {
             "negotiate" | "kerberos" => out.push(quena_proxy::Scheme::Negotiate),
             "ntlm" => out.push(quena_proxy::Scheme::Ntlm),
@@ -150,7 +167,11 @@ fn parse_prefer(s: &str) -> Vec<quena_proxy::Scheme> {
         }
     }
     if out.is_empty() {
-        out = vec![quena_proxy::Scheme::Negotiate, quena_proxy::Scheme::Ntlm, quena_proxy::Scheme::Basic];
+        out = vec![
+            quena_proxy::Scheme::Negotiate,
+            quena_proxy::Scheme::Ntlm,
+            quena_proxy::Scheme::Basic,
+        ];
     }
     out
 }
@@ -159,18 +180,24 @@ impl ProxyEngine {
     pub fn new(core: &Arc<AppCore>) -> Result<Arc<ProxyEngine>> {
         let data = core.paths.data.clone();
         // Browsers open many connections; the default soft limit (256 on macOS) is too low.
-        if let Some(n) = quena_platform::raise_fd_limit(2 * quena_proxy::MAX_CLIENT_CONNECTIONS as u64 + 1024) {
+        if let Some(n) =
+            quena_platform::raise_fd_limit(2 * quena_proxy::MAX_CLIENT_CONNECTIONS as u64 + 1024)
+        {
             tracing::debug!(target: "quena", "open-file limit {n}");
         }
         // Crash recovery: a previous run left the system proxy pointing to us.
         match quena_platform::restore_system_proxy(&backup_path(&data)) {
-            Ok(true) => tracing::warn!(target: "quena", "restored the system proxy left over by a previous run"),
+            Ok(true) => {
+                tracing::warn!(target: "quena", "restored the system proxy left over by a previous run")
+            }
             Ok(false) => {}
             Err(e) => tracing::error!(target: "quena", "restoring the system proxy failed: {e}"),
         }
         let s = core.settings();
         let ca = if s.https.decrypt || data.join(quena_tls::CA_CERT_FILE).exists() {
-            Some(Arc::new(CertAuthority::load_or_create(&data).context("root CA")?))
+            Some(Arc::new(
+                CertAuthority::load_or_create(&data).context("root CA")?,
+            ))
         } else {
             None
         };
@@ -178,7 +205,12 @@ impl ProxyEngine {
         // The PAC file (possibly a download) is loaded by the first `apply`, i.e. when
         // capturing starts on its background thread, not while the app is starting up.
         let pac_slot: Mutex<Option<Arc<crate::pac::PacResolver>>> = Mutex::new(None);
-        let proxy = Proxy::new(core.capture(), proxy_config(&s, detected.0.clone(), &detected.2, None), ca.clone()).map_err(|e| anyhow!("{e}"))?;
+        let proxy = Proxy::new(
+            core.capture(),
+            proxy_config(&s, detected.0.clone(), &detected.2, None),
+            ca.clone(),
+        )
+        .map_err(|e| anyhow!("{e}"))?;
         proxy.shared.recorder.set_lossless(s.lossless_recording);
         if let Some(r) = &core.rules {
             proxy.set_interceptor(r.clone());
@@ -188,7 +220,12 @@ impl ProxyEngine {
             proxy,
             ca: RwLock::new(ca),
             data_dir: data,
-            state: Mutex::new(State { detected_upstream: detected.0, pac_url: detected.1, detected_bypass: detected.2, ..Default::default() }),
+            state: Mutex::new(State {
+                detected_upstream: detected.0,
+                pac_url: detected.1,
+                detected_bypass: detected.2,
+                ..Default::default()
+            }),
             rules: RwLock::new(core.rules.clone()),
             pac: pac_slot,
         });
@@ -215,7 +252,13 @@ impl ProxyEngine {
                 path: ca.cert_path().display().to_string(),
                 pem: ca.cert_pem().to_string(),
             },
-            None => CaInfo { exists: false, trusted: false, sha256: String::new(), path: String::new(), pem: String::new() },
+            None => CaInfo {
+                exists: false,
+                trusted: false,
+                sha256: String::new(),
+                path: String::new(),
+                pem: String::new(),
+            },
         }
     }
 
@@ -229,7 +272,8 @@ impl ProxyEngine {
 
     pub fn ca_remove(&self) -> Result<CaInfo> {
         if let Some(ca) = self.ca.read().clone() {
-            quena_platform::remove_root_ca(&ca.cert_path(), &ca.sha1_fingerprint()).map_err(|e| anyhow!("{e}"))?;
+            quena_platform::remove_root_ca(&ca.cert_path(), &ca.sha1_fingerprint())
+                .map_err(|e| anyhow!("{e}"))?;
             tracing::info!(target: "quena", "root certificate removed from the trust store");
         }
         Ok(self.ca_info())
@@ -268,18 +312,28 @@ impl ProxyEngine {
     fn apply(&self, core: &Arc<AppCore>) -> Result<()> {
         let s = core.settings();
         // HTTPS clients of a reverse proxy port get certificates from the root CA too.
-        let reverse_tls = s.reverse_proxy.active().any(|e| e.client_protocol != crate::settings::ClientProtocol::Http);
+        let reverse_tls = s
+            .reverse_proxy
+            .active()
+            .any(|e| e.client_protocol != crate::settings::ClientProtocol::Http);
         if s.https.decrypt || reverse_tls {
             self.ensure_ca()?;
         }
         let (detected, system_pac, detected_bypass) = {
             let st = self.state.lock();
-            (st.detected_upstream.clone(), st.pac_url.clone(), st.detected_bypass.clone())
+            (
+                st.detected_upstream.clone(),
+                st.pac_url.clone(),
+                st.detected_bypass.clone(),
+            )
         };
         let pac = resolve_pac(&self.pac, &s, system_pac.as_deref());
         let cfg = proxy_config(&s, detected, &detected_bypass, pac);
         self.state.lock().upstream = cfg.upstream.as_ref().map(|(h, p)| format!("{h}:{p}"));
-        self.proxy.shared.recorder.set_lossless(s.lossless_recording);
+        self.proxy
+            .shared
+            .recorder
+            .set_lossless(s.lossless_recording);
         self.apply_client_certs(&s);
         self.proxy.reconfigure(cfg).map_err(|e| anyhow!("{e}"))
     }
@@ -300,7 +354,11 @@ impl ProxyEngine {
                     continue;
                 }
             };
-            let key_path = if c.key_path.trim().is_empty() { &c.cert_path } else { &c.key_path };
+            let key_path = if c.key_path.trim().is_empty() {
+                &c.cert_path
+            } else {
+                &c.key_path
+            };
             let key = match std::fs::read_to_string(key_path) {
                 Ok(v) => v,
                 Err(e) => {
@@ -398,7 +456,11 @@ impl CaptureEngine for ProxyEngine {
         let s = core.settings();
         if s.proxy.act_as_system_proxy {
             let port = addrs[0].port();
-            match quena_platform::set_system_proxy(port, &system_bypass(), &backup_path(&self.data_dir)) {
+            match quena_platform::set_system_proxy(
+                port,
+                &system_bypass(),
+                &backup_path(&self.data_dir),
+            ) {
                 Ok(()) => self.state.lock().system_proxy = true,
                 Err(e) => {
                     // Some services may already point to us: undo the partial change.
@@ -428,15 +490,38 @@ impl CaptureEngine for ProxyEngine {
         let cfg = self.proxy.shared.cfg();
         EngineStatus {
             capturing: self.proxy.is_running(),
-            listen: self.proxy.listen_addrs().iter().map(|a| a.to_string()).collect(),
+            listen: self
+                .proxy
+                .listen_addrs()
+                .iter()
+                .map(|a| a.to_string())
+                .collect(),
             system_proxy: st.system_proxy,
             decrypting: cfg.decrypt && self.ca.read().is_some(),
             upstream: st.upstream.clone(),
             error: st.error.clone(),
-            breakpoints: self.rules.read().as_ref().map(|r| r.breakpoints().labels()).unwrap_or_default(),
-            paused: self.rules.read().as_ref().map(|r| r.paused().len()).unwrap_or(0),
-            autoresponder: self.rules.read().as_ref().is_some_and(|r| r.autoresponder_active()),
-            rewrite: self.rules.read().as_ref().is_some_and(|r| r.rewrite.active()),
+            breakpoints: self
+                .rules
+                .read()
+                .as_ref()
+                .map(|r| r.breakpoints().labels())
+                .unwrap_or_default(),
+            paused: self
+                .rules
+                .read()
+                .as_ref()
+                .map(|r| r.paused().len())
+                .unwrap_or(0),
+            autoresponder: self
+                .rules
+                .read()
+                .as_ref()
+                .is_some_and(|r| r.autoresponder_active()),
+            rewrite: self
+                .rules
+                .read()
+                .as_ref()
+                .is_some_and(|r| r.rewrite.active()),
             listeners: self.proxy.listener_status(),
         }
     }
@@ -449,7 +534,11 @@ impl CaptureEngine for ProxyEngine {
         let new_port = self.proxy.listen_addrs().first().map(|a| a.port());
         if was_running && old_port != new_port && self.state.lock().system_proxy {
             if let Some(p) = new_port {
-                let _ = quena_platform::set_system_proxy(p, &system_bypass(), &backup_path(&self.data_dir));
+                let _ = quena_platform::set_system_proxy(
+                    p,
+                    &system_bypass(),
+                    &backup_path(&self.data_dir),
+                );
             }
         }
         Ok(())
@@ -476,7 +565,11 @@ mod tests {
     fn system_exceptions_go_direct() {
         let mut s = Settings::default();
         let corp = Some(("proxy.corp".to_string(), 8080));
-        let exc = vec!["<local>".to_string(), "*.corp.example".to_string(), " ".to_string()];
+        let exc = vec![
+            "<local>".to_string(),
+            "*.corp.example".to_string(),
+            " ".to_string(),
+        ];
         let cfg = proxy_config(&s, corp.clone(), &exc, None);
         assert_eq!(cfg.upstream_for("appserver:80"), None);
         assert_eq!(cfg.upstream_for("wiki.corp.example:443"), None);
@@ -484,7 +577,10 @@ mod tests {
         // A manual upstream comes with its own bypass list.
         s.proxy.manual_upstream = "gw.example:3128".into();
         let cfg = proxy_config(&s, corp, &exc, None);
-        assert_eq!(cfg.upstream_for("appserver:80"), Some(("gw.example".to_string(), 3128)));
+        assert_eq!(
+            cfg.upstream_for("appserver:80"),
+            Some(("gw.example".to_string(), 3128))
+        );
     }
 
     #[test]

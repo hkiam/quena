@@ -1,10 +1,10 @@
 //! Automatic authentication: connection-pinned handshake loop (401/407).
 //! See docs/m8a-automatic-authentication.md.
 
+use crate::Shared;
 use crate::body::{ProxyBody, StoredStream, empty};
 use crate::connector::Connector;
 use crate::forward::ConnCtx;
-use crate::Shared;
 use http::{Request, Response, Version};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
@@ -24,9 +24,12 @@ const HANDSHAKE_STEP_TIMEOUT: Duration = Duration::from_secs(5);
 const UNAVAILABLE_FOR: Duration = Duration::from_secs(600);
 
 /// (scheme, host) → until when the scheme is skipped for the host.
-static UNAVAILABLE: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<(Scheme, String), std::time::Instant>>> = std::sync::OnceLock::new();
+static UNAVAILABLE: std::sync::OnceLock<
+    parking_lot::Mutex<std::collections::HashMap<(Scheme, String), std::time::Instant>>,
+> = std::sync::OnceLock::new();
 
-fn unavailable() -> &'static parking_lot::Mutex<std::collections::HashMap<(Scheme, String), std::time::Instant>> {
+fn unavailable()
+-> &'static parking_lot::Mutex<std::collections::HashMap<(Scheme, String), std::time::Instant>> {
     UNAVAILABLE.get_or_init(Default::default)
 }
 
@@ -53,14 +56,24 @@ fn skipped(scheme: Scheme, host: &str) -> bool {
 /// One step of a handshake on a blocking thread, bounded by [`HANDSHAKE_STEP_TIMEOUT`]. A step
 /// that times out keeps running on its thread (the libraries cannot be interrupted) and the
 /// scheme is skipped for the host for [`UNAVAILABLE_FOR`].
-async fn bounded_step<T: Send + 'static>(scheme: Scheme, host: &str, f: impl FnOnce() -> Result<T, quena_auth::AuthError> + Send + 'static) -> Result<T, String> {
+async fn bounded_step<T: Send + 'static>(
+    scheme: Scheme,
+    host: &str,
+    f: impl FnOnce() -> Result<T, quena_auth::AuthError> + Send + 'static,
+) -> Result<T, String> {
     match tokio::time::timeout(HANDSHAKE_STEP_TIMEOUT, tokio::task::spawn_blocking(f)).await {
         Ok(Ok(r)) => r.map_err(|e| e.to_string()),
         Ok(Err(e)) => Err(format!("handshake step failed: {e}")),
         Err(_) => {
-            unavailable().lock().insert((scheme, host.to_ascii_lowercase()), std::time::Instant::now() + UNAVAILABLE_FOR);
+            unavailable().lock().insert(
+                (scheme, host.to_ascii_lowercase()),
+                std::time::Instant::now() + UNAVAILABLE_FOR,
+            );
             tracing::warn!(target: "quena::auth", "{} for {host} did not answer within {} s (no reachable KDC or domain controller?); skipped for this host for {} min", scheme.header_name(), HANDSHAKE_STEP_TIMEOUT.as_secs(), UNAVAILABLE_FOR.as_secs() / 60);
-            Err(format!("no answer within {} s", HANDSHAKE_STEP_TIMEOUT.as_secs()))
+            Err(format!(
+                "no answer within {} s",
+                HANDSHAKE_STEP_TIMEOUT.as_secs()
+            ))
         }
     }
 }
@@ -100,14 +113,25 @@ pub fn pinned_client(ctx: &ConnCtx, host: &str, port: u16) -> Arc<Client<Connect
         .http1_preserve_header_case(true)
         .http2_only(false)
         .set_host(true)
-        .build(Connector { cfg, tls: ctx.shared.tls_clients.clone() });
+        .build(Connector {
+            cfg,
+            tls: ctx.shared.tls_clients.clone(),
+        });
     let client = Arc::new(client);
     map.insert(key, client.clone());
     client
 }
 
-fn build_req(head: &RequestHead, extra_auth: Option<(&str, String)>, body: ProxyBody, force_empty_len: bool) -> Result<Request<ProxyBody>, String> {
-    let uri: http::Uri = head.url.parse().map_err(|e| format!("invalid URL {}: {e}", head.url))?;
+fn build_req(
+    head: &RequestHead,
+    extra_auth: Option<(&str, String)>,
+    body: ProxyBody,
+    force_empty_len: bool,
+) -> Result<Request<ProxyBody>, String> {
+    let uri: http::Uri = head
+        .url
+        .parse()
+        .map_err(|e| format!("invalid URL {}: {e}", head.url))?;
     let mut req = Request::builder()
         .method(http::Method::from_bytes(head.method.as_bytes()).map_err(|e| e.to_string())?)
         .uri(uri)
@@ -118,11 +142,15 @@ fn build_req(head: &RequestHead, extra_auth: Option<(&str, String)>, body: Proxy
     if force_empty_len {
         req.headers_mut().remove(http::header::CONTENT_LENGTH);
         req.headers_mut().remove(http::header::TRANSFER_ENCODING);
-        req.headers_mut().insert(http::header::CONTENT_LENGTH, http::HeaderValue::from_static("0"));
+        req.headers_mut().insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("0"),
+        );
     }
     if let Some((name, value)) = extra_auth {
         if let Ok(v) = http::HeaderValue::from_str(&value) {
-            req.headers_mut().insert(http::HeaderName::from_bytes(name.as_bytes()).unwrap(), v);
+            req.headers_mut()
+                .insert(http::HeaderName::from_bytes(name.as_bytes()).unwrap(), v);
         }
     }
     Ok(req)
@@ -150,19 +178,33 @@ async fn drain(resp: Response<Incoming>) {
 }
 
 /// `client.request` with the same response-head bound as ordinary requests.
-async fn request_bounded<C>(client: &hyper_util::client::legacy::Client<C, crate::body::ProxyBody>, req: http::Request<crate::body::ProxyBody>) -> Result<Response<Incoming>, String>
+async fn request_bounded<C>(
+    client: &hyper_util::client::legacy::Client<C, crate::body::ProxyBody>,
+    req: http::Request<crate::body::ProxyBody>,
+) -> Result<Response<Incoming>, String>
 where
     C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
 {
     match tokio::time::timeout(crate::forward::RESPONSE_HEAD_TIMEOUT, client.request(req)).await {
         Ok(r) => r.map_err(err_chain),
-        Err(_) => Err(format!("no response from the server within {} s", crate::forward::RESPONSE_HEAD_TIMEOUT.as_secs())),
+        Err(_) => Err(format!(
+            "no response from the server within {} s",
+            crate::forward::RESPONSE_HEAD_TIMEOUT.as_secs()
+        )),
     }
 }
 
 fn challenge_values(resp: &Response<Incoming>, proxy: bool) -> Vec<String> {
-    let name = if proxy { "proxy-authenticate" } else { "www-authenticate" };
-    resp.headers().get_all(name).iter().filter_map(|v| v.to_str().ok().map(|s| s.to_string())).collect()
+    let name = if proxy {
+        "proxy-authenticate"
+    } else {
+        "www-authenticate"
+    };
+    resp.headers()
+        .get_all(name)
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(|s| s.to_string()))
+        .collect()
 }
 
 /// Run the request with automatic authentication. Legs are pinned to one
@@ -177,7 +219,14 @@ pub async fn send_with_auth(
     on_leg: &mut (dyn FnMut(u16) + Send),
 ) -> Result<Response<Incoming>, String> {
     let cfg = shared.cfg();
-    let (host, port) = crate::util::split_host_port(&crate::forward::url_host_pub(&head.url), if head.url.starts_with("https") { 443 } else { 80 });
+    let (host, port) = crate::util::split_host_port(
+        &crate::forward::url_host_pub(&head.url),
+        if head.url.starts_with("https") {
+            443
+        } else {
+            80
+        },
+    );
     let client = pinned_client(ctx, &host, port);
     let stream = |b: &StoredBody| StoredStream::new(b.clone()).boxed();
 
@@ -186,16 +235,29 @@ pub async fn send_with_auth(
     let resp = request_bounded(&client, req).await?;
     let is_proxy_challenge = resp.status() == http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
     let is_server_challenge = resp.status() == http::StatusCode::UNAUTHORIZED;
-    let applies = (is_server_challenge && cfg.auth_applies(&host)) || (is_proxy_challenge && cfg.auto_auth && cfg.auto_auth_upstream);
+    let applies = (is_server_challenge && cfg.auth_applies(&host))
+        || (is_proxy_challenge && cfg.auto_auth && cfg.auto_auth_upstream);
     if !applies {
         return Ok(resp);
     }
 
     let offers = quena_auth::parse_challenges(&challenge_values(&resp, is_proxy_challenge));
     let resolver = shared.creds();
-    let realm = offers.iter().find_map(|o| o.params.iter().find(|(k, _)| k.eq_ignore_ascii_case("realm")).map(|(_, v)| v.clone())).unwrap_or_default();
+    let realm = offers
+        .iter()
+        .find_map(|o| {
+            o.params
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("realm"))
+                .map(|(_, v)| v.clone())
+        })
+        .unwrap_or_default();
     let creds = resolver.credentials(&host, &realm);
-    let auth_header = if is_proxy_challenge { "Proxy-Authorization" } else { "Authorization" };
+    let auth_header = if is_proxy_challenge {
+        "Proxy-Authorization"
+    } else {
+        "Authorization"
+    };
 
     // Candidate schemes in preference order; try each until one produces a first
     // header (e.g. skip Negotiate when there is no Kerberos ticket → fall back to NTLM).
@@ -203,11 +265,23 @@ pub async fn send_with_auth(
         .iter()
         .filter(|o| match o.scheme {
             Scheme::Basic | Scheme::Ntlm => creds.is_some(),
-            Scheme::Negotiate => (cfg!(target_os = "macos") || cfg!(target_os = "linux") || cfg!(windows)) && negotiate_possible(&host),
+            Scheme::Negotiate => {
+                (cfg!(target_os = "macos") || cfg!(target_os = "linux") || cfg!(windows))
+                    && negotiate_possible(&host)
+            }
         })
         .filter(|o| !skipped(o.scheme, &host))
         .collect();
-    candidates.sort_by_key(|o| std::cmp::Reverse(cfg.auth_prefer.iter().rev().position(|p| *p == o.scheme).map(|i| i as i32).unwrap_or(-1)));
+    candidates.sort_by_key(|o| {
+        std::cmp::Reverse(
+            cfg.auth_prefer
+                .iter()
+                .rev()
+                .position(|p| *p == o.scheme)
+                .map(|i| i as i32)
+                .unwrap_or(-1),
+        )
+    });
     if candidates.is_empty() {
         return Ok(resp);
     }
@@ -242,7 +316,11 @@ pub async fn send_with_auth(
                 None => {
                     let (mut moved, token) = (hs, challenge_token.clone());
                     let scheme = moved.scheme();
-                    match bounded_step(scheme, &host, move || moved.next_header(token.as_deref()).map(|v| (moved, v))).await {
+                    match bounded_step(scheme, &host, move || {
+                        moved.next_header(token.as_deref()).map(|v| (moved, v))
+                    })
+                    .await
+                    {
                         Ok((back, v)) => {
                             hs = back;
                             v
@@ -259,7 +337,12 @@ pub async fn send_with_auth(
             let final_leg = !hs.is_multi_leg() || !expects_more_legs(&hs, leg);
             // Send body only on the final leg; negotiate legs carry an empty body.
             let leg_body = if final_leg { stream(&body) } else { empty() };
-            let req = build_req(head, Some((auth_header, header_value)), leg_body, !final_leg)?;
+            let req = build_req(
+                head,
+                Some((auth_header, header_value)),
+                leg_body,
+                !final_leg,
+            )?;
             let resp = request_bounded(&client, req).await?;
             tracing::debug!(target: "quena::auth", "{} leg {} to {host}: {} (body sent: {})", hs.scheme().header_name(), leg + 1, resp.status(), final_leg);
             let again_proxy = resp.status() == http::StatusCode::PROXY_AUTHENTICATION_REQUIRED;
@@ -267,7 +350,10 @@ pub async fn send_with_auth(
             if (again_proxy && is_proxy_challenge) || (again_server && is_server_challenge) {
                 // Need another leg: pick the continuation token for this scheme.
                 let vals = challenge_values(&resp, is_proxy_challenge);
-                challenge_token = quena_auth::parse_challenges(&vals).into_iter().find(|o| o.scheme == hs.scheme()).and_then(|o| o.token);
+                challenge_token = quena_auth::parse_challenges(&vals)
+                    .into_iter()
+                    .find(|o| o.scheme == hs.scheme())
+                    .and_then(|o| o.token);
                 drain(resp).await;
                 if challenge_token.is_none() && final_leg {
                     tracing::debug!(target: "quena::auth", "{} rejected by {host}", hs.scheme().header_name());
@@ -334,7 +420,10 @@ mod step_tests {
         assert!(!skipped(Scheme::Ntlm, host));
         // Quick steps pass through, errors keep their text.
         assert_eq!(bounded_step(Scheme::Ntlm, "x", || Ok(7)).await, Ok(7));
-        let e: Result<(), String> = bounded_step(Scheme::Ntlm, "x", || Err(quena_auth::AuthError::NoCredentials)).await;
+        let e: Result<(), String> = bounded_step(Scheme::Ntlm, "x", || {
+            Err(quena_auth::AuthError::NoCredentials)
+        })
+        .await;
         assert!(e.is_err() && !skipped(Scheme::Ntlm, "x"));
     }
 }

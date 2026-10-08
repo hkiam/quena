@@ -5,11 +5,19 @@ use crate::Shared;
 use crate::body::{ProxyBody, full};
 use http::{HeaderValue, Request, Response, StatusCode};
 
-fn resp(status: StatusCode, ct: &'static str, body: impl Into<bytes::Bytes>) -> Response<ProxyBody> {
+fn resp(
+    status: StatusCode,
+    ct: &'static str,
+    body: impl Into<bytes::Bytes>,
+) -> Response<ProxyBody> {
     let mut r = Response::new(full(body.into()));
     *r.status_mut() = status;
-    r.headers_mut().insert(http::header::CONTENT_TYPE, HeaderValue::from_static(ct));
-    r.headers_mut().insert(http::header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    r.headers_mut()
+        .insert(http::header::CONTENT_TYPE, HeaderValue::from_static(ct));
+    r.headers_mut().insert(
+        http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
     r
 }
 
@@ -18,18 +26,39 @@ pub fn serve<B>(shared: &Shared, req: &Request<B>) -> Response<ProxyBody> {
     let path = req.uri().path();
     match (path, &ca) {
         ("/quena-root-ca.crt" | "/quena-root-ca.pem", Some(ca)) => {
-            let mut r = resp(StatusCode::OK, "application/x-x509-ca-cert", ca.cert_pem().to_string());
-            r.headers_mut().insert(http::header::CONTENT_DISPOSITION, HeaderValue::from_static("attachment; filename=\"quena-root-ca.crt\""));
+            let mut r = resp(
+                StatusCode::OK,
+                "application/x-x509-ca-cert",
+                ca.cert_pem().to_string(),
+            );
+            r.headers_mut().insert(
+                http::header::CONTENT_DISPOSITION,
+                HeaderValue::from_static("attachment; filename=\"quena-root-ca.crt\""),
+            );
             r
         }
         ("/quena-root-ca.cer" | "/quena-root-ca.der", Some(ca)) => {
-            let mut r = resp(StatusCode::OK, "application/pkix-cert", ca.cert_der().to_vec());
-            r.headers_mut().insert(http::header::CONTENT_DISPOSITION, HeaderValue::from_static("attachment; filename=\"quena-root-ca.cer\""));
+            let mut r = resp(
+                StatusCode::OK,
+                "application/pkix-cert",
+                ca.cert_der().to_vec(),
+            );
+            r.headers_mut().insert(
+                http::header::CONTENT_DISPOSITION,
+                HeaderValue::from_static("attachment; filename=\"quena-root-ca.cer\""),
+            );
             r
         }
-        ("/quena.mobileconfig", Some(ca)) => resp(StatusCode::OK, "application/x-apple-aspen-config", ca.mobileconfig()),
+        ("/quena.mobileconfig", Some(ca)) => resp(
+            StatusCode::OK,
+            "application/x-apple-aspen-config",
+            ca.mobileconfig(),
+        ),
         ("/" | "/index.html", _) => {
-            let fp = ca.as_ref().map(|c| c.sha256_fingerprint()).unwrap_or_default();
+            let fp = ca
+                .as_ref()
+                .map(|c| c.sha256_fingerprint())
+                .unwrap_or_default();
             let cert = if ca.is_some() {
                 format!(
                     r#"<h2>Root certificate</h2>
@@ -51,6 +80,10 @@ pub fn serve<B>(shared: &Shared, req: &Request<B>) -> Response<ProxyBody> {
             );
             resp(StatusCode::OK, "text/html; charset=utf-8", body)
         }
-        _ => resp(StatusCode::NOT_FOUND, "text/plain; charset=utf-8", "Not found"),
+        _ => resp(
+            StatusCode::NOT_FOUND,
+            "text/plain; charset=utf-8",
+            "Not found",
+        ),
     }
 }

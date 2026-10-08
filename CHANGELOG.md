@@ -8,6 +8,19 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **gRPC and Protobuf with a schema**: with `.proto` files (*Settings → Bodies & Storage →
+  Protobuf schemas*, files or folders, import paths) the *gRPC* view shows field names,
+  schema types, enum values by name and nested message types; unknown fields stay by
+  number. The message type comes from the gRPC method in the URL, or is chosen for plain
+  Protobuf bodies.
+  - **Server reflection** (off by default): *Fetch schema from server* asks the session's
+    gRPC server for its schema (v1, else v1alpha, imports by file name) and keeps it in the
+    data directory.
+  - The view also uncompresses messages per `grpc-encoding`, reads gRPC-Web trailers
+    (`grpc-status` in the last frame) and decodes `grpc-web-text` (base64).
+- **MessagePack view** for `application/msgpack`, `x-msgpack` and `vnd.msgpack`: the
+  values as a tree, with binary data, extension types, timestamps and streams of several
+  values.
 - **Rewrite rules have an editor** in the Mock Rules tab: *New rewrite rule…*, a double-click
   or the context menu.
   - Every operation has its own fields: JSONPath, a JSON value, regex and replacement,

@@ -99,10 +99,17 @@ pub struct ListenerSettings {
 
 impl ListenerSettings {
     fn with_port(port: u16) -> Self {
-        ListenerSettings { enabled: false, port, allow_remote: false }
+        ListenerSettings {
+            enabled: false,
+            port,
+            allow_remote: false,
+        }
     }
     pub fn to_port(&self) -> Option<quena_proxy::listener::ExtraPort> {
-        self.enabled.then_some(quena_proxy::listener::ExtraPort { port: self.port, allow_remote: self.allow_remote })
+        self.enabled.then_some(quena_proxy::listener::ExtraPort {
+            port: self.port,
+            allow_remote: self.allow_remote,
+        })
     }
 }
 
@@ -130,7 +137,14 @@ pub struct HostRemapEntry {
 
 impl Default for HostRemapEntry {
     fn default() -> Self {
-        HostRemapEntry { id: String::new(), enabled: true, host: String::new(), target: String::new(), keep_host: true, comment: String::new() }
+        HostRemapEntry {
+            id: String::new(),
+            enabled: true,
+            host: String::new(),
+            target: String::new(),
+            keep_host: true,
+            comment: String::new(),
+        }
     }
 }
 
@@ -143,13 +157,18 @@ impl HostRemapSettings {
         self.entries
             .iter()
             .filter(|e| e.enabled)
-            .filter_map(|e| quena_proxy::remap::HostRemap::parse(&e.host, &e.target, e.keep_host).map_err(|err| tracing::warn!(target: "quena", "host remap {err}")).ok())
+            .filter_map(|e| {
+                quena_proxy::remap::HostRemap::parse(&e.host, &e.target, e.keep_host)
+                    .map_err(|err| tracing::warn!(target: "quena", "host remap {err}"))
+                    .ok()
+            })
             .collect()
     }
 
     pub fn validate(&self) -> Result<(), String> {
         for e in &self.entries {
-            quena_proxy::remap::HostRemap::parse(&e.host, &e.target, e.keep_host).map_err(|err| format!("host remapping: {err}"))?;
+            quena_proxy::remap::HostRemap::parse(&e.host, &e.target, e.keep_host)
+                .map_err(|err| format!("host remapping: {err}"))?;
         }
         Ok(())
     }
@@ -167,14 +186,34 @@ pub fn parse_hosts_file(text: &str) -> Vec<HostRemapEntry> {
         }
         for name in parts {
             let name = name.to_ascii_lowercase();
-            let local = name == "localhost" || name.ends_with(".localhost") || name == "broadcasthost" || name.starts_with("ip6-");
+            let local = name == "localhost"
+                || name.ends_with(".localhost")
+                || name == "broadcasthost"
+                || name.starts_with("ip6-");
             if local || out.iter().any(|e| e.host == name) {
                 continue;
             }
-            out.push(HostRemapEntry { host: name, target: ip.to_string(), comment: "hosts file".into(), ..Default::default() });
+            out.push(HostRemapEntry {
+                host: name,
+                target: ip.to_string(),
+                comment: "hosts file".into(),
+                ..Default::default()
+            });
         }
     }
     out
+}
+
+/// Protobuf schemas for gRPC and protobuf bodies (Settings → Bodies & Storage).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProtobufSettings {
+    /// `.proto` files, or folders searched for them.
+    pub proto_paths: Vec<String>,
+    /// Folders `import` statements are resolved against (besides the folders above).
+    pub include_paths: Vec<String>,
+    /// Offer to fetch schemas from gRPC servers (server reflection), on request.
+    pub reflection: bool,
 }
 
 /// Default SOCKS port.
@@ -205,7 +244,11 @@ impl Default for ReverseProxyEntry {
 impl ReverseProxyEntry {
     /// Display name: the name, else `:port`.
     pub fn label(&self) -> String {
-        if self.name.trim().is_empty() { format!(":{}", self.listen_port) } else { self.name.trim().to_string() }
+        if self.name.trim().is_empty() {
+            format!(":{}", self.listen_port)
+        } else {
+            self.name.trim().to_string()
+        }
     }
 
     /// The proxy's view of the entry, or why it cannot be used.
@@ -217,7 +260,11 @@ impl ReverseProxyEntry {
         for p in &self.paths {
             let prefix = parse_prefix(&p.prefix).map_err(|e| format!("{label}: {e}"))?;
             let t = Target::parse(&p.target).map_err(|e| format!("{label} {prefix}: {e}"))?;
-            paths.push(PathRoute { prefix, target: t, strip_prefix: p.strip_prefix });
+            paths.push(PathRoute {
+                prefix,
+                target: t,
+                strip_prefix: p.strip_prefix,
+            });
         }
         let tls_host = self.tls_host.trim();
         Ok(quena_proxy::reverse::ReverseRoute {
@@ -229,7 +276,11 @@ impl ReverseProxyEntry {
             target,
             paths,
             preserve_host: self.preserve_host,
-            tls_host: if tls_host.is_empty() { "localhost".into() } else { tls_host.to_string() },
+            tls_host: if tls_host.is_empty() {
+                "localhost".into()
+            } else {
+                tls_host.to_string()
+            },
             rewrite_location: self.rewrite_location,
             rewrite_cookie_domain: self.rewrite_cookie_domain,
             forwarded_headers: self.forwarded_headers,
@@ -240,13 +291,16 @@ impl ReverseProxyEntry {
 impl ReverseProxySettings {
     /// Entries that listen while capturing.
     pub fn active(&self) -> impl Iterator<Item = &ReverseProxyEntry> {
-        self.entries.iter().filter(move |e| self.enabled && e.enabled)
+        self.entries
+            .iter()
+            .filter(move |e| self.enabled && e.enabled)
     }
 
     /// Check the entries against each other and the other ports Quena uses (`taken`: port
     /// and what uses it).
     pub fn validate(&self, taken: &[(u16, &str)]) -> Result<(), String> {
-        let mut seen: std::collections::HashMap<u16, String> = taken.iter().map(|(p, n)| (*p, n.to_string())).collect();
+        let mut seen: std::collections::HashMap<u16, String> =
+            taken.iter().map(|(p, n)| (*p, n.to_string())).collect();
         for e in &self.entries {
             e.to_route()?;
             if e.listen_port == 0 {
@@ -257,7 +311,11 @@ impl ReverseProxySettings {
                 continue;
             }
             if let Some(other) = seen.insert(e.listen_port, e.label()) {
-                return Err(format!("{} and {other} both use port {}", e.label(), e.listen_port));
+                return Err(format!(
+                    "{} and {other} both use port {}",
+                    e.label(),
+                    e.listen_port
+                ));
             }
         }
         Ok(())
@@ -349,6 +407,9 @@ pub struct Settings {
     /// Host remapping (Capture → Host Remapping…).
     #[serde(default)]
     pub host_remap: HostRemapSettings,
+    /// Protobuf schemas (`.proto` files) for gRPC and protobuf bodies.
+    #[serde(default)]
+    pub protobuf: ProtobufSettings,
     pub https: HttpsSettings,
     pub bodies: BodyConfigDto,
     /// "Keep: N sessions" (0 = all).
@@ -396,6 +457,7 @@ impl Default for Settings {
             socks: default_socks(),
             transparent: default_transparent(),
             host_remap: HostRemapSettings::default(),
+            protobuf: ProtobufSettings::default(),
             https: HttpsSettings::default(),
             bodies: BodyConfigDto::default(),
             keep_sessions: 0,
@@ -448,7 +510,14 @@ pub struct McpSettings {
 
 impl Default for McpSettings {
     fn default() -> Self {
-        McpSettings { enabled: false, port: 8867, access: McpAccess::ReadOnly, token: String::new(), include_secrets: false, files_dir: String::new() }
+        McpSettings {
+            enabled: false,
+            port: 8867,
+            access: McpAccess::ReadOnly,
+            token: String::new(),
+            include_secrets: false,
+            files_dir: String::new(),
+        }
     }
 }
 
@@ -524,7 +593,10 @@ impl Settings {
         if self.mcp.enabled {
             taken.push((self.mcp.port, "the MCP server's port"));
         }
-        for (l, name) in [(&self.socks, "the SOCKS port"), (&self.transparent, "the transparent port")] {
+        for (l, name) in [
+            (&self.socks, "the SOCKS port"),
+            (&self.transparent, "the transparent port"),
+        ] {
             if !l.enabled {
                 continue;
             }
@@ -536,7 +608,9 @@ impl Settings {
             }
             taken.push((l.port, name));
         }
-        self.reverse_proxy.validate(&taken).map_err(|e| format!("reverse proxy: {e}"))
+        self.reverse_proxy
+            .validate(&taken)
+            .map_err(|e| format!("reverse proxy: {e}"))
     }
 
     pub fn load(path: &Path) -> Settings {
@@ -544,7 +618,9 @@ impl Settings {
             Ok(b) => serde_json::from_slice(&b).unwrap_or_else(|e| {
                 // Keep the damaged file: the next save would otherwise overwrite it for good.
                 let aside = crate::keep_corrupt(path);
-                tracing::warn!("settings unreadable ({e}); using defaults, the old file was kept as {aside}");
+                tracing::warn!(
+                    "settings unreadable ({e}); using defaults, the old file was kept as {aside}"
+                );
                 Settings::default()
             }),
             Err(_) => Settings::default(),
@@ -553,7 +629,10 @@ impl Settings {
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self).expect("settings json"))?;
+        std::fs::write(
+            &tmp,
+            serde_json::to_vec_pretty(self).expect("settings json"),
+        )?;
         std::fs::rename(tmp, path)
     }
 }

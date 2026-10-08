@@ -83,12 +83,18 @@ pub struct MockOptions {
     pub keep_set_cookie: bool,
 }
 
-fn sanitize_or_preset<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<SanitizeOptions>, D::Error> {
+fn sanitize_or_preset<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Option<SanitizeOptions>, D::Error> {
     use serde::de::Error;
     match Value::deserialize(d)? {
         Value::Null => Ok(None),
-        Value::String(name) => SanitizeOptions::preset(&name).map(Some).ok_or_else(|| D::Error::custom(format!("unknown sanitize preset {name:?}"))),
-        v => serde_json::from_value(v).map(Some).map_err(D::Error::custom),
+        Value::String(name) => SanitizeOptions::preset(&name)
+            .map(Some)
+            .ok_or_else(|| D::Error::custom(format!("unknown sanitize preset {name:?}"))),
+        v => serde_json::from_value(v)
+            .map(Some)
+            .map_err(D::Error::custom),
     }
 }
 
@@ -100,7 +106,10 @@ impl Default for MockOptions {
             hosts: vec![],
             include_static: false,
             query: QueryMatch::Ignore,
-            ignore_params: DEFAULT_IGNORED_PARAMS.iter().map(|s| s.to_string()).collect(),
+            ignore_params: DEFAULT_IGNORED_PARAMS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             repeats: Repeats::Last,
             match_body: true,
             latency: false,
@@ -168,7 +177,9 @@ pub struct QueryParam {
 pub enum BodyMatch {
     None,
     /// Semantically equal JSON; [`JSON_IGNORE`] marks values that may differ.
-    Json { value: Value },
+    Json {
+        value: Value,
+    },
     /// By operation name (empty: none sent) and variables; with `query` also by the query
     /// text (normalized: formatting does not matter). The query is matched when the request
     /// has no operation name, or when two recorded queries share name and variables.
@@ -179,9 +190,13 @@ pub enum BodyMatch {
         query: Option<String>,
     },
     /// `application/x-www-form-urlencoded` pairs as sent (raw); `None` matches any value.
-    Form { pairs: Vec<(String, Option<String>)> },
+    Form {
+        pairs: Vec<(String, Option<String>)>,
+    },
     /// Exactly this text (above [`MAX_REGEX_BODY`] matched by SHA-256, `BODYHASH:`).
-    Text { text: String },
+    Text {
+        text: String,
+    },
 }
 
 impl BodyMatch {
@@ -254,7 +269,10 @@ pub struct MockSet {
 
 impl MockSet {
     pub fn sequences(&self) -> usize {
-        self.entries.iter().filter(|e| e.sequence.is_some_and(|s| s.index == 0)).count()
+        self.entries
+            .iter()
+            .filter(|e| e.sequence.is_some_and(|s| s.index == 0))
+            .count()
     }
 }
 
@@ -303,7 +321,14 @@ impl MockPreview {
                 .entries
                 .iter()
                 .take(PREVIEW_ROWS)
-                .map(|e| PreviewEntry { session: e.session, method: e.method.clone(), url: e.url.clone(), status: e.status, body_match: !e.body_match.is_none(), sequence: e.sequence })
+                .map(|e| PreviewEntry {
+                    session: e.session,
+                    method: e.method.clone(),
+                    url: e.url.clone(),
+                    status: e.status,
+                    body_match: !e.body_match.is_none(),
+                    sequence: e.sequence,
+                })
                 .collect(),
         }
     }
@@ -326,8 +351,18 @@ pub const MAX_PACKAGE_LATENCY_MS: u32 = 60_000;
 const PREVIEW_COMPARE_BODY: u64 = 64 << 10;
 
 /// Response headers never written into a mock (the body is served decoded and complete).
-const DROP_RESPONSE_HEADERS: [&str; 10] =
-    ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "te", "trailer", "upgrade", "content-length", "alt-svc", "content-encoding"];
+const DROP_RESPONSE_HEADERS: [&str; 10] = [
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "transfer-encoding",
+    "te",
+    "trailer",
+    "upgrade",
+    "content-length",
+    "alt-svc",
+    "content-encoding",
+];
 
 struct Cand {
     entry: MockEntry,
@@ -352,14 +387,20 @@ fn is_tchar(b: u8) -> bool {
 
 /// A header that can be written as is: token name, no CR, LF or NUL in the value.
 pub fn valid_header(name: &str, value: &str) -> bool {
-    !name.is_empty() && name.bytes().all(is_tchar) && !value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
+    !name.is_empty()
+        && name.bytes().all(is_tchar)
+        && !value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
 }
 
 /// A status reason without control characters (the standard one when nothing is left).
 fn clean_reason(reason: &str, status: u16) -> String {
     let r: String = reason.chars().filter(|c| !c.is_control()).collect();
     let r = r.trim();
-    if r.is_empty() { crate::mock::reason(status).to_string() } else { r.to_string() }
+    if r.is_empty() {
+        crate::mock::reason(status).to_string()
+    } else {
+        r.to_string()
+    }
 }
 
 /// No body and no Content-Length (1xx, 204, 304).
@@ -394,9 +435,21 @@ pub fn specificity(e: &MockEntry) -> u32 {
 /// up to 64 KiB of stored bytes and only when stored identically (not when they are equal
 /// only after decoding or sanitizing); a decoded response above [`MAX_RESPONSE_BODY`] is
 /// noticed only when the stored body is that large, and an undecodable one not at all.
-pub fn generate(cap: &Arc<Capture>, ids: &[SessionId], opts: &MockOptions, with_bodies: bool, p: &dyn Progress) -> Result<MockSet> {
-    let mut sanitizer = opts.sanitize.as_ref().map(|o| Sanitizer::new(SanitizeOptions::for_mocks(o)));
-    let mut set = MockSet { sessions: ids.len(), ..Default::default() };
+pub fn generate(
+    cap: &Arc<Capture>,
+    ids: &[SessionId],
+    opts: &MockOptions,
+    with_bodies: bool,
+    p: &dyn Progress,
+) -> Result<MockSet> {
+    let mut sanitizer = opts
+        .sanitize
+        .as_ref()
+        .map(|o| Sanitizer::new(SanitizeOptions::for_mocks(o)));
+    let mut set = MockSet {
+        sessions: ids.len(),
+        ..Default::default()
+    };
     let mut cands: Vec<Cand> = Vec::new();
     for (i, id) in ids.iter().enumerate() {
         if p.cancelled() {
@@ -406,9 +459,21 @@ pub fn generate(cap: &Arc<Capture>, ids: &[SessionId], opts: &MockOptions, with_
             p.progress(i as u64, ids.len() as u64);
         }
         let Some(d) = cap.detail(*id) else { continue };
-        match candidate(cap, &d, opts, sanitizer.as_mut(), with_bodies, &mut set.dropped_headers) {
+        match candidate(
+            cap,
+            &d,
+            opts,
+            sanitizer.as_mut(),
+            with_bodies,
+            &mut set.dropped_headers,
+        ) {
             Ok(c) => cands.push(c),
-            Err(reason) => set.skipped.push(Skipped { id: *id, method: d.request.method.clone(), url: d.request.url.clone(), reason }),
+            Err(reason) => set.skipped.push(Skipped {
+                id: *id,
+                method: d.request.method.clone(),
+                url: d.request.url.clone(),
+                reason,
+            }),
         }
     }
     if set.dropped_headers > 0 {
@@ -429,22 +494,38 @@ pub fn generate(cap: &Arc<Capture>, ids: &[SessionId], opts: &MockOptions, with_
     }
     // Specific matchers first (stable: otherwise recorded order).
     let mut order: Vec<usize> = (0..groups.len()).collect();
-    order.sort_by_key(|g| groups[*g].first().map(|c| specificity(&c.entry)).unwrap_or(u32::MAX));
+    order.sort_by_key(|g| {
+        groups[*g]
+            .first()
+            .map(|c| specificity(&c.entry))
+            .unwrap_or(u32::MAX)
+    });
     let mut seq_no = 0;
     for g in order {
         let mut items = std::mem::take(&mut groups[g]);
-        let skip = |c: &Cand, reason| Skipped { id: c.entry.session, method: c.entry.method.clone(), url: c.entry.url.clone(), reason };
+        let skip = |c: &Cand, reason| Skipped {
+            id: c.entry.session,
+            method: c.entry.method.clone(),
+            url: c.entry.url.clone(),
+            reason,
+        };
         match opts.repeats {
             Repeats::Last => {
                 let last = items.pop().expect("groups are never empty");
-                set.skipped.extend(items.iter().map(|c| skip(c, SkipReason::Superseded)));
+                set.skipped
+                    .extend(items.iter().map(|c| skip(c, SkipReason::Superseded)));
                 set.entries.push(last.entry);
             }
             Repeats::Sequence => {
                 let mut kept: Vec<Cand> = Vec::new();
                 for c in items {
                     let same = kept.last().is_some_and(|k| {
-                        k.entry.status == c.entry.status && if with_bodies { k.entry.body == c.entry.body } else { k.fingerprint.is_some() && k.fingerprint == c.fingerprint }
+                        k.entry.status == c.entry.status
+                            && if with_bodies {
+                                k.entry.body == c.entry.body
+                            } else {
+                                k.fingerprint.is_some() && k.fingerprint == c.fingerprint
+                            }
                     });
                     if same {
                         set.skipped.push(skip(&c, SkipReason::Duplicate));
@@ -458,7 +539,11 @@ pub fn generate(cap: &Arc<Capture>, ids: &[SessionId], opts: &MockOptions, with_
                 }
                 for (index, mut c) in kept.into_iter().enumerate() {
                     if len > 1 {
-                        c.entry.sequence = Some(Sequence { group: seq_no, index, len });
+                        c.entry.sequence = Some(Sequence {
+                            group: seq_no,
+                            index,
+                            len,
+                        });
                     }
                     set.entries.push(c.entry);
                 }
@@ -479,7 +564,9 @@ pub fn generate(cap: &Arc<Capture>, ids: &[SessionId], opts: &MockOptions, with_
 /// A sequence whose rules matched differently would break its chain.
 fn unify_matcher(items: &mut [Cand]) {
     let Some(first) = items.first() else { return };
-    let exact = items.iter().all(|c| c.entry.exact_url && c.entry.url == first.entry.url);
+    let exact = items
+        .iter()
+        .all(|c| c.entry.exact_url && c.entry.url == first.entry.url);
     let query = first.entry.query.clone();
     for c in items.iter_mut() {
         c.entry.exact_url = exact;
@@ -492,7 +579,15 @@ fn unify_matcher(items: &mut [Cand]) {
 fn disambiguate_graphql(cands: &mut [Cand]) {
     let mut hashes: HashMap<String, BTreeSet<String>> = HashMap::new();
     let gkey = |c: &Cand| match &c.entry.body_match {
-        BodyMatch::GraphQl { operation_name, variables, query: None } => Some(format!("{} {operation_name} {}", c.url_key, canonical(variables))),
+        BodyMatch::GraphQl {
+            operation_name,
+            variables,
+            query: None,
+        } => Some(format!(
+            "{} {operation_name} {}",
+            c.url_key,
+            canonical(variables)
+        )),
         _ => None,
     };
     for c in cands.iter() {
@@ -519,11 +614,26 @@ fn path_pattern(orig: &str, san: &str) -> Option<String> {
     let o: Vec<&str> = orig.split('/').collect();
     let s: Vec<&str> = san.split('/').collect();
     let parts: Vec<String> = if o.len() == s.len() {
-        s.iter().zip(&o).map(|(s, o)| if s == o { re_lit(s) } else { "[^/]*".to_string() }).collect()
+        s.iter()
+            .zip(&o)
+            .map(|(s, o)| {
+                if s == o {
+                    re_lit(s)
+                } else {
+                    "[^/]*".to_string()
+                }
+            })
+            .collect()
     } else {
         // Another number of segments: the changed middle matches anything up to the query.
         let pre = o.iter().zip(&s).take_while(|(a, b)| a == b).count();
-        let suf = o.iter().rev().zip(s.iter().rev()).take_while(|(a, b)| a == b).count().min(o.len().min(s.len()) - pre);
+        let suf = o
+            .iter()
+            .rev()
+            .zip(s.iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(o.len().min(s.len()) - pre);
         let mut v: Vec<String> = s[..pre].iter().map(|x| re_lit(x)).collect();
         v.push("[^?#]*".into());
         v.extend(s[s.len() - suf..].iter().map(|x| re_lit(x)));
@@ -532,7 +642,14 @@ fn path_pattern(orig: &str, san: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
-fn candidate(cap: &Arc<Capture>, d: &SessionDetail, opts: &MockOptions, sanitizer: Option<&mut Sanitizer>, with_bodies: bool, dropped: &mut usize) -> std::result::Result<Cand, SkipReason> {
+fn candidate(
+    cap: &Arc<Capture>,
+    d: &SessionDetail,
+    opts: &MockOptions,
+    sanitizer: Option<&mut Sanitizer>,
+    with_bodies: bool,
+    dropped: &mut usize,
+) -> std::result::Result<Cand, SkipReason> {
     let method = d.request.method.to_ascii_uppercase();
     if d.summary.kind == SessionKind::Tunnel || method == "CONNECT" {
         return Err(SkipReason::Tunnel);
@@ -543,7 +660,9 @@ fn candidate(cap: &Arc<Capture>, d: &SessionDetail, opts: &MockOptions, sanitize
     if method.is_empty() || !method.bytes().all(is_tchar) {
         return Err(SkipReason::Incomplete);
     }
-    let Some(orig_resp) = &d.response else { return Err(SkipReason::NoResponse) };
+    let Some(orig_resp) = &d.response else {
+        return Err(SkipReason::NoResponse);
+    };
     match orig_resp.status {
         0 => return Err(SkipReason::NoResponse),
         101 => return Err(SkipReason::WebSocket),
@@ -556,10 +675,16 @@ fn candidate(cap: &Arc<Capture>, d: &SessionDetail, opts: &MockOptions, sanitize
     if d.summary.has_flag(flags::RESPONSE_TRUNCATED) {
         return Err(SkipReason::Truncated);
     }
-    let Some((full_origin, path, query)) = split_full_url(&d.request.url) else { return Err(SkipReason::Tunnel) };
+    let Some((full_origin, path, query)) = split_full_url(&d.request.url) else {
+        return Err(SkipReason::Tunnel);
+    };
     let (scheme, authority) = full_origin.split_once("://").unwrap_or(("http", ""));
     let has_userinfo = authority.contains('@');
-    let host = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority).to_string();
+    let host = authority
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or(authority)
+        .to_string();
     if host.is_empty() {
         return Err(SkipReason::Tunnel);
     }
@@ -577,70 +702,154 @@ fn candidate(cap: &Arc<Capture>, d: &SessionDetail, opts: &MockOptions, sanitize
     if orig_resp.status >= 400 && !opts.include_errors {
         return Err(SkipReason::ErrorStatus);
     }
-    let (req_body, resp_body) = cap.bodies_of(d.summary.id).unwrap_or_else(|| (Body::empty(), Body::empty()));
+    let (req_body, resp_body) = cap
+        .bodies_of(d.summary.id)
+        .unwrap_or_else(|| (Body::empty(), Body::empty()));
     if resp_body.is_truncated() {
         return Err(SkipReason::Truncated);
     }
     if resp_body.len() > MAX_RESPONSE_BODY as u64 {
         return Err(SkipReason::TooLarge);
     }
-    let limit = if with_bodies { MAX_MATCH_BODY } else { PREVIEW_MATCH_BODY };
+    let limit = if with_bodies {
+        MAX_MATCH_BODY
+    } else {
+        PREVIEW_MATCH_BODY
+    };
     let wants_req = opts.match_body && !req_body.is_empty() && req_body.len() <= (limit * 4) as u64;
-    let req_orig = if wants_req { decoded_body(&d.request.headers, &req_body, limit + 1) } else { Vec::new() };
+    let req_orig = if wants_req {
+        decoded_body(&d.request.headers, &req_body, limit + 1)
+    } else {
+        Vec::new()
+    };
     let wants_req = wants_req && req_orig.len() <= limit;
     let empty = Body::empty();
     let req_in = if wants_req { &req_body } else { &empty };
     let resp_in = if with_bodies { &resp_body } else { &empty };
 
     // Sanitize (or just decode) what is written.
-    let (detail, req_san, resp_bytes, keep_encoding): (Cow<SessionDetail>, Cow<[u8]>, Vec<u8>, bool) = match sanitizer {
+    let (detail, req_san, resp_bytes, keep_encoding): (
+        Cow<SessionDetail>,
+        Cow<[u8]>,
+        Vec<u8>,
+        bool,
+    ) = match sanitizer {
         Some(s) => {
-            let removed = |s: &Sanitizer| s.log().count("bodyRemoved") + s.log().count("undecodable");
+            let removed =
+                |s: &Sanitizer| s.log().count("bodyRemoved") + s.log().count("undecodable");
             let before = removed(s);
             let out = s.session(d, req_in, resp_in);
-            if with_bodies && !resp_body.is_empty() && removed(s) > before && out.response.starts_with(b"<body removed:") {
-                return Err(if out.response.starts_with(b"<body removed: could not be decoded") { SkipReason::Undecodable } else { SkipReason::TooLarge });
+            if with_bodies
+                && !resp_body.is_empty()
+                && removed(s) > before
+                && out.response.starts_with(b"<body removed:")
+            {
+                return Err(
+                    if out
+                        .response
+                        .starts_with(b"<body removed: could not be decoded")
+                    {
+                        SkipReason::Undecodable
+                    } else {
+                        SkipReason::TooLarge
+                    },
+                );
             }
-            (Cow::Owned(out.detail), Cow::Owned(out.request), out.response, false)
+            (
+                Cow::Owned(out.detail),
+                Cow::Owned(out.request),
+                out.response,
+                false,
+            )
         }
         None => {
-            let resp_bytes = if with_bodies { decoded_body(&orig_resp.headers, &resp_body, MAX_RESPONSE_BODY + 1) } else { Vec::new() };
+            let resp_bytes = if with_bodies {
+                decoded_body(&orig_resp.headers, &resp_body, MAX_RESPONSE_BODY + 1)
+            } else {
+                Vec::new()
+            };
             if resp_bytes.len() > MAX_RESPONSE_BODY {
                 return Err(SkipReason::TooLarge);
             }
             // Unknown or broken encoding: the bytes are still encoded, so the header stays.
-            let ce = orig_resp.headers.get("content-encoding").map(|v| v.trim().to_ascii_lowercase()).filter(|v| !v.is_empty() && v != "identity");
-            let still_encoded = with_bodies && ce.is_some() && !resp_body.is_empty() && resp_body.read_range(0, resp_bytes.len() + 1).is_ok_and(|raw| raw == resp_bytes);
-            (Cow::Borrowed(d), Cow::Borrowed(&req_orig[..]), resp_bytes, still_encoded)
+            let ce = orig_resp
+                .headers
+                .get("content-encoding")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .filter(|v| !v.is_empty() && v != "identity");
+            let still_encoded = with_bodies
+                && ce.is_some()
+                && !resp_body.is_empty()
+                && resp_body
+                    .read_range(0, resp_bytes.len() + 1)
+                    .is_ok_and(|raw| raw == resp_bytes);
+            (
+                Cow::Borrowed(d),
+                Cow::Borrowed(&req_orig[..]),
+                resp_bytes,
+                still_encoded,
+            )
         }
     };
     let resp = detail.response.as_ref().unwrap_or(orig_resp);
 
     // URL: parameters and path segments replaced by the sanitizer match any value.
-    let (_, san_path, san_query) = split_full_url(&detail.request.url).unwrap_or((origin.clone(), path.clone(), query.clone()));
+    let (_, san_path, san_query) = split_full_url(&detail.request.url).unwrap_or((
+        origin.clone(),
+        path.clone(),
+        query.clone(),
+    ));
     let path_regex = path_pattern(&path, &san_path);
     let orig_params = parse_query(query.as_deref());
     let mut params = parse_query(san_query.as_deref());
     mark_replaced(&orig_params, &mut params);
     let ignored: Vec<String> = match opts.query {
-        QueryMatch::Ignore => opts.ignore_params.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        QueryMatch::Ignore => opts
+            .ignore_params
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
         QueryMatch::Exact => vec![],
     };
     let before = params.len();
     params.retain(|q| !ignored.iter().any(|pat| glob_matches(pat, &q.name)));
     // A URL the sanitizer left alone, without ignored parameters, stays an exact, readable
     // match (`EXACT:` has no room for whitespace, user info or a fragment).
-    let plain = !has_userinfo && !detail.request.url.contains('#') && !detail.request.url.chars().any(|c| c.is_whitespace() || c.is_control());
-    let exact_url = plain && detail.request.url == d.request.url && path_regex.is_none() && params.len() == before && !params.iter().any(|q| q.any);
+    let plain = !has_userinfo
+        && !detail.request.url.contains('#')
+        && !detail
+            .request
+            .url
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control());
+    let exact_url = plain
+        && detail.request.url == d.request.url
+        && path_regex.is_none()
+        && params.len() == before
+        && !params.iter().any(|q| q.any);
 
-    let req_ct = detail.request.headers.get("content-type").unwrap_or("").to_ascii_lowercase();
-    let (body_match, gql_query) = if wants_req { body_match(&req_ct, &req_orig, &req_san) } else { (BodyMatch::None, None) };
+    let req_ct = detail
+        .request
+        .headers
+        .get("content-type")
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let (body_match, gql_query) = if wants_req {
+        body_match(&req_ct, &req_orig, &req_san)
+    } else {
+        (BodyMatch::None, None)
+    };
 
     // Response as served.
     let mut headers: Vec<(String, String)> = Vec::new();
     for (n, v) in resp.headers.iter() {
         let l = n.to_ascii_lowercase();
-        if n.starts_with(':') || (DROP_RESPONSE_HEADERS.contains(&l.as_str()) && !(keep_encoding && l == "content-encoding")) || (!opts.keep_set_cookie && l == "set-cookie") {
+        if n.starts_with(':')
+            || (DROP_RESPONSE_HEADERS.contains(&l.as_str())
+                && !(keep_encoding && l == "content-encoding"))
+            || (!opts.keep_set_cookie && l == "set-cookie")
+        {
             continue;
         }
         if !valid_header(n, v) {
@@ -650,13 +859,23 @@ fn candidate(cap: &Arc<Capture>, d: &SessionDetail, opts: &MockOptions, sanitize
         headers.push((n.to_string(), v.to_string()));
     }
     let is_head = method == "HEAD";
-    let body = if is_head || bodiless_status(resp.status) { Vec::new() } else { resp_bytes };
+    let body = if is_head || bodiless_status(resp.status) {
+        Vec::new()
+    } else {
+        resp_bytes
+    };
     if with_bodies && !bodiless_status(resp.status) {
         if is_head {
             // The length of the GET body, when the recording tells it (and it is not the
             // length of an encoded body that the mock would serve decoded).
-            let encoded = orig_resp.headers.get("content-encoding").is_some_and(|v| !v.trim().is_empty() && !v.trim().eq_ignore_ascii_case("identity"));
-            if let Some(cl) = resp.headers.get("content-length").map(str::trim).filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+            let encoded = orig_resp.headers.get("content-encoding").is_some_and(|v| {
+                !v.trim().is_empty() && !v.trim().eq_ignore_ascii_case("identity")
+            });
+            if let Some(cl) = resp
+                .headers
+                .get("content-length")
+                .map(str::trim)
+                .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
                 && (!encoded || keep_encoding)
             {
                 headers.push(("Content-Length".into(), cl.to_string()));
@@ -665,16 +884,31 @@ fn candidate(cap: &Arc<Capture>, d: &SessionDetail, opts: &MockOptions, sanitize
             headers.push(("Content-Length".into(), body.len().to_string()));
         }
     }
-    let content_type = resp.headers.get("content-type").filter(|v| valid_header("content-type", v)).unwrap_or("").to_string();
+    let content_type = resp
+        .headers
+        .get("content-type")
+        .filter(|v| valid_header("content-type", v))
+        .unwrap_or("")
+        .to_string();
     let delay_ms = if opts.latency { ttfb_ms(&d.timers) } else { 0 };
     let reason = clean_reason(&resp.reason, resp.status);
-    let fingerprint = (!with_bodies && opts.repeats == Repeats::Sequence && resp_body.len() <= PREVIEW_COMPARE_BODY).then(|| {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        orig_resp.headers.get("content-encoding").unwrap_or("").hash(&mut h);
-        resp_body.read_range(0, PREVIEW_COMPARE_BODY as usize).unwrap_or_default().hash(&mut h);
-        h.finish()
-    });
+    let fingerprint = (!with_bodies
+        && opts.repeats == Repeats::Sequence
+        && resp_body.len() <= PREVIEW_COMPARE_BODY)
+        .then(|| {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            orig_resp
+                .headers
+                .get("content-encoding")
+                .unwrap_or("")
+                .hash(&mut h);
+            resp_body
+                .read_range(0, PREVIEW_COMPARE_BODY as usize)
+                .unwrap_or_default()
+                .hash(&mut h);
+            h.finish()
+        });
 
     let url_key = format!(
         "{method} {} {} ?{}",
@@ -684,7 +918,20 @@ fn candidate(cap: &Arc<Capture>, d: &SessionDetail, opts: &MockOptions, sanitize
             None => format!("P{san_path}"),
         },
         {
-            let mut q: Vec<String> = params.iter().map(|q| format!("{}={}", q.raw_name, if q.any { "*" } else { q.raw_value.as_deref().unwrap_or("") })).collect();
+            let mut q: Vec<String> = params
+                .iter()
+                .map(|q| {
+                    format!(
+                        "{}={}",
+                        q.raw_name,
+                        if q.any {
+                            "*"
+                        } else {
+                            q.raw_value.as_deref().unwrap_or("")
+                        }
+                    )
+                })
+                .collect();
             q.sort();
             q.join("&")
         },
@@ -726,7 +973,11 @@ fn split_full_url(url: &str) -> Option<(String, String, Option<String>)> {
         Some((p, q)) => (p, Some(q.to_string())),
         None => (tail, None),
     };
-    let path = if path.is_empty() { "/".to_string() } else { path.to_string() };
+    let path = if path.is_empty() {
+        "/".to_string()
+    } else {
+        path.to_string()
+    };
     Some((format!("{scheme}://{authority}"), path, query))
 }
 
@@ -738,7 +989,10 @@ fn pct_decode(s: &str) -> String {
         match b[i] {
             b'+' => out.push(b' '),
             b'%' if i + 2 < b.len() => {
-                match std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                match std::str::from_utf8(&b[i + 1..i + 3])
+                    .ok()
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+                {
                     Some(v) => {
                         out.push(v);
                         i += 3;
@@ -763,20 +1017,34 @@ fn parse_query(q: Option<&str>) -> Vec<QueryParam> {
                 Some((n, v)) => (n, Some(v)),
                 None => (p, None),
             };
-            QueryParam { raw_name: n.to_string(), raw_value: v.map(str::to_string), name: pct_decode(n), value: v.map(pct_decode), any: false }
+            QueryParam {
+                raw_name: n.to_string(),
+                raw_value: v.map(str::to_string),
+                name: pct_decode(n),
+                value: v.map(pct_decode),
+                any: false,
+            }
         })
         .collect()
 }
 
 /// Parameters whose value the sanitizer changed match any value.
 fn mark_replaced(orig: &[QueryParam], san: &mut [QueryParam]) {
-    if orig.len() == san.len() && orig.iter().zip(san.iter()).all(|(o, s)| o.raw_name == s.raw_name) {
+    if orig.len() == san.len()
+        && orig
+            .iter()
+            .zip(san.iter())
+            .all(|(o, s)| o.raw_name == s.raw_name)
+    {
         for (o, s) in orig.iter().zip(san.iter_mut()) {
             s.any = o.raw_value != s.raw_value;
         }
     } else {
         for s in san.iter_mut() {
-            s.any = orig.iter().find(|o| o.raw_name == s.raw_name).is_none_or(|o| o.raw_value != s.raw_value);
+            s.any = orig
+                .iter()
+                .find(|o| o.raw_name == s.raw_name)
+                .is_none_or(|o| o.raw_value != s.raw_value);
         }
     }
 }
@@ -791,7 +1059,9 @@ fn glob_matches(pat: &str, name: &str) -> bool {
             let mut rest = n.as_str();
             for (i, part) in parts.iter().enumerate() {
                 if i == 0 {
-                    let Some(r) = rest.strip_prefix(part) else { return false };
+                    let Some(r) = rest.strip_prefix(part) else {
+                        return false;
+                    };
                     rest = r;
                 } else if i == parts.len() - 1 {
                     return rest.ends_with(part);
@@ -816,23 +1086,68 @@ fn host_matches(filter: &str, host: &str) -> bool {
 
 /// Scripts, styles, images, fonts and media: by response type or file extension.
 fn is_static(path: &str, content_type: &str) -> bool {
-    let ct = content_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
-    if ct.starts_with("image/") || ct.starts_with("font/") || ct.starts_with("video/") || ct.starts_with("audio/") {
+    let ct = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if ct.starts_with("image/")
+        || ct.starts_with("font/")
+        || ct.starts_with("video/")
+        || ct.starts_with("audio/")
+    {
         return true;
     }
-    if matches!(ct.as_str(), "text/css" | "application/javascript" | "text/javascript" | "application/x-javascript" | "application/font-woff" | "application/wasm") {
+    if matches!(
+        ct.as_str(),
+        "text/css"
+            | "application/javascript"
+            | "text/javascript"
+            | "application/x-javascript"
+            | "application/font-woff"
+            | "application/wasm"
+    ) {
         return true;
     }
-    let ext = path.rsplit('/').next().and_then(|f| f.rsplit_once('.')).map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    let ext = path
+        .rsplit('/')
+        .next()
+        .and_then(|f| f.rsplit_once('.'))
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
     matches!(
         ext.as_str(),
-        "js" | "mjs" | "css" | "map" | "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "avif" | "ico" | "woff" | "woff2" | "ttf" | "otf" | "eot" | "mp4" | "webm" | "mp3" | "wasm"
+        "js" | "mjs"
+            | "css"
+            | "map"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "svg"
+            | "webp"
+            | "avif"
+            | "ico"
+            | "woff"
+            | "woff2"
+            | "ttf"
+            | "otf"
+            | "eot"
+            | "mp4"
+            | "webm"
+            | "mp3"
+            | "wasm"
     )
 }
 
 /// Time to first byte in ms (at most a minute).
 fn ttfb_ms(t: &Timers) -> u32 {
-    let start = t.server_done_request.or(t.server_begin_request).or(t.client_done_request).or(t.client_begin_request);
+    let start = t
+        .server_done_request
+        .or(t.server_begin_request)
+        .or(t.client_done_request)
+        .or(t.client_begin_request);
     let first = t.server_got_first_byte.or(t.got_response_headers);
     match (start, first) {
         (Some(s), Some(f)) if f > s => ((f - s) / 1000).min(60_000) as u32,
@@ -841,7 +1156,12 @@ fn ttfb_ms(t: &Timers) -> u32 {
 }
 
 fn looks_like_json(ct: &str, body: &[u8]) -> bool {
-    ct.contains("json") || (ct.is_empty() && body.iter().find(|b| !b.is_ascii_whitespace()).is_some_and(|b| *b == b'{' || *b == b'['))
+    ct.contains("json")
+        || (ct.is_empty()
+            && body
+                .iter()
+                .find(|b| !b.is_ascii_whitespace())
+                .is_some_and(|b| *b == b'{' || *b == b'['))
 }
 
 /// The matcher for a request body, plus the GraphQL query as recorded (for
@@ -851,37 +1171,86 @@ fn body_match(ct: &str, orig: &[u8], san: &[u8]) -> (BodyMatch, Option<String>) 
         return (BodyMatch::None, None);
     }
     if looks_like_json(ct, san) {
-        let Ok(s) = serde_json::from_slice::<Value>(san) else { return (BodyMatch::None, None) };
+        let Ok(s) = serde_json::from_slice::<Value>(san) else {
+            return (BodyMatch::None, None);
+        };
         let spec = match serde_json::from_slice::<Value>(orig) {
             Ok(o) => with_placeholders(&o, &s),
             Err(_) => s,
         };
-        let query = spec.get("query").and_then(|q| q.as_str()).filter(|q| *q != JSON_IGNORE).map(str::to_string);
+        let query = spec
+            .get("query")
+            .and_then(|q| q.as_str())
+            .filter(|q| *q != JSON_IGNORE)
+            .map(str::to_string);
         let variables = || spec.get("variables").cloned().unwrap_or(Value::Null);
-        if let Some(op) = spec.get("operationName").and_then(|v| v.as_str()).filter(|o| !o.is_empty() && *o != JSON_IGNORE)
+        if let Some(op) = spec
+            .get("operationName")
+            .and_then(|v| v.as_str())
+            .filter(|o| !o.is_empty() && *o != JSON_IGNORE)
             && spec.get("query").is_some_and(|q| q.is_string())
         {
-            return (BodyMatch::GraphQl { operation_name: op.to_string(), variables: variables(), query: None }, query);
+            return (
+                BodyMatch::GraphQl {
+                    operation_name: op.to_string(),
+                    variables: variables(),
+                    query: None,
+                },
+                query,
+            );
         }
         // GraphQL without operation name: by query (normalized) and variables. Only for a
         // body that is nothing but a GraphQL request (`{"query": "…"}` from a search API is not).
-        let graphql_only = spec.as_object().is_some_and(|o| o.keys().all(|k| matches!(k.as_str(), "query" | "variables" | "operationName" | "extensions")))
-            && spec.get("operationName").is_none_or(|o| o.is_null() || o.as_str() == Some(""));
+        let graphql_only = spec.as_object().is_some_and(|o| {
+            o.keys().all(|k| {
+                matches!(
+                    k.as_str(),
+                    "query" | "variables" | "operationName" | "extensions"
+                )
+            })
+        }) && spec
+            .get("operationName")
+            .is_none_or(|o| o.is_null() || o.as_str() == Some(""));
         if let Some(q) = &query
             && graphql_only
         {
-            return (BodyMatch::GraphQl { operation_name: String::new(), variables: variables(), query: Some(q.clone()) }, query);
+            return (
+                BodyMatch::GraphQl {
+                    operation_name: String::new(),
+                    variables: variables(),
+                    query: Some(q.clone()),
+                },
+                query,
+            );
         }
         return (BodyMatch::Json { value: spec }, None);
     }
     if ct.contains("x-www-form-urlencoded") {
-        let (Ok(o), Ok(s)) = (std::str::from_utf8(orig), std::str::from_utf8(san)) else { return (BodyMatch::None, None) };
+        let (Ok(o), Ok(s)) = (std::str::from_utf8(orig), std::str::from_utf8(san)) else {
+            return (BodyMatch::None, None);
+        };
         if s.len() > MAX_REGEX_BODY {
             // Too large for a regex: matched by hash, which needs it unchanged.
-            return (if o == s && !s.contains('\0') { BodyMatch::Text { text: s.to_string() } } else { BodyMatch::None }, None);
+            return (
+                if o == s && !s.contains('\0') {
+                    BodyMatch::Text {
+                        text: s.to_string(),
+                    }
+                } else {
+                    BodyMatch::None
+                },
+                None,
+            );
         }
         let split = |x: &str| -> Vec<(String, Option<String>)> {
-            x.split('&').filter(|p| !p.is_empty()).map(|p| p.split_once('=').map(|(n, v)| (n.to_string(), Some(v.to_string()))).unwrap_or((p.to_string(), None))).collect()
+            x.split('&')
+                .filter(|p| !p.is_empty())
+                .map(|p| {
+                    p.split_once('=')
+                        .map(|(n, v)| (n.to_string(), Some(v.to_string())))
+                        .unwrap_or((p.to_string(), None))
+                })
+                .collect()
         };
         let (o, s) = (split(o), split(s));
         let same_shape = o.len() == s.len() && o.iter().zip(&s).all(|(a, b)| a.0 == b.0);
@@ -889,15 +1258,31 @@ fn body_match(ct: &str, orig: &[u8], san: &[u8]) -> (BodyMatch, Option<String>) 
             .iter()
             .enumerate()
             .map(|(i, (n, v))| {
-                let changed = if same_shape { o[i].1 != *v } else { o.iter().find(|x| x.0 == *n).is_none_or(|x| x.1 != *v) };
-                (n.clone(), if changed { None } else { Some(v.clone().unwrap_or_default()) })
+                let changed = if same_shape {
+                    o[i].1 != *v
+                } else {
+                    o.iter().find(|x| x.0 == *n).is_none_or(|x| x.1 != *v)
+                };
+                (
+                    n.clone(),
+                    if changed {
+                        None
+                    } else {
+                        Some(v.clone().unwrap_or_default())
+                    },
+                )
             })
             .collect();
         return (BodyMatch::Form { pairs }, None);
     }
     match std::str::from_utf8(san) {
         // Text the sanitizer changed cannot be matched exactly any more.
-        Ok(t) if orig == san && !t.contains('\0') => (BodyMatch::Text { text: t.to_string() }, None),
+        Ok(t) if orig == san && !t.contains('\0') => (
+            BodyMatch::Text {
+                text: t.to_string(),
+            },
+            None,
+        ),
         _ => (BodyMatch::None, None),
     }
 }
@@ -908,8 +1293,24 @@ fn with_placeholders(orig: &Value, san: &Value) -> Value {
         return san.clone();
     }
     match (orig, san) {
-        (Value::Object(o), Value::Object(s)) => Value::Object(s.iter().map(|(k, v)| (k.clone(), o.get(k).map(|ov| with_placeholders(ov, v)).unwrap_or_else(|| v.clone()))).collect()),
-        (Value::Array(o), Value::Array(s)) if o.len() == s.len() => Value::Array(o.iter().zip(s).map(|(a, b)| with_placeholders(a, b)).collect()),
+        (Value::Object(o), Value::Object(s)) => Value::Object(
+            s.iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        o.get(k)
+                            .map(|ov| with_placeholders(ov, v))
+                            .unwrap_or_else(|| v.clone()),
+                    )
+                })
+                .collect(),
+        ),
+        (Value::Array(o), Value::Array(s)) if o.len() == s.len() => Value::Array(
+            o.iter()
+                .zip(s)
+                .map(|(a, b)| with_placeholders(a, b))
+                .collect(),
+        ),
         _ => Value::String(JSON_IGNORE.into()),
     }
 }
@@ -946,7 +1347,9 @@ fn canonical(v: &Value) -> String {
             Value::Number(n) if n.is_i64() || n.is_u64() => out.push_str(&n.to_string()),
             Value::Number(n) => match n.as_f64() {
                 // A float that holds an integer prints like that integer.
-                Some(f) if f.fract() == 0.0 && f.abs() < 9.007_199_254_740_992e15 => out.push_str(&(f as i64).to_string()),
+                Some(f) if f.fract() == 0.0 && f.abs() < 9.007_199_254_740_992e15 => {
+                    out.push_str(&(f as i64).to_string())
+                }
                 Some(f) => out.push_str(&f.to_string()),
                 None => out.push_str(&n.to_string()),
             },
@@ -962,10 +1365,25 @@ fn body_key(b: &BodyMatch) -> String {
     match b {
         BodyMatch::None => String::new(),
         BodyMatch::Json { value } => format!("J{}", canonical(value)),
-        BodyMatch::GraphQl { operation_name, variables, query } => {
-            format!("G{operation_name} {} {}", canonical(variables), query.as_deref().map(graphql_query_hash).unwrap_or_default())
+        BodyMatch::GraphQl {
+            operation_name,
+            variables,
+            query,
+        } => {
+            format!(
+                "G{operation_name} {} {}",
+                canonical(variables),
+                query.as_deref().map(graphql_query_hash).unwrap_or_default()
+            )
         }
-        BodyMatch::Form { pairs } => format!("F{}", pairs.iter().map(|(n, v)| format!("{n}={}", v.as_deref().unwrap_or("\u{0}*"))).collect::<Vec<_>>().join("&")),
+        BodyMatch::Form { pairs } => format!(
+            "F{}",
+            pairs
+                .iter()
+                .map(|(n, v)| format!("{n}={}", v.as_deref().unwrap_or("\u{0}*")))
+                .collect::<Vec<_>>()
+                .join("&")
+        ),
         BodyMatch::Text { text } => format!("T{text}"),
     }
 }
@@ -990,11 +1408,19 @@ fn re_lit(s: &str) -> String {
 /// Regex (without `regex:`) for the entry's URL: path exactly (or its pattern), the kept
 /// parameters in recorded order, ignored parameters anywhere with any value.
 pub fn url_regex(e: &MockEntry) -> String {
-    let base = format!("{}{}", re_lit(&e.origin), e.path_regex.clone().unwrap_or_else(|| re_lit(&e.path)));
+    let base = format!(
+        "{}{}",
+        re_lit(&e.origin),
+        e.path_regex.clone().unwrap_or_else(|| re_lit(&e.path))
+    );
     let ign = if e.ignored_params.is_empty() {
         None
     } else {
-        let alts: Vec<String> = e.ignored_params.iter().map(|p| p.split('*').map(re_lit).collect::<Vec<_>>().join("[^=&]*")).collect();
+        let alts: Vec<String> = e
+            .ignored_params
+            .iter()
+            .map(|p| p.split('*').map(re_lit).collect::<Vec<_>>().join("[^=&]*"))
+            .collect();
         Some(format!("(?:(?i:{})(?:=[^&]*)?)", alts.join("|")))
     };
     let kept: Vec<String> = e
@@ -1032,12 +1458,20 @@ pub fn url_regex(e: &MockEntry) -> String {
 
 /// The Mock Rules match expression for an entry.
 pub fn match_expression(e: &MockEntry) -> String {
-    let url = if e.exact_url { format!("EXACT:{}", e.url) } else { format!("regex:{}", url_regex(e)) };
+    let url = if e.exact_url {
+        format!("EXACT:{}", e.url)
+    } else {
+        format!("regex:{}", url_regex(e))
+    };
     let m = &e.method;
     match &e.body_match {
         BodyMatch::None => format!("METHOD:{m} {url}"),
         BodyMatch::Json { value } => format!("METHOD:{m} BODYJSON:{url} {value}"),
-        BodyMatch::GraphQl { operation_name, variables, query } => {
+        BodyMatch::GraphQl {
+            operation_name,
+            variables,
+            query,
+        } => {
             let mut spec = serde_json::Map::new();
             if !operation_name.is_empty() {
                 spec.insert("operationName".into(), json!(operation_name));
@@ -1058,13 +1492,24 @@ pub fn match_expression(e: &MockEntry) -> String {
                 .collect();
             let joined: usize = parts.iter().map(|p| p.len() + 1).sum();
             if joined > MAX_REGEX_BODY && pairs.iter().all(|(_, v)| v.is_some()) {
-                let text = pairs.iter().map(|(n, v)| format!("{n}={}", v.as_deref().unwrap_or(""))).collect::<Vec<_>>().join("&");
+                let text = pairs
+                    .iter()
+                    .map(|(n, v)| format!("{n}={}", v.as_deref().unwrap_or("")))
+                    .collect::<Vec<_>>()
+                    .join("&");
                 return format!("METHOD:{m} BODYHASH:{url} {}", sha256_hex(text.as_bytes()));
             }
-            format!("METHOD:{m} URLWithBody:{url} regex:(?s)^{}$", parts.join("&"))
+            format!(
+                "METHOD:{m} URLWithBody:{url} regex:(?s)^{}$",
+                parts.join("&")
+            )
         }
-        BodyMatch::Text { text } if text.len() > MAX_REGEX_BODY => format!("METHOD:{m} BODYHASH:{url} {}", sha256_hex(text.as_bytes())),
-        BodyMatch::Text { text } => format!("METHOD:{m} URLWithBody:{url} regex:(?s)^{}$", re_lit(text)),
+        BodyMatch::Text { text } if text.len() > MAX_REGEX_BODY => {
+            format!("METHOD:{m} BODYHASH:{url} {}", sha256_hex(text.as_bytes()))
+        }
+        BodyMatch::Text { text } => {
+            format!("METHOD:{m} URLWithBody:{url} regex:(?s)^{}$", re_lit(text))
+        }
     }
 }
 
@@ -1085,7 +1530,11 @@ pub fn raw_response(e: &MockEntry) -> Vec<u8> {
             h.push(n.clone(), v.clone());
         }
     }
-    let body: &[u8] = if bodiless_status(e.status) || e.method.eq_ignore_ascii_case("HEAD") { &[] } else { &e.body };
+    let body: &[u8] = if bodiless_status(e.status) || e.method.eq_ignore_ascii_case("HEAD") {
+        &[]
+    } else {
+        &e.body
+    };
     if !bodiless_status(e.status) {
         if e.method.eq_ignore_ascii_case("HEAD") {
             if let Some(l) = recorded_len {
@@ -1095,7 +1544,12 @@ pub fn raw_response(e: &MockEntry) -> Vec<u8> {
             h.push("Content-Length", body.len().to_string());
         }
     }
-    let head = ResponseHead { status: e.status, reason: clean_reason(&e.reason, e.status), version: HttpVersion::Http11, headers: h };
+    let head = ResponseHead {
+        status: e.status,
+        reason: clean_reason(&e.reason, e.status),
+        version: HttpVersion::Http11,
+        headers: h,
+    };
     let mut out = Vec::with_capacity(body.len() + 512);
     let _ = quena_formats::raw::write_response_head(&mut out, &head);
     out.extend_from_slice(body);
@@ -1119,14 +1573,21 @@ fn slug(path: &str) -> String {
 }
 
 fn method_slug(m: &str) -> String {
-    m.chars().filter(|c| c.is_ascii_alphanumeric()).take(10).collect()
+    m.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(10)
+        .collect()
 }
 
 /// The rules of a package: actions are paths relative to the package folder
 /// (`responses/0001-GET-api-items.dat`). Writes the response files through `out`. Returns
 /// the state and how many entries were left out because their expression does not compile
 /// (logged; should not happen).
-fn package_rules(set: &MockSet, out: &mut dyn Out, opts_latency: bool) -> Result<(AutoResponderState, usize)> {
+fn package_rules(
+    set: &MockSet,
+    out: &mut dyn Out,
+    opts_latency: bool,
+) -> Result<(AutoResponderState, usize)> {
     let mut rules = Vec::with_capacity(set.entries.len());
     let mut rejected = 0;
     for (i, e) in set.entries.iter().enumerate() {
@@ -1136,7 +1597,12 @@ fn package_rules(set: &MockSet, out: &mut dyn Out, opts_latency: bool) -> Result
             rejected += 1;
             continue;
         }
-        let file = format!("responses/{:04}-{}-{}.dat", i + 1, method_slug(&e.method), slug(&e.path));
+        let file = format!(
+            "responses/{:04}-{}-{}.dat",
+            i + 1,
+            method_slug(&e.method),
+            slug(&e.path)
+        );
         out.put(&file, &raw_response(e))?;
         let last = e.sequence.is_none_or(|s| s.index + 1 == s.len);
         rules.push(Rule {
@@ -1150,14 +1616,29 @@ fn package_rules(set: &MockSet, out: &mut dyn Out, opts_latency: bool) -> Result
             hits: 0,
         });
     }
-    Ok((AutoResponderState { enabled: true, unmatched_passthrough: true, enable_latency: opts_latency && set.entries.iter().any(|e| e.delay_ms > 0), rules }, rejected))
+    Ok((
+        AutoResponderState {
+            enabled: true,
+            unmatched_passthrough: true,
+            enable_latency: opts_latency && set.entries.iter().any(|e| e.delay_ms > 0),
+            rules,
+        },
+        rejected,
+    ))
 }
 
 fn package_readme(set: &MockSet) -> String {
     let mut s = String::from("Quena mock package\r\n==================\r\n\r\n");
-    s.push_str("Recorded responses as Quena Mock Rules. Import: Mock Rules tab -> Import package...\r\n");
+    s.push_str(
+        "Recorded responses as Quena Mock Rules. Import: Mock Rules tab -> Import package...\r\n",
+    );
     s.push_str("(or drop the .quena-mocks file onto the Mock Rules tab).\r\n\r\n");
-    s.push_str(&format!("Mappings: {}\r\nSequences: {}\r\nHosts: {}\r\n\r\n", set.entries.len(), set.sequences(), set.hosts.join(", ")));
+    s.push_str(&format!(
+        "Mappings: {}\r\nSequences: {}\r\nHosts: {}\r\n\r\n",
+        set.entries.len(),
+        set.sequences(),
+        set.hosts.join(", ")
+    ));
     s.push_str("Contents\r\n  rules.json      the rules (match expression -> response file)\r\n  responses/*.dat raw HTTP responses (status line, headers, body)\r\n");
     s
 }
@@ -1183,7 +1664,9 @@ impl Out for DirOut {
 pub struct ZipOut(zip::ZipWriter<std::fs::File>);
 impl ZipOut {
     pub fn create(path: &Path) -> Result<ZipOut> {
-        Ok(ZipOut(zip::ZipWriter::new(std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?)))
+        Ok(ZipOut(zip::ZipWriter::new(
+            std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?,
+        )))
     }
     pub fn finish(self) -> Result<()> {
         self.0.finish()?.sync_all()?;
@@ -1192,7 +1675,9 @@ impl ZipOut {
 }
 impl Out for ZipOut {
     fn put(&mut self, path: &str, data: &[u8]) -> Result<()> {
-        let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).large_file(data.len() as u64 >= u32::MAX as u64);
+        let o = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .large_file(data.len() as u64 >= u32::MAX as u64);
         self.0.start_file(path, o)?;
         self.0.write_all(data)?;
         Ok(())
@@ -1210,8 +1695,15 @@ impl Out for MemOut {
 
 /// A unique hidden name next to `path` (same folder, so a rename replaces atomically).
 fn temp_sibling(path: &Path, what: &str) -> PathBuf {
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    path.with_file_name(format!(".{name}.{what}-{}-{:08x}", std::process::id(), rand::random::<u32>()))
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.with_file_name(format!(
+        ".{name}.{what}-{}-{:08x}",
+        std::process::id(),
+        rand::random::<u32>()
+    ))
 }
 
 /// Write a ZIP through a temporary file and move it into place: an existing file is replaced
@@ -1249,24 +1741,34 @@ const WIREMOCK_OWN: [&str; 3] = ["mappings", "__files", "README.md"];
 /// left alone. The new files are written first (into a hidden folder inside), then swapped
 /// in, so a failed export leaves the old one intact. A ZIP is replaced atomically.
 pub fn write_wiremock(set: &MockSet, path: &Path) -> Result<()> {
-    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) {
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+    {
         return write_zip_atomic(path, |z| write_wiremock_to(set, z));
     }
     std::fs::create_dir_all(path).with_context(|| format!("create {}", path.display()))?;
-    let tmp = path.join(format!(".quena-new-{}-{:08x}", std::process::id(), rand::random::<u32>()));
+    let tmp = path.join(format!(
+        ".quena-new-{}-{:08x}",
+        std::process::id(),
+        rand::random::<u32>()
+    ));
     let r = (|| {
         write_wiremock_to(set, &mut DirOut(tmp.clone()))?;
         std::fs::create_dir_all(tmp.join("mappings"))?;
         for own in WIREMOCK_OWN {
             let old = path.join(own);
             match std::fs::symlink_metadata(&old) {
-                Ok(m) if m.is_dir() => std::fs::remove_dir_all(&old).with_context(|| format!("remove {}", old.display()))?,
-                Ok(_) => std::fs::remove_file(&old).with_context(|| format!("remove {}", old.display()))?,
+                Ok(m) if m.is_dir() => std::fs::remove_dir_all(&old)
+                    .with_context(|| format!("remove {}", old.display()))?,
+                Ok(_) => std::fs::remove_file(&old)
+                    .with_context(|| format!("remove {}", old.display()))?,
                 Err(_) => {}
             }
             let new = tmp.join(own);
             if new.exists() {
-                std::fs::rename(&new, &old).with_context(|| format!("move to {}", old.display()))?;
+                std::fs::rename(&new, &old)
+                    .with_context(|| format!("move to {}", old.display()))?;
             }
         }
         Ok(())
@@ -1280,18 +1782,33 @@ fn write_wiremock_to(set: &MockSet, out: &mut dyn Out) -> Result<()> {
     let multi = set.hosts.len() > 1;
     for (i, e) in set.entries.iter().enumerate() {
         let n = i + 1;
-        let body_file = (!e.body.is_empty() && !bodiless_status(e.status) && !e.method.eq_ignore_ascii_case("HEAD")).then(|| format!("{n:04}.{}", file_ext(&e.content_type)));
+        let body_file = (!e.body.is_empty()
+            && !bodiless_status(e.status)
+            && !e.method.eq_ignore_ascii_case("HEAD"))
+        .then(|| format!("{n:04}.{}", file_ext(&e.content_type)));
         if let Some(f) = &body_file {
             out.put(&format!("__files/{f}"), &e.body)?;
         }
         let m = wiremock_mapping(e, n, body_file.as_deref(), multi);
-        out.put(&format!("mappings/{n:04}-{}-{}.json", method_slug(&e.method), slug(&e.path)), &serde_json::to_vec_pretty(&m)?)?;
+        out.put(
+            &format!(
+                "mappings/{n:04}-{}-{}.json",
+                method_slug(&e.method),
+                slug(&e.path)
+            ),
+            &serde_json::to_vec_pretty(&m)?,
+        )?;
     }
     out.put("README.md", wiremock_readme(set).as_bytes())
 }
 
 fn file_ext(ct: &str) -> &'static str {
-    let ct = ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let ct = ct
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     match ct.as_str() {
         c if c.contains("json") => "json",
         "text/html" => "html",
@@ -1314,11 +1831,20 @@ fn file_ext(ct: &str) -> &'static str {
 
 /// The WireMock mapping of an entry (`n`: number in the export, from 1). `multi_host`: add a
 /// Host header matcher. The priority is [`specificity`].
-pub fn wiremock_mapping(e: &MockEntry, n: usize, body_file: Option<&str>, multi_host: bool) -> Value {
+pub fn wiremock_mapping(
+    e: &MockEntry,
+    n: usize,
+    body_file: Option<&str>,
+    multi_host: bool,
+) -> Value {
     let mut req = serde_json::Map::new();
     req.insert("method".into(), json!(e.method));
     if e.exact_url {
-        let q = e.url.split_once('?').map(|(_, q)| format!("?{}", q.split('#').next().unwrap_or(""))).unwrap_or_default();
+        let q = e
+            .url
+            .split_once('?')
+            .map(|(_, q)| format!("?{}", q.split('#').next().unwrap_or("")))
+            .unwrap_or_default();
         req.insert("url".into(), json!(format!("{}{q}", e.path)));
     } else {
         match &e.path_regex {
@@ -1334,8 +1860,18 @@ pub fn wiremock_mapping(e: &MockEntry, n: usize, body_file: Option<&str>, multi_
             }
         }
         for (name, vals) in by_name {
-            let pat = |q: &QueryParam| if q.any { json!({ "matches": ".*" }) } else { json!({ "equalTo": q.value.clone().unwrap_or_default() }) };
-            let m = if vals.len() == 1 { pat(vals[0]) } else { json!({ "hasExactly": vals.iter().map(|q| pat(q)).collect::<Vec<_>>() }) };
+            let pat = |q: &QueryParam| {
+                if q.any {
+                    json!({ "matches": ".*" })
+                } else {
+                    json!({ "equalTo": q.value.clone().unwrap_or_default() })
+                }
+            };
+            let m = if vals.len() == 1 {
+                pat(vals[0])
+            } else {
+                json!({ "hasExactly": vals.iter().map(|q| pat(q)).collect::<Vec<_>>() })
+            };
             qp.insert(name, m);
         }
         if !qp.is_empty() {
@@ -1343,12 +1879,21 @@ pub fn wiremock_mapping(e: &MockEntry, n: usize, body_file: Option<&str>, multi_
         }
     }
     if multi_host {
-        req.insert("headers".into(), json!({ "Host": { "equalTo": e.host, "caseInsensitive": true } }));
+        req.insert(
+            "headers".into(),
+            json!({ "Host": { "equalTo": e.host, "caseInsensitive": true } }),
+        );
     }
     let patterns: Vec<Value> = match &e.body_match {
         BodyMatch::None => vec![],
-        BodyMatch::Json { value } => vec![json!({ "equalToJson": value, "ignoreArrayOrder": false, "ignoreExtraElements": false })],
-        BodyMatch::GraphQl { operation_name, variables, query } => {
+        BodyMatch::Json { value } => vec![
+            json!({ "equalToJson": value, "ignoreArrayOrder": false, "ignoreExtraElements": false }),
+        ],
+        BodyMatch::GraphQl {
+            operation_name,
+            variables,
+            query,
+        } => {
             let mut v = vec![];
             if !operation_name.is_empty() {
                 v.push(json!({ "matchesJsonPath": { "expression": "$.operationName", "equalTo": operation_name } }));
@@ -1363,9 +1908,22 @@ pub fn wiremock_mapping(e: &MockEntry, n: usize, body_file: Option<&str>, multi_
         }
         BodyMatch::Form { pairs } => {
             if pairs.iter().all(|(_, v)| v.is_some()) {
-                vec![json!({ "equalTo": pairs.iter().map(|(n, v)| format!("{n}={}", v.as_deref().unwrap_or(""))).collect::<Vec<_>>().join("&") })]
+                vec![
+                    json!({ "equalTo": pairs.iter().map(|(n, v)| format!("{n}={}", v.as_deref().unwrap_or(""))).collect::<Vec<_>>().join("&") }),
+                ]
             } else {
-                let re: Vec<String> = pairs.iter().map(|(n, v)| format!("{}={}", regex::escape(n), v.as_deref().map(regex::escape).unwrap_or_else(|| "[^&]*".into()))).collect();
+                let re: Vec<String> = pairs
+                    .iter()
+                    .map(|(n, v)| {
+                        format!(
+                            "{}={}",
+                            regex::escape(n),
+                            v.as_deref()
+                                .map(regex::escape)
+                                .unwrap_or_else(|| "[^&]*".into())
+                        )
+                    })
+                    .collect();
                 vec![json!({ "matches": format!("(?s)^{}$", re.join("&")) })]
             }
         }
@@ -1399,15 +1957,31 @@ pub fn wiremock_mapping(e: &MockEntry, n: usize, body_file: Option<&str>, multi_
         resp.insert("fixedDelayMilliseconds".into(), json!(e.delay_ms));
     }
     let mut m = serde_json::Map::new();
-    m.insert("name".into(), json!(format!("{n:04} {} {}", e.method, e.path)));
+    m.insert(
+        "name".into(),
+        json!(format!("{n:04} {} {}", e.method, e.path)),
+    );
     m.insert("priority".into(), json!(specificity(e)));
     m.insert("request".into(), Value::Object(req));
     m.insert("response".into(), Value::Object(resp));
     if let Some(s) = e.sequence {
-        m.insert("scenarioName".into(), json!(format!("sequence-{:03} {} {}", s.group, e.method, e.path)));
-        m.insert("requiredScenarioState".into(), json!(if s.index == 0 { "Started".to_string() } else { format!("step-{}", s.index + 1) }));
+        m.insert(
+            "scenarioName".into(),
+            json!(format!("sequence-{:03} {} {}", s.group, e.method, e.path)),
+        );
+        m.insert(
+            "requiredScenarioState".into(),
+            json!(if s.index == 0 {
+                "Started".to_string()
+            } else {
+                format!("step-{}", s.index + 1)
+            }),
+        );
         if s.index + 1 < s.len {
-            m.insert("newScenarioState".into(), json!(format!("step-{}", s.index + 2)));
+            m.insert(
+                "newScenarioState".into(),
+                json!(format!("step-{}", s.index + 2)),
+            );
         }
     }
     Value::Object(m)
@@ -1423,14 +1997,23 @@ pub fn wiremock_files(set: &MockSet) -> Vec<(String, Vec<u8>)> {
 
 fn wiremock_readme(set: &MockSet) -> String {
     let mut s = String::from("# WireMock mocks from Quena\n\n");
-    s.push_str(&format!("{} mappings, {} sequences (scenarios), hosts: {}.\n\n", set.entries.len(), set.sequences(), set.hosts.join(", ")));
+    s.push_str(&format!(
+        "{} mappings, {} sequences (scenarios), hosts: {}.\n\n",
+        set.entries.len(),
+        set.sequences(),
+        set.hosts.join(", ")
+    ));
     s.push_str("## Run\n\n```sh\ndocker run --rm -v \"$PWD:/home/wiremock\" -p 8080:8080 wiremock/wiremock\n```\n\n");
     s.push_str("Or with the standalone JAR: `java -jar wiremock-standalone.jar --root-dir .`\n\n");
     s.push_str("Then point the frontend at `http://localhost:8080` instead of the real backend, e.g. the API base URL, or a dev-server proxy (Vite `server.proxy`, webpack `devServer.proxy`).\n\n");
     if set.hosts.len() > 1 {
         s.push_str("## Several hosts\n\nThe recording spans several hosts, so every mapping also matches the `Host` header. Requests must arrive with the original host name, for example:\n\n");
-        s.push_str("- a dev-server proxy that keeps the Host header (Vite: `changeOrigin: false`), or\n");
-        s.push_str("- WireMock as forward proxy for plain HTTP (`--enable-browser-proxying`), or\n");
+        s.push_str(
+            "- a dev-server proxy that keeps the Host header (Vite: `changeOrigin: false`), or\n",
+        );
+        s.push_str(
+            "- WireMock as forward proxy for plain HTTP (`--enable-browser-proxying`), or\n",
+        );
         s.push_str("- export one host at a time (host filter in Quena's Mocks dialog) and run one WireMock per host.\n\n");
     }
     s.push_str("Sequences use scenarios: the responses come in recorded order, the last one repeats. Reset them with `POST /__admin/scenarios/reset`.\n\n");
@@ -1487,7 +2070,11 @@ pub fn sanitize_name(s: &str) -> String {
 }
 
 fn safe_file_name(f: &str) -> bool {
-    !f.is_empty() && f.len() <= 128 && !f.starts_with('.') && f.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    !f.is_empty()
+        && f.len() <= 128
+        && !f.starts_with('.')
+        && f.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
 /// Largest package accepted (all files uncompressed), largest single file, largest
@@ -1501,8 +2088,10 @@ const MAX_PACKAGE_FILES: usize = 100_000;
 /// `responses/<file>` are taken; no path can leave `dest` (zip-slip); files are streamed to
 /// disk and bounded (256 MiB each, 2 GiB in all).
 pub fn extract_package(zip_path: &Path, dest: &Path) -> Result<AutoResponderState> {
-    let f = std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
-    let mut z = zip::ZipArchive::new(std::io::BufReader::new(f)).map_err(|e| anyhow!("{}: not a mock package ({e})", zip_path.display()))?;
+    let f =
+        std::fs::File::open(zip_path).with_context(|| format!("open {}", zip_path.display()))?;
+    let mut z = zip::ZipArchive::new(std::io::BufReader::new(f))
+        .map_err(|e| anyhow!("{}: not a mock package ({e})", zip_path.display()))?;
     if z.len() > MAX_PACKAGE_FILES {
         bail!("mock package has too many files ({})", z.len());
     }
@@ -1517,17 +2106,25 @@ pub fn extract_package(zip_path: &Path, dest: &Path) -> Result<AutoResponderStat
         let name = entry.name().replace('\\', "/");
         let target = if name == "rules.json" || name == "README.txt" {
             dest.join(&name)
-        } else if let Some(f) = name.strip_prefix("responses/").filter(|f| safe_file_name(f)) {
+        } else if let Some(f) = name
+            .strip_prefix("responses/")
+            .filter(|f| safe_file_name(f))
+        {
             dest.join("responses").join(f)
         } else {
             tracing::warn!(target: "quena", "mock package: skipped {name:?}");
             continue;
         };
-        let cap = if name == "rules.json" { MAX_RULES_JSON } else { MAX_PACKAGE_ENTRY };
+        let cap = if name == "rules.json" {
+            MAX_RULES_JSON
+        } else {
+            MAX_PACKAGE_ENTRY
+        };
         if entry.size() > cap {
             bail!("mock package: {name} is larger than {} MiB", cap >> 20);
         }
-        let mut file = std::fs::File::create(&target).with_context(|| format!("create {}", target.display()))?;
+        let mut file = std::fs::File::create(&target)
+            .with_context(|| format!("create {}", target.display()))?;
         // The declared size may lie: the copy itself is bounded.
         let n = std::io::copy(&mut entry.by_ref().take(cap + 1), &mut file)?;
         if n > cap {
@@ -1535,14 +2132,18 @@ pub fn extract_package(zip_path: &Path, dest: &Path) -> Result<AutoResponderStat
         }
         total += n;
         if total > MAX_PACKAGE_BYTES {
-            bail!("mock package is larger than {} GiB", MAX_PACKAGE_BYTES >> 30);
+            bail!(
+                "mock package is larger than {} GiB",
+                MAX_PACKAGE_BYTES >> 30
+            );
         }
         if name == "rules.json" {
             drop(file);
             rules_json = Some(std::fs::read(&target)?);
         }
     }
-    let raw = rules_json.ok_or_else(|| anyhow!("{}: no rules.json, not a mock package", zip_path.display()))?;
+    let raw = rules_json
+        .ok_or_else(|| anyhow!("{}: no rules.json, not a mock package", zip_path.display()))?;
     serde_json::from_slice(&raw).map_err(|e| anyhow!("rules.json: {e}"))
 }
 
@@ -1554,7 +2155,11 @@ pub fn match_host(expr: &str) -> Option<String> {
     let mut s = expr.trim();
     let lower = |x: &str| x.to_ascii_lowercase();
     if lower(s).starts_with("method:") {
-        s = s[7..].trim_start().split_once(char::is_whitespace)?.1.trim();
+        s = s[7..]
+            .trim_start()
+            .split_once(char::is_whitespace)?
+            .1
+            .trim();
     }
     for p in ["bodyjson:", "graphql:", "bodyhash:", "urlwithbody:"] {
         if lower(s).starts_with(p) {
@@ -1565,7 +2170,11 @@ pub fn match_host(expr: &str) -> Option<String> {
     let l = lower(s);
     let url_host = |u: &str| -> Option<String> {
         let (scheme, rest) = u.split_once("://")?;
-        if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')) {
+        if scheme.is_empty()
+            || !scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        {
             return None;
         }
         let auth = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
@@ -1640,7 +2249,11 @@ fn top_level_alternation(r: &str) -> bool {
 /// status/delay/drop (a package must not map remote hosts or local folders), rules that do
 /// not compile, and rules not limited to one host ([`match_host`]: `*` or a substring would
 /// answer for every site). Latency is capped at [`MAX_PACKAGE_LATENCY_MS`].
-pub fn resolve_package_rules(state: &AutoResponderState, dir: &Path, name: &str) -> (Vec<Rule>, usize) {
+pub fn resolve_package_rules(
+    state: &AutoResponderState,
+    dir: &Path,
+    name: &str,
+) -> (Vec<Rule>, usize) {
     let mut out = Vec::new();
     let mut rejected = 0;
     for r in &state.rules {
@@ -1654,7 +2267,12 @@ pub fn resolve_package_rules(state: &AutoResponderState, dir: &Path, name: &str)
         }
         // A top-level regex rule expands `$1` … in its action: a `$` in the data folder's
         // path must stay literal.
-        if r.match_.trim_start().to_ascii_lowercase().starts_with("regex:") && !r.action.trim().starts_with('*') {
+        if r.match_
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("regex:")
+            && !r.action.trim().starts_with('*')
+        {
             action = action.replace('$', "$$");
         }
         out.push(Rule {
@@ -1681,7 +2299,11 @@ fn package_action(a: &str, dir: &Path) -> Option<String> {
     let r = l.strip_prefix('*')?;
     let ok = r.parse::<u16>().is_ok()
         || matches!(r, "drop" | "reset" | "corspreflightallow")
-        || r.strip_prefix("delay:").is_some_and(|d| d.trim().parse::<u64>().is_ok_and(|ms| ms <= MAX_PACKAGE_LATENCY_MS as u64));
+        || r.strip_prefix("delay:").is_some_and(|d| {
+            d.trim()
+                .parse::<u64>()
+                .is_ok_and(|ms| ms <= MAX_PACKAGE_LATENCY_MS as u64)
+        });
     ok.then(|| t.to_string())
 }
 
@@ -1694,7 +2316,13 @@ fn rule_hosts<'a>(rules: impl Iterator<Item = &'a Rule>) -> Vec<String> {
 /// Put package rules into Mock Rules: an earlier import of the same package is replaced; with
 /// `replace` all other rules go too. The package rules come first (they are specific). The
 /// change is atomic ([`Rules::update_autoresponder`]).
-pub fn install_rules(rules: &Rules, name: &str, new_rules: Vec<Rule>, replace: bool, enable_latency: bool) -> Result<usize> {
+pub fn install_rules(
+    rules: &Rules,
+    name: &str,
+    new_rules: Vec<Rule>,
+    replace: bool,
+    enable_latency: bool,
+) -> Result<usize> {
     let n = new_rules.len();
     rules.update_autoresponder(true, |s| {
         if replace {
@@ -1710,7 +2338,9 @@ pub fn install_rules(rules: &Rules, name: &str, new_rules: Vec<Rule>, replace: b
 }
 
 fn unix_ms(t: std::time::SystemTime) -> Option<i64> {
-    t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_millis() as i64)
+    t.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as i64)
 }
 
 // ------------------------------------------------------------------ AppCore
@@ -1748,7 +2378,11 @@ pub struct MockJobResult {
 
 /// A fresh, unique folder name for one installation of a package.
 fn generation_name() -> String {
-    format!("g{}-{:08x}", unix_ms(std::time::SystemTime::now()).unwrap_or(0), rand::random::<u32>())
+    format!(
+        "g{}-{:08x}",
+        unix_ms(std::time::SystemTime::now()).unwrap_or(0),
+        rand::random::<u32>()
+    )
 }
 
 impl AppCore {
@@ -1770,11 +2404,25 @@ impl AppCore {
     /// differ from the result).
     pub fn mock_preview(&self, ids: Vec<SessionId>, opts: MockOptions) -> Result<MockPreview> {
         let ids = self.mock_ids(ids);
-        let set = generate(&self.capture(), &ids, &opts, false, &quena_formats::NoProgress)?;
+        let set = generate(
+            &self.capture(),
+            &ids,
+            &opts,
+            false,
+            &quena_formats::NoProgress,
+        )?;
         Ok(MockPreview::of(&set))
     }
 
-    fn mock_job(self: &Arc<Self>, ids: Vec<SessionId>, opts: MockOptions, target: &'static str, path: PathBuf, title: String, name: Option<String>) -> JobId {
+    fn mock_job(
+        self: &Arc<Self>,
+        ids: Vec<SessionId>,
+        opts: MockOptions,
+        target: &'static str,
+        path: PathBuf,
+        title: String,
+        name: Option<String>,
+    ) -> JobId {
         let ids = self.mock_ids(ids);
         let cap = self.capture();
         let core = Arc::downgrade(self);
@@ -1784,7 +2432,9 @@ impl AppCore {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             ids.hash(&mut h);
-            serde_json::to_string(&opts).unwrap_or_default().hash(&mut h);
+            serde_json::to_string(&opts)
+                .unwrap_or_default()
+                .hash(&mut h);
             h.finish()
         };
         self.jobs.submit(format!("mocks:{target}:{}:{fingerprint:016x}", path.display()), title, Priority::Background, true, move |ctx| {
@@ -1822,13 +2472,23 @@ impl AppCore {
     }
 
     /// Write a WireMock export (folder, or ZIP for `*.zip`) as a job.
-    pub fn mock_export_wiremock(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, opts: MockOptions) -> Result<JobId> {
+    pub fn mock_export_wiremock(
+        self: &Arc<Self>,
+        ids: Vec<SessionId>,
+        path: PathBuf,
+        opts: MockOptions,
+    ) -> Result<JobId> {
         let title = format!("Writing WireMock mocks to {}", path.display());
         Ok(self.mock_job(ids, opts, "wiremock", path, title, None))
     }
 
     /// Write a Quena mock package (`.quena-mocks`) as a job.
-    pub fn mock_export_package(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, opts: MockOptions) -> Result<JobId> {
+    pub fn mock_export_package(
+        self: &Arc<Self>,
+        ids: Vec<SessionId>,
+        path: PathBuf,
+        opts: MockOptions,
+    ) -> Result<JobId> {
         let title = format!("Writing mock package {}", path.display());
         Ok(self.mock_job(ids, opts, "package", path, title, None))
     }
@@ -1836,13 +2496,26 @@ impl AppCore {
     /// Create mock rules from sessions right away: the package is written to
     /// `<data>/mocks/<name>/` and installed (an earlier package of that name is replaced).
     /// An empty name picks `sessions-<date>-<time>`; names are lower case.
-    pub fn mock_apply(self: &Arc<Self>, ids: Vec<SessionId>, opts: MockOptions, name: String) -> Result<JobId> {
+    pub fn mock_apply(
+        self: &Arc<Self>,
+        ids: Vec<SessionId>,
+        opts: MockOptions,
+        name: String,
+    ) -> Result<JobId> {
         if self.rules.is_none() {
             bail!("mock rules unavailable");
         }
         let name = if name.trim().is_empty() {
             let t = time::OffsetDateTime::now_utc();
-            format!("sessions-{:04}{:02}{:02}-{:02}{:02}{:02}", t.year(), t.month() as u8, t.day(), t.hour(), t.minute(), t.second())
+            format!(
+                "sessions-{:04}{:02}{:02}-{:02}{:02}{:02}",
+                t.year(),
+                t.month() as u8,
+                t.day(),
+                t.hour(),
+                t.minute(),
+                t.second()
+            )
         } else {
             sanitize_name(&name)
         };
@@ -1852,8 +2525,16 @@ impl AppCore {
     }
 
     /// Install a generated set as package `name`. Returns (rules installed, rejected, folder).
-    fn install_generated(&self, set: &MockSet, opts: &MockOptions, name: &str) -> Result<(usize, usize, PathBuf)> {
-        let rules = self.rules.as_ref().ok_or_else(|| anyhow!("mock rules unavailable"))?;
+    fn install_generated(
+        &self,
+        set: &MockSet,
+        opts: &MockOptions,
+        name: &str,
+    ) -> Result<(usize, usize, PathBuf)> {
+        let rules = self
+            .rules
+            .as_ref()
+            .ok_or_else(|| anyhow!("mock rules unavailable"))?;
         let _lock = rules.package_lock();
         let pkg = self.mocks_dir().join(name);
         let gen_name = generation_name();
@@ -1891,7 +2572,11 @@ impl AppCore {
         for e in std::fs::read_dir(&pkg).into_iter().flatten().flatten() {
             if e.file_name() != keep {
                 let p = e.path();
-                let r = if e.file_type().is_ok_and(|t| t.is_dir()) { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+                let r = if e.file_type().is_ok_and(|t| t.is_dir()) {
+                    std::fs::remove_dir_all(&p)
+                } else {
+                    std::fs::remove_file(&p)
+                };
                 if let Err(err) = r {
                     tracing::warn!(target: "quena", "mock package {name}: cannot remove {}: {err}", p.display());
                 }
@@ -1910,24 +2595,42 @@ impl AppCore {
     /// name, lower case), rules tagged `pkg:<name>` on top of Mock Rules. `replace`: remove all
     /// other rules.
     pub fn mock_import_package(&self, path: PathBuf, replace: bool) -> Result<MockPackage> {
-        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
         self.import_package_as(&path, &sanitize_name(&stem), replace)
     }
 
     /// Import a package from bytes (dropped onto the Mock Rules tab).
-    pub fn mock_import_package_bytes(&self, file_name: &str, data: &[u8], replace: bool) -> Result<MockPackage> {
+    pub fn mock_import_package_bytes(
+        &self,
+        file_name: &str,
+        data: &[u8],
+        replace: bool,
+    ) -> Result<MockPackage> {
         let root = self.mocks_dir();
         std::fs::create_dir_all(&root)?;
-        let tmp = root.join(format!(".incoming-{}-{}.zip", std::process::id(), rand::random::<u32>()));
+        let tmp = root.join(format!(
+            ".incoming-{}-{}.zip",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
         std::fs::write(&tmp, data)?;
-        let stem = Path::new(file_name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let stem = Path::new(file_name)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
         let r = self.import_package_as(&tmp, &sanitize_name(&stem), replace);
         let _ = std::fs::remove_file(&tmp);
         r
     }
 
     fn import_package_as(&self, path: &Path, name: &str, replace: bool) -> Result<MockPackage> {
-        let rules = self.rules.as_ref().ok_or_else(|| anyhow!("mock rules unavailable"))?;
+        let rules = self
+            .rules
+            .as_ref()
+            .ok_or_else(|| anyhow!("mock rules unavailable"))?;
         let _lock = rules.package_lock();
         let pkg = self.mocks_dir().join(name);
         let gen_name = generation_name();
@@ -1950,7 +2653,17 @@ impl AppCore {
         };
         self.drop_old_generations(name, &gen_name);
         tracing::info!(target: "quena", "mock package {name}: {n} rule(s) imported, {rejected} left out");
-        Ok(MockPackage { name: name.into(), dir: pkg.display().to_string(), rules: n, rejected, hosts, created: std::fs::metadata(&r#gen).and_then(|m| m.modified()).ok().and_then(unix_ms) })
+        Ok(MockPackage {
+            name: name.into(),
+            dir: pkg.display().to_string(),
+            rules: n,
+            rejected,
+            hosts,
+            created: std::fs::metadata(&r#gen)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(unix_ms),
+        })
     }
 
     fn check_package_name(name: &str) -> Result<String> {
@@ -1964,16 +2677,26 @@ impl AppCore {
     /// The name is compared case-insensitively.
     pub fn mock_remove_package(&self, name: &str) -> Result<usize> {
         let name = Self::check_package_name(name)?;
-        let rules = self.rules.as_ref().ok_or_else(|| anyhow!("mock rules unavailable"))?;
+        let rules = self
+            .rules
+            .as_ref()
+            .ok_or_else(|| anyhow!("mock rules unavailable"))?;
         let _lock = rules.package_lock();
         let n = rules.update_autoresponder(true, |s| {
             let before = s.rules.len();
             s.rules.retain(|r| !is_package_rule(r, &name));
             before - s.rules.len()
         })?;
-        for e in std::fs::read_dir(self.mocks_dir()).into_iter().flatten().flatten() {
-            if e.file_name().to_string_lossy().eq_ignore_ascii_case(&name) && e.file_type().is_ok_and(|t| t.is_dir()) {
-                std::fs::remove_dir_all(e.path()).with_context(|| format!("remove {}", e.path().display()))?;
+        for e in std::fs::read_dir(self.mocks_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if e.file_name().to_string_lossy().eq_ignore_ascii_case(&name)
+                && e.file_type().is_ok_and(|t| t.is_dir())
+            {
+                std::fs::remove_dir_all(e.path())
+                    .with_context(|| format!("remove {}", e.path().display()))?;
             }
         }
         Ok(n)
@@ -1984,7 +2707,10 @@ impl AppCore {
     /// rules reset.
     pub fn mock_reset_sequences(&self, name: &str) -> Result<usize> {
         let name = Self::check_package_name(name)?;
-        let rules = self.rules.as_ref().ok_or_else(|| anyhow!("mock rules unavailable"))?;
+        let rules = self
+            .rules
+            .as_ref()
+            .ok_or_else(|| anyhow!("mock rules unavailable"))?;
         Ok(rules.reset_hits(|r| is_package_rule(r, &name)))
     }
 
@@ -1999,9 +2725,16 @@ impl AppCore {
             }
         }
         let mut out: Vec<MockPackage> = Vec::new();
-        for e in std::fs::read_dir(self.mocks_dir()).into_iter().flatten().flatten() {
+        for e in std::fs::read_dir(self.mocks_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
             let name = e.file_name().to_string_lossy().to_ascii_lowercase();
-            if name.starts_with('.') || !e.file_type().is_ok_and(|t| t.is_dir()) || out.iter().any(|p| p.name == name) {
+            if name.starts_with('.')
+                || !e.file_type().is_ok_and(|t| t.is_dir())
+                || out.iter().any(|p| p.name == name)
+            {
                 continue;
             }
             let rules = by_pkg.get(&name).map(Vec::as_slice).unwrap_or(&[]);
@@ -2009,7 +2742,11 @@ impl AppCore {
                 rules: rules.len(),
                 hosts: rule_hosts(rules.iter()),
                 dir: e.path().display().to_string(),
-                created: e.metadata().and_then(|m| m.modified()).ok().and_then(unix_ms),
+                created: e
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(unix_ms),
                 rejected: 0,
                 name,
             });
@@ -2050,8 +2787,12 @@ mod tests {
     #[test]
     fn url_regex_ignores_params_anywhere() {
         let mut e = entry("https://api.x.de/items?page=2&_=1700000&utm_source=mail");
-        e.ignored_params = DEFAULT_IGNORED_PARAMS.iter().map(|s| s.to_string()).collect();
-        e.query.retain(|q| !e.ignored_params.iter().any(|p| glob_matches(p, &q.name)));
+        e.ignored_params = DEFAULT_IGNORED_PARAMS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        e.query
+            .retain(|q| !e.ignored_params.iter().any(|p| glob_matches(p, &q.name)));
         e.exact_url = false;
         let re = regex::Regex::new(&url_regex(&e)).unwrap();
         for (u, want) in [
@@ -2069,20 +2810,36 @@ mod tests {
         e.ignored_params = vec!["_".into()];
         e.exact_url = false;
         let re = regex::Regex::new(&url_regex(&e)).unwrap();
-        assert!(re.is_match("https://api.x.de/a.b") && re.is_match("https://api.x.de/a.b?_=1") && !re.is_match("https://api.x.de/aXb"));
+        assert!(
+            re.is_match("https://api.x.de/a.b")
+                && re.is_match("https://api.x.de/a.b?_=1")
+                && !re.is_match("https://api.x.de/aXb")
+        );
     }
 
     #[test]
     fn path_patterns() {
         assert_eq!(path_pattern("/a/b", "/a/b"), None);
-        assert_eq!(path_pattern("/reset/eyJabc", "/reset/%3Cjwt-1%3E").as_deref(), Some("/reset/[^/]*"));
-        assert_eq!(path_pattern("/u/a.b/x/y/z", "/u/a.b/%3Cp%3E/z").as_deref(), Some(r"/u/a\.b/[^?#]*/z"));
+        assert_eq!(
+            path_pattern("/reset/eyJabc", "/reset/%3Cjwt-1%3E").as_deref(),
+            Some("/reset/[^/]*")
+        );
+        assert_eq!(
+            path_pattern("/u/a.b/x/y/z", "/u/a.b/%3Cp%3E/z").as_deref(),
+            Some(r"/u/a\.b/[^?#]*/z")
+        );
         let mut e = entry("https://api.x.de/users/%3Cemail-1%3E/orders");
         e.path_regex = path_pattern("/users/max%40example.com/orders", &e.path);
         e.exact_url = false;
         let re = regex::Regex::new(&url_regex(&e)).unwrap();
-        assert!(re.is_match("https://api.x.de/users/max%40example.com/orders") && !re.is_match("https://api.x.de/users/a/b/orders"));
-        assert!(!match_expression(&e).contains(char::is_whitespace) || match_expression(&e).starts_with("METHOD:GET regex:"));
+        assert!(
+            re.is_match("https://api.x.de/users/max%40example.com/orders")
+                && !re.is_match("https://api.x.de/users/a/b/orders")
+        );
+        assert!(
+            !match_expression(&e).contains(char::is_whitespace)
+                || match_expression(&e).starts_with("METHOD:GET regex:")
+        );
         // Whitespace is spelled out (the expression is split at whitespace).
         assert_eq!(re_lit("a b\n"), r"a\x{20}b\x{a}");
     }
@@ -2090,10 +2847,19 @@ mod tests {
     #[test]
     fn hosts_of_match_expressions() {
         for (m, want) in [
-            ("METHOD:GET EXACT:https://API.x.de:8443/a?b=1", Some("api.x.de:8443")),
-            (r"METHOD:POST BODYJSON:regex:^https://api\.x\.de/search(?:\?x)?$ {}", Some("api.x.de")),
+            (
+                "METHOD:GET EXACT:https://API.x.de:8443/a?b=1",
+                Some("api.x.de:8443"),
+            ),
+            (
+                r"METHOD:POST BODYJSON:regex:^https://api\.x\.de/search(?:\?x)?$ {}",
+                Some("api.x.de"),
+            ),
             ("prefix:http://mock.invalid/api/", Some("mock.invalid")),
-            ("METHOD:POST URLWithBody:EXACT:http://a.test/x regex:^a$", Some("a.test")),
+            (
+                "METHOD:POST URLWithBody:EXACT:http://a.test/x regex:^a$",
+                Some("a.test"),
+            ),
             ("*", None),
             ("login", None),
             ("NOT:x", None),
@@ -2110,9 +2876,13 @@ mod tests {
 
     #[test]
     fn options_from_json() {
-        let o: MockOptions = serde_json::from_str(r#"{"sanitize":"gdpr","repeats":"sequence"}"#).unwrap();
+        let o: MockOptions =
+            serde_json::from_str(r#"{"sanitize":"gdpr","repeats":"sequence"}"#).unwrap();
         assert_eq!(o.sanitize, SanitizeOptions::preset("gdpr"));
-        assert_eq!((o.repeats, o.query, o.match_body), (Repeats::Sequence, QueryMatch::Ignore, true));
+        assert_eq!(
+            (o.repeats, o.query, o.match_body),
+            (Repeats::Sequence, QueryMatch::Ignore, true)
+        );
         let o: MockOptions = serde_json::from_str(r#"{"sanitize":null}"#).unwrap();
         assert!(o.sanitize.is_none());
         let o: MockOptions = serde_json::from_str("{}").unwrap();
@@ -2125,24 +2895,48 @@ mod tests {
 
     #[test]
     fn helpers() {
-        assert!(glob_matches("utm_*", "UTM_Source") && !glob_matches("utm_*", "xutm_") && glob_matches("a*b*c", "aXXbYc"));
-        assert!(host_matches("example.com", "api.example.com:8443") && !host_matches("example.com", "badexample.com"));
+        assert!(
+            glob_matches("utm_*", "UTM_Source")
+                && !glob_matches("utm_*", "xutm_")
+                && glob_matches("a*b*c", "aXXbYc")
+        );
+        assert!(
+            host_matches("example.com", "api.example.com:8443")
+                && !host_matches("example.com", "badexample.com")
+        );
         assert_eq!(sanitize_name("../../etc/passwd"), "etc-passwd");
         assert_eq!(sanitize_name("Mein Paket (2)"), "mein-paket-2");
         assert_eq!(sanitize_name("..."), "mocks");
         assert_eq!(package_tag("Shop-API"), "pkg:shop-api");
         assert_eq!(slug("/api/v1/items/"), "api-v1-items");
         assert_eq!(pct_decode("a%20b+c%zz"), "a b c%zz");
-        assert!(is_static("/app.js", "") && is_static("/x", "image/png") && !is_static("/api/items", "application/json"));
-        let o: Value = serde_json::from_str(r#"{"user":"a","password":"secret","n":[1,2]}"#).unwrap();
-        let s: Value = serde_json::from_str(r#"{"user":"a","password":"<redacted>","n":[1,2]}"#).unwrap();
-        assert_eq!(with_placeholders(&o, &s), json!({"user":"a","password":JSON_IGNORE,"n":[1,2]}));
-        assert_eq!(canonical(&json!({"b":1,"a":[1.0,{"d":2,"c":3}]})), r#"{"a":[1,{"c":3,"d":2}],"b":1}"#);
+        assert!(
+            is_static("/app.js", "")
+                && is_static("/x", "image/png")
+                && !is_static("/api/items", "application/json")
+        );
+        let o: Value =
+            serde_json::from_str(r#"{"user":"a","password":"secret","n":[1,2]}"#).unwrap();
+        let s: Value =
+            serde_json::from_str(r#"{"user":"a","password":"<redacted>","n":[1,2]}"#).unwrap();
+        assert_eq!(
+            with_placeholders(&o, &s),
+            json!({"user":"a","password":JSON_IGNORE,"n":[1,2]})
+        );
+        assert_eq!(
+            canonical(&json!({"b":1,"a":[1.0,{"d":2,"c":3}]})),
+            r#"{"a":[1,{"c":3,"d":2}],"b":1}"#
+        );
         // Large integers stay apart.
         let a: Value = serde_json::from_str(r#"{"id":9007199254740993}"#).unwrap();
         let b: Value = serde_json::from_str(r#"{"id":9007199254740992}"#).unwrap();
         assert_ne!(canonical(&a), canonical(&b));
-        assert!(valid_header("X-A", "b\tc") && !valid_header("X-A", "b\r\nSet-Cookie: x") && !valid_header("X A", "b") && !valid_header("X-A", "a\0"));
+        assert!(
+            valid_header("X-A", "b\tc")
+                && !valid_header("X-A", "b\r\nSet-Cookie: x")
+                && !valid_header("X A", "b")
+                && !valid_header("X-A", "a\0")
+        );
         assert_eq!(clean_reason("OK\r\nX: y", 200), "OKX: y");
         assert_eq!(clean_reason("\r\n", 404), "Not Found");
     }
@@ -2151,17 +2945,36 @@ mod tests {
     fn raw_response_framing() {
         let mut e = entry("http://a.test/x");
         e.body = b"hello".to_vec();
-        e.headers = vec![("Content-Length".into(), "999".into()), ("X-Bad".into(), "a\r\nInjected: 1".into()), ("X-Ok".into(), "1".into())];
+        e.headers = vec![
+            ("Content-Length".into(), "999".into()),
+            ("X-Bad".into(), "a\r\nInjected: 1".into()),
+            ("X-Ok".into(), "1".into()),
+        ];
         let raw = String::from_utf8(raw_response(&e)).unwrap();
-        assert!(raw.contains("Content-Length: 5\r\n") && !raw.contains("Injected") && raw.ends_with("\r\n\r\nhello"), "{raw}");
+        assert!(
+            raw.contains("Content-Length: 5\r\n")
+                && !raw.contains("Injected")
+                && raw.ends_with("\r\n\r\nhello"),
+            "{raw}"
+        );
         e.status = 204;
         let raw = String::from_utf8(raw_response(&e)).unwrap();
-        assert!(!raw.to_ascii_lowercase().contains("content-length") && raw.ends_with("\r\n\r\n"), "{raw}");
+        assert!(
+            !raw.to_ascii_lowercase().contains("content-length") && raw.ends_with("\r\n\r\n"),
+            "{raw}"
+        );
         e.status = 200;
         e.method = "HEAD".into();
         let raw = String::from_utf8(raw_response(&e)).unwrap();
-        assert!(raw.contains("Content-Length: 999\r\n") && raw.ends_with("\r\n\r\n"), "{raw}");
+        assert!(
+            raw.contains("Content-Length: 999\r\n") && raw.ends_with("\r\n\r\n"),
+            "{raw}"
+        );
         e.reason = "OK\r\nX-Evil: 1".into();
-        assert!(!String::from_utf8(raw_response(&e)).unwrap().contains("\r\nX-Evil"));
+        assert!(
+            !String::from_utf8(raw_response(&e))
+                .unwrap()
+                .contains("\r\nX-Evil")
+        );
     }
 }

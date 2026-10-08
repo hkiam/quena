@@ -43,8 +43,10 @@ mod analyzer_world {
 }
 
 use analyzer_world::exports::quena::plugin::analyzer::{
-    AuthInfo as WitAuthInfo, Info as AnalyzerInfo, JwtClaims as WitJwtClaims, OauthRequest as WitOauthRequest, OauthResponse as WitOauthResponse, OidcDiscovery as WitOidcDiscovery,
-    Session as WitSession, TextInfo as WitTextInfo, Timers as WitTimers,
+    AuthInfo as WitAuthInfo, Info as AnalyzerInfo, JwtClaims as WitJwtClaims,
+    OauthRequest as WitOauthRequest, OauthResponse as WitOauthResponse,
+    OidcDiscovery as WitOidcDiscovery, Session as WitSession, TextInfo as WitTextInfo,
+    Timers as WitTimers,
 };
 use analyzer_world::{AnalyzerPlugin, AnalyzerPluginPre};
 use decoder_world::exports::quena::plugin::decoder::{Info as DecoderInfo, Representation};
@@ -469,7 +471,14 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { memory: 512 << 20, call_timeout: Duration::from_secs(10), max_output: 16 << 30, max_inspect_output: 4 << 20, finish_timeout: Duration::from_secs(60), max_report: 64 << 20 }
+        Limits {
+            memory: 512 << 20,
+            call_timeout: Duration::from_secs(10),
+            max_output: 16 << 30,
+            max_inspect_output: 4 << 20,
+            finish_timeout: Duration::from_secs(60),
+            max_report: 64 << 20,
+        }
     }
 }
 
@@ -484,7 +493,10 @@ struct State {
 
 impl WasiView for State {
     fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView { ctx: &mut self.wasi, table: &mut self.table }
+        WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
+        }
     }
 }
 
@@ -510,7 +522,11 @@ impl Loaded {
             (Some(i), _, _) => (&i.name, &i.version, &i.tab),
             (_, Some((_, i)), _) => (&i.name, &i.version, &i.tab),
             (_, _, Some((_, i))) => (&i.name, &i.version, &i.title),
-            _ => (&self.manifest.name, &self.manifest.version, &self.manifest.name),
+            _ => (
+                &self.manifest.name,
+                &self.manifest.version,
+                &self.manifest.name,
+            ),
         }
     }
 }
@@ -558,7 +574,11 @@ impl PluginHost {
 
     /// Like [`PluginHost::new`], with the compiled plugins in `cache_dir` (which several
     /// processes may share).
-    pub fn with_cache(dirs: Vec<PathBuf>, state_dir: &Path, cache_dir: PathBuf) -> Result<Arc<PluginHost>> {
+    pub fn with_cache(
+        dirs: Vec<PathBuf>,
+        state_dir: &Path,
+        cache_dir: PathBuf,
+    ) -> Result<Arc<PluginHost>> {
         let mut cfg = Config::new();
         cfg.wasm_component_model(true);
         cfg.epoch_interruption(true);
@@ -598,7 +618,10 @@ impl PluginHost {
     }
 
     fn disabled_ids(&self) -> Vec<String> {
-        std::fs::read(&self.disabled_file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        std::fs::read(&self.disabled_file)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
     }
 
     /// (Re)scan the plugin directories.
@@ -606,26 +629,45 @@ impl PluginHost {
         let disabled = self.disabled_ids();
         let mut found = Vec::new();
         for d in &self.dirs {
-            let Ok(rd) = std::fs::read_dir(d) else { continue };
-            let mut entries: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.join("plugin.toml").exists()).collect();
+            let Ok(rd) = std::fs::read_dir(d) else {
+                continue;
+            };
+            let mut entries: Vec<_> = rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.join("plugin.toml").exists())
+                .collect();
             entries.sort();
             for dir in entries {
                 match self.load(&dir) {
                     Ok(l) => {
-                        if found.iter().any(|x: &Arc<Loaded>| x.manifest.id == l.manifest.id) {
+                        if found
+                            .iter()
+                            .any(|x: &Arc<Loaded>| x.manifest.id == l.manifest.id)
+                        {
                             continue; // first search path wins
                         }
-                        l.enabled.store(!disabled.contains(&l.manifest.id), Ordering::Relaxed);
+                        l.enabled
+                            .store(!disabled.contains(&l.manifest.id), Ordering::Relaxed);
                         tracing::info!(target: "quena::plugins", "loaded plugin {} {} from {}", l.manifest.name, l.manifest.version, dir.display());
                         found.push(Arc::new(l));
                     }
-                    Err(e) => tracing::warn!(target: "quena::plugins", "plugin in {}: {e:#}", dir.display()),
+                    Err(e) => {
+                        tracing::warn!(target: "quena::plugins", "plugin in {}: {e:#}", dir.display())
+                    }
                 }
             }
         }
         let wasm: Vec<PathBuf> = found
             .iter()
-            .flat_map(|l| std::fs::read_dir(&l.dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wasm")))
+            .flat_map(|l| {
+                std::fs::read_dir(&l.dir)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "wasm"))
+            })
             .collect();
         self.prune_cache(&wasm);
         *self.plugins.write() = found;
@@ -638,7 +680,11 @@ impl PluginHost {
         let bytes = std::fs::read(wasm).with_context(|| format!("{}", wasm.display()))?;
         let mut h = std::collections::hash_map::DefaultHasher::new();
         self.engine.precompile_compatibility_hash().hash(&mut h);
-        let key = format!("{}-{:016x}", hex::encode(&sha2::Sha256::digest(&bytes)[..16]), h.finish());
+        let key = format!(
+            "{}-{:016x}",
+            hex::encode(&sha2::Sha256::digest(&bytes)[..16]),
+            h.finish()
+        );
         let cached = self.cache_dir.join(format!("{key}.cwasm"));
         // Read into memory rather than `deserialize_file`: a memory-mapped cache file is
         // locked on Windows (updates and pruning fail) and overwriting it on Unix while
@@ -652,18 +698,27 @@ impl PluginHost {
                 Ok(c) => {
                     // In use: a fresh mtime keeps it from being pruned as abandoned by other
                     // processes sharing the cache (atime is unreliable, often `noatime`).
-                    let _ = std::fs::File::options().write(true).open(&cached).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+                    let _ = std::fs::File::options()
+                        .write(true)
+                        .open(&cached)
+                        .and_then(|f| f.set_modified(std::time::SystemTime::now()));
                     return Ok(c);
                 }
-                Err(e) => tracing::debug!(target: "quena::plugins", "stale compile cache {}: {e}", cached.display()),
+                Err(e) => {
+                    tracing::debug!(target: "quena::plugins", "stale compile cache {}: {e}", cached.display())
+                }
             }
         }
         let component = Component::new(&self.engine, &bytes).map_err(|e| anyhow!("{e:#}"))?;
         if let Ok(ser) = component.serialize() {
             let _ = std::fs::create_dir_all(&self.cache_dir);
             // A name of its own: processes sharing the cache may compile the same plugin at once.
-            let tmp = cached.with_extension(format!("{}-{:x}.tmp", std::process::id(), rand_suffix()));
-            if std::fs::write(&tmp, &ser).and_then(|_| std::fs::rename(&tmp, &cached)).is_err() {
+            let tmp =
+                cached.with_extension(format!("{}-{:x}.tmp", std::process::id(), rand_suffix()));
+            if std::fs::write(&tmp, &ser)
+                .and_then(|_| std::fs::rename(&tmp, &cached))
+                .is_err()
+            {
                 let _ = std::fs::remove_file(&tmp);
             }
         }
@@ -675,7 +730,9 @@ impl PluginHost {
     /// once nobody has loaded them for [`CACHE_UNUSED_MAX_AGE`]; temporary files that a
     /// crashed writer left behind go after [`CACHE_TMP_MAX_AGE`].
     fn prune_cache(&self, keep: &[PathBuf]) {
-        let Ok(rd) = std::fs::read_dir(&self.cache_dir) else { return };
+        let Ok(rd) = std::fs::read_dir(&self.cache_dir) else {
+            return;
+        };
         let used: Vec<String> = keep
             .iter()
             .filter_map(|w| std::fs::read(w).ok())
@@ -686,14 +743,19 @@ impl PluginHost {
             .collect();
         let now = std::time::SystemTime::now();
         let older_than = |e: &std::fs::DirEntry, age: std::time::Duration| {
-            e.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok()).is_some_and(|d| d > age)
+            e.metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| now.duration_since(t).ok())
+                .is_some_and(|d| d > age)
         };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             let stale = if name.ends_with(".tmp") {
                 older_than(&e, CACHE_TMP_MAX_AGE)
             } else if name.ends_with(".cwasm") {
-                !used.iter().any(|u| name.starts_with(u.as_str())) && older_than(&e, CACHE_UNUSED_MAX_AGE)
+                !used.iter().any(|u| name.starts_with(u.as_str()))
+                    && older_than(&e, CACHE_UNUSED_MAX_AGE)
             } else {
                 false
             };
@@ -704,7 +766,8 @@ impl PluginHost {
     }
 
     fn load(&self, dir: &Path) -> Result<Loaded> {
-        let manifest: Manifest = toml::from_str(&std::fs::read_to_string(dir.join("plugin.toml"))?).context("plugin.toml")?;
+        let manifest: Manifest = toml::from_str(&std::fs::read_to_string(dir.join("plugin.toml"))?)
+            .context("plugin.toml")?;
         let kind = if manifest.analyzer.is_some() {
             PluginKind::Analyzer
         } else if manifest.header_inspector.is_some() {
@@ -712,10 +775,22 @@ impl PluginHost {
         } else {
             PluginKind::Decoder
         };
-        let mut l =
-            Loaded { manifest: manifest.clone(), dir: dir.to_path_buf(), kind, pre: None, info: None, header: None, analyzer: None, enabled: AtomicBool::new(true), error: None };
+        let mut l = Loaded {
+            manifest: manifest.clone(),
+            dir: dir.to_path_buf(),
+            kind,
+            pre: None,
+            info: None,
+            header: None,
+            analyzer: None,
+            enabled: AtomicBool::new(true),
+            error: None,
+        };
         if manifest.api_version != API_VERSION {
-            l.error = Some(format!("unsupported API version {} (host supports {API_VERSION})", manifest.api_version));
+            l.error = Some(format!(
+                "unsupported API version {} (host supports {API_VERSION})",
+                manifest.api_version
+            ));
             return Ok(l);
         }
         let wasm = match &manifest.wasm {
@@ -728,25 +803,37 @@ impl PluginHost {
         };
         let r = (|| -> Result<()> {
             let component = self.compile_cached(&wasm)?;
-            let pre = self.linker.instantiate_pre(&component).map_err(|e| anyhow!("{e:#}"))?;
+            let pre = self
+                .linker
+                .instantiate_pre(&component)
+                .map_err(|e| anyhow!("{e:#}"))?;
             match kind {
                 PluginKind::Decoder => {
                     let pre = PluginPre::new(pre).map_err(|e| anyhow!("{e:#}"))?;
                     let (mut store, plugin) = self.instantiate(&pre)?;
-                    let info = plugin.quena_plugin_decoder().call_get_info(&mut store).map_err(|e| anyhow!("{e:#}"))?;
+                    let info = plugin
+                        .quena_plugin_decoder()
+                        .call_get_info(&mut store)
+                        .map_err(|e| anyhow!("{e:#}"))?;
                     l.pre = Some(pre);
                     l.info = Some(info);
                 }
                 PluginKind::HeaderInspector => {
                     let pre = HeaderPluginPre::new(pre).map_err(|e| anyhow!("{e:#}"))?;
                     let (mut store, plugin) = self.instantiate_header(&pre)?;
-                    let info = plugin.quena_plugin_header_inspector().call_get_info(&mut store).map_err(|e| anyhow!("{e:#}"))?;
+                    let info = plugin
+                        .quena_plugin_header_inspector()
+                        .call_get_info(&mut store)
+                        .map_err(|e| anyhow!("{e:#}"))?;
                     l.header = Some((pre, info));
                 }
                 PluginKind::Analyzer => {
                     let pre = AnalyzerPluginPre::new(pre).map_err(|e| anyhow!("{e:#}"))?;
                     let (mut store, plugin) = self.instantiate_analyzer(&pre)?;
-                    let info = plugin.quena_plugin_analyzer().call_get_info(&mut store).map_err(|e| anyhow!("{e:#}"))?;
+                    let info = plugin
+                        .quena_plugin_analyzer()
+                        .call_get_info(&mut store)
+                        .map_err(|e| anyhow!("{e:#}"))?;
                     l.analyzer = Some((pre, info));
                 }
             }
@@ -761,8 +848,21 @@ impl PluginHost {
     /// Fresh sandboxed store: no preopens, no env, no args, no network — the plugin only computes.
     fn store(&self) -> Store<State> {
         let wasi = WasiCtxBuilder::new().build();
-        let limits = StoreLimitsBuilder::new().memory_size(self.limits.memory).instances(4).tables(32).memories(4).build();
-        let mut store = Store::new(&self.engine, State { wasi, table: ResourceTable::new(), limits, call_end: None });
+        let limits = StoreLimitsBuilder::new()
+            .memory_size(self.limits.memory)
+            .instances(4)
+            .tables(32)
+            .memories(4)
+            .build();
+        let mut store = Store::new(
+            &self.engine,
+            State {
+                wasi,
+                table: ResourceTable::new(),
+                limits,
+                call_end: None,
+            },
+        );
         store.limiter(|s| &mut s.limits);
         store.set_epoch_deadline(self.deadline_ticks());
         store
@@ -774,13 +874,19 @@ impl PluginHost {
         Ok((store, plugin))
     }
 
-    fn instantiate_header(&self, pre: &HeaderPluginPre<State>) -> Result<(Store<State>, HeaderPlugin)> {
+    fn instantiate_header(
+        &self,
+        pre: &HeaderPluginPre<State>,
+    ) -> Result<(Store<State>, HeaderPlugin)> {
         let mut store = self.store();
         let plugin = pre.instantiate(&mut store).map_err(|e| anyhow!("{e:#}"))?;
         Ok((store, plugin))
     }
 
-    fn instantiate_analyzer(&self, pre: &AnalyzerPluginPre<State>) -> Result<(Store<State>, AnalyzerPlugin)> {
+    fn instantiate_analyzer(
+        &self,
+        pre: &AnalyzerPluginPre<State>,
+    ) -> Result<(Store<State>, AnalyzerPlugin)> {
         let mut store = self.store();
         let plugin = pre.instantiate(&mut store).map_err(|e| anyhow!("{e:#}"))?;
         Ok((store, plugin))
@@ -816,12 +922,28 @@ impl PluginHost {
                         _ => Output::Text,
                     },
                     enabled,
-                    status: if l.error.is_some() { "Error".into() } else if enabled { "Enabled".into() } else { "Disabled".into() },
+                    status: if l.error.is_some() {
+                        "Error".into()
+                    } else if enabled {
+                        "Enabled".into()
+                    } else {
+                        "Disabled".into()
+                    },
                     error: l.error.clone(),
                     path: l.dir.display().to_string(),
                     kind: l.kind,
-                    mime_types: l.manifest.decoder.as_ref().map(|d| d.mime_types.clone()).unwrap_or_default(),
-                    headers: l.manifest.header_inspector.as_ref().map(|h| h.headers.clone()).unwrap_or_default(),
+                    mime_types: l
+                        .manifest
+                        .decoder
+                        .as_ref()
+                        .map(|d| d.mime_types.clone())
+                        .unwrap_or_default(),
+                    headers: l
+                        .manifest
+                        .header_inspector
+                        .as_ref()
+                        .map(|h| h.headers.clone())
+                        .unwrap_or_default(),
                 }
             })
             .collect()
@@ -829,9 +951,16 @@ impl PluginHost {
 
     pub fn set_enabled(&self, id: &str, on: bool) -> Result<()> {
         let list = self.plugins.read();
-        let p = list.iter().find(|l| l.manifest.id == id).ok_or_else(|| anyhow!("unknown plugin {id}"))?;
+        let p = list
+            .iter()
+            .find(|l| l.manifest.id == id)
+            .ok_or_else(|| anyhow!("unknown plugin {id}"))?;
         p.enabled.store(on, Ordering::Relaxed);
-        let disabled: Vec<String> = list.iter().filter(|l| !l.enabled.load(Ordering::Relaxed)).map(|l| l.manifest.id.clone()).collect();
+        let disabled: Vec<String> = list
+            .iter()
+            .filter(|l| !l.enabled.load(Ordering::Relaxed))
+            .map(|l| l.manifest.id.clone())
+            .collect();
         std::fs::write(&self.disabled_file, serde_json::to_vec(&disabled)?)?;
         Ok(())
     }
@@ -841,21 +970,39 @@ impl PluginHost {
     }
 
     pub fn output(&self, index: u16) -> Option<Output> {
-        self.list().into_iter().find(|p| p.index == index).map(|p| p.output)
+        self.list()
+            .into_iter()
+            .find(|p| p.index == index)
+            .map(|p| p.output)
     }
 
     /// Plugins that apply to a body: (index, tab title, confidence).
     pub fn candidates(&self, content_type: Option<&str>, prefix: &[u8]) -> Vec<(u16, String, u8)> {
-        let ct = content_type.map(|c| c.split(';').next().unwrap_or("").trim().to_ascii_lowercase());
+        let ct = content_type.map(|c| {
+            c.split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        });
         let mut out = Vec::new();
         for (i, l) in self.plugins.read().iter().enumerate() {
             if !l.enabled.load(Ordering::Relaxed) {
                 continue;
             }
-            let (Some(pre), Some(info)) = (&l.pre, &l.info) else { continue };
-            let manifest_hit = ct.as_ref().is_some_and(|ct| l.manifest.decoder.as_ref().is_some_and(|d| d.mime_types.iter().any(|m| m.eq_ignore_ascii_case(ct))));
+            let (Some(pre), Some(info)) = (&l.pre, &l.info) else {
+                continue;
+            };
+            let manifest_hit = ct.as_ref().is_some_and(|ct| {
+                l.manifest
+                    .decoder
+                    .as_ref()
+                    .is_some_and(|d| d.mime_types.iter().any(|m| m.eq_ignore_ascii_case(ct)))
+            });
             let conf = match self.instantiate(pre).and_then(|(mut store, p)| {
-                p.quena_plugin_decoder().call_detect(&mut store, content_type, &prefix[..prefix.len().min(4096)]).map_err(|e| anyhow!("{e:#}"))
+                p.quena_plugin_decoder()
+                    .call_detect(&mut store, content_type, &prefix[..prefix.len().min(4096)])
+                    .map_err(|e| anyhow!("{e:#}"))
             }) {
                 Ok(c) => c,
                 Err(e) => {
@@ -873,15 +1020,33 @@ impl PluginHost {
     }
 
     /// Run plugin `index` over `input`, streaming output to `out`.
-    pub fn decode(&self, index: u16, content_type: Option<&str>, input: &mut dyn Read, out: &mut dyn Write, cancelled: &dyn Fn() -> bool) -> Result<u64> {
-        let l = self.get(index).ok_or_else(|| anyhow!("plugin {index} not found"))?;
+    pub fn decode(
+        &self,
+        index: u16,
+        content_type: Option<&str>,
+        input: &mut dyn Read,
+        out: &mut dyn Write,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<u64> {
+        let l = self
+            .get(index)
+            .ok_or_else(|| anyhow!("plugin {index} not found"))?;
         if !l.enabled.load(Ordering::Relaxed) {
             return Err(anyhow!("plugin {} is disabled", l.manifest.name));
         }
-        let pre = l.pre.as_ref().ok_or_else(|| anyhow!("plugin {} failed to load: {}", l.manifest.name, l.error.clone().unwrap_or_default()))?;
+        let pre = l.pre.as_ref().ok_or_else(|| {
+            anyhow!(
+                "plugin {} failed to load: {}",
+                l.manifest.name,
+                l.error.clone().unwrap_or_default()
+            )
+        })?;
         let (mut store, plugin) = self.instantiate(pre)?;
         let d = plugin.quena_plugin_decoder();
-        let session = d.session().call_constructor(&mut store, content_type).map_err(|e| anyhow!("plugin: {e:#}"))?;
+        let session = d
+            .session()
+            .call_constructor(&mut store, content_type)
+            .map_err(|e| anyhow!("plugin: {e:#}"))?;
         let mut buf = vec![0u8; 256 * 1024];
         let mut written = 0u64;
         let result = (|| -> Result<()> {
@@ -892,14 +1057,21 @@ impl PluginHost {
                 let n = input.read(&mut buf)?;
                 store.set_epoch_deadline(self.deadline_ticks());
                 let chunk = if n == 0 {
-                    d.session().call_finish(&mut store, session).map_err(|e| anyhow!("plugin trapped: {e:#}"))?
+                    d.session()
+                        .call_finish(&mut store, session)
+                        .map_err(|e| anyhow!("plugin trapped: {e:#}"))?
                 } else {
-                    d.session().call_push(&mut store, session, &buf[..n]).map_err(|e| anyhow!("plugin trapped: {e:#}"))?
+                    d.session()
+                        .call_push(&mut store, session, &buf[..n])
+                        .map_err(|e| anyhow!("plugin trapped: {e:#}"))?
                 };
                 let chunk = chunk.map_err(|e| anyhow!("{e}"))?;
                 written += chunk.len() as u64;
                 if written > self.limits.max_output {
-                    return Err(anyhow!("plugin output exceeds {} bytes", self.limits.max_output));
+                    return Err(anyhow!(
+                        "plugin output exceeds {} bytes",
+                        self.limits.max_output
+                    ));
                 }
                 out.write_all(&chunk)?;
                 if n == 0 {
@@ -921,22 +1093,32 @@ impl PluginHost {
             if !l.enabled.load(Ordering::Relaxed) {
                 continue;
             }
-            let (Some((pre, info)), Some(m)) = (&l.header, &l.manifest.header_inspector) else { continue };
+            let (Some((pre, info)), Some(m)) = (&l.header, &l.manifest.header_inspector) else {
+                continue;
+            };
             if !m.headers.is_empty() && !m.headers.iter().any(|h| h.eq_ignore_ascii_case(&name)) {
                 continue;
             }
             let r = (|| -> Result<Option<(u8, Vec<InspectNode>)>> {
                 let (mut store, plugin) = self.instantiate_header(pre)?;
                 let h = plugin.quena_plugin_header_inspector();
-                let conf = h.call_detect(&mut store, &name, value).map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
+                let conf = h
+                    .call_detect(&mut store, &name, value)
+                    .map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
                 if conf < 50 {
                     return Ok(None);
                 }
                 store.set_epoch_deadline(self.deadline_ticks());
-                let nodes = h.call_inspect(&mut store, &name, value).map_err(|e| anyhow!("plugin trapped: {e:#}"))?.map_err(|e| anyhow!("{e}"))?;
+                let nodes = h
+                    .call_inspect(&mut store, &name, value)
+                    .map_err(|e| anyhow!("plugin trapped: {e:#}"))?
+                    .map_err(|e| anyhow!("{e}"))?;
                 let size: usize = nodes.iter().map(|n| n.name.len() + n.value.len()).sum();
                 if size > self.limits.max_inspect_output {
-                    return Err(anyhow!("plugin output exceeds {} bytes", self.limits.max_inspect_output));
+                    return Err(anyhow!(
+                        "plugin output exceeds {} bytes",
+                        self.limits.max_inspect_output
+                    ));
                 }
                 let nodes = nodes
                     .into_iter()
@@ -954,7 +1136,13 @@ impl PluginHost {
                     .collect();
                 Ok(Some((conf, nodes)))
             })();
-            let entry = |confidence, nodes, error| HeaderInspection { plugin_id: l.manifest.id.clone(), tab: info.tab.clone(), confidence, nodes, error };
+            let entry = |confidence, nodes, error| HeaderInspection {
+                plugin_id: l.manifest.id.clone(),
+                tab: info.tab.clone(),
+                confidence,
+                nodes,
+                error,
+            };
             match r {
                 Ok(Some((conf, nodes))) => out.push(entry(conf, nodes, None)),
                 Ok(None) => {}
@@ -970,7 +1158,9 @@ impl PluginHost {
 
     /// Enabled, loaded analyzer plugin `index`.
     fn analyzer(&self, index: u16) -> Result<(Arc<Loaded>, AnalyzerPluginPre<State>)> {
-        let l = self.get(index).ok_or_else(|| anyhow!("plugin {index} not found"))?;
+        let l = self
+            .get(index)
+            .ok_or_else(|| anyhow!("plugin {index} not found"))?;
         if l.kind != PluginKind::Analyzer {
             return Err(anyhow!("plugin {} is no analyzer", l.manifest.name));
         }
@@ -979,7 +1169,13 @@ impl PluginHost {
         }
         let pre = match &l.analyzer {
             Some((pre, _)) => pre.clone(),
-            None => return Err(anyhow!("plugin {} failed to load: {}", l.manifest.name, l.error.clone().unwrap_or_default())),
+            None => {
+                return Err(anyhow!(
+                    "plugin {} failed to load: {}",
+                    l.manifest.name,
+                    l.error.clone().unwrap_or_default()
+                ));
+            }
         };
         Ok((l, pre))
     }
@@ -988,9 +1184,15 @@ impl PluginHost {
     pub fn describe(&self, index: u16, lang: &str) -> Result<String> {
         let (_, pre) = self.analyzer(index)?;
         let (mut store, plugin) = self.instantiate_analyzer(&pre)?;
-        let out = plugin.quena_plugin_analyzer().call_describe(&mut store, lang).map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
+        let out = plugin
+            .quena_plugin_analyzer()
+            .call_describe(&mut store, lang)
+            .map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
         if out.len() > self.limits.max_report {
-            return Err(anyhow!("plugin output exceeds {} bytes", self.limits.max_report));
+            return Err(anyhow!(
+                "plugin output exceeds {} bytes",
+                self.limits.max_report
+            ));
         }
         Ok(out)
     }
@@ -1021,7 +1223,13 @@ impl PluginHost {
         cancelled: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> Result<String> {
         let c = cancelled.clone();
-        self.analyze_inner(index, options_json, next_batch, &move || c(), Some(cancelled))
+        self.analyze_inner(
+            index,
+            options_json,
+            next_batch,
+            &move || c(),
+            Some(cancelled),
+        )
     }
 
     fn analyze_inner(
@@ -1041,7 +1249,9 @@ impl PluginHost {
                     return Err(wasmtime::format_err!("cancelled"));
                 }
                 match ctx.data().call_end {
-                    Some(end) if Instant::now() < end => Ok(wasmtime::UpdateDeadline::Continue(INTERRUPT_SLICE)),
+                    Some(end) if Instant::now() < end => {
+                        Ok(wasmtime::UpdateDeadline::Continue(INTERRUPT_SLICE))
+                    }
                     _ => Ok(wasmtime::UpdateDeadline::Interrupt),
                 }
             });
@@ -1050,7 +1260,10 @@ impl PluginHost {
         let plugin = pre.instantiate(&mut store).map_err(|e| anyhow!("{e:#}"))?;
         let a = plugin.quena_plugin_analyzer();
         arm(&mut store, self.limits.call_timeout, sliced);
-        let run = a.run().call_constructor(&mut store, options_json).map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
+        let run = a
+            .run()
+            .call_constructor(&mut store, options_json)
+            .map_err(|e| anyhow!("plugin trapped: {e:#}"))?;
         let result = (|| -> Result<String> {
             loop {
                 if cancelled() {
@@ -1064,16 +1277,26 @@ impl PluginHost {
                 let Some(batch) = batch else { break };
                 let batch: Vec<WitSession> = batch.into_iter().map(WitSession::from).collect();
                 arm(&mut store, self.limits.call_timeout, sliced);
-                a.run().call_push(&mut store, run, &batch).map_err(|e| anyhow!("plugin trapped: {e:#}"))?.map_err(|e| anyhow!("{e}"))?;
+                a.run()
+                    .call_push(&mut store, run, &batch)
+                    .map_err(|e| anyhow!("plugin trapped: {e:#}"))?
+                    .map_err(|e| anyhow!("{e}"))?;
             }
             arm(&mut store, self.limits.finish_timeout, sliced);
-            let report = a.run().call_finish(&mut store, run).map_err(|e| anyhow!("plugin trapped: {e:#}"))?.map_err(|e| anyhow!("{e}"))?;
+            let report = a
+                .run()
+                .call_finish(&mut store, run)
+                .map_err(|e| anyhow!("plugin trapped: {e:#}"))?
+                .map_err(|e| anyhow!("{e}"))?;
             // Cancelled while `finish` ran: the caller must not get (and store) a stale report.
             if cancelled() {
                 return Err(anyhow!("cancelled"));
             }
             if report.len() > self.limits.max_report {
-                return Err(anyhow!("plugin output exceeds {} bytes", self.limits.max_report));
+                return Err(anyhow!(
+                    "plugin output exceeds {} bytes",
+                    self.limits.max_report
+                ));
             }
             Ok(report)
         })();
@@ -1091,7 +1314,12 @@ const CACHE_TMP_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10
 fn rand_suffix() -> u64 {
     use std::hash::{BuildHasher, Hasher};
     let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+    h.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    );
     h.finish()
 }
 
@@ -1101,7 +1329,12 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     fn age(p: &Path, by: Duration) {
-        std::fs::File::options().write(true).open(p).unwrap().set_modified(SystemTime::now() - by).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(SystemTime::now() - by)
+            .unwrap();
     }
 
     /// A shared cache: other processes' recent components and fresh temp files stay; abandoned

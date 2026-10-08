@@ -95,7 +95,13 @@ impl Drop for AbortOnDrop {
             if !d.summary.state.is_final() {
                 d.summary.state = SessionState::Aborted;
                 d.summary.flags |= quena_model::flags::CLIENT_ABORTED;
-                d.error.get_or_insert_with(|| if panicking { format!("{reason} (internal error)") } else { reason.to_string() });
+                d.error.get_or_insert_with(|| {
+                    if panicking {
+                        format!("{reason} (internal error)")
+                    } else {
+                        reason.to_string()
+                    }
+                });
             }
         });
         self.live.finish();
@@ -197,7 +203,11 @@ impl LiveSession {
 
     /// Guard that aborts and finishes the session if it is dropped unfinished.
     pub fn abort_on_drop(self: &Arc<Self>, reason: &'static str) -> AbortOnDrop {
-        AbortOnDrop { live: self.clone(), reason, armed: true }
+        AbortOnDrop {
+            live: self.clone(),
+            reason,
+            armed: true,
+        }
     }
 
     /// A body recording starts; the session is not persisted before the guard is dropped.
@@ -324,7 +334,11 @@ pub struct RecoverableCapture {
 
 impl Capture {
     /// Open (or create) a capture directory.
-    pub fn open(dir: impl Into<PathBuf>, body_cfg: BodyConfig, temporary: bool) -> Result<Arc<Capture>> {
+    pub fn open(
+        dir: impl Into<PathBuf>,
+        body_cfg: BodyConfig,
+        temporary: bool,
+    ) -> Result<Arc<Capture>> {
         let dir = dir.into();
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("capture.lock"), std::process::id().to_string())?;
@@ -337,7 +351,11 @@ impl Capture {
             index,
             db,
             live: RwLock::new(HashMap::new()),
-            cache: Mutex::new(Lru { map: HashMap::new(), order: VecDeque::new(), cap: 4096 }),
+            cache: Mutex::new(Lru {
+                map: HashMap::new(),
+                order: VecDeque::new(),
+                cap: 4096,
+            }),
             next_id: AtomicU64::new(1),
             numbering: AtomicU64::new(new_numbering()),
             temporary,
@@ -353,7 +371,9 @@ impl Capture {
         self.db.for_each(|d| {
             max_id = max_id.max(d.summary.id);
             for b in [&d.request_body, &d.response_body] {
-                if let quena_model::BodyRef::Inline { id, .. } | quena_model::BodyRef::Blob { id, .. } = b {
+                if let quena_model::BodyRef::Inline { id, .. }
+                | quena_model::BodyRef::Blob { id, .. } = b
+                {
                     max_body = max_body.max(*id);
                 }
             }
@@ -376,7 +396,8 @@ impl Capture {
             }
             self.index.upsert(s);
         })?;
-        self.next_id.store(max_id.saturating_add(1), Ordering::Relaxed);
+        self.next_id
+            .store(max_id.saturating_add(1), Ordering::Relaxed);
         self.bodies.bump_id(max_body);
         self.index.tick();
         Ok(())
@@ -402,7 +423,11 @@ impl Capture {
     }
 
     /// Start a new session; it is visible in the list immediately.
-    pub fn begin(self: &Arc<Self>, kind: SessionKind, init: impl FnOnce(&mut SessionDetail)) -> Arc<LiveSession> {
+    pub fn begin(
+        self: &Arc<Self>,
+        kind: SessionKind,
+        init: impl FnOnce(&mut SessionDetail),
+    ) -> Arc<LiveSession> {
         let id = self.next_id();
         let mut d = SessionDetail::default();
         d.summary.id = id;
@@ -460,17 +485,22 @@ impl Capture {
     fn finish_later(&self, live: Arc<LiveSession>) {
         let deadline = std::time::Instant::now() + FINISH_GRACE;
         let mut tx = self.deferred.lock();
-        if tx.as_ref().is_none_or(|t| t.send((live.clone(), deadline)).is_err()) {
+        if tx
+            .as_ref()
+            .is_none_or(|t| t.send((live.clone(), deadline)).is_err())
+        {
             let (t, rx) = std::sync::mpsc::channel::<(Arc<LiveSession>, std::time::Instant)>();
-            let spawned = std::thread::Builder::new().name("quena-finish".into()).spawn(move || {
-                while let Ok((l, at)) = rx.recv() {
-                    let now = std::time::Instant::now();
-                    if at > now {
-                        std::thread::sleep(at - now);
+            let spawned = std::thread::Builder::new()
+                .name("quena-finish".into())
+                .spawn(move || {
+                    while let Ok((l, at)) = rx.recv() {
+                        let now = std::time::Instant::now();
+                        if at > now {
+                            std::thread::sleep(at - now);
+                        }
+                        l.force_finish();
                     }
-                    l.force_finish();
-                }
-            });
+                });
             if spawned.is_err() {
                 live.force_finish();
                 return;
@@ -481,7 +511,9 @@ impl Capture {
     }
 
     fn finish(&self, id: SessionId) {
-        let Some(live) = self.live.write().remove(&id) else { return };
+        let Some(live) = self.live.write().remove(&id) else {
+            return;
+        };
         let mut d = live.detail();
         d.refresh_summary();
         d.summary.request_body_len = live.request_body().wire_len();
@@ -520,7 +552,10 @@ impl Capture {
             return Some((l.request_body(), l.response_body()));
         }
         let d = self.detail(id)?;
-        Some((self.bodies.open_ref(&d.request_body), self.bodies.open_ref(&d.response_body)))
+        Some((
+            self.bodies.open_ref(&d.request_body),
+            self.bodies.open_ref(&d.response_body),
+        ))
     }
 
     /// Persist UI-level changes (mark, comment) of a finished session.
@@ -634,11 +669,15 @@ fn pid_alive(pid: u32) -> bool {
 /// Find temporary captures that were not closed cleanly.
 pub fn find_recoverable(captures_root: &Path) -> Vec<RecoverableCapture> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(captures_root) else { return out };
+    let Ok(rd) = std::fs::read_dir(captures_root) else {
+        return out;
+    };
     for e in rd.flatten() {
         let dir = e.path();
         let lock = dir.join("capture.lock");
-        let Ok(pid) = std::fs::read_to_string(&lock) else { continue };
+        let Ok(pid) = std::fs::read_to_string(&lock) else {
+            continue;
+        };
         let pid: u32 = pid.trim().parse().unwrap_or(0);
         if pid == std::process::id() || (pid != 0 && pid_alive(pid)) {
             continue;
@@ -666,7 +705,11 @@ pub fn find_recoverable(captures_root: &Path) -> Vec<RecoverableCapture> {
             let _ = std::fs::remove_dir_all(&dir);
             continue;
         }
-        out.push(RecoverableCapture { dir, sessions, modified });
+        out.push(RecoverableCapture {
+            dir,
+            sessions,
+            modified,
+        });
     }
     out
 }
@@ -681,12 +724,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cap = Capture::open(dir.path().join("cap"), BodyConfig::default(), true).unwrap();
         let s = cap.begin(SessionKind::Http, |d| {
-            d.request = RequestHead { method: "POST".into(), url: "http://a/x".into(), ..Default::default() };
+            d.request = RequestHead {
+                method: "POST".into(),
+                url: "http://a/x".into(),
+                ..Default::default()
+            };
         });
         let hold = s.hold();
         // The response is complete before the request body recording finished.
         s.finish();
-        assert!(cap.live(s.id).is_some(), "persisted before the request body was recorded");
+        assert!(
+            cap.live(s.id).is_some(),
+            "persisted before the request body was recorded"
+        );
         let mut w = cap.bodies.writer();
         w.write(b"late request body").unwrap();
         s.set_request_body(w.finish());
@@ -705,13 +755,21 @@ mod tests {
         {
             let cap = Capture::open(&path, BodyConfig::default(), true).unwrap();
             let s = cap.begin(SessionKind::Http, |d| {
-                d.request = RequestHead { method: "GET".into(), url: "http://a/x".into(), ..Default::default() };
+                d.request = RequestHead {
+                    method: "GET".into(),
+                    url: "http://a/x".into(),
+                    ..Default::default()
+                };
             });
             let mut w = cap.bodies.writer();
             w.write(b"hello").unwrap();
             s.set_response_body(w.finish());
             s.update(|d| {
-                d.response = Some(ResponseHead { status: 200, reason: "OK".into(), ..Default::default() });
+                d.response = Some(ResponseHead {
+                    status: 200,
+                    reason: "OK".into(),
+                    ..Default::default()
+                });
                 d.summary.state = SessionState::Done;
             });
             s.finish();

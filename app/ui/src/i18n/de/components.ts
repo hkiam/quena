@@ -515,4 +515,11 @@ export const components: Record<string, string> = {
   "Host remapping is on": "Host-Umleitung ist aktiv",
   "{n} remap": "{n} Umleitung",
   "{n} remaps": "{n} Umleitungen",
+  "Protobuf schemas": "Protobuf-Schemas",
+  "With .proto files the gRPC and protobuf view shows field names, types and enum values instead of field numbers. Folders are searched for .proto files; imports are resolved against them and the import paths.": "Mit .proto-Dateien zeigt die gRPC- und Protobuf-Ansicht Feldnamen, Typen und Enum-Werte statt Feldnummern. Ordner werden nach .proto-Dateien durchsucht; Imports werden gegen sie und die Importpfade aufgelöst.",
+  "Add .proto files…": ".proto-Dateien hinzufügen…",
+  "Add folder…": "Ordner hinzufügen…",
+  "Import paths (one per line)": "Importpfade (einer pro Zeile)",
+  "Allow fetching schemas from gRPC servers (server reflection, on request in the gRPC view)": "Schemas von gRPC-Servern holen erlauben (Server Reflection, auf Anforderung in der gRPC-Ansicht)",
+  "{files} files, {messages} message types, {services} services; {reflected} fetched from servers": "{files} Dateien, {messages} Nachrichtentypen, {services} Services; {reflected} von Servern geholt",
 };

@@ -67,8 +67,15 @@ impl TlsConn {
         let mut used = 0;
         while self.bufs[side].len() - used >= 5 {
             let b = &self.bufs[side][used..];
-            let (ty, version, len) = (b[0], u16::from_be_bytes([b[1], b[2]]), u16::from_be_bytes([b[3], b[4]]) as usize);
-            if !(CHANGE_CIPHER_SPEC..=APPLICATION_DATA).contains(&ty) || b[1] != 3 || len > MAX_RECORD {
+            let (ty, version, len) = (
+                b[0],
+                u16::from_be_bytes([b[1], b[2]]),
+                u16::from_be_bytes([b[3], b[4]]) as usize,
+            );
+            if !(CHANGE_CIPHER_SPEC..=APPLICATION_DATA).contains(&ty)
+                || b[1] != 3
+                || len > MAX_RECORD
+            {
                 self.stop(side, "the connection stopped looking like TLS");
                 return out;
             }
@@ -93,7 +100,10 @@ impl TlsConn {
 
     /// Bytes of one side are missing: record boundaries and sequence numbers are lost.
     pub fn gap(&mut self, side: usize, n: u64) {
-        self.stop(side, &format!("{n} bytes of the encrypted connection are missing in the capture"));
+        self.stop(
+            side,
+            &format!("{n} bytes of the encrypted connection are missing in the capture"),
+        );
     }
 
     fn stop(&mut self, side: usize, why: &str) {
@@ -108,11 +118,23 @@ impl TlsConn {
         self.server.is_some_and(|s| s.version == 0x0304)
     }
 
-    fn record(&mut self, side: usize, ty: u8, version: u16, fragment: &[u8], keys: &KeyLog, out: &mut Vec<Vec<u8>>) {
+    fn record(
+        &mut self,
+        side: usize,
+        ty: u8,
+        version: u16,
+        fragment: &[u8],
+        keys: &KeyLog,
+        out: &mut Vec<Vec<u8>>,
+    ) {
         let tls13 = self.tls13();
         // TLS 1.3 protects records as application data; TLS 1.2 protects everything after
         // the ChangeCipherSpec of that side.
-        let sealed = if tls13 { ty == APPLICATION_DATA } else { self.prot[side].is_some() };
+        let sealed = if tls13 {
+            ty == APPLICATION_DATA
+        } else {
+            self.prot[side].is_some()
+        };
         if !sealed {
             match ty {
                 HANDSHAKE => {
@@ -126,7 +148,9 @@ impl TlsConn {
             }
             return;
         }
-        let Some(prot) = self.prot[side].as_mut() else { return };
+        let Some(prot) = self.prot[side].as_mut() else {
+            return;
+        };
         let Some((real, plain)) = prot.open(ty, version, fragment) else {
             if tls13 && side == CLIENT && self.next[CLIENT].is_some() {
                 // Before the client's Finished: 0-RTT early data under keys not logged here.
@@ -211,7 +235,11 @@ impl TlsConn {
         let suite = match (sh.version, tlsrec::suite(sh.suite)) {
             (0x0303 | 0x0304, Some(s)) if s.tls13 == (sh.version == 0x0304) => s,
             _ => {
-                let what = if sh.version < 0x0303 { self.info.version.clone() } else { self.info.cipher.clone() };
+                let what = if sh.version < 0x0303 {
+                    self.info.version.clone()
+                } else {
+                    self.info.cipher.clone()
+                };
                 self.keys = Keys::Unsupported(what);
                 return;
             }
@@ -222,7 +250,12 @@ impl TlsConn {
         };
         if suite.tls13 {
             // The handshake secrets alone would read no application data.
-            let (Some(ch), Some(sh_), Some(ct), Some(st)) = (&secrets.handshake[CLIENT], &secrets.handshake[SERVER], &secrets.traffic[CLIENT], &secrets.traffic[SERVER]) else {
+            let (Some(ch), Some(sh_), Some(ct), Some(st)) = (
+                &secrets.handshake[CLIENT],
+                &secrets.handshake[SERVER],
+                &secrets.traffic[CLIENT],
+                &secrets.traffic[SERVER],
+            ) else {
                 self.keys = Keys::Missing;
                 return;
             };

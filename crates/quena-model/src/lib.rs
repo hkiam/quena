@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod correlation;
-pub mod wslog;
 mod headers;
+pub mod wslog;
 pub use headers::{Headers, latin1_to_string, string_to_latin1};
 
 /// Sequential session number, shown as `#` in the session list.
@@ -57,7 +57,10 @@ impl SessionState {
         matches!(self, SessionState::Done | SessionState::Aborted)
     }
     pub fn is_breakpoint(self) -> bool {
-        matches!(self, SessionState::BreakpointRequest | SessionState::BreakpointResponse)
+        matches!(
+            self,
+            SessionState::BreakpointRequest | SessionState::BreakpointResponse
+        )
     }
 }
 
@@ -109,7 +112,9 @@ impl MarkColor {
         }
     }
     pub fn parse(s: &str) -> Option<MarkColor> {
-        MarkColor::ALL.into_iter().find(|c| c.as_str().eq_ignore_ascii_case(s))
+        MarkColor::ALL
+            .into_iter()
+            .find(|c| c.as_str().eq_ignore_ascii_case(s))
     }
 }
 
@@ -361,7 +366,11 @@ pub const VIA_FLAG: &str = "x-quena-via";
 impl SessionDetail {
     /// The listener the request came through (reverse proxy entry, SOCKS5, transparent), if any.
     pub fn via(&self) -> String {
-        self.extra_flags.iter().find(|(k, _)| k == VIA_FLAG).map(|(_, v)| v.clone()).unwrap_or_default()
+        self.extra_flags
+            .iter()
+            .find(|(k, _)| k == VIA_FLAG)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
     }
 
     /// Recompute the list row fields that are derived from heads.
@@ -381,7 +390,12 @@ impl SessionDetail {
         s.conn = self.connection.client_conn_id.unwrap_or(0);
         s.trace = correlation::trace_id(&self.request.headers);
         s.session = correlation::session_key(&self.request.headers);
-        s.via = self.extra_flags.iter().find(|(k, _)| k == VIA_FLAG).map(|(_, v)| v.clone()).unwrap_or_default();
+        s.via = self
+            .extra_flags
+            .iter()
+            .find(|(k, _)| k == VIA_FLAG)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default();
         s.request_body_len = self.request_body.wire_len();
         if let Some(resp) = &self.response {
             s.status = resp.status;
@@ -397,8 +411,12 @@ impl SessionDetail {
             s.process = p.display();
         }
         if let (Some(start), Some(end)) = (
-            self.timers.client_begin_request.or(self.timers.client_connected),
-            self.timers.client_done_response.or(self.timers.server_done_response),
+            self.timers
+                .client_begin_request
+                .or(self.timers.client_connected),
+            self.timers
+                .client_done_response
+                .or(self.timers.server_done_response),
         ) {
             s.duration_ms = Some(((end - start).max(0) / 1000) as u32);
         }
@@ -430,7 +448,11 @@ pub fn split_url(url: &str, method: &str) -> (String, String) {
     match rest.find(['/', '?']) {
         Some(i) => {
             let path = &rest[i..];
-            let path = if path.starts_with('?') { format!("/{path}") } else { path.to_string() };
+            let path = if path.starts_with('?') {
+                format!("/{path}")
+            } else {
+                path.to_string()
+            };
             (rest[..i].to_string(), path)
         }
         None => (rest.to_string(), "/".to_string()),
@@ -459,8 +481,14 @@ mod tests {
             ("a.b:8443".into(), "/x/y?z=1".into())
         );
         assert_eq!(split_url("http://a.b", "GET"), ("a.b".into(), "/".into()));
-        assert_eq!(split_url("http://a.b?x", "GET"), ("a.b".into(), "/?x".into()));
-        assert_eq!(split_url("a.b:443", "CONNECT"), ("a.b:443".into(), "a.b:443".into()));
+        assert_eq!(
+            split_url("http://a.b?x", "GET"),
+            ("a.b".into(), "/?x".into())
+        );
+        assert_eq!(
+            split_url("a.b:443", "CONNECT"),
+            ("a.b:443".into(), "a.b:443".into())
+        );
     }
 
     #[test]
@@ -474,7 +502,12 @@ mod tests {
         };
         let mut h = Headers::default();
         h.push("Content-Type", "text/html; charset=utf-8");
-        d.response = Some(ResponseHead { status: 200, reason: "OK".into(), version: HttpVersion::Http11, headers: h });
+        d.response = Some(ResponseHead {
+            status: 200,
+            reason: "OK".into(),
+            version: HttpVersion::Http11,
+            headers: h,
+        });
         d.refresh_summary();
         assert_eq!(d.summary.host, "example.com");
         assert_eq!(d.summary.protocol, "HTTPS");

@@ -59,7 +59,13 @@ pub struct SystemProxy {
 impl SystemProxy {
     pub fn points_to(&self, port: u16) -> bool {
         let local = |h: &str| h == "127.0.0.1" || h == "localhost" || h == "::1";
-        self.http.as_ref().is_some_and(|(h, p)| local(h) && *p == port) || self.https.as_ref().is_some_and(|(h, p)| local(h) && *p == port)
+        self.http
+            .as_ref()
+            .is_some_and(|(h, p)| local(h) && *p == port)
+            || self
+                .https
+                .as_ref()
+                .is_some_and(|(h, p)| local(h) && *p == port)
     }
 }
 
@@ -128,7 +134,10 @@ pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// busy browser plus tunnels exhausts quickly). Returns the new soft limit.
 #[cfg(unix)]
 pub fn raise_fd_limit(want: u64) -> Option<u64> {
-    let mut rl = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    let mut rl = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
     // SAFETY: getrlimit/setrlimit only read/write the struct we pass.
     unsafe {
         if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) != 0 {
@@ -139,7 +148,10 @@ pub fn raise_fd_limit(want: u64) -> Option<u64> {
         #[cfg(target_os = "macos")]
         let target = target.min(10240);
         if target > rl.rlim_cur {
-            let new = libc::rlimit { rlim_cur: target, rlim_max: rl.rlim_max };
+            let new = libc::rlimit {
+                rlim_cur: target,
+                rlim_max: rl.rlim_max,
+            };
             if libc::setrlimit(libc::RLIMIT_NOFILE, &new) == 0 {
                 return Some(target as u64);
             }
@@ -185,7 +197,10 @@ mod secure_tests {
     fn roundtrip() {
         let acct = format!("quena-test|{}", std::process::id());
         super::secure::set(&acct, b"s3cr3t-\x00\xff").unwrap();
-        assert_eq!(super::secure::get(&acct).unwrap().as_deref(), Some(&b"s3cr3t-\x00\xff"[..]));
+        assert_eq!(
+            super::secure::get(&acct).unwrap().as_deref(),
+            Some(&b"s3cr3t-\x00\xff"[..])
+        );
         super::secure::delete(&acct).unwrap();
         assert_eq!(super::secure::get(&acct).unwrap(), None);
     }

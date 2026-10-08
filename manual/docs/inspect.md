@@ -86,7 +86,8 @@ These views appear only when the content fits:
 |---|---|---|
 | *WebSocket* | WebSocket sessions | the frame log with direction, type, size and payload; *All frames* or *Text messages* only |
 | *SSE* | `text/event-stream` responses | the stream split into events, live |
-| *gRPC* | gRPC / Protobuf messages | message frames and a schemaless field tree (no `.proto` needed) |
+| *gRPC* | gRPC, gRPC-Web and Protobuf messages | message frames and their fields; with a [schema](#grpc-and-protobuf-with-a-schema) field names, types and enum values |
+| *MessagePack* | `application/msgpack`, `x-msgpack`, `vnd.msgpack` | the values as a tree, like *JSON*, plus binary data, extension types and timestamps |
 | *Parts* | `multipart/*` bodies, including MTOM | the parts of `multipart/related`, `form-data` and `mixed` |
 | *SOAP* | SOAP envelopes | SOAP version, action, operation, body and SOAP faults |
 | *Atom/OData* | Atom feeds and OData (v2/v3 Atom) | entity sets and types, entries, properties and links |
@@ -165,6 +166,40 @@ The **Auth** view shows `Authorization`/`Proxy-Authorization` (request) and
 
 Tokens a plugin recognises in cookies or other headers are listed below the authentication
 headers.
+
+## gRPC and Protobuf with a schema
+
+Without a schema the *gRPC* view shows field numbers and guesses the types from the wire
+format (a varint, a string or a nested message). With the `.proto` files of the service it
+shows what the fields are:
+
+- field names next to their numbers, the schema types (`int64`, `sint32`, `double`, …),
+  enum values by name (`GREEN (2)`), nested messages with their type, repeated fields as
+  lists;
+- fields the schema does not know (a newer server, an extension) stay, by number.
+
+**Adding the schema:** *Settings → Bodies & Storage → Protobuf schemas → Add .proto files…*
+or *Add folder…* (searched for `.proto` files). Imports are resolved against the folders
+added and the *Import paths*; well-known types (`google/protobuf/*.proto`) are built in. The
+line below shows how many files, message types and services were loaded, or the compiler's
+error.
+
+**Which message type:** for gRPC Quena takes the method from the URL
+(`/package.Service/Method`): its input type for the request, its output type for the
+response. The *Schema* line in the view says which type was used. For a plain Protobuf body
+(`application/x-protobuf`, a REST API) there is no method — choose the type in the field
+next to it; the choice holds for that message until you select another session.
+
+**Server reflection:** many gRPC servers can tell their schema themselves. Switch on *Allow
+fetching schemas from gRPC servers* in the settings; the *gRPC* view then has **Fetch schema
+from server**. Quena asks the session's server (`grpc.reflection.v1`, else `v1alpha`) for
+the service's files and their imports, through the upstream proxy and host remapping like
+other traffic, and keeps them in `protobuf-reflection` in the data directory. This sends a
+request to that server, so it only happens when you click.
+
+Also decoded: messages compressed per message (`grpc-encoding: gzip`, `deflate`, `zstd`,
+…), the trailers of gRPC-Web in the last frame (`grpc-status`, `grpc-message`), and
+`application/grpc-web-text` (base64).
 
 ## GraphQL
 

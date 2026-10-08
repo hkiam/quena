@@ -442,7 +442,9 @@ fn main() -> ExitCode {
     // the captured traffic. Best effort; without a handler the OS would just kill us.
     let _ = ctrlc::set_handler(|| {
         // `reverse` stops on the first signal and still saves; a second one ends it now.
-        if REVERSE_RUNNING.load(std::sync::atomic::Ordering::SeqCst) && !STOP.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        if REVERSE_RUNNING.load(std::sync::atomic::Ordering::SeqCst)
+            && !STOP.swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
             return;
         }
         if let Some(d) = DATA_DIR.get() {
@@ -455,8 +457,12 @@ fn main() -> ExitCode {
         Command::Compare(a) => compare(a),
         Command::Sanitize(a) => sanitize(a).map(|_| true),
         Command::Mock(a) => mock(a).map(|_| true),
-        Command::Http { command: HttpCommand::Run(a) } => http_run(a),
-        Command::Http { command: HttpCommand::FromHar(a) } => http_from(a).map(|_| true),
+        Command::Http {
+            command: HttpCommand::Run(a),
+        } => http_run(a),
+        Command::Http {
+            command: HttpCommand::FromHar(a),
+        } => http_from(a).map(|_| true),
         Command::Reverse(a) => reverse(a).map(|_| true),
         Command::Profiles { lang, plugins } => profiles(&lang, &plugins).map(|_| true),
     };
@@ -694,7 +700,9 @@ fn check_captures(files: &[PathBuf]) -> Result<()> {
         if !f.is_file() {
             return Err(usage(format!("{}: no such file", f.display())));
         }
-        let canonical = f.canonicalize().map_err(|e| usage(format!("{}: {e}", f.display())))?;
+        let canonical = f
+            .canonicalize()
+            .map_err(|e| usage(format!("{}: {e}", f.display())))?;
         if !seen.insert(canonical) {
             return Err(usage(format!("capture given twice: {}", f.display())));
         }
@@ -703,7 +711,12 @@ fn check_captures(files: &[PathBuf]) -> Result<()> {
 }
 
 /// Import the captures into a store of their own; all sessions in recorded order.
-fn load_captures(files: &[PathBuf], keylogs: &[PathBuf], quiet: bool, deadline: &Deadline) -> Result<(Engine, Vec<u64>)> {
+fn load_captures(
+    files: &[PathBuf],
+    keylogs: &[PathBuf],
+    quiet: bool,
+    deadline: &Deadline,
+) -> Result<(Engine, Vec<u64>)> {
     let engine = Engine::bare()?;
     for f in files {
         progress(quiet, &format!("importing {}", f.display()));
@@ -737,19 +750,29 @@ fn mock_options(text: &str) -> std::result::Result<quena_app_core::mockgen::Mock
     if !unknown.is_empty() {
         unknown.sort();
         let unknown: Vec<&str> = unknown.iter().map(|s| s.as_str()).collect();
-        return Err(format!("unknown option(s): {} (known: {})", unknown.join(", "), known.join(", ")));
+        return Err(format!(
+            "unknown option(s): {} (known: {})",
+            unknown.join(", "),
+            known.join(", ")
+        ));
     }
     let sanitize = match map.remove("sanitize") {
         None => None,
         Some(Value::Null) => Some(None),
         Some(Value::String(name)) if name == "none" => Some(None),
-        Some(Value::String(name)) => Some(Some(
-            SanitizeOptions::preset(&name).ok_or_else(|| format!("sanitize: unknown preset {name:?} (credentials, support, gdpr or none)"))?,
+        Some(Value::String(name)) => {
+            Some(Some(SanitizeOptions::preset(&name).ok_or_else(|| {
+                format!("sanitize: unknown preset {name:?} (credentials, support, gdpr or none)")
+            })?))
+        }
+        Some(o @ Value::Object(_)) => Some(Some(
+            SanitizeOptions::from_json_strict(&o.to_string())
+                .map_err(|e| format!("sanitize: {e}"))?,
         )),
-        Some(o @ Value::Object(_)) => Some(Some(SanitizeOptions::from_json_strict(&o.to_string()).map_err(|e| format!("sanitize: {e}"))?)),
         Some(_) => return Err("sanitize: a preset name, null or an object".into()),
     };
-    let mut opts: MockOptions = serde_json::from_value(Value::Object(map)).map_err(|e| format!("invalid options: {e}"))?;
+    let mut opts: MockOptions =
+        serde_json::from_value(Value::Object(map)).map_err(|e| format!("invalid options: {e}"))?;
     if let Some(s) = sanitize {
         opts.sanitize = s;
     }
@@ -762,7 +785,10 @@ fn path_key(p: &Path) -> PathBuf {
     if let Ok(c) = p.canonicalize() {
         return c;
     }
-    let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let parent = p
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     match (parent.canonicalize(), p.file_name()) {
         (Ok(d), Some(n)) => d.join(n),
         _ => p.to_path_buf(),
@@ -771,16 +797,27 @@ fn path_key(p: &Path) -> PathBuf {
 
 /// No output may overwrite an input or another output; nor may a WireMock folder hold an
 /// input in the parts that are replaced (`mappings`, `__files`).
-fn check_outputs(inputs: &[PathBuf], outputs: &[(&str, &PathBuf)], wiremock_dir: Option<&Path>) -> Result<()> {
+fn check_outputs(
+    inputs: &[PathBuf],
+    outputs: &[(&str, &PathBuf)],
+    wiremock_dir: Option<&Path>,
+) -> Result<()> {
     let ins: Vec<(PathBuf, &PathBuf)> = inputs.iter().map(|p| (path_key(p), p)).collect();
     let mut seen: Vec<(PathBuf, &str)> = Vec::new();
     for (flag, p) in outputs {
         let k = path_key(p);
         if let Some((_, i)) = ins.iter().find(|(c, _)| *c == k) {
-            return Err(usage(format!("{flag} {}: is the capture {}", p.display(), i.display())));
+            return Err(usage(format!(
+                "{flag} {}: is the capture {}",
+                p.display(),
+                i.display()
+            )));
         }
         if let Some((_, other)) = seen.iter().find(|(c, _)| *c == k) {
-            return Err(usage(format!("{flag} {}: the same file as {other}", p.display())));
+            return Err(usage(format!(
+                "{flag} {}: the same file as {other}",
+                p.display()
+            )));
         }
         seen.push((k, flag));
     }
@@ -788,12 +825,21 @@ fn check_outputs(inputs: &[PathBuf], outputs: &[(&str, &PathBuf)], wiremock_dir:
         let d = path_key(dir);
         for (c, i) in &ins {
             if c.starts_with(d.join("mappings")) || c.starts_with(d.join("__files")) {
-                return Err(usage(format!("--wiremock {}: would replace the capture {}", dir.display(), i.display())));
+                return Err(usage(format!(
+                    "--wiremock {}: would replace the capture {}",
+                    dir.display(),
+                    i.display()
+                )));
             }
         }
         for (c, flag) in &seen {
-            if *flag != "--wiremock" && (c.starts_with(d.join("mappings")) || c.starts_with(d.join("__files"))) {
-                return Err(usage(format!("--wiremock {}: would replace the {flag} output", dir.display())));
+            if *flag != "--wiremock"
+                && (c.starts_with(d.join("mappings")) || c.starts_with(d.join("__files")))
+            {
+                return Err(usage(format!(
+                    "--wiremock {}: would replace the {flag} output",
+                    dir.display()
+                )));
             }
         }
     }
@@ -805,14 +851,31 @@ fn sanitize(a: SanitizeArgs) -> Result<()> {
     use quena_app_core::sanitize::SanitizeOptions;
     let deadline = Deadline::after(a.timeout);
     let opts: SanitizeOptions = match &a.config {
-        Some(p) => SanitizeOptions::from_json_strict(&read_text(p)?).map_err(|e| usage(format!("{}: {e}", p.display())))?,
-        None => SanitizeOptions::preset(&a.preset).ok_or_else(|| usage(format!("--preset {}: use support, gdpr or credentials", a.preset)))?,
+        Some(p) => SanitizeOptions::from_json_strict(&read_text(p)?)
+            .map_err(|e| usage(format!("{}: {e}", p.display())))?,
+        None => SanitizeOptions::preset(&a.preset).ok_or_else(|| {
+            usage(format!(
+                "--preset {}: use support, gdpr or credentials",
+                a.preset
+            ))
+        })?,
     };
     opts.validate().map_err(usage)?;
-    let format = match a.output.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+    let format = match a
+        .output
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
         Some("saz") => ArchiveFormat::Saz,
         Some("har") => ArchiveFormat::Har,
-        _ => return Err(usage(format!("-o {}: the output is a .saz or .har file", a.output.display()))),
+        _ => {
+            return Err(usage(format!(
+                "-o {}: the output is a .saz or .har file",
+                a.output.display()
+            )));
+        }
     };
     check_captures(&a.files)?;
     for p in std::iter::once(&a.output).chain(a.log.as_ref()) {
@@ -826,7 +889,16 @@ fn sanitize(a: SanitizeArgs) -> Result<()> {
     let tmp = engine._data.path().join("sanitize-tmp");
     let body_cfg = engine.core.settings().bodies.to_config();
     let existed = a.output.exists();
-    let r = sanitized_export(&engine.core.capture(), &ids, &a.output, format, opts, &tmp, body_cfg, &DeadlineProgress(&deadline));
+    let r = sanitized_export(
+        &engine.core.capture(),
+        &ids,
+        &a.output,
+        format,
+        opts,
+        &tmp,
+        body_cfg,
+        &DeadlineProgress(&deadline),
+    );
     let log = match r {
         Ok(log) => log,
         Err(e) => {
@@ -838,24 +910,44 @@ fn sanitize(a: SanitizeArgs) -> Result<()> {
         }
     };
     if let Some(p) = &a.log {
-        let text = if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) { serde_json::to_string_pretty(&log)? } else { log.to_text() };
+        let text = if p
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+        {
+            serde_json::to_string_pretty(&log)?
+        } else {
+            log.to_text()
+        };
         std::fs::write(p, text).with_context(|| p.display().to_string())?;
     }
     if !a.quiet {
-        eprintln!("quena-cli: {} → {}: {}", ids.len(), a.output.display(), log.summary_line());
+        eprintln!(
+            "quena-cli: {} → {}: {}",
+            ids.len(),
+            a.output.display(),
+            log.summary_line()
+        );
     }
     Ok(())
 }
 
 /// `[NAME=]PORT=URL` → (name, port, target).
 fn parse_route(spec: &str) -> Result<(String, u16, String)> {
-    let bad = || usage(format!("--route {spec}: expected [NAME=]PORT=URL, e.g. 8080=https://api.example.com"));
+    let bad = || {
+        usage(format!(
+            "--route {spec}: expected [NAME=]PORT=URL, e.g. 8080=https://api.example.com"
+        ))
+    };
     let (first, rest) = spec.split_once('=').ok_or_else(bad)?;
     let (name, port, url) = match first.parse::<u16>() {
         Ok(p) => (String::new(), p, rest),
         Err(_) => {
             let (p, url) = rest.split_once('=').ok_or_else(bad)?;
-            (first.trim().to_string(), p.parse::<u16>().map_err(|_| bad())?, url)
+            (
+                first.trim().to_string(),
+                p.parse::<u16>().map_err(|_| bad())?,
+                url,
+            )
         }
     };
     if port == 0 {
@@ -866,13 +958,19 @@ fn parse_route(spec: &str) -> Result<(String, u16, String)> {
 
 /// Reverse proxy without a window: listen, forward, record, print an access log, save.
 fn reverse(a: ReverseArgs) -> Result<()> {
-    use quena_app_core::settings::{ClientProtocol, ListenerSettings, ReversePathEntry, ReverseProxyEntry};
+    use quena_app_core::settings::{
+        ClientProtocol, ListenerSettings, ReversePathEntry, ReverseProxyEntry,
+    };
     let mut entries = Vec::new();
     for (i, spec) in a.routes.iter().enumerate() {
         let (name, port, target) = parse_route(spec)?;
         entries.push(ReverseProxyEntry {
             id: format!("r{i}"),
-            name: if name.is_empty() { format!(":{port}") } else { name },
+            name: if name.is_empty() {
+                format!(":{port}")
+            } else {
+                name
+            },
             enabled: true,
             listen_port: port,
             allow_remote: a.bind_all,
@@ -891,17 +989,34 @@ fn reverse(a: ReverseArgs) -> Result<()> {
         });
     }
     for spec in &a.paths {
-        let bad = || usage(format!("--path {spec}: expected PORT/PREFIX=URL, e.g. 8080/auth=https://sso.example.com"));
+        let bad = || {
+            usage(format!(
+                "--path {spec}: expected PORT/PREFIX=URL, e.g. 8080/auth=https://sso.example.com"
+            ))
+        };
         let (left, url) = spec.split_once('=').ok_or_else(bad)?;
         let (port, prefix) = left.split_once('/').ok_or_else(bad)?;
         let port: u16 = port.parse().map_err(|_| bad())?;
-        let entry = entries.iter_mut().find(|e| e.listen_port == port).ok_or_else(|| usage(format!("--path {spec}: no --route on port {port}")))?;
-        entry.paths.push(ReversePathEntry { prefix: format!("/{prefix}"), target: url.trim().to_string(), strip_prefix: a.strip_prefix });
+        let entry = entries
+            .iter_mut()
+            .find(|e| e.listen_port == port)
+            .ok_or_else(|| usage(format!("--path {spec}: no --route on port {port}")))?;
+        entry.paths.push(ReversePathEntry {
+            prefix: format!("/{prefix}"),
+            target: url.trim().to_string(),
+            strip_prefix: a.strip_prefix,
+        });
     }
     if let Some(p) = &a.save {
-        let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        let ext = p
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
         if ext != "saz" && ext != "har" {
-            return Err(usage(format!("--save {}: use a .saz or .har file", p.display())));
+            return Err(usage(format!(
+                "--save {}: use a .saz or .har file",
+                p.display()
+            )));
         }
     }
     let engine = Engine::bare()?;
@@ -911,9 +1026,11 @@ fn reverse(a: ReverseArgs) -> Result<()> {
     let tls = (!a.routes.is_empty() && !matches!(a.protocol, ClientProto::Http)) || a.decrypt;
     if let Some(dir) = &a.ca_dir {
         std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
-        quena_tls::CertAuthority::load_or_create(dir).map_err(|e| usage(format!("--ca-dir {}: {e}", dir.display())))?;
+        quena_tls::CertAuthority::load_or_create(dir)
+            .map_err(|e| usage(format!("--ca-dir {}: {e}", dir.display())))?;
         for f in [quena_tls::CA_CERT_FILE, quena_tls::CA_KEY_FILE] {
-            std::fs::copy(dir.join(f), data.join(f)).with_context(|| dir.join(f).display().to_string())?;
+            std::fs::copy(dir.join(f), data.join(f))
+                .with_context(|| dir.join(f).display().to_string())?;
         }
     }
     let mut s = core.settings();
@@ -927,48 +1044,87 @@ fn reverse(a: ReverseArgs) -> Result<()> {
     s.https.decrypt = a.decrypt;
     s.reverse_proxy.enabled = !entries.is_empty();
     s.reverse_proxy.entries = entries;
-    let listener = |p: Option<u16>| ListenerSettings { enabled: p.is_some(), port: p.unwrap_or(0), allow_remote: a.bind_all };
+    let listener = |p: Option<u16>| ListenerSettings {
+        enabled: p.is_some(),
+        port: p.unwrap_or(0),
+        allow_remote: a.bind_all,
+    };
     s.host_remap.enabled = !a.remaps.is_empty();
     for (i, spec) in a.remaps.iter().enumerate() {
-        let (host, target) = spec.split_once('=').ok_or_else(|| usage(format!("--remap {spec}: expected HOST=TARGET, e.g. api.example.com=10.0.0.5:8443")))?;
-        s.host_remap.entries.push(quena_app_core::settings::HostRemapEntry { id: format!("m{i}"), host: host.trim().into(), target: target.trim().into(), ..Default::default() });
+        let (host, target) = spec.split_once('=').ok_or_else(|| {
+            usage(format!(
+                "--remap {spec}: expected HOST=TARGET, e.g. api.example.com=10.0.0.5:8443"
+            ))
+        })?;
+        s.host_remap
+            .entries
+            .push(quena_app_core::settings::HostRemapEntry {
+                id: format!("m{i}"),
+                host: host.trim().into(),
+                target: target.trim().into(),
+                ..Default::default()
+            });
     }
     s.host_remap.validate().map_err(usage)?;
     s.socks = listener(a.socks);
     s.transparent = listener(a.transparent);
     // Port 0 for the forward listener: validate against the ports actually requested.
     s.validate_ports().map_err(usage)?;
-    core.update_settings(s).map_err(|e| usage(format!("{e:#}")))?;
+    core.update_settings(s)
+        .map_err(|e| usage(format!("{e:#}")))?;
     let proxy = quena_app_core::engine::ProxyEngine::new(&core)?;
     core.set_proxy_engine(proxy.clone());
     if let Some(rules) = &a.rules {
-        let is_farx = rules.extension().is_some_and(|e| e.eq_ignore_ascii_case("farx"));
+        let is_farx = rules
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("farx"));
         if is_farx {
-            let xml = std::fs::read_to_string(rules).map_err(|e| usage(format!("--rules {}: {e}", rules.display())))?;
-            let mut state = quena_app_core::rules::import_farx(&xml).map_err(|e| usage(format!("--rules {}: {e:#}", rules.display())))?;
+            let xml = std::fs::read_to_string(rules)
+                .map_err(|e| usage(format!("--rules {}: {e}", rules.display())))?;
+            let mut state = quena_app_core::rules::import_farx(&xml)
+                .map_err(|e| usage(format!("--rules {}: {e:#}", rules.display())))?;
             state.enabled = true;
             state.unmatched_passthrough = true;
-            core.rules.as_ref().ok_or_else(|| anyhow!("no rules engine"))?.set_autoresponder(state, false)?;
+            core.rules
+                .as_ref()
+                .ok_or_else(|| anyhow!("no rules engine"))?
+                .set_autoresponder(state, false)?;
         } else {
-            core.mock_import_package(rules.clone(), true).map_err(|e| usage(format!("--rules {}: {e:#}", rules.display())))?;
+            core.mock_import_package(rules.clone(), true)
+                .map_err(|e| usage(format!("--rules {}: {e:#}", rules.display())))?;
         }
     }
     core.start_capture()?;
     let status = core.status().engine.listeners;
-    let failed: Vec<String> = status.iter().filter_map(|r| r.error.as_ref().map(|e| format!("{}: {e}", r.name))).collect();
+    let failed: Vec<String> = status
+        .iter()
+        .filter_map(|r| r.error.as_ref().map(|e| format!("{}: {e}", r.name)))
+        .collect();
     if !failed.is_empty() {
         core.shutdown();
         return Err(usage(failed.join("; ")));
     }
     for r in &status {
-        let addr = r.listen.iter().find(|a| a.starts_with(|c: char| c.is_ascii_digit())).or(r.listen.first()).cloned().unwrap_or_default();
+        let addr = r
+            .listen
+            .iter()
+            .find(|a| a.starts_with(|c: char| c.is_ascii_digit()))
+            .or(r.listen.first())
+            .cloned()
+            .unwrap_or_default();
         eprintln!("quena-cli: {} {addr} → {}", r.name, r.target);
     }
     if tls {
         let ca = data.join(quena_tls::CA_CERT_FILE);
         match &a.ca_dir {
-            Some(dir) => eprintln!("quena-cli: HTTPS clients must trust {}", dir.join(quena_tls::CA_CERT_FILE).display()),
-            None if ca.exists() => eprintln!("quena-cli: HTTPS clients must trust {} (new for this run; keep one with --ca-dir)", ca.display()),
+            Some(dir) => eprintln!(
+                "quena-cli: HTTPS clients must trust {}",
+                dir.join(quena_tls::CA_CERT_FILE).display()
+            ),
+            None if ca.exists() => eprintln!(
+                "quena-cli: HTTPS clients must trust {} (new for this run; keep one with --ca-dir)",
+                ca.display()
+            ),
             None => {}
         }
     }
@@ -979,19 +1135,35 @@ fn reverse(a: ReverseArgs) -> Result<()> {
     let mut out = std::io::stdout().lock();
     loop {
         cap.index.tick();
-        let mut done: Vec<_> = cap.index.find_all(|s| s.state.is_final() && !printed.contains(&s.id)).into_iter().filter_map(|id| cap.index.get(id)).collect();
+        let mut done: Vec<_> = cap
+            .index
+            .find_all(|s| s.state.is_final() && !printed.contains(&s.id))
+            .into_iter()
+            .filter_map(|id| cap.index.get(id))
+            .collect();
         done.sort_by_key(|s| s.id);
         for s in done {
             printed.insert(s.id);
             if !a.quiet {
-                let status = if s.status == 0 { "ERR".to_string() } else { s.status.to_string() };
+                let status = if s.status == 0 {
+                    "ERR".to_string()
+                } else {
+                    s.status.to_string()
+                };
                 let time = s.duration_ms.map(|d| format!("{d} ms")).unwrap_or_default();
-                let _ = writeln!(out, "{status:>4} {time:>8}  {:<7} {}  [{}]", s.method, s.full_url(), s.via);
+                let _ = writeln!(
+                    out,
+                    "{status:>4} {time:>8}  {:<7} {}  [{}]",
+                    s.method,
+                    s.full_url(),
+                    s.via
+                );
                 let _ = out.flush();
             }
         }
         if STOP.load(std::sync::atomic::Ordering::SeqCst)
-            || a.duration.is_some_and(|d| started.elapsed() >= Duration::from_secs(d))
+            || a.duration
+                .is_some_and(|d| started.elapsed() >= Duration::from_secs(d))
             || a.max_sessions.is_some_and(|n| printed.len() >= n)
         {
             break;
@@ -1000,13 +1172,19 @@ fn reverse(a: ReverseArgs) -> Result<()> {
     }
     core.stop_capture()?;
     if let Some(path) = &a.save {
-        let job = core.export_archive(Vec::new(), path.clone(), None).map_err(|e| usage(format!("{}: {e}", path.display())))?;
+        let job = core
+            .export_archive(Vec::new(), path.clone(), None)
+            .map_err(|e| usage(format!("{}: {e}", path.display())))?;
         match engine.wait(job, &Deadline::after(600), &path.display().to_string()) {
             Ok(()) => {}
             Err(JobError::Failed(e)) => bail!(e),
             Err(JobError::Wait(e)) => return Err(e),
         }
-        eprintln!("quena-cli: {} session(s) → {}", printed.len(), path.display());
+        eprintln!(
+            "quena-cli: {} session(s) → {}",
+            printed.len(),
+            path.display()
+        );
     }
     REVERSE_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
     core.shutdown();
@@ -1029,13 +1207,20 @@ fn http_run(a: HttpRunArgs) -> Result<bool> {
             a.env.as_deref(),
             &a.names,
             Duration::from_secs(a.timeout),
-            &quena_formats::http_file::Access { process_env: true, root: None },
+            &quena_formats::http_file::Access {
+                process_env: true,
+                root: None,
+            },
         )
         .map_err(|e| usage(format!("{e:#}")))?;
     let mut ok = true;
     let mut out = std::io::stdout().lock();
     for r in &results {
-        let name = r.name.as_deref().map(|n| format!("  ({n})")).unwrap_or_default();
+        let name = r
+            .name
+            .as_deref()
+            .map(|n| format!("  ({n})"))
+            .unwrap_or_default();
         let time = r.duration_ms.map(|d| format!("{d} ms")).unwrap_or_default();
         let failed = r.error.is_some() || r.pending || r.status.is_none_or(|s| s >= 400);
         ok &= !failed;
@@ -1053,7 +1238,9 @@ fn http_run(a: HttpRunArgs) -> Result<bool> {
     }
     if let Some(path) = &a.save {
         let ids: Vec<_> = results.iter().filter_map(|r| r.session).collect();
-        let job = core.export_archive(ids, path.clone(), None).map_err(|e| usage(format!("{}: {e}", path.display())))?;
+        let job = core
+            .export_archive(ids, path.clone(), None)
+            .map_err(|e| usage(format!("{}: {e}", path.display())))?;
         match engine.wait(job, &Deadline::after(600), &path.display().to_string()) {
             Ok(()) => {}
             Err(JobError::Failed(e)) => bail!(e),
@@ -1089,7 +1276,9 @@ fn mock(a: MockArgs) -> Result<()> {
     use quena_app_core::sanitize::SanitizeOptions;
     let deadline = Deadline::after(a.timeout);
     let mut opts: MockOptions = match &a.config {
-        Some(p) => mock_options(&read_text(p)?).map_err(|e| usage(format!("{}: {e}", p.display())))?,
+        Some(p) => {
+            mock_options(&read_text(p)?).map_err(|e| usage(format!("{}: {e}", p.display())))?
+        }
         None => MockOptions::default(),
     };
     if !a.hosts.is_empty() {
@@ -1106,12 +1295,24 @@ fn mock(a: MockArgs) -> Result<()> {
     match a.sanitize.as_deref() {
         None => {}
         Some("none") => opts.sanitize = None,
-        Some(p) => opts.sanitize = Some(SanitizeOptions::preset(p).ok_or_else(|| usage(format!("--sanitize {p}: use credentials, support, gdpr or none")))?),
+        Some(p) => {
+            opts.sanitize = Some(SanitizeOptions::preset(p).ok_or_else(|| {
+                usage(format!(
+                    "--sanitize {p}: use credentials, support, gdpr or none"
+                ))
+            })?)
+        }
     }
     check_captures(&a.files)?;
     if let Some(p) = &a.package {
-        if !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("quena-mocks")) {
-            return Err(usage(format!("--package {}: a mock package ends in .quena-mocks", p.display())));
+        if !p
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("quena-mocks"))
+        {
+            return Err(usage(format!(
+                "--package {}: a mock package ends in .quena-mocks",
+                p.display()
+            )));
         }
         check_writable(p).map_err(|e| usage(format!("--package {}: {e}", p.display())))?;
     }
@@ -1123,11 +1324,21 @@ fn mock(a: MockArgs) -> Result<()> {
             // A folder: it may exist already (its mappings and __files are replaced), its
             // parent must; an existing file is not a folder.
             if p.exists() && !p.is_dir() {
-                return Err(usage(format!("--wiremock {}: is a file, not a folder (use a folder or a .zip)", p.display())));
+                return Err(usage(format!(
+                    "--wiremock {}: is a file, not a folder (use a folder or a .zip)",
+                    p.display()
+                )));
             }
-            let parent = p.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            let parent = p
+                .parent()
+                .filter(|d| !d.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
             if !parent.is_dir() {
-                return Err(usage(format!("--wiremock {}: no such folder: {}", p.display(), parent.display())));
+                return Err(usage(format!(
+                    "--wiremock {}: no such folder: {}",
+                    p.display(),
+                    parent.display()
+                )));
             }
             wiremock_dir = Some(p.as_path());
         }
@@ -1138,7 +1349,14 @@ fn mock(a: MockArgs) -> Result<()> {
     check_outputs(&a.files, &outs, wiremock_dir)?;
     let (engine, ids) = load_captures(&a.files, &a.tls_keylog, a.quiet, &deadline)?;
     progress(a.quiet, "building mocks");
-    let set = mockgen::generate(&engine.core.capture(), &ids, &opts, true, &DeadlineProgress(&deadline)).map_err(|e| deadline.explain(e, "building mocks"))?;
+    let set = mockgen::generate(
+        &engine.core.capture(),
+        &ids,
+        &opts,
+        true,
+        &DeadlineProgress(&deadline),
+    )
+    .map_err(|e| deadline.explain(e, "building mocks"))?;
     if deadline.passed() {
         return Err(deadline.explain(anyhow!("cancelled"), "building mocks"));
     }
@@ -1527,7 +1745,8 @@ impl Engine {
         let job = if keylogs.is_empty() || !quena_app_core::archive::is_capture(file) {
             self.core.import_archive(file.to_path_buf())
         } else {
-            self.core.import_capture(file.to_path_buf(), None, keylogs.to_vec(), Vec::new(), None)
+            self.core
+                .import_capture(file.to_path_buf(), None, keylogs.to_vec(), Vec::new(), None)
         }
         .map_err(|e| usage(format!("{}: {e}", file.display())))?;
         match self.wait(job, deadline, &file.display().to_string()) {

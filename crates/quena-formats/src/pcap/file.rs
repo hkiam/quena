@@ -33,7 +33,8 @@ pub enum Reader<R> {
 impl<R: Read> Reader<R> {
     pub fn new(mut r: R) -> io::Result<Self> {
         let mut magic = [0u8; 4];
-        r.read_exact(&mut magic).map_err(|_| invalid("the file is too short for a packet capture"))?;
+        r.read_exact(&mut magic)
+            .map_err(|_| invalid("the file is too short for a packet capture"))?;
         if u32::from_le_bytes(magic) == PCAPNG_SHB {
             return Ok(Reader::Pcapng(Pcapng::new(r)?));
         }
@@ -45,9 +46,16 @@ impl<R: Read> Reader<R> {
             _ => return Err(invalid("not a pcap or pcapng file")),
         };
         let mut h = [0u8; 20];
-        r.read_exact(&mut h).map_err(|_| invalid("the pcap file header is incomplete"))?;
+        r.read_exact(&mut h)
+            .map_err(|_| invalid("the pcap file header is incomplete"))?;
         let linktype = rd32(le, &h[16..20]) & 0x03ff_ffff;
-        Ok(Reader::Pcap(Pcap { r, le, nanos, linktype, truncated: false }))
+        Ok(Reader::Pcap(Pcap {
+            r,
+            le,
+            nanos,
+            linktype,
+            truncated: false,
+        }))
     }
 
     /// The next packet or block of secrets; `None` at the end of the file.
@@ -73,12 +81,20 @@ fn invalid(msg: &str) -> io::Error {
 
 fn rd16(le: bool, b: &[u8]) -> u16 {
     let a = [b[0], b[1]];
-    if le { u16::from_le_bytes(a) } else { u16::from_be_bytes(a) }
+    if le {
+        u16::from_le_bytes(a)
+    } else {
+        u16::from_be_bytes(a)
+    }
 }
 
 fn rd32(le: bool, b: &[u8]) -> u32 {
     let a = [b[0], b[1], b[2], b[3]];
-    if le { u32::from_le_bytes(a) } else { u32::from_be_bytes(a) }
+    if le {
+        u32::from_le_bytes(a)
+    } else {
+        u32::from_be_bytes(a)
+    }
 }
 
 /// `read_exact` that tells a clean end of file (nothing read) from a cut one.
@@ -133,7 +149,11 @@ impl<R: Read> Pcap<R> {
             return Ok(None);
         }
         let ts = sec * 1_000_000 + if self.nanos { frac / 1000 } else { frac };
-        Ok(Some(Packet { ts, linktype: self.linktype, data }))
+        Ok(Some(Packet {
+            ts,
+            linktype: self.linktype,
+            data,
+        }))
     }
 }
 
@@ -173,9 +193,16 @@ const SECRETS_TLS_KEY_LOG: u32 = 0x544c_534b;
 
 impl<R: Read> Pcapng<R> {
     fn new(r: R) -> io::Result<Self> {
-        let mut p = Pcapng { r, le: true, ifaces: Vec::new(), last_ts: 0, truncated: false };
+        let mut p = Pcapng {
+            r,
+            le: true,
+            ifaces: Vec::new(),
+            last_ts: 0,
+            truncated: false,
+        };
         // The block type has been read; the section header follows.
-        p.section().map_err(|_| invalid("the pcapng section header is incomplete"))?;
+        p.section()
+            .map_err(|_| invalid("the pcapng section header is incomplete"))?;
         Ok(p)
     }
 
@@ -192,7 +219,10 @@ impl<R: Read> Pcapng<R> {
         if !(28..=MAX_PACKET).contains(&total) {
             return Err(invalid("corrupt pcapng section header"));
         }
-        io::copy(&mut (&mut self.r).take((total - 12) as u64), &mut io::sink())?;
+        io::copy(
+            &mut (&mut self.r).take((total - 12) as u64),
+            &mut io::sink(),
+        )?;
         self.ifaces.clear();
         Ok(())
     }
@@ -248,7 +278,12 @@ impl<R: Read> Pcapng<R> {
             }
             // Interface description
             1 if b.len() >= 8 => {
-                let mut iface = Iface { linktype: rd16(le, &b[0..2]) as u32, pow2: false, exp: 6, offset_s: 0 };
+                let mut iface = Iface {
+                    linktype: rd16(le, &b[0..2]) as u32,
+                    pow2: false,
+                    exp: 6,
+                    offset_s: 0,
+                };
                 let mut opts = &b[8..];
                 while opts.len() >= 4 {
                     let code = rd16(le, &opts[0..2]);
@@ -262,7 +297,11 @@ impl<R: Read> Pcapng<R> {
                         }
                         14 if len >= 8 => {
                             let a: [u8; 8] = v[..8].try_into().unwrap();
-                            iface.offset_s = if le { i64::from_le_bytes(a) } else { i64::from_be_bytes(a) };
+                            iface.offset_s = if le {
+                                i64::from_le_bytes(a)
+                            } else {
+                                i64::from_be_bytes(a)
+                            };
                         }
                         _ => {}
                     }
@@ -278,7 +317,11 @@ impl<R: Read> Pcapng<R> {
                 let caplen = rd32(le, &b[12..16]) as usize;
                 let data = b.get(20..20 + caplen)?.to_vec();
                 self.last_ts = iface.micros(ts);
-                Some(Item::Packet(Packet { ts: self.last_ts, linktype: iface.linktype, data }))
+                Some(Item::Packet(Packet {
+                    ts: self.last_ts,
+                    linktype: iface.linktype,
+                    data,
+                }))
             }
             // Obsolete packet block
             2 if b.len() >= 20 => {
@@ -287,13 +330,21 @@ impl<R: Read> Pcapng<R> {
                 let caplen = rd32(le, &b[12..16]) as usize;
                 let data = b.get(20..20 + caplen)?.to_vec();
                 self.last_ts = iface.micros(ts);
-                Some(Item::Packet(Packet { ts: self.last_ts, linktype: iface.linktype, data }))
+                Some(Item::Packet(Packet {
+                    ts: self.last_ts,
+                    linktype: iface.linktype,
+                    data,
+                }))
             }
             // Simple packet: no timestamp, interface 0.
             3 if b.len() >= 4 => {
                 let iface = *self.ifaces.first()?;
                 let len = (rd32(le, &b[0..4]) as usize).min(b.len() - 4);
-                Some(Item::Packet(Packet { ts: self.last_ts, linktype: iface.linktype, data: b[4..4 + len].to_vec() }))
+                Some(Item::Packet(Packet {
+                    ts: self.last_ts,
+                    linktype: iface.linktype,
+                    data: b[4..4 + len].to_vec(),
+                }))
             }
             _ => None,
         }
@@ -340,7 +391,11 @@ pub(crate) mod tests {
     }
 
     /// The same, with a Decryption Secrets Block (TLS key log) before the packets.
-    pub fn pcapng_with_secrets(linktype: u16, frames: &[(Micros, Vec<u8>)], secrets: Option<&[u8]>) -> Vec<u8> {
+    pub fn pcapng_with_secrets(
+        linktype: u16,
+        frames: &[(Micros, Vec<u8>)],
+        secrets: Option<&[u8]>,
+    ) -> Vec<u8> {
         let mut shb = 0x1a2b_3c4du32.to_be_bytes().to_vec();
         shb.extend_from_slice(&[0, 1, 0, 0]);
         shb.extend_from_slice(&(-1i64).to_be_bytes());
@@ -383,7 +438,10 @@ pub(crate) mod tests {
 
     #[test]
     fn pcap_and_pcapng() {
-        let frames = vec![(1_700_000_000_123_456, b"abc".to_vec()), (1_700_000_001_000_001, b"defgh".to_vec())];
+        let frames = vec![
+            (1_700_000_000_123_456, b"abc".to_vec()),
+            (1_700_000_001_000_001, b"defgh".to_vec()),
+        ];
         for file in [pcap(1, &frames), pcapng(1, &frames)] {
             let (p, cut) = all(&file);
             assert!(!cut);
@@ -401,9 +459,15 @@ pub(crate) mod tests {
 
     #[test]
     fn decryption_secrets_block() {
-        let file = pcapng_with_secrets(1, &[(1_000_000, b"x".to_vec())], Some(b"CLIENT_RANDOM 00 11\n"));
+        let file = pcapng_with_secrets(
+            1,
+            &[(1_000_000, b"x".to_vec())],
+            Some(b"CLIENT_RANDOM 00 11\n"),
+        );
         let mut r = Reader::new(&file[..]).unwrap();
-        assert!(matches!(r.next().unwrap(), Some(Item::Secrets(s)) if s == b"CLIENT_RANDOM 00 11\n"));
+        assert!(
+            matches!(r.next().unwrap(), Some(Item::Secrets(s)) if s == b"CLIENT_RANDOM 00 11\n")
+        );
         assert!(matches!(r.next().unwrap(), Some(Item::Packet(p)) if p.data == b"x"));
         assert!(r.next().unwrap().is_none());
     }

@@ -9,11 +9,12 @@
 //! * optional extra listeners ([`listener`]): reverse proxy ports that forward to fixed
 //!   targets ([`reverse`]), a SOCKS5 port and a port for transparently redirected traffic
 
+pub mod auth;
 mod body;
 mod conn;
 mod connector;
 mod forward;
-pub mod auth;
+pub mod grpc_client;
 pub mod hooks;
 mod landing;
 pub mod listener;
@@ -23,13 +24,15 @@ pub mod reverse;
 mod socks;
 mod transparent;
 mod tunnel;
-pub mod wsframe;
 pub mod util;
+pub mod wsframe;
 
+pub use auth::{CredentialResolver, NoCredentials};
 pub use body::{BoxError, ProxyBody, empty, full};
 pub use forward::{ExecuteOptions, Upstream, execute, execute_with};
-pub use hooks::{Interceptor, NoInterceptor, RequestAction, ResponseAction, ResponseHeadAction, SessionView};
-pub use auth::{CredentialResolver, NoCredentials};
+pub use hooks::{
+    Interceptor, NoInterceptor, RequestAction, ResponseAction, ResponseHeadAction, SessionView,
+};
 
 /// Resolves the upstream proxy for a host (implemented by the app via PAC).
 pub trait UpstreamResolver: Send + Sync + std::fmt::Debug {
@@ -135,7 +138,11 @@ impl Default for ProxyConfig {
             auto_auth: false,
             auto_auth_hosts: vec![],
             auto_auth_upstream: false,
-            auth_prefer: vec![quena_auth::Scheme::Negotiate, quena_auth::Scheme::Ntlm, quena_auth::Scheme::Basic],
+            auth_prefer: vec![
+                quena_auth::Scheme::Negotiate,
+                quena_auth::Scheme::Ntlm,
+                quena_auth::Scheme::Basic,
+            ],
             throttle_bps: 0,
             throttle_latency_ms: 0,
             reverse: vec![],
@@ -150,25 +157,36 @@ impl Default for ProxyConfig {
 /// script is in play the (possibly blocking) evaluation is moved to the blocking
 /// pool so it never stalls a proxy worker thread; the static/no-PAC case stays
 /// inline and cheap.
-pub(crate) async fn resolve_upstream(cfg: &Arc<ProxyConfig>, host_port: String) -> Option<(String, u16)> {
+pub(crate) async fn resolve_upstream(
+    cfg: &Arc<ProxyConfig>,
+    host_port: String,
+) -> Option<(String, u16)> {
     if !cfg.uses_pac() {
         return cfg.upstream_for(&host_port);
     }
     let cfg = cfg.clone();
-    tokio::task::spawn_blocking(move || cfg.upstream_for(&host_port)).await.unwrap_or(None)
+    tokio::task::spawn_blocking(move || cfg.upstream_for(&host_port))
+        .await
+        .unwrap_or(None)
 }
 
 /// Host patterns: globs (`*.example.com`, `10.1.*`), a domain with its subdomains
 /// (`*.corp` also matches `corp`), address ranges (`169.254/16`, `10.0.0.0/8`) and, as in
 /// Windows' proxy exceptions, `<local>` for names without a dot (`intranet`, `appserver`).
 pub fn host_matches(list: &[String], host: &str) -> bool {
-    let h = quena_query::host_without_port(host).trim_matches(['[', ']']).to_ascii_lowercase();
+    let h = quena_query::host_without_port(host)
+        .trim_matches(['[', ']'])
+        .to_ascii_lowercase();
     let ip: Option<IpAddr> = h.parse().ok();
     list.iter().any(|p| {
         quena_query::glob_match(p, &h)
             || (p.starts_with("*.") && h.eq_ignore_ascii_case(&p[2..]))
-            || (p.eq_ignore_ascii_case("<local>") && ip.is_none() && !h.is_empty() && !h.contains('.'))
-            || (p.contains('/') && ip.is_some_and(|ip| util::Cidr::parse(p).is_some_and(|c| c.contains(ip))))
+            || (p.eq_ignore_ascii_case("<local>")
+                && ip.is_none()
+                && !h.is_empty()
+                && !h.contains('.'))
+            || (p.contains('/')
+                && ip.is_some_and(|ip| util::Cidr::parse(p).is_some_and(|c| c.contains(ip))))
     })
 }
 
@@ -208,7 +226,8 @@ impl ProxyConfig {
     }
     /// Whether auto-auth applies to `host` (server 401 case).
     pub fn auth_applies(&self, host: &str) -> bool {
-        self.auto_auth && (self.auto_auth_hosts.is_empty() || host_matches(&self.auto_auth_hosts, host))
+        self.auto_auth
+            && (self.auto_auth_hosts.is_empty() || host_matches(&self.auto_auth_hosts, host))
     }
 
     /// Where a connection to `host:port` goes instead (host remapping).
@@ -221,7 +240,11 @@ impl ProxyConfig {
 
     /// The extra listeners this configuration asks for.
     pub fn listeners(&self) -> Vec<listener::Listener> {
-        let mut out: Vec<listener::Listener> = self.reverse.iter().map(|r| listener::Listener::Reverse(Arc::new(r.clone()))).collect();
+        let mut out: Vec<listener::Listener> = self
+            .reverse
+            .iter()
+            .map(|r| listener::Listener::Reverse(Arc::new(r.clone())))
+            .collect();
         if let Some(p) = self.socks {
             out.push(listener::Listener::Socks(p));
         }
@@ -306,15 +329,25 @@ pub struct Proxy {
 }
 
 impl Proxy {
-    pub fn new(capture: Arc<Capture>, cfg: ProxyConfig, ca: Option<Arc<CertAuthority>>) -> Result<Arc<Proxy>, ProxyError> {
+    pub fn new(
+        capture: Arc<Capture>,
+        cfg: ProxyConfig,
+        ca: Option<Arc<CertAuthority>>,
+    ) -> Result<Arc<Proxy>, ProxyError> {
         quena_tls::init();
         let rt = tokio::runtime::Builder::new_multi_thread()
             .thread_name("quena-proxy")
-            .worker_threads(std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 8))
+            .worker_threads(
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(4)
+                    .clamp(2, 8),
+            )
             .enable_all()
             .build()
             .map_err(|e| ProxyError::Other(e.to_string()))?;
-        let tls_clients = Arc::new(ClientConfigs::new().map_err(|e| ProxyError::Other(e.to_string()))?);
+        let tls_clients =
+            Arc::new(ClientConfigs::new().map_err(|e| ProxyError::Other(e.to_string()))?);
         let cfg = Arc::new(cfg);
         let upstream = {
             let _g = rt.enter();
@@ -337,7 +370,13 @@ impl Proxy {
             conn_limit: Arc::new(tokio::sync::Semaphore::new(MAX_CLIENT_CONNECTIONS)),
             closing: tokio::sync::watch::channel(0).0,
         });
-        Ok(Arc::new(Proxy { shared, rt, stop: RwLock::new(None), extra: parking_lot::Mutex::new(vec![]), extra_status: RwLock::new(vec![]) }))
+        Ok(Arc::new(Proxy {
+            shared,
+            rt,
+            stop: RwLock::new(None),
+            extra: parking_lot::Mutex::new(vec![]),
+            extra_status: RwLock::new(vec![]),
+        }))
     }
 
     pub fn runtime(&self) -> &tokio::runtime::Runtime {
@@ -368,7 +407,10 @@ impl Proxy {
                         tracing::warn!(target: "quena::proxy", "port {} is in use, listening on {port} instead", cfg.port);
                     }
                     for l in listeners {
-                        addrs.push(l.local_addr().map_err(|e| ProxyError::Other(e.to_string()))?);
+                        addrs.push(
+                            l.local_addr()
+                                .map_err(|e| ProxyError::Other(e.to_string()))?,
+                        );
                         let _ = self.spawn_accept(l, rx.clone(), None);
                     }
                     break;
@@ -390,11 +432,21 @@ impl Proxy {
 
     /// Bind `port` on IPv4 and IPv6 (loopback, or all interfaces). An IPv6 listener that
     /// is unavailable is left out; the port being taken is an error.
-    fn bind_pair(&self, port: u16, remote: bool) -> Result<Vec<TcpListener>, (String, std::io::Error)> {
+    fn bind_pair(
+        &self,
+        port: u16,
+        remote: bool,
+    ) -> Result<Vec<TcpListener>, (String, std::io::Error)> {
         let bind: Vec<SocketAddr> = if remote {
-            vec![SocketAddr::from(([0, 0, 0, 0], port)), SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port))]
+            vec![
+                SocketAddr::from(([0, 0, 0, 0], port)),
+                SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port)),
+            ]
         } else {
-            vec![SocketAddr::from(([127, 0, 0, 1], port)), SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, port))]
+            vec![
+                SocketAddr::from(([127, 0, 0, 1], port)),
+                SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, port)),
+            ]
         };
         let mut listeners: Vec<TcpListener> = Vec::new();
         for a in &bind {
@@ -407,7 +459,11 @@ impl Proxy {
             }
             let a = &a;
             let l = self.rt.block_on(async {
-                let sock = if a.is_ipv4() { tokio::net::TcpSocket::new_v4()? } else { tokio::net::TcpSocket::new_v6()? };
+                let sock = if a.is_ipv4() {
+                    tokio::net::TcpSocket::new_v4()?
+                } else {
+                    tokio::net::TcpSocket::new_v6()?
+                };
                 sock.set_reuseaddr(true)?;
                 #[cfg(unix)]
                 if a.is_ipv6() {
@@ -419,7 +475,9 @@ impl Proxy {
             });
             match l {
                 Ok(l) => listeners.push(l),
-                Err(e) if a.is_ipv6() && (port == 0 || e.kind() != std::io::ErrorKind::AddrInUse) => {
+                Err(e)
+                    if a.is_ipv6() && (port == 0 || e.kind() != std::io::ErrorKind::AddrInUse) =>
+                {
                     tracing::debug!("IPv6 listener unavailable: {e}");
                 }
                 Err(e) => return Err((a.to_string(), e)),
@@ -461,7 +519,15 @@ impl Proxy {
         });
         let mut status = Vec::new();
         for l in wanted {
-            let mut st = listener::ListenerStatus { id: l.id(), kind: l.kind(), name: l.name(), port: l.port(), target: l.target(), listen: vec![], error: None };
+            let mut st = listener::ListenerStatus {
+                id: l.id(),
+                kind: l.kind(),
+                name: l.name(),
+                port: l.port(),
+                target: l.target(),
+                listen: vec![],
+                error: None,
+            };
             if let Some(r) = running.iter().find(|r| r.listener.as_ref() == l) {
                 st.listen = r.addrs.iter().map(|a| a.to_string()).collect();
                 status.push(st);
@@ -471,7 +537,8 @@ impl Proxy {
             let bound = if main_port == Some(l.port()) {
                 Err(format!("port {} is the proxy port", l.port()))
             } else {
-                self.bind_pair(l.port(), l.allow_remote()).map_err(|(a, e)| format!("cannot listen on {a}: {e}"))
+                self.bind_pair(l.port(), l.allow_remote())
+                    .map_err(|(a, e)| format!("cannot listen on {a}: {e}"))
             };
             match bound {
                 Ok(listeners) => {
@@ -488,7 +555,12 @@ impl Proxy {
                     connector::add_self_addrs(&addrs);
                     tracing::info!(target: "quena::proxy", "{}: {} → {}", l.name(), addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "), l.target());
                     st.listen = addrs.iter().map(|a| a.to_string()).collect();
-                    running.push(listener::Running { listener: l, addrs, stop: tx, tasks });
+                    running.push(listener::Running {
+                        listener: l,
+                        addrs,
+                        stop: tx,
+                        tasks,
+                    });
                 }
                 Err(e) => {
                     tracing::warn!(target: "quena::proxy", "{}: {e}", l.name());
@@ -500,7 +572,12 @@ impl Proxy {
         *self.extra_status.write() = status;
     }
 
-    fn spawn_accept(&self, l: TcpListener, mut stop: watch::Receiver<bool>, route: Option<Arc<listener::Listener>>) -> tokio::task::JoinHandle<()> {
+    fn spawn_accept(
+        &self,
+        l: TcpListener,
+        mut stop: watch::Receiver<bool>,
+        route: Option<Arc<listener::Listener>>,
+    ) -> tokio::task::JoinHandle<()> {
         let shared = self.shared.clone();
         self.rt.spawn(async move {
             loop {
@@ -552,7 +629,8 @@ impl Proxy {
     /// Apply a new configuration. Restarts listeners if the listen settings changed.
     pub fn reconfigure(&self, cfg: ProxyConfig) -> Result<(), ProxyError> {
         let old = self.shared.cfg();
-        let restart = self.is_running() && (old.port != cfg.port || old.allow_remote != cfg.allow_remote);
+        let restart =
+            self.is_running() && (old.port != cfg.port || old.allow_remote != cfg.allow_remote);
         let cfg = Arc::new(cfg);
         *self.shared.cfg.write() = cfg.clone();
         let up = {
@@ -591,8 +669,20 @@ fn set_v6only(sock: &tokio::net::TcpSocket) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
     let fd = sock.as_raw_fd();
     let on: LibcInt = 1;
-    let r = unsafe { setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &on as *const _ as *const _, std::mem::size_of::<LibcInt>() as u32) };
-    if r == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+    let r = unsafe {
+        setsockopt(
+            fd,
+            IPPROTO_IPV6,
+            IPV6_V6ONLY,
+            &on as *const _ as *const _,
+            std::mem::size_of::<LibcInt>() as u32,
+        )
+    };
+    if r == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 #[cfg(unix)]
@@ -605,13 +695,22 @@ const IPV6_V6ONLY: i32 = 26;
 const IPPROTO_IPV6: i32 = 41;
 #[cfg(unix)]
 unsafe extern "C" {
-    fn setsockopt(socket: i32, level: i32, name: i32, value: *const std::ffi::c_void, option_len: u32) -> i32;
+    fn setsockopt(
+        socket: i32,
+        level: i32,
+        name: i32,
+        value: *const std::ffi::c_void,
+        option_len: u32,
+    ) -> i32;
 }
 
 /// First connection id of this run: the start time in seconds, shifted so the ids of
 /// different runs do not overlap (2^20 connections per second between two starts). Stays
 /// below 2^53, so the UI (JavaScript numbers) shows it exactly.
 fn conn_id_base() -> u64 {
-    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     (secs << 20) | 1
 }

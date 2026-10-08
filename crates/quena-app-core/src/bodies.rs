@@ -29,7 +29,9 @@ fn effective(spec: &DeriveSpec, v: Variant) -> Variant {
     match v {
         Variant::Plugin(_) | Variant::Text(_) => v,
         Variant::Pretty if variant_applies(spec, Variant::Pretty) => Variant::Pretty,
-        Variant::Pretty | Variant::Decoded if variant_applies(spec, Variant::Decoded) => Variant::Decoded,
+        Variant::Pretty | Variant::Decoded if variant_applies(spec, Variant::Decoded) => {
+            Variant::Decoded
+        }
         _ => Variant::Raw,
     }
 }
@@ -41,8 +43,12 @@ fn vname(v: Variant) -> String {
 impl AppCore {
     fn body_source(&self, id: SessionId, part: Part) -> Result<(Body, Headers)> {
         let cap = self.capture();
-        let (req, resp) = cap.bodies_of(id).ok_or_else(|| anyhow!("session {id} not found"))?;
-        let d = cap.detail(id).ok_or_else(|| anyhow!("session {id} not found"))?;
+        let (req, resp) = cap
+            .bodies_of(id)
+            .ok_or_else(|| anyhow!("session {id} not found"))?;
+        let d = cap
+            .detail(id)
+            .ok_or_else(|| anyhow!("session {id} not found"))?;
         Ok(match part {
             Part::Request => (req, d.request.headers),
             Part::Response => (resp, d.response.map(|r| r.headers).unwrap_or_default()),
@@ -67,8 +73,14 @@ impl AppCore {
 
     /// Resolve (and start producing, if needed) a body variant. The fourth value is the
     /// charset of the variant's bytes when the variant fixes it (see [`output_charset`]).
-    fn variant_body(&self, id: SessionId, part: Part, v: Variant) -> Result<(Body, Variant, Option<JobId>)> {
-        self.variant_body_cs(id, part, v).map(|r| (r.body, r.variant, r.job))
+    fn variant_body(
+        &self,
+        id: SessionId,
+        part: Part,
+        v: Variant,
+    ) -> Result<(Body, Variant, Option<JobId>)> {
+        self.variant_body_cs(id, part, v)
+            .map(|r| (r.body, r.variant, r.job))
     }
 
     /// [`variant_body`] plus the charset fixed by the variant and the body's own charset.
@@ -93,32 +105,63 @@ impl AppCore {
                     },
                     human(src.len())
                 );
-                Some(self.jobs.submit(key, title, Priority::Interactive, src.len() > VISIBLE_JOB_BYTES, move |ctx| {
-                    work(&CtxProgress(ctx)).map_err(|e| e.to_string())
-                }))
+                Some(self.jobs.submit(
+                    key,
+                    title,
+                    Priority::Interactive,
+                    src.len() > VISIBLE_JOB_BYTES,
+                    move |ctx| work(&CtxProgress(ctx)).map_err(|e| e.to_string()),
+                ))
             }
-            None => self.jobs.by_key(&key).filter(|j| matches!(j.status(), JobStatus::Queued | JobStatus::Running)).map(|j| j.id),
+            None => self
+                .jobs
+                .by_key(&key)
+                .filter(|j| matches!(j.status(), JobStatus::Queued | JobStatus::Running))
+                .map(|j| j.id),
         };
-        Ok(Resolved { body: d.body, variant: v, job, fixed, detected })
+        Ok(Resolved {
+            body: d.body,
+            variant: v,
+            job,
+            fixed,
+            detected,
+        })
     }
 
     /// Charset to read a variant's text in: fixed by the variant, else the one the viewer
     /// asks for (an override), else the body's own.
-    fn text_charset(&self, id: SessionId, part: Part, fixed: Option<&'static Encoding>, detected: Option<&'static Encoding>, requested: Option<&str>) -> &'static Encoding {
+    fn text_charset(
+        &self,
+        id: SessionId,
+        part: Part,
+        fixed: Option<&'static Encoding>,
+        detected: Option<&'static Encoding>,
+        requested: Option<&str>,
+    ) -> &'static Encoding {
         if let Some(f) = fixed {
             return f;
         }
-        if let Some(e) = requested.and_then(quena_body::charset::for_label).filter(|e| !quena_body::text::needs_transcoding(e)) {
+        if let Some(e) = requested
+            .and_then(quena_body::charset::for_label)
+            .filter(|e| !quena_body::text::needs_transcoding(e))
+        {
             return e;
         }
         let e = detected.or_else(|| {
             let (src, headers) = self.body_source(id, part).ok()?;
             Some(self.charset_of(&src, &spec_of(&headers)))
         });
-        e.filter(|e| !quena_body::text::needs_transcoding(e)).unwrap_or(quena_body::text::UTF_8)
+        e.filter(|e| !quena_body::text::needs_transcoding(e))
+            .unwrap_or(quena_body::text::UTF_8)
     }
 
-    fn view_of(&self, body: &Body, v: Variant, job: Option<JobId>, fixed: Option<&'static Encoding>) -> BodyView {
+    fn view_of(
+        &self,
+        body: &Body,
+        v: Variant,
+        job: Option<JobId>,
+        fixed: Option<&'static Encoding>,
+    ) -> BodyView {
         let cap = self.capture();
         let key = format!("derive:{}:{}", body.id(), vname(v));
         let error = self.jobs.by_key(&key).and_then(|j| j.snapshot().error);
@@ -134,44 +177,97 @@ impl AppCore {
             }
             None => (0, false, 0, None),
         };
-        BodyView { len: body.len(), complete: body.is_complete(), variant: v, charset: fixed.map(|e| e.name().to_string()), job, line_job, lines, lines_done, scanned, error }
+        BodyView {
+            len: body.len(),
+            complete: body.is_complete(),
+            variant: v,
+            charset: fixed.map(|e| e.name().to_string()),
+            job,
+            line_job,
+            lines,
+            lines_done,
+            scanned,
+            error,
+        }
     }
 
     /// Open a body variant for line-based viewing: starts derivation and line indexing.
     pub fn body_open(&self, id: SessionId, part: Part, variant: Variant) -> Result<BodyView> {
-        let Resolved { body, variant: v, job, fixed, .. } = self.variant_body_cs(id, part, variant)?;
+        let Resolved {
+            body,
+            variant: v,
+            job,
+            fixed,
+            ..
+        } = self.variant_body_cs(id, part, variant)?;
         let cap = self.capture();
         let (idx, created) = cap.bodies.line_index_or_create(body.id(), v);
         if created {
             let b = body.clone();
             let big = body.len() > VISIBLE_JOB_BYTES || !body.is_complete();
-            self.jobs.submit(format!("lines:{}:{}", body.id(), vname(v)), format!("Indexing lines of #{id}"), Priority::Interactive, big, move |ctx| {
-                idx.build(&b, &CtxProgress(ctx)).map_err(|e| e.to_string())
-            });
+            self.jobs.submit(
+                format!("lines:{}:{}", body.id(), vname(v)),
+                format!("Indexing lines of #{id}"),
+                Priority::Interactive,
+                big,
+                move |ctx| idx.build(&b, &CtxProgress(ctx)).map_err(|e| e.to_string()),
+            );
         }
         Ok(self.view_of(&body, v, job, fixed))
     }
 
     /// Read lines of a variant (after [`body_open`]), decoded from `charset` (the viewer's
     /// override; default the body's charset; ignored when the variant fixes it).
-    pub fn body_lines(&self, id: SessionId, part: Part, variant: Variant, start: u64, count: usize, charset: Option<&str>) -> Result<LinesDto> {
-        let Resolved { body, variant: v, job, fixed, detected } = self.variant_body_cs(id, part, variant)?;
+    pub fn body_lines(
+        &self,
+        id: SessionId,
+        part: Part,
+        variant: Variant,
+        start: u64,
+        count: usize,
+        charset: Option<&str>,
+    ) -> Result<LinesDto> {
+        let Resolved {
+            body,
+            variant: v,
+            job,
+            fixed,
+            detected,
+        } = self.variant_body_cs(id, part, variant)?;
         let enc = self.text_charset(id, part, fixed, detected, charset);
         let cap = self.capture();
         let idx = match cap.bodies.line_index(body.id(), v) {
             Some(i) => i,
             None => {
                 self.body_open(id, part, variant)?;
-                cap.bodies.line_index(body.id(), v).ok_or_else(|| anyhow!("no line index"))?
+                cap.bodies
+                    .line_index(body.id(), v)
+                    .ok_or_else(|| anyhow!("no line index"))?
             }
         };
         let lines = idx.read_lines_as(&body, start, count.min(5000), enc)?;
-        Ok(LinesDto { start, lines, view: self.view_of(&body, v, job, fixed) })
+        Ok(LinesDto {
+            start,
+            lines,
+            view: self.view_of(&body, v, job, fixed),
+        })
     }
 
     /// Byte range of a variant (custom protocol handler, hex view, images).
-    pub fn body_range(&self, id: SessionId, part: Part, variant: Variant, offset: u64, len: usize) -> Result<BodyRange> {
-        let Resolved { body, variant: v, fixed, .. } = self.variant_body_cs(id, part, variant)?;
+    pub fn body_range(
+        &self,
+        id: SessionId,
+        part: Part,
+        variant: Variant,
+        offset: u64,
+        len: usize,
+    ) -> Result<BodyRange> {
+        let Resolved {
+            body,
+            variant: v,
+            fixed,
+            ..
+        } = self.variant_body_cs(id, part, variant)?;
         let data = body.read_range(offset, len.min(16 << 20))?;
         let (_, headers) = self.body_source(id, part)?;
         Ok(BodyRange {
@@ -185,15 +281,34 @@ impl AppCore {
     }
 
     /// Current length of a variant (starts derivation).
-    pub fn body_len(&self, id: SessionId, part: Part, variant: Variant) -> Result<(u64, bool, Variant)> {
+    pub fn body_len(
+        &self,
+        id: SessionId,
+        part: Part,
+        variant: Variant,
+    ) -> Result<(u64, bool, Variant)> {
         let (body, v, _) = self.variant_body(id, part, variant)?;
         Ok((body.len(), body.is_complete(), v))
     }
 
     /// Streaming search inside a body variant, for text in the variant's charset (see
     /// [`body_lines`]). Results via [`search_result`].
-    pub fn body_search(&self, id: SessionId, part: Part, variant: Variant, needle: String, ignore_case: bool, charset: Option<&str>) -> Result<JobId> {
-        let Resolved { body, variant: v, fixed, detected, .. } = self.variant_body_cs(id, part, variant)?;
+    pub fn body_search(
+        &self,
+        id: SessionId,
+        part: Part,
+        variant: Variant,
+        needle: String,
+        ignore_case: bool,
+        charset: Option<&str>,
+    ) -> Result<JobId> {
+        let Resolved {
+            body,
+            variant: v,
+            fixed,
+            detected,
+            ..
+        } = self.variant_body_cs(id, part, variant)?;
         let enc = self.text_charset(id, part, fixed, detected, charset);
         let prefix = format!("search:{}:{}", body.id(), vname(v));
         self.jobs.cancel_prefix(&prefix);
@@ -201,38 +316,58 @@ impl AppCore {
         let r2 = result.clone();
         let idx = self.capture().bodies.line_index(body.id(), v);
         let key = format!("{prefix}:{}", quena_model::now_us());
-        let job = self.jobs.submit(key, format!("Searching #{id} for \"{needle}\""), Priority::Interactive, body.len() > VISIBLE_JOB_BYTES, move |ctx| {
-            // Wait for derivation to finish so offsets are stable.
-            while !body.is_complete() {
-                if ctx.cancelled() {
-                    return Ok(());
-                }
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            let mut pending = Vec::new();
-            let res = quena_body::search::search_text(&body, &needle, enc, ignore_case, 0, &CtxProgress(ctx), |off| {
-                pending.push(off);
-                if pending.len() >= 256 {
-                    let mut r = r2.lock();
-                    for o in pending.drain(..) {
-                        let line = idx.as_ref().and_then(|i| i.line_of_offset(&body, o).ok()).unwrap_or(0);
-                        r.hits.push(SearchHit { offset: o, line });
+        let job = self.jobs.submit(
+            key,
+            format!("Searching #{id} for \"{needle}\""),
+            Priority::Interactive,
+            body.len() > VISIBLE_JOB_BYTES,
+            move |ctx| {
+                // Wait for derivation to finish so offsets are stable.
+                while !body.is_complete() {
+                    if ctx.cancelled() {
+                        return Ok(());
                     }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
                 }
-                if r2.lock().hits.len() + pending.len() >= 10_000 {
-                    r2.lock().truncated = true;
-                    return false;
+                let mut pending = Vec::new();
+                let res = quena_body::search::search_text(
+                    &body,
+                    &needle,
+                    enc,
+                    ignore_case,
+                    0,
+                    &CtxProgress(ctx),
+                    |off| {
+                        pending.push(off);
+                        if pending.len() >= 256 {
+                            let mut r = r2.lock();
+                            for o in pending.drain(..) {
+                                let line = idx
+                                    .as_ref()
+                                    .and_then(|i| i.line_of_offset(&body, o).ok())
+                                    .unwrap_or(0);
+                                r.hits.push(SearchHit { offset: o, line });
+                            }
+                        }
+                        if r2.lock().hits.len() + pending.len() >= 10_000 {
+                            r2.lock().truncated = true;
+                            return false;
+                        }
+                        true
+                    },
+                );
+                let mut r = r2.lock();
+                for o in pending {
+                    let line = idx
+                        .as_ref()
+                        .and_then(|i| i.line_of_offset(&body, o).ok())
+                        .unwrap_or(0);
+                    r.hits.push(SearchHit { offset: o, line });
                 }
-                true
-            });
-            let mut r = r2.lock();
-            for o in pending {
-                let line = idx.as_ref().and_then(|i| i.line_of_offset(&body, o).ok()).unwrap_or(0);
-                r.hits.push(SearchHit { offset: o, line });
-            }
-            r.done = true;
-            res.map(|_| ()).map_err(|e| e.to_string())
-        });
+                r.done = true;
+                res.map(|_| ()).map_err(|e| e.to_string())
+            },
+        );
         let mut s = self.searches.lock();
         if s.len() > 64 {
             s.clear();
@@ -246,55 +381,86 @@ impl AppCore {
     }
 
     /// Save a byte range of a body variant to a file (multipart part export).
-    pub fn save_body_range(&self, id: SessionId, part: Part, offset: u64, len: u64, path: std::path::PathBuf) -> Result<u64> {
+    pub fn save_body_range(
+        &self,
+        id: SessionId,
+        part: Part,
+        offset: u64,
+        len: u64,
+        path: std::path::PathBuf,
+    ) -> Result<u64> {
         let (body, _v, _) = self.variant_body(id, part, Variant::Raw)?;
         let title = format!("Saving part of #{id} to {}", path.display());
-        Ok(self.jobs.submit(format!("savepart:{}:{}", body.id(), path.display()), title, Priority::Background, len > 8 << 20, move |ctx| {
-            use std::io::Write;
-            let mut out = std::io::BufWriter::new(std::fs::File::create(&path).map_err(|e| e.to_string())?);
-            let mut done = 0u64;
-            let mut buf = vec![0u8; 1 << 20];
-            while done < len {
-                if ctx.cancelled() {
-                    return Err("cancelled".into());
+        Ok(self.jobs.submit(
+            format!("savepart:{}:{}", body.id(), path.display()),
+            title,
+            Priority::Background,
+            len > 8 << 20,
+            move |ctx| {
+                use std::io::Write;
+                let mut out = std::io::BufWriter::new(
+                    std::fs::File::create(&path).map_err(|e| e.to_string())?,
+                );
+                let mut done = 0u64;
+                let mut buf = vec![0u8; 1 << 20];
+                while done < len {
+                    if ctx.cancelled() {
+                        return Err("cancelled".into());
+                    }
+                    let want = (len - done).min(buf.len() as u64) as usize;
+                    let n = body
+                        .read_at(offset + done, &mut buf[..want])
+                        .map_err(|e| e.to_string())?;
+                    if n == 0 {
+                        break;
+                    }
+                    out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+                    done += n as u64;
+                    ctx.progress(done, len);
                 }
-                let want = (len - done).min(buf.len() as u64) as usize;
-                let n = body.read_at(offset + done, &mut buf[..want]).map_err(|e| e.to_string())?;
-                if n == 0 {
-                    break;
-                }
-                out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-                done += n as u64;
-                ctx.progress(done, len);
-            }
-            out.flush().map_err(|e| e.to_string())
-        }))
+                out.flush().map_err(|e| e.to_string())
+            },
+        ))
     }
 
     /// Save a body variant to a file (runs as a job, streaming).
-    pub fn save_body(&self, id: SessionId, part: Part, variant: Variant, path: std::path::PathBuf) -> Result<JobId> {
+    pub fn save_body(
+        &self,
+        id: SessionId,
+        part: Part,
+        variant: Variant,
+        path: std::path::PathBuf,
+    ) -> Result<JobId> {
         let (body, v, _) = self.variant_body(id, part, variant)?;
         let title = format!("Saving body of #{id} to {}", path.display());
-        Ok(self.jobs.submit(format!("save:{}:{}:{}", body.id(), vname(v), path.display()), title, Priority::Background, true, move |ctx| {
-            use std::io::{Read, Write};
-            let mut out = std::io::BufWriter::new(std::fs::File::create(&path).map_err(|e| e.to_string())?);
-            let mut r = body.stream(0, true).with_cancel(Arc::new({
-                let c = ctx.clone();
-                move || c.cancelled()
-            }));
-            let mut buf = vec![0u8; 1 << 20];
-            let mut done = 0u64;
-            loop {
-                let n = r.read(&mut buf).map_err(|e| e.to_string())?;
-                if n == 0 {
-                    break;
+        Ok(self.jobs.submit(
+            format!("save:{}:{}:{}", body.id(), vname(v), path.display()),
+            title,
+            Priority::Background,
+            true,
+            move |ctx| {
+                use std::io::{Read, Write};
+                let mut out = std::io::BufWriter::new(
+                    std::fs::File::create(&path).map_err(|e| e.to_string())?,
+                );
+                let mut r = body.stream(0, true).with_cancel(Arc::new({
+                    let c = ctx.clone();
+                    move || c.cancelled()
+                }));
+                let mut buf = vec![0u8; 1 << 20];
+                let mut done = 0u64;
+                loop {
+                    let n = r.read(&mut buf).map_err(|e| e.to_string())?;
+                    if n == 0 {
+                        break;
+                    }
+                    out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+                    done += n as u64;
+                    ctx.progress(done, body.len());
                 }
-                out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
-                done += n as u64;
-                ctx.progress(done, body.len());
-            }
-            out.flush().map_err(|e| e.to_string())
-        }))
+                out.flush().map_err(|e| e.to_string())
+            },
+        ))
     }
 }
 
@@ -327,5 +493,9 @@ pub fn human(n: u64) -> String {
         v /= 1024.0;
         i += 1;
     }
-    if i == 0 { format!("{n} B") } else { format!("{v:.1} {}", U[i]) }
+    if i == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", U[i])
+    }
 }

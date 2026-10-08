@@ -41,14 +41,26 @@ pub fn firefox_prefs(port: u16) -> String {
         ("security.enterprise_roots.enabled", "true".into()),
         ("browser.shell.checkDefaultBrowser", "false".into()),
         ("browser.aboutwelcome.enabled", "false".into()),
-        ("datareporting.policy.dataSubmissionPolicyBypassNotification", "true".into()),
+        (
+            "datareporting.policy.dataSubmissionPolicyBypassNotification",
+            "true".into(),
+        ),
     ];
-    prefs.iter().map(|(k, v)| format!("user_pref(\"{k}\", {v});\n")).collect()
+    prefs
+        .iter()
+        .map(|(k, v)| format!("user_pref(\"{k}\", {v});\n"))
+        .collect()
 }
 
 /// Command line of Firefox with its own profile.
 pub fn firefox_args(profile: &Path, url: Option<&str>) -> Vec<String> {
-    vec!["-profile".into(), profile.display().to_string(), "-no-remote".into(), "-new-instance".into(), url.unwrap_or("about:blank").to_string()]
+    vec![
+        "-profile".into(),
+        profile.display().to_string(),
+        "-no-remote".into(),
+        "-new-instance".into(),
+        url.unwrap_or("about:blank").to_string(),
+    ]
 }
 
 /// Environment of a terminal that uses Quena. `bundle`: system roots plus Quena's, for the
@@ -65,7 +77,15 @@ pub fn terminal_env(port: u16, quena_ca: &Path, bundle: Option<&Path>) -> Vec<(S
     env.push(("NODE_EXTRA_CA_CERTS".into(), quena_ca.display().to_string()));
     if let Some(b) = bundle {
         let b = b.display().to_string();
-        for k in ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "AWS_CA_BUNDLE", "PIP_CERT", "CARGO_HTTP_CAINFO"] {
+        for k in [
+            "SSL_CERT_FILE",
+            "REQUESTS_CA_BUNDLE",
+            "CURL_CA_BUNDLE",
+            "GIT_SSL_CAINFO",
+            "AWS_CA_BUNDLE",
+            "PIP_CERT",
+            "CARGO_HTTP_CAINFO",
+        ] {
             env.push((k.to_string(), b.clone()));
         }
     }
@@ -86,12 +106,21 @@ impl AppCore {
         self.start_capture()?;
         let engine = self.proxy_engine()?;
         let addrs = engine.proxy.listen_addrs();
-        addrs.iter().find(|a| a.is_ipv4()).or(addrs.first()).map(|a| a.port()).ok_or_else(|| anyhow!("the proxy is not listening"))
+        addrs
+            .iter()
+            .find(|a| a.is_ipv4())
+            .or(addrs.first())
+            .map(|a| a.port())
+            .ok_or_else(|| anyhow!("the proxy is not listening"))
     }
 
     /// Start `kind` (from [`AppCore::browsers`]) with its own Quena profile.
     pub fn launch_browser(self: &Arc<Self>, kind: &str, url: Option<&str>) -> Result<Browser> {
-        let b = self.browsers().into_iter().find(|b| b.kind == kind).ok_or_else(|| anyhow!("{kind}: browser not found"))?;
+        let b = self
+            .browsers()
+            .into_iter()
+            .find(|b| b.kind == kind)
+            .ok_or_else(|| anyhow!("{kind}: browser not found"))?;
         let port = self.capture_port()?;
         let profile = self.paths.data.join("browser-profiles").join(&b.kind);
         std::fs::create_dir_all(&profile).with_context(|| profile.display().to_string())?;
@@ -101,7 +130,8 @@ impl AppCore {
                 chromium_args(&profile, port, &ca.spki_sha256_base64(), url)
             }
             BrowserFamily::Firefox => {
-                std::fs::write(profile.join("user.js"), firefox_prefs(port)).context("Firefox profile")?;
+                std::fs::write(profile.join("user.js"), firefox_prefs(port))
+                    .context("Firefox profile")?;
                 firefox_args(&profile, url)
             }
         };
@@ -122,7 +152,8 @@ impl AppCore {
         });
         let bundle = bundle.transpose()?;
         let env = terminal_env(port, &ca_path, bundle.as_deref());
-        quena_platform::launch::open_terminal(&env, &self.paths.data.join("terminal")).map_err(|e| anyhow!("{e}"))?;
+        quena_platform::launch::open_terminal(&env, &self.paths.data.join("terminal"))
+            .map_err(|e| anyhow!("{e}"))?;
         tracing::info!(target: "quena", "opened a terminal that uses Quena (port {port})");
         Ok(())
     }
@@ -134,12 +165,20 @@ mod tests {
 
     #[test]
     fn chromium_uses_its_own_profile_and_quena() {
-        let a = chromium_args(Path::new("/data/browser-profiles/chrome"), 8866, "AbC=", Some("https://example.com"));
+        let a = chromium_args(
+            Path::new("/data/browser-profiles/chrome"),
+            8866,
+            "AbC=",
+            Some("https://example.com"),
+        );
         assert!(a.contains(&"--user-data-dir=/data/browser-profiles/chrome".to_string()));
         assert!(a.contains(&"--proxy-server=127.0.0.1:8866".to_string()));
         assert!(a.contains(&"--ignore-certificate-errors-spki-list=AbC=".to_string()));
         assert_eq!(a.last().unwrap(), "https://example.com");
-        assert_eq!(chromium_args(Path::new("/p"), 1, "x", None).last().unwrap(), "about:blank");
+        assert_eq!(
+            chromium_args(Path::new("/p"), 1, "x", None).last().unwrap(),
+            "about:blank"
+        );
     }
 
     #[test]
@@ -147,20 +186,38 @@ mod tests {
         let p = firefox_prefs(9000);
         assert!(p.contains("user_pref(\"network.proxy.http_port\", 9000);"));
         assert!(p.contains("user_pref(\"network.proxy.type\", 1);"));
-        assert!(p.lines().all(|l| l.starts_with("user_pref(\"") && l.ends_with(");")), "{p}");
+        assert!(
+            p.lines()
+                .all(|l| l.starts_with("user_pref(\"") && l.ends_with(");")),
+            "{p}"
+        );
     }
 
     #[test]
     fn terminal_env_replaces_trust_stores_only_with_a_bundle() {
         let ca = Path::new("/d/quena-root-ca.pem");
-        let get = |env: &[(String, String)], k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        let get = |env: &[(String, String)], k: &str| {
+            env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
+        };
         let e = terminal_env(8866, ca, None);
-        assert_eq!(get(&e, "HTTPS_PROXY").as_deref(), Some("http://127.0.0.1:8866"));
-        assert_eq!(get(&e, "https_proxy").as_deref(), Some("http://127.0.0.1:8866"));
-        assert_eq!(get(&e, "NODE_EXTRA_CA_CERTS").as_deref(), Some("/d/quena-root-ca.pem"));
+        assert_eq!(
+            get(&e, "HTTPS_PROXY").as_deref(),
+            Some("http://127.0.0.1:8866")
+        );
+        assert_eq!(
+            get(&e, "https_proxy").as_deref(),
+            Some("http://127.0.0.1:8866")
+        );
+        assert_eq!(
+            get(&e, "NODE_EXTRA_CA_CERTS").as_deref(),
+            Some("/d/quena-root-ca.pem")
+        );
         assert_eq!(get(&e, "SSL_CERT_FILE"), None);
         let e = terminal_env(8866, ca, Some(Path::new("/d/bundle.pem")));
         assert_eq!(get(&e, "SSL_CERT_FILE").as_deref(), Some("/d/bundle.pem"));
-        assert_eq!(get(&e, "REQUESTS_CA_BUNDLE").as_deref(), Some("/d/bundle.pem"));
+        assert_eq!(
+            get(&e, "REQUESTS_CA_BUNDLE").as_deref(),
+            Some("/d/bundle.pem")
+        );
     }
 }

@@ -18,12 +18,18 @@ static TYPE1_BODY: AtomicUsize = AtomicUsize::new(0);
 struct Creds;
 impl CredentialResolver for Creds {
     fn credentials(&self, _host: &str, _realm: &str) -> Option<Credentials> {
-        Some(Credentials { user: "User".into(), domain: "Domain".into(), password: "Password".into() })
+        Some(Credentials {
+            user: "User".into(),
+            domain: "Domain".into(),
+            password: "Password".into(),
+        })
     }
 }
 
 /// Reads one HTTP/1.1 request (head + body per Content-Length). Returns (method, path, headers, body).
-fn read_request(r: &mut BufReader<&std::net::TcpStream>) -> Option<(String, Vec<(String, String)>, Vec<u8>)> {
+fn read_request(
+    r: &mut BufReader<&std::net::TcpStream>,
+) -> Option<(String, Vec<(String, String)>, Vec<u8>)> {
     let mut first = String::new();
     if r.read_line(&mut first).ok()? == 0 {
         return None;
@@ -53,7 +59,10 @@ fn read_request(r: &mut BufReader<&std::net::TcpStream>) -> Option<(String, Vec<
 }
 
 fn auth_hdr(headers: &[(String, String)], name: &str) -> Option<String> {
-    headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone())
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.clone())
 }
 
 /// A well-formed NTLM CHALLENGE_MESSAGE (MS-NLMP 2.2.1.2): flags, target name,
@@ -110,27 +119,51 @@ fn ntlm_server() -> u16 {
                 let mut s = &stream;
                 let mut stage = 0; // 0 none, 1 got type1
                 loop {
-                    let Some((first, headers, body)) = read_request(&mut r) else { break };
+                    let Some((first, headers, body)) = read_request(&mut r) else {
+                        break;
+                    };
                     let ntlm = auth_hdr(&headers, "authorization");
-                    eprintln!("[ntlm-server] {} auth={:?} body={}B stage={stage}", first.trim_end(), ntlm.as_deref().map(|v| v.split(' ').next().unwrap_or("").to_string()), body.len());
+                    eprintln!(
+                        "[ntlm-server] {} auth={:?} body={}B stage={stage}",
+                        first.trim_end(),
+                        ntlm.as_deref()
+                            .map(|v| v.split(' ').next().unwrap_or("").to_string()),
+                        body.len()
+                    );
                     match ntlm.as_deref() {
                         None => {
                             let _ = s.write_all(b"HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM\r\nWWW-Authenticate: Negotiate\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n");
                             stage = 0;
                         }
                         Some(v) if v.starts_with("NTLM ") => {
-                            let msg = B64.decode(v.trim_start_matches("NTLM ")).unwrap_or_default();
-                            let mtype = if msg.len() >= 12 { u32::from_le_bytes(msg[8..12].try_into().unwrap()) } else { 0 };
-                            eprintln!("[ntlm-server] NTLM message type {mtype} ({} bytes)", msg.len());
+                            let msg = B64
+                                .decode(v.trim_start_matches("NTLM "))
+                                .unwrap_or_default();
+                            let mtype = if msg.len() >= 12 {
+                                u32::from_le_bytes(msg[8..12].try_into().unwrap())
+                            } else {
+                                0
+                            };
+                            eprintln!(
+                                "[ntlm-server] NTLM message type {mtype} ({} bytes)",
+                                msg.len()
+                            );
                             if mtype == 1 {
                                 TYPE1_BODY.fetch_max(body.len(), Ordering::Relaxed);
                                 // Send a well-formed Type 2 challenge (SSPI on Windows rejects minimal ones).
                                 let b = B64.encode(realistic_type2());
-                                let _ = write!(s, "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM {b}\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n");
+                                let _ = write!(
+                                    s,
+                                    "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM {b}\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n"
+                                );
                                 stage = 1;
                             } else if mtype == 3 && stage == 1 {
                                 // Accept; echo the received body so the test can verify replay.
-                                let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n", body.len());
+                                let _ = write!(
+                                    s,
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+                                    body.len()
+                                );
                                 let _ = s.write_all(&body);
                                 stage = 0;
                             } else {
@@ -152,7 +185,14 @@ fn ntlm_server() -> u16 {
     port
 }
 
-fn setup(cfg: ProxyConfig) -> (Arc<Proxy>, Arc<Capture>, tempfile::TempDir, std::net::SocketAddr) {
+fn setup(
+    cfg: ProxyConfig,
+) -> (
+    Arc<Proxy>,
+    Arc<Capture>,
+    tempfile::TempDir,
+    std::net::SocketAddr,
+) {
     let dir = tempfile::tempdir().unwrap();
     let capture = Capture::open(dir.path().join("cap"), BodyConfig::default(), true).unwrap();
     let proxy = Proxy::new(capture.clone(), cfg, None).unwrap();
@@ -167,40 +207,73 @@ fn curl(proxy: &std::net::SocketAddr, args: &[&str]) -> (i32, String) {
         .args(args)
         .output()
         .unwrap();
-    (o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stdout).into_owned())
+    (
+        o.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&o.stdout).into_owned(),
+    )
 }
 
 /// Proxy auth decisions in the test output (visible when a test fails, e.g. on CI).
 fn init_logs() {
     // Straight to stderr: the proxy logs from its own threads, which the test harness doesn't capture.
-    let _ = tracing_subscriber::fmt().with_env_filter("quena::auth=debug").with_writer(std::io::stderr).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("quena::auth=debug")
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
 #[test]
 fn ntlm_auto_auth_with_body_replay() {
     init_logs();
     let server = ntlm_server();
-    let mut cfg = ProxyConfig { port: 0, auto_auth: true, ..Default::default() };
+    let mut cfg = ProxyConfig {
+        port: 0,
+        auto_auth: true,
+        ..Default::default()
+    };
     cfg.auto_auth_hosts = vec![];
     let (proxy, cap, _d, addr) = setup(cfg);
 
     // POST with a body: the server echoes the body only on the authenticated (Type 3) leg.
-    let (_c, out) = curl(&addr, &["-X", "POST", "--data-binary", "hello-ntlm-body", &format!("http://127.0.0.1:{server}/secure")]);
+    let (_c, out) = curl(
+        &addr,
+        &[
+            "-X",
+            "POST",
+            "--data-binary",
+            "hello-ntlm-body",
+            &format!("http://127.0.0.1:{server}/secure"),
+        ],
+    );
     if out != "hello-ntlm-body" {
         cap.index.tick();
         for id in cap.index.find_all(|s| s.url == "/secure") {
             let d = cap.detail(id).unwrap();
-            eprintln!("[diag] session {id}: status {} custom {:?} error {:?}", d.summary.status, d.summary.custom, d.error);
+            eprintln!(
+                "[diag] session {id}: status {} custom {:?} error {:?}",
+                d.summary.status, d.summary.custom, d.error
+            );
         }
     }
-    assert_eq!(out, "hello-ntlm-body", "body must be replayed on the authenticated leg");
-    assert_eq!(TYPE1_BODY.load(Ordering::Relaxed), 0, "the Type 1 leg must not carry the body (no double upload)");
+    assert_eq!(
+        out, "hello-ntlm-body",
+        "body must be replayed on the authenticated leg"
+    );
+    assert_eq!(
+        TYPE1_BODY.load(Ordering::Relaxed),
+        0,
+        "the Type 1 leg must not carry the body (no double upload)"
+    );
 
     // Session shows the final 200 and the handshake leg count.
     let t = Instant::now();
     let s = loop {
         cap.index.tick();
-        if let Some(id) = cap.index.find_all(|s| s.url == "/secure" && s.state.is_final()).last() {
+        if let Some(id) = cap
+            .index
+            .find_all(|s| s.url == "/secure" && s.state.is_final())
+            .last()
+        {
             break cap.index.get(*id).unwrap();
         }
         assert!(t.elapsed() < Duration::from_secs(10));
@@ -227,7 +300,9 @@ fn basic_auto_auth() {
                 let mut s = &stream;
                 while let Some((_first, headers, _body)) = read_request(&mut r) {
                     match auth_hdr(&headers, "authorization") {
-                        Some(v) if v == format!("Basic {}", B64.encode("Domain\\User:Password")) => {
+                        Some(v)
+                            if v == format!("Basic {}", B64.encode("Domain\\User:Password")) =>
+                        {
                             let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nOK");
                         }
                         _ => {
@@ -238,7 +313,11 @@ fn basic_auto_auth() {
             });
         }
     });
-    let (proxy, _c, _d, addr) = setup(ProxyConfig { port: 0, auto_auth: true, ..Default::default() });
+    let (proxy, _c, _d, addr) = setup(ProxyConfig {
+        port: 0,
+        auto_auth: true,
+        ..Default::default()
+    });
     let (_c, out) = curl(&addr, &[&format!("http://127.0.0.1:{port}/x")]);
     assert_eq!(out, "OK");
     proxy.stop();
@@ -261,7 +340,11 @@ fn rejected_scheme_falls_back_to_next() {
                     let ok = B64.encode("Domain\\User:Password");
                     match auth_hdr(&headers, "authorization") {
                         Some(v) if v == format!("Basic {ok}") => {
-                            let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n", body.len());
+                            let _ = write!(
+                                s,
+                                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+                                body.len()
+                            );
                             let _ = s.write_all(&body);
                         }
                         _ => {
@@ -272,9 +355,25 @@ fn rejected_scheme_falls_back_to_next() {
             });
         }
     });
-    let cfg = ProxyConfig { port: 0, auto_auth: true, ..Default::default() }; // prefers NTLM over Basic
+    let cfg = ProxyConfig {
+        port: 0,
+        auto_auth: true,
+        ..Default::default()
+    }; // prefers NTLM over Basic
     let (proxy, _cap, _d, addr) = setup(cfg);
-    let (_c, out) = curl(&addr, &["-X", "POST", "--data-binary", "fallback-body", &format!("http://127.0.0.1:{port}/x")]);
-    assert_eq!(out, "fallback-body", "NTLM was rejected, so Quena must retry with Basic and replay the body");
+    let (_c, out) = curl(
+        &addr,
+        &[
+            "-X",
+            "POST",
+            "--data-binary",
+            "fallback-body",
+            &format!("http://127.0.0.1:{port}/x"),
+        ],
+    );
+    assert_eq!(
+        out, "fallback-body",
+        "NTLM was rejected, so Quena must retry with Basic and replay the body"
+    );
     proxy.stop();
 }
