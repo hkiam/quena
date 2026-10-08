@@ -356,6 +356,11 @@ The packages are not signed with a paid certificate or notarized yet. On macOS, 
 *System Settings → Privacy & Security* after the first launch attempt and choose *Open Anyway*;
 on Windows, SmartScreen may ask you to confirm (*More info → Run anyway*).
 
+Every release also lists what Quena is built from as a **CycloneDX SBOM** per platform
+(`quena-<version>-<platform>.cdx.json`, `quena-cli-<version>-<platform>.cdx.json`); the packages,
+the `quena-cli` archive and the Docker image contain it as `sbom.cdx.json`
+([details](https://hkiam.github.io/quena/install/#software-bill-of-materials-sbom)).
+
 ### Build from source
 
 Requirements: [Rust](https://rustup.rs) **1.95+**, [Node.js](https://nodejs.org) **20.19+** (or 22.12+), and the
@@ -527,6 +532,8 @@ Two principles shape every component:
   that cannot render a payload shows an error instead of taking the window down. Damaged state
   files (settings, rules, certificate, database) are set aside instead of blocking the start.
 - Remote connections are **off by default** and restricted by an allow-list when enabled.
+- Every release comes with **SBOMs** (CycloneDX) of the app and of `quena-cli`, to check a version
+  against vulnerability advisories with Dependency-Track, Grype or Trivy.
 
 Please report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 
