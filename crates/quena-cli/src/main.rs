@@ -1,4 +1,5 @@
-//! `quena-cli`: Quena's diagnostics without a window, for CI pipelines.
+//! `quena-cli`: Quena without a window, for CI pipelines: diagnostics, sanitizing, mocks,
+//! `.http` collections, and recording traffic as a reverse, SOCKS or transparent proxy.
 //!
 //! `quena-cli diagnose capture.har --baseline main.json --fail-on critical` imports the
 //! captures into a temporary store, runs the diagnostics analyzer (the same plugin and the same
@@ -38,7 +39,7 @@ static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 #[command(
     name = "quena-cli",
     version,
-    about = "Quena diagnostics for CI: analyse HAR/SAZ/pcap captures, compare with a baseline, fail the build on regressions."
+    about = "Quena for CI: analyse HAR/SAZ/pcap captures, compare with a baseline, fail the build on regressions; record traffic as a reverse, SOCKS or transparent proxy (reverse)."
 )]
 #[command(
     after_help = "Exit codes: 0 gate passed, 1 gate failed, 2 usage or input error, 3 analysis error.\n\

@@ -63,6 +63,16 @@ in an `https://…` action keep working as before. A remapped session is listed 
 URL; its comment and the `x-quena-mapped-from` / `x-quena-mapped-to` session flags keep both
 ends.
 
+## Reverse proxy
+
+Fiddler Classic acts as a reverse proxy through a FiddlerScript rule that changes the host of
+requests arriving on its port (or an extra listen port). In Quena this is a setting:
+**Capture → Reverse Proxy…**, one entry per local port and target, with path routes, HTTPS
+clients, cleartext HTTP/2 (gRPC), redirect rewriting and a *Via* column. The same works
+headless with `quena-cli reverse`. SOCKS clients and firewall-redirected traffic have ports of
+their own (*Settings → Connections*). See [Reverse proxy](../manual/docs/reverse-proxy.md) and
+[SOCKS and transparent](../manual/docs/socks-transparent.md).
+
 ## Command field
 
 The command field in the toolbar understands the syntax you know:

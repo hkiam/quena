@@ -23,6 +23,10 @@ conspicuous, why it matters and where to look next*, with the evidence one click
 - **Capture** HTTP/1.1, HTTP/2 and HTTPS (with a locally generated root certificate),
   CONNECT tunnels, WebSocket frames and Server-Sent Events — from this computer, from
   phones and tablets, or from VMs.
+- **Reach clients without proxy settings**: a [reverse proxy](reverse-proxy.md) port
+  forwards to a fixed target (or one per path) — for backends, containers, test suites,
+  webhooks and gRPC — and [SOCKS and transparent ports](socks-transparent.md) take SOCKS
+  clients and firewall-redirected traffic. Headless too, with `quena-cli reverse`.
 - **Inspect** headers, bodies, cookies, caching and authentication, with views that pick
   themselves for the content: JSON, XML, SOAP, Atom/OData, gRPC, multipart/MTOM,
   WebSocket, SSE, images and more. Multi-gigabyte bodies open instantly.
@@ -53,6 +57,7 @@ HTTPS decryption is opt-in, and saved passwords live in the operating system's s
 |---|---|
 | install Quena and record your first request | [Install and first start](install.md) |
 | capture from browsers, CLI tools, phones or through a corporate proxy | [Capturing traffic](capture.md), [HTTPS and devices](https.md) |
+| capture clients that cannot use a proxy (backends, containers, gRPC, redirected traffic) | [Reverse proxy](reverse-proxy.md), [SOCKS and transparent](socks-transparent.md) |
 | find, sort, mark and filter sessions | [Session list](sessions.md) |
 | read requests and responses | [Inspect](inspect.md) |
 | change, mock or resend traffic | [Change and replay](change-replay.md) |

@@ -9,6 +9,9 @@
 - Command-line tools and many runtimes (Node.js, Java, Python …) ignore the desktop proxy
   setting. Use their proxy option or `HTTP_PROXY`/`HTTPS_PROXY` — see
   [Tools that ignore the system proxy](capture.md#tools-that-ignore-the-system-proxy).
+- A client with no proxy setting at all (a backend with a fixed URL, a container, gRPC):
+  point it at a [reverse proxy](reverse-proxy.md) port instead, or redirect its connections
+  to the [transparent port](socks-transparent.md#transparent).
 - Is a filter hiding sessions? The status bar says *filtered* and the *Filters* tab shows a
   dot. Also check *View → Hide in List* and the process scope in the status bar.
 - Is another program using port 8866? Change *Settings → Connections → Listen port*.

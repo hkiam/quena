@@ -55,6 +55,12 @@ Quena is an independent, open-source take on this kind of tool, with its own des
   than `main`. See [Diagnostics in CI](#diagnostics-in-ci).
 - **Easy to use.** Start Quena, and traffic appears. HTTPS decryption is one checkbox and one
   "Trust" click. No accounts, no cloud, no setup wizard marathon.
+- **Reaches clients that ignore proxies.** A backend with a fixed API URL, a container, a
+  test suite, a webhook sender or a gRPC client calls a **reverse proxy** port that forwards
+  to its target, one target per path if needed. Clients that speak SOCKS get a **SOCKS5**
+  port, and connections a firewall redirects land on a **transparent** port. All of it is
+  recorded, mocked and tampered with like proxied traffic, also headless with
+  `quena-cli reverse` as a CI or Docker sidecar.
 - **Reads what others recorded.** A tcpdump or Wireshark capture from a server, a container
   or an app that refuses proxies opens like an archive — HTTP/1.x, WebSocket and HTTP/2 as
   sessions, and HTTPS too when its TLS key log (`SSLKEYLOGFILE`) is at hand.
@@ -181,6 +187,9 @@ quena-cli: 1 critical, 4 warning, 9 info · vs. baseline: 2 new, 1 resolved, 0 c
   JUnit XML for the test report of your CI.
 - **Not only HAR:** SAZ archives and packet captures (`.pcap`, `.pcapng`) work as well — for
   HTTPS in a capture pass its key log with `--tls-keylog`.
+- **Records what has no browser:** `quena-cli reverse --route api=8080=http://localhost:3000
+  --save api.har` sits in front of the service your API tests call (also as a Docker sidecar)
+  and hands the capture to the gate.
 - **Same engine, same privacy:** the analyzer and the redaction of the desktop app; nothing
   leaves the build machine.
 
@@ -197,6 +206,11 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 
 ### Capture
 - HTTP/1.1, **HTTP/2**, HTTPS (on-the-fly certificates), CONNECT tunnels
+- **Reverse proxy** ports for clients without proxy support: fixed target or one per path,
+  HTTPS and cleartext HTTP/2 (gRPC) from the client, redirects pointed back; headless with
+  `quena-cli reverse`
+- **SOCKS5/4** port, and a **transparent** port for firewall-redirected traffic
+  (iptables, pf)
 - **Packet captures** from tcpdump and Wireshark (`.pcap`, `.pcapng`): TCP reassembled,
   HTTP/1.x, WebSocket and HTTP/2 as sessions, **HTTPS decrypted with a TLS key log**
   (`SSLKEYLOGFILE`, or embedded in pcapng) — TLS 1.3 and TLS 1.2 (GCM, ChaCha20, CBC)
@@ -492,7 +506,7 @@ Quena is a Rust core with a thin, fast UI:
 │        │ async IPC commands                 │ quena:// + Range│
 ├────────┴────────────────────────────────────┴────────────────┤
 │ quena-app-core   commands, jobs, rules, settings, archives    │
-│ quena-proxy      hyper/rustls MITM proxy, HTTP/2, WS, auth    │
+│ quena-proxy      MITM, reverse, SOCKS, transparent, h2, WS    │
 │ quena-index      incremental sort/filter over 500k sessions   │
 │ quena-body       disk-backed bodies, range reads, decoding    │
 │ quena-store      capture database (SQLite) + recovery         │
@@ -531,7 +545,9 @@ Two principles shape every component:
   imports and inspectors have size limits, a request loop back into Quena is refused, and a view
   that cannot render a payload shows an error instead of taking the window down. Damaged state
   files (settings, rules, certificate, database) are set aside instead of blocking the start.
-- Remote connections are **off by default** and restricted by an allow-list when enabled.
+- Remote connections are **off by default** and restricted by an allow-list when enabled. The
+  same holds for reverse proxy, SOCKS and transparent ports; a reverse proxy port forwards to its
+  targets only and never acts as an open proxy.
 - Every release comes with **SBOMs** (CycloneDX) of the app and of `quena-cli`, to check a version
   against vulnerability advisories with Dependency-Track, Grype or Trivy.
 

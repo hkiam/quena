@@ -8,7 +8,7 @@ FROM debian:bookworm-slim
 ARG TARGETARCH
 ARG VERSION
 LABEL org.opencontainers.image.title="quena-cli" \
-      org.opencontainers.image.description="Quena diagnostics for CI: analyse HAR/SAZ captures, compare with a baseline, fail the build on regressions" \
+      org.opencontainers.image.description="Quena for CI: analyse HAR/SAZ/pcap captures and fail the build on regressions; record traffic as a reverse, SOCKS or transparent proxy (quena-cli reverse)" \
       org.opencontainers.image.source="https://github.com/hkiam/quena" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${VERSION}"
