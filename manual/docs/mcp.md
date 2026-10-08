@@ -100,6 +100,9 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `run_http_file` | ✓ | send a `.http` collection (or some of its requests) through Quena |
 | `sessions_to_http_file` | ✓ | write captured sessions as a `.http` file with environment files |
 | `export_archive` | ✓ | save sessions as `.har` or `.saz` in the agents' folder (existing files only with `overwrite`) |
+| `list_reverse_proxies` | | [reverse proxy](reverse-proxy.md) entries and whether they listen |
+| `set_reverse_proxy`, `remove_reverse_proxy` | ✓ | add, change or delete reverse proxy entries and their path routes (agents cannot open one to remote computers) |
+| `set_listeners` | ✓ | switch the [SOCKS and transparent ports](socks-transparent.md) on or off, or move them (this machine only) |
 
 Lists return at most 200 rows and bodies at most 1 MB per call (reading from up to 8 MB into
 a body), so an agent never pulls a whole capture at once. A tool error comes back as a result with `isError`, so the agent sees

@@ -65,6 +65,14 @@ Both are Mock Rules, made with *Mock Rules → Add mapping…* and editable like
 `regex:` rules with `$1` in an `https://…` action keep working as before. Details:
 [Map Remote](change-replay.md#map-remote), [Map Local](change-replay.md#map-local).
 
+## Reverse proxy
+
+Fiddler Classic acts as a reverse proxy through a FiddlerScript rule that changes the host
+of requests arriving on its port (or an extra listen port). In Quena this is a setting:
+**Capture → Reverse Proxy…**, one entry per local port and target, with HTTPS clients,
+cleartext HTTP/2 (gRPC), redirect rewriting and a *Via* column. The same works headless
+with `quena-cli reverse`. See [Reverse proxy](reverse-proxy.md).
+
 ## Command field
 
 The command field in the toolbar understands the syntax you know:

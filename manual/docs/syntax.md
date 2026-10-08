@@ -63,6 +63,7 @@ not kind == tunnel
 | `conn` | `connection` | client connection id (sessions of one keep-alive or HTTP/2 connection) |
 | `trace` | `correlation` | trace or correlation id of the request |
 | `session` | `sessioncookie` | session cookie as `NAME #hash` |
+| `via` | `reverse` | how the request came in: a [reverse proxy](reverse-proxy.md) entry, `SOCKS5` or `transparent` |
 
 ### Operators
 

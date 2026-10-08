@@ -156,6 +156,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &CheckMenuItem::with_id(app, "file.capture", tr("Capture Traffic"), true, false, Some("F12"))?,
             &item(app, "tools.https", "HTTPS Settings…", None)?,
             &item(app, "tools.connect-device", "Connect Device…", None)?,
+            &item(app, "tools.reverse-proxy", "Reverse Proxy…", None)?,
             &sep()?,
             &Submenu::with_items(
                 app,

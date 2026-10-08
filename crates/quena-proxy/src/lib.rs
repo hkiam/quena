@@ -6,6 +6,8 @@
 //! * every exchange is recorded into a [`Capture`] while being streamed;
 //!   recording never blocks forwarding (bounded recorder queues)
 //! * hook points ([`Interceptor`]) for AutoResponder, breakpoints and scripts
+//! * optional extra listeners ([`listener`]): reverse proxy ports that forward to fixed
+//!   targets ([`reverse`]), a SOCKS5 port and a port for transparently redirected traffic
 
 mod body;
 mod conn;
@@ -14,7 +16,11 @@ mod forward;
 pub mod auth;
 pub mod hooks;
 mod landing;
+pub mod listener;
 mod recorder;
+pub mod reverse;
+mod socks;
+mod transparent;
 mod tunnel;
 pub mod wsframe;
 pub mod util;
@@ -95,6 +101,12 @@ pub struct ProxyConfig {
     pub throttle_bps: u64,
     /// Extra latency added before each response, in milliseconds.
     pub throttle_latency_ms: u64,
+    /// Reverse proxy ports (listening while the proxy runs).
+    pub reverse: Vec<reverse::ReverseRoute>,
+    /// SOCKS5/4 port (listening while the proxy runs).
+    pub socks: Option<listener::ExtraPort>,
+    /// Port for transparently redirected traffic (listening while the proxy runs).
+    pub transparent: Option<listener::ExtraPort>,
 }
 
 impl Default for ProxyConfig {
@@ -123,6 +135,9 @@ impl Default for ProxyConfig {
             auth_prefer: vec![quena_auth::Scheme::Negotiate, quena_auth::Scheme::Ntlm, quena_auth::Scheme::Basic],
             throttle_bps: 0,
             throttle_latency_ms: 0,
+            reverse: vec![],
+            socks: None,
+            transparent: None,
         }
     }
 }
@@ -192,11 +207,28 @@ impl ProxyConfig {
         self.auto_auth && (self.auto_auth_hosts.is_empty() || host_matches(&self.auto_auth_hosts, host))
     }
 
+    /// The extra listeners this configuration asks for.
+    pub fn listeners(&self) -> Vec<listener::Listener> {
+        let mut out: Vec<listener::Listener> = self.reverse.iter().map(|r| listener::Listener::Reverse(Arc::new(r.clone()))).collect();
+        if let Some(p) = self.socks {
+            out.push(listener::Listener::Socks(p));
+        }
+        if let Some(p) = self.transparent {
+            out.push(listener::Listener::Transparent(p));
+        }
+        out
+    }
+
     pub fn client_allowed(&self, ip: IpAddr) -> bool {
+        self.client_allowed_with(ip, self.allow_remote)
+    }
+
+    /// Like [`ProxyConfig::client_allowed`] for a listener with its own remote switch.
+    pub fn client_allowed_with(&self, ip: IpAddr, allow_remote: bool) -> bool {
         if ip.is_loopback() || ip.to_canonical().is_loopback() {
             return true;
         }
-        if !self.allow_remote {
+        if !allow_remote {
             return false;
         }
         let ip = ip.to_canonical();
@@ -256,6 +288,9 @@ pub struct Proxy {
     pub shared: Arc<Shared>,
     rt: tokio::runtime::Runtime,
     stop: RwLock<Option<watch::Sender<bool>>>,
+    /// Reverse proxy listeners that run, and the state of every configured one.
+    extra: parking_lot::Mutex<Vec<listener::Running>>,
+    extra_status: RwLock<Vec<listener::ListenerStatus>>,
 }
 
 impl Proxy {
@@ -290,7 +325,7 @@ impl Proxy {
             conn_limit: Arc::new(tokio::sync::Semaphore::new(MAX_CLIENT_CONNECTIONS)),
             closing: tokio::sync::watch::channel(0).0,
         });
-        Ok(Arc::new(Proxy { shared, rt, stop: RwLock::new(None) }))
+        Ok(Arc::new(Proxy { shared, rt, stop: RwLock::new(None), extra: parking_lot::Mutex::new(vec![]), extra_status: RwLock::new(vec![]) }))
     }
 
     pub fn runtime(&self) -> &tokio::runtime::Runtime {
@@ -315,46 +350,18 @@ impl Proxy {
         let mut addrs = Vec::new();
         let mut last_err = None;
         for port in cfg.port..cfg.port.saturating_add(20) {
-            let bind: Vec<SocketAddr> = if cfg.allow_remote {
-                vec![SocketAddr::from(([0, 0, 0, 0], port)), SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port))]
-            } else {
-                vec![SocketAddr::from(([127, 0, 0, 1], port)), SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, port))]
-            };
-            let mut listeners = Vec::new();
-            let mut ok = true;
-            for a in &bind {
-                let l = self.rt.block_on(async {
-                    let sock = if a.is_ipv4() { tokio::net::TcpSocket::new_v4()? } else { tokio::net::TcpSocket::new_v6()? };
-                    sock.set_reuseaddr(true)?;
-                    #[cfg(unix)]
-                    if a.is_ipv6() {
-                        // Keep IPv6 listener IPv6-only so both binds succeed.
-                        let _ = set_v6only(&sock);
+            match self.bind_pair(port, cfg.allow_remote) {
+                Ok(listeners) => {
+                    if port != cfg.port {
+                        tracing::warn!(target: "quena::proxy", "port {} is in use, listening on {port} instead", cfg.port);
                     }
-                    sock.bind(*a)?;
-                    sock.listen(1024)
-                });
-                match l {
-                    Ok(l) => listeners.push(l),
-                    Err(e) if a.is_ipv6() && e.kind() != std::io::ErrorKind::AddrInUse => {
-                        tracing::debug!("IPv6 listener unavailable: {e}");
+                    for l in listeners {
+                        addrs.push(l.local_addr().map_err(|e| ProxyError::Other(e.to_string()))?);
+                        let _ = self.spawn_accept(l, rx.clone(), None);
                     }
-                    Err(e) => {
-                        last_err = Some((a.to_string(), e));
-                        ok = false;
-                        break;
-                    }
+                    break;
                 }
-            }
-            if ok && !listeners.is_empty() {
-                if port != cfg.port {
-                    tracing::warn!(target: "quena::proxy", "port {} is in use, listening on {port} instead", cfg.port);
-                }
-                for l in listeners {
-                    addrs.push(l.local_addr().map_err(|e| ProxyError::Other(e.to_string()))?);
-                    self.spawn_accept(l, rx.clone());
-                }
-                break;
+                Err(e) => last_err = Some(e),
             }
         }
         if addrs.is_empty() {
@@ -365,10 +372,123 @@ impl Proxy {
         connector::add_self_addrs(&addrs);
         *self.stop.write() = Some(tx);
         tracing::info!(target: "quena::proxy", "listening on {}", addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "));
+        self.sync_listeners(&cfg.listeners());
         Ok(addrs)
     }
 
-    fn spawn_accept(&self, l: TcpListener, mut stop: watch::Receiver<bool>) {
+    /// Bind `port` on IPv4 and IPv6 (loopback, or all interfaces). An IPv6 listener that
+    /// is unavailable is left out; the port being taken is an error.
+    fn bind_pair(&self, port: u16, remote: bool) -> Result<Vec<TcpListener>, (String, std::io::Error)> {
+        let bind: Vec<SocketAddr> = if remote {
+            vec![SocketAddr::from(([0, 0, 0, 0], port)), SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, port))]
+        } else {
+            vec![SocketAddr::from(([127, 0, 0, 1], port)), SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, port))]
+        };
+        let mut listeners: Vec<TcpListener> = Vec::new();
+        for a in &bind {
+            // Port 0: IPv6 takes the port IPv4 got, so both addresses share one port.
+            let mut a = *a;
+            if port == 0 {
+                if let Some(p) = listeners.first().and_then(|l| l.local_addr().ok()) {
+                    a.set_port(p.port());
+                }
+            }
+            let a = &a;
+            let l = self.rt.block_on(async {
+                let sock = if a.is_ipv4() { tokio::net::TcpSocket::new_v4()? } else { tokio::net::TcpSocket::new_v6()? };
+                sock.set_reuseaddr(true)?;
+                #[cfg(unix)]
+                if a.is_ipv6() {
+                    // Keep IPv6 listener IPv6-only so both binds succeed.
+                    let _ = set_v6only(&sock);
+                }
+                sock.bind(*a)?;
+                sock.listen(1024)
+            });
+            match l {
+                Ok(l) => listeners.push(l),
+                Err(e) if a.is_ipv6() && (port == 0 || e.kind() != std::io::ErrorKind::AddrInUse) => {
+                    tracing::debug!("IPv6 listener unavailable: {e}");
+                }
+                Err(e) => return Err((a.to_string(), e)),
+            }
+        }
+        if listeners.is_empty() {
+            return Err(("?".into(), std::io::Error::other("no address")));
+        }
+        Ok(listeners)
+    }
+
+    /// State of the extra listeners (reverse proxy, SOCKS, transparent) while running.
+    pub fn listener_status(&self) -> Vec<listener::ListenerStatus> {
+        self.extra_status.read().clone()
+    }
+
+    /// Run exactly `wanted`: unchanged listeners keep running, changed or removed ones
+    /// stop, new ones start. A port that cannot be bound is reported in
+    /// [`Proxy::listener_status`]; it never stops the main listener or the others.
+    fn sync_listeners(&self, wanted: &[listener::Listener]) {
+        let mut running = self.extra.lock();
+        let mut stopped = Vec::new();
+        running.retain_mut(|r| {
+            let keep = wanted.iter().any(|n| n == r.listener.as_ref());
+            if !keep {
+                let _ = r.stop.send(true);
+                connector::remove_self_addrs(&r.addrs);
+                stopped.append(&mut r.tasks);
+                tracing::info!(target: "quena::proxy", "{} stopped (port {})", r.listener.name(), r.listener.port());
+            }
+            keep
+        });
+        // The accept loops close their sockets when they end: wait, so a changed entry
+        // can bind the same port again right away.
+        self.rt.block_on(async {
+            for t in stopped {
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), t).await;
+            }
+        });
+        let mut status = Vec::new();
+        for l in wanted {
+            let mut st = listener::ListenerStatus { id: l.id(), kind: l.kind(), name: l.name(), port: l.port(), target: l.target(), listen: vec![], error: None };
+            if let Some(r) = running.iter().find(|r| r.listener.as_ref() == l) {
+                st.listen = r.addrs.iter().map(|a| a.to_string()).collect();
+                status.push(st);
+                continue;
+            }
+            let main_port = self.shared.listen.read().first().map(|a| a.port());
+            let bound = if main_port == Some(l.port()) {
+                Err(format!("port {} is the proxy port", l.port()))
+            } else {
+                self.bind_pair(l.port(), l.allow_remote()).map_err(|(a, e)| format!("cannot listen on {a}: {e}"))
+            };
+            match bound {
+                Ok(listeners) => {
+                    let (tx, rx) = watch::channel(false);
+                    let l = Arc::new(l.clone());
+                    let mut addrs = Vec::new();
+                    let mut tasks = Vec::new();
+                    for sock in listeners {
+                        if let Ok(a) = sock.local_addr() {
+                            addrs.push(a);
+                        }
+                        tasks.push(self.spawn_accept(sock, rx.clone(), Some(l.clone())));
+                    }
+                    connector::add_self_addrs(&addrs);
+                    tracing::info!(target: "quena::proxy", "{}: {} → {}", l.name(), addrs.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(", "), l.target());
+                    st.listen = addrs.iter().map(|a| a.to_string()).collect();
+                    running.push(listener::Running { listener: l, addrs, stop: tx, tasks });
+                }
+                Err(e) => {
+                    tracing::warn!(target: "quena::proxy", "{}: {e}", l.name());
+                    st.error = Some(e);
+                }
+            }
+            status.push(st);
+        }
+        *self.extra_status.write() = status;
+    }
+
+    fn spawn_accept(&self, l: TcpListener, mut stop: watch::Receiver<bool>, route: Option<Arc<listener::Listener>>) -> tokio::task::JoinHandle<()> {
         let shared = self.shared.clone();
         self.rt.spawn(async move {
             loop {
@@ -377,9 +497,10 @@ impl Proxy {
                         Ok((s, peer)) => match shared.conn_limit.clone().try_acquire_owned() {
                             Ok(permit) => {
                                 let shared = shared.clone();
+                                let route = route.clone();
                                 tokio::spawn(async move {
                                     let _permit = permit;
-                                    conn::handle_client(shared, s, peer).await
+                                    conn::handle_client(shared, s, peer, route).await
                                 });
                             }
                             Err(_) => {
@@ -400,7 +521,7 @@ impl Proxy {
                     _ = stop.changed() => break,
                 }
             }
-        });
+        })
     }
 
     pub fn stop(&self) {
@@ -412,6 +533,8 @@ impl Proxy {
         let mut listen = self.shared.listen.write();
         connector::remove_self_addrs(&listen);
         listen.clear();
+        drop(listen);
+        self.sync_listeners(&[]);
     }
 
     /// Apply a new configuration. Restarts listeners if the listen settings changed.
@@ -428,6 +551,8 @@ impl Proxy {
         if restart {
             self.stop();
             self.start()?;
+        } else if self.is_running() {
+            self.sync_listeners(&self.shared.cfg().listeners());
         }
         Ok(())
     }

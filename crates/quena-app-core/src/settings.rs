@@ -42,6 +42,157 @@ impl Default for ProxySettings {
     }
 }
 
+/// Reverse proxy ports: each forwards everything to one target (they listen while capturing).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReverseProxySettings {
+    /// Master switch; off leaves every entry unused.
+    pub enabled: bool,
+    pub entries: Vec<ReverseProxyEntry>,
+}
+
+pub use quena_proxy::reverse::ClientProtocol;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReverseProxyEntry {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub listen_port: u16,
+    /// Accept clients from other machines (still limited by `proxy.remoteAllowlist`).
+    pub allow_remote: bool,
+    pub client_protocol: ClientProtocol,
+    /// `http(s)://host[:port][/base path]`
+    pub target: String,
+    pub preserve_host: bool,
+    /// Certificate name for TLS clients without SNI (empty: `localhost`).
+    pub tls_host: String,
+    pub rewrite_location: bool,
+    pub rewrite_cookie_domain: bool,
+    pub forwarded_headers: bool,
+    /// Other targets for some paths; the longest matching prefix wins.
+    pub paths: Vec<ReversePathEntry>,
+}
+
+/// Requests whose path starts with `prefix` go to `target`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReversePathEntry {
+    /// `/auth`, `/api/v2` …
+    pub prefix: String,
+    /// `http(s)://host[:port][/base path]`
+    pub target: String,
+    /// Drop the prefix from the forwarded path.
+    pub strip_prefix: bool,
+}
+
+/// A port of its own: SOCKS or transparent (listening while capturing).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ListenerSettings {
+    pub enabled: bool,
+    pub port: u16,
+    /// Accept clients from other machines (still limited by `proxy.remoteAllowlist`).
+    pub allow_remote: bool,
+}
+
+impl ListenerSettings {
+    fn with_port(port: u16) -> Self {
+        ListenerSettings { enabled: false, port, allow_remote: false }
+    }
+    pub fn to_port(&self) -> Option<quena_proxy::listener::ExtraPort> {
+        self.enabled.then_some(quena_proxy::listener::ExtraPort { port: self.port, allow_remote: self.allow_remote })
+    }
+}
+
+/// Default SOCKS port.
+pub const SOCKS_PORT: u16 = 8868;
+/// Default port for transparently redirected traffic.
+pub const TRANSPARENT_PORT: u16 = 8869;
+
+impl Default for ReverseProxyEntry {
+    fn default() -> Self {
+        ReverseProxyEntry {
+            id: String::new(),
+            name: String::new(),
+            enabled: true,
+            listen_port: 8080,
+            allow_remote: false,
+            client_protocol: ClientProtocol::Auto,
+            target: String::new(),
+            preserve_host: false,
+            tls_host: String::new(),
+            rewrite_location: true,
+            rewrite_cookie_domain: false,
+            forwarded_headers: false,
+            paths: vec![],
+        }
+    }
+}
+
+impl ReverseProxyEntry {
+    /// Display name: the name, else `:port`.
+    pub fn label(&self) -> String {
+        if self.name.trim().is_empty() { format!(":{}", self.listen_port) } else { self.name.trim().to_string() }
+    }
+
+    /// The proxy's view of the entry, or why it cannot be used.
+    pub fn to_route(&self) -> Result<quena_proxy::reverse::ReverseRoute, String> {
+        use quena_proxy::reverse::{PathRoute, Target, parse_prefix};
+        let label = self.label();
+        let target = Target::parse(&self.target).map_err(|e| format!("{label}: {e}"))?;
+        let mut paths = Vec::new();
+        for p in &self.paths {
+            let prefix = parse_prefix(&p.prefix).map_err(|e| format!("{label}: {e}"))?;
+            let t = Target::parse(&p.target).map_err(|e| format!("{label} {prefix}: {e}"))?;
+            paths.push(PathRoute { prefix, target: t, strip_prefix: p.strip_prefix });
+        }
+        let tls_host = self.tls_host.trim();
+        Ok(quena_proxy::reverse::ReverseRoute {
+            id: self.id.clone(),
+            name: label,
+            port: self.listen_port,
+            allow_remote: self.allow_remote,
+            client_protocol: self.client_protocol,
+            target,
+            paths,
+            preserve_host: self.preserve_host,
+            tls_host: if tls_host.is_empty() { "localhost".into() } else { tls_host.to_string() },
+            rewrite_location: self.rewrite_location,
+            rewrite_cookie_domain: self.rewrite_cookie_domain,
+            forwarded_headers: self.forwarded_headers,
+        })
+    }
+}
+
+impl ReverseProxySettings {
+    /// Entries that listen while capturing.
+    pub fn active(&self) -> impl Iterator<Item = &ReverseProxyEntry> {
+        self.entries.iter().filter(move |e| self.enabled && e.enabled)
+    }
+
+    /// Check the entries against each other and the other ports Quena uses (`taken`: port
+    /// and what uses it).
+    pub fn validate(&self, taken: &[(u16, &str)]) -> Result<(), String> {
+        let mut seen: std::collections::HashMap<u16, String> = taken.iter().map(|(p, n)| (*p, n.to_string())).collect();
+        for e in &self.entries {
+            e.to_route()?;
+            if e.listen_port == 0 {
+                return Err(format!("{}: the port must not be 0", e.label()));
+            }
+            // Ports only matter for entries that listen.
+            if !self.enabled || !e.enabled {
+                continue;
+            }
+            if let Some(other) = seen.insert(e.listen_port, e.label()) {
+                return Err(format!("{} and {other} both use port {}", e.label(), e.listen_port));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum DecryptScope {
@@ -115,6 +266,15 @@ pub enum ImportExisting {
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub proxy: ProxySettings,
+    /// Reverse proxy ports (Capture → Reverse Proxy…).
+    #[serde(default)]
+    pub reverse_proxy: ReverseProxySettings,
+    /// SOCKS5/4 port (Settings → Connections).
+    #[serde(default = "default_socks")]
+    pub socks: ListenerSettings,
+    /// Port for transparently redirected traffic (Settings → Connections).
+    #[serde(default = "default_transparent")]
+    pub transparent: ListenerSettings,
     pub https: HttpsSettings,
     pub bodies: BodyConfigDto,
     /// "Keep: N sessions" (0 = all).
@@ -158,6 +318,9 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             proxy: ProxySettings::default(),
+            reverse_proxy: ReverseProxySettings::default(),
+            socks: default_socks(),
+            transparent: default_transparent(),
             https: HttpsSettings::default(),
             bodies: BodyConfigDto::default(),
             keep_sessions: 0,
@@ -264,7 +427,43 @@ impl BodyConfigDto {
     }
 }
 
+fn default_socks() -> ListenerSettings {
+    ListenerSettings::with_port(SOCKS_PORT)
+}
+
+fn default_transparent() -> ListenerSettings {
+    ListenerSettings::with_port(TRANSPARENT_PORT)
+}
+
+impl Default for ListenerSettings {
+    fn default() -> Self {
+        ListenerSettings::with_port(0)
+    }
+}
+
 impl Settings {
+    /// Ports of Quena's listeners must differ: the proxy, MCP, SOCKS, transparent and the
+    /// reverse proxy entries.
+    pub fn validate_ports(&self) -> Result<(), String> {
+        let mut taken: Vec<(u16, &str)> = vec![(self.proxy.port, "the proxy port")];
+        if self.mcp.enabled {
+            taken.push((self.mcp.port, "the MCP server's port"));
+        }
+        for (l, name) in [(&self.socks, "the SOCKS port"), (&self.transparent, "the transparent port")] {
+            if !l.enabled {
+                continue;
+            }
+            if l.port == 0 {
+                return Err(format!("{name} must not be 0"));
+            }
+            if let Some((_, other)) = taken.iter().find(|(p, _)| *p == l.port) {
+                return Err(format!("port {} is {other} and cannot be {name}", l.port));
+            }
+            taken.push((l.port, name));
+        }
+        self.reverse_proxy.validate(&taken).map_err(|e| format!("reverse proxy: {e}"))
+    }
+
     pub fn load(path: &Path) -> Settings {
         match std::fs::read(path) {
             Ok(b) => serde_json::from_slice(&b).unwrap_or_else(|e| {

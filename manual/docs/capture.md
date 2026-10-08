@@ -56,6 +56,11 @@ export HTTPS_PROXY=http://127.0.0.1:8866
 For HTTPS, such tools must also trust Quena's root certificate — see
 [HTTPS and devices](https.md).
 
+Clients that take no proxy at all (a backend with a fixed API URL, a container, a webhook
+sender, gRPC) can call a [reverse proxy](reverse-proxy.md) port of Quena instead: it
+forwards everything to one target (or one per path) and records it. Clients that speak
+SOCKS, and connections a firewall redirects, have [ports of their own](socks-transparent.md).
+
 ## Upstream proxy and PAC
 
 In a corporate network, Quena forwards to the proxy you used before. The options are in

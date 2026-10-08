@@ -128,6 +128,13 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, system_bypass
         auth_prefer: parse_prefer(&s.auth.prefer),
         throttle_bps: s.throttle_kbps.saturating_mul(1000) / 8,
         throttle_latency_ms: s.throttle_latency_ms,
+        reverse: s
+            .reverse_proxy
+            .active()
+            .filter_map(|e| e.to_route().map_err(|err| tracing::warn!(target: "quena", "reverse proxy {err}")).ok())
+            .collect(),
+        socks: s.socks.to_port(),
+        transparent: s.transparent.to_port(),
     }
 }
 
@@ -259,7 +266,9 @@ impl ProxyEngine {
 
     fn apply(&self, core: &Arc<AppCore>) -> Result<()> {
         let s = core.settings();
-        if s.https.decrypt {
+        // HTTPS clients of a reverse proxy port get certificates from the root CA too.
+        let reverse_tls = s.reverse_proxy.active().any(|e| e.client_protocol != crate::settings::ClientProtocol::Http);
+        if s.https.decrypt || reverse_tls {
             self.ensure_ca()?;
         }
         let (detected, system_pac, detected_bypass) = {
@@ -427,6 +436,7 @@ impl CaptureEngine for ProxyEngine {
             paused: self.rules.read().as_ref().map(|r| r.paused().len()).unwrap_or(0),
             autoresponder: self.rules.read().as_ref().is_some_and(|r| r.autoresponder_active()),
             rewrite: self.rules.read().as_ref().is_some_and(|r| r.rewrite.active()),
+            listeners: self.proxy.listener_status(),
         }
     }
 

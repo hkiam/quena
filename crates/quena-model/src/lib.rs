@@ -311,6 +311,10 @@ pub struct SessionSummary {
     /// Session cookie as name and hash ([`correlation::session_key`]).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub session: String,
+    /// Listener the request came through: a reverse proxy entry, `SOCKS5` or `transparent`
+    /// (empty: the proxy port, or Quena's own request).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub via: String,
 }
 
 impl SessionSummary {
@@ -350,7 +354,16 @@ pub struct SessionDetail {
     pub extra_flags: Vec<(String, String)>,
 }
 
+/// Session flag naming the listener a request came through besides the proxy port: a reverse
+/// proxy entry, `SOCKS5` or `transparent`.
+pub const VIA_FLAG: &str = "x-quena-via";
+
 impl SessionDetail {
+    /// The listener the request came through (reverse proxy entry, SOCKS5, transparent), if any.
+    pub fn via(&self) -> String {
+        self.extra_flags.iter().find(|(k, _)| k == VIA_FLAG).map(|(_, v)| v.clone()).unwrap_or_default()
+    }
+
     /// Recompute the list row fields that are derived from heads.
     pub fn refresh_summary(&mut self) {
         let s = &mut self.summary;
@@ -368,6 +381,7 @@ impl SessionDetail {
         s.conn = self.connection.client_conn_id.unwrap_or(0);
         s.trace = correlation::trace_id(&self.request.headers);
         s.session = correlation::session_key(&self.request.headers);
+        s.via = self.extra_flags.iter().find(|(k, _)| k == VIA_FLAG).map(|(_, v)| v.clone()).unwrap_or_default();
         s.request_body_len = self.request_body.wire_len();
         if let Some(resp) = &self.response {
             s.status = resp.status;

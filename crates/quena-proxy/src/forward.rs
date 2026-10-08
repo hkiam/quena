@@ -66,6 +66,10 @@ pub struct ConnCtx {
     /// Per-connection dedicated upstream clients for authenticated hosts
     /// (connection pinning – never shared with another client connection).
     pub auth_clients: parking_lot::Mutex<std::collections::HashMap<(String, u16), Arc<hyper_util::client::legacy::Client<crate::connector::Connector, ProxyBody>>>>,
+    /// Set on a reverse proxy port: every request goes to this route's targets.
+    pub reverse: Option<Arc<crate::reverse::ReverseRoute>>,
+    /// The listener besides the proxy port the connection came in on (Via column).
+    pub via: Option<String>,
 }
 
 impl ConnCtx {
@@ -321,17 +325,31 @@ fn note_gave_up(live: &LiveSession, part: &str, why: &str) {
 /// Entry point for every proxied request.
 pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Response<ProxyBody>, Infallible> {
     let shared = ctx.shared.clone();
-    let Some(url) = absolute_url(&req, &ctx) else {
-        return Ok(crate::landing::serve(&shared, &req));
+    // On a reverse proxy port every request goes to the route's target; how the client
+    // addressed Quena is kept for the response headers that name the target.
+    let (url, reverse) = match &ctx.reverse {
+        Some(r) => {
+            let (url, routed) = r.upstream_url(req.uri());
+            (url, Some(ReverseOut { route: r.clone(), client_origin: crate::reverse::client_origin(&req, ctx.scheme, r.port), routed }))
+        }
+        None => {
+            let Some(url) = absolute_url(&req, &ctx) else {
+                return Ok(crate::landing::serve(&shared, &req));
+            };
+            if is_self_target(&shared, &url) {
+                return Ok(crate::landing::serve(&shared, &req));
+            }
+            (url, None)
+        }
     };
-    if is_self_target(&shared, &url) {
-        return Ok(crate::landing::serve(&shared, &req));
-    }
     let cfg = shared.cfg();
     let capture = shared.capture();
     let now = now_us();
     let h1 = is_h1(req.version());
-    let head = RequestHead { method: req.method().to_string(), url: url.clone(), version: version_of(req.version()), headers: record_headers(req.headers(), h1) };
+    let mut head = RequestHead { method: req.method().to_string(), url: url.clone(), version: version_of(req.version()), headers: record_headers(req.headers(), h1) };
+    if let Some(r) = &reverse {
+        r.prepare_request(&mut head, &ctx, &req);
+    }
     let process = ctx.process().await;
     let client_ip = ctx.client_addr.ip().to_canonical().to_string();
     let live = capture.begin(SessionKind::Http, |d| {
@@ -350,6 +368,9 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
         }
         if ctx.remote {
             d.summary.flags |= flags::REMOTE_CLIENT;
+        }
+        if let Some(v) = &ctx.via {
+            d.extra_flags.push((crate::reverse::FLAG.into(), v.clone()));
         }
     });
     // Client gone (hyper drops this future), panic, or a forgotten path: end the session.
@@ -433,7 +454,7 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
                     while let Some(Ok(_)) = b.frame().await {}
                 });
             }
-            return Ok(respond_locally(&shared, &live, &view, rh, body));
+            return Ok(respond_locally(&shared, &live, &view, rh, body, reverse.as_ref()));
         }
         RequestAction::Forward { head: new_head, body: new_body, delay_ms } => {
             if delay_ms > 0 {
@@ -521,7 +542,57 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
             return Ok(crate::tunnel::websocket(&shared, &live, resp, cu));
         }
     }
-    Ok(deliver_response(&shared, &live, &view, &head, resp, &mut guard).await)
+    Ok(deliver_response(&shared, &live, &view, &head, resp, &mut guard, reverse.as_ref()).await)
+}
+
+/// Reverse proxy handling of one request: the route and how the client addressed Quena.
+struct ReverseOut {
+    route: Arc<crate::reverse::ReverseRoute>,
+    client_origin: String,
+    /// The target the request went to (path routes).
+    routed: crate::reverse::Routed,
+}
+
+impl ReverseOut {
+    /// Host and forwarding headers of the request sent to the target.
+    fn prepare_request(&self, head: &mut RequestHead, ctx: &ConnCtx, req: &Request<Incoming>) {
+        let route = &self.route;
+        let client_host = self.client_origin.split_once("://").map(|(_, h)| h.to_string()).unwrap_or_default();
+        // Names as the client's HTTP version records them (Title-Case for HTTP/1).
+        let h1 = is_h1(req.version());
+        let name = |n: &str| if h1 { title_case(n) } else { n.to_string() };
+        if route.preserve_host {
+            // HTTP/2 clients send `:authority` only; the target still needs a Host.
+            if head.headers.get("host").is_none() {
+                head.headers.push(name("host"), client_host.clone());
+            }
+        } else if head.headers.get("host").is_some() {
+            head.headers.set("host", self.routed.target.authority.clone());
+        }
+        if route.forwarded_headers {
+            let ip = ctx.client_addr.ip().to_canonical().to_string();
+            let xff = match head.headers.get("x-forwarded-for") {
+                Some(prev) => format!("{prev}, {ip}"),
+                None => ip,
+            };
+            for (n, v) in [("x-forwarded-for", xff), ("x-forwarded-proto", ctx.scheme.to_string()), ("x-forwarded-host", client_host)] {
+                head.headers.remove(n);
+                head.headers.push(name(n), v);
+            }
+        }
+    }
+
+    /// Point response headers that name the target back to Quena; note it in the session.
+    fn apply(&self, live: &LiveSession, headers: &mut http::HeaderMap) {
+        let notes = self.route.rewrite_response(headers, &self.client_origin, &self.routed);
+        if !notes.is_empty() {
+            let text = notes.join("; ");
+            live.update(move |d| {
+                d.extra_flags.retain(|(k, _)| k != crate::reverse::REWRITE_FLAG);
+                d.extra_flags.push((crate::reverse::REWRITE_FLAG.into(), text));
+            });
+        }
+    }
 }
 
 fn url_host(url: &str) -> String {
@@ -624,6 +695,7 @@ async fn deliver_response(
     req_head: &RequestHead,
     resp: Response<Incoming>,
     guard: &mut quena_store::AbortOnDrop,
+    reverse: Option<&ReverseOut>,
 ) -> Response<ProxyBody> {
     let cfg = shared.cfg();
     let hooks = shared.hooks();
@@ -723,7 +795,10 @@ async fn deliver_response(
             (resp_head, body)
         };
         let len = body.len();
-        let out = build_client_response(&head, throttle(StoredStream::new(body).boxed()), Some(len));
+        let mut out = build_client_response(&head, throttle(StoredStream::new(body).boxed()), Some(len));
+        if let Some(r) = reverse {
+            r.apply(live, out.headers_mut());
+        }
         live.update(|d| {
             d.summary.state = if aborted { SessionState::Aborted } else { SessionState::Done };
             d.timers.client_begin_response = Some(now_us());
@@ -776,6 +851,9 @@ async fn deliver_response(
             hooks2.on_complete(&view2);
         }),
     );
+    if let Some(r) = reverse {
+        r.apply(live, &mut parts.headers);
+    }
     // From here the streaming body (its recorder callback) finishes the session.
     guard.disarm();
     live.update(|d| d.timers.client_begin_response = Some(now_us()));
@@ -821,9 +899,17 @@ pub(crate) fn build_client_response(head: &ResponseHead, body: ProxyBody, len: O
     r
 }
 
-fn respond_locally(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &SessionView, head: ResponseHead, body: StoredBody) -> Response<ProxyBody> {
+fn respond_locally(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &SessionView, head: ResponseHead, body: StoredBody, reverse: Option<&ReverseOut>) -> Response<ProxyBody> {
+    // A HEAD response announces the length of the body a GET would get (a recorded
+    // Content-Length); it never has a body of its own, so 0 would be wrong.
+    let head_request = live.detail().request.method.eq_ignore_ascii_case("HEAD");
     let len = body.len();
-    live.set_response_body(body.clone());
+    let out_len = if head_request && len == 0 && head.headers.get("content-length").is_some() { None } else { Some(len) };
+    let mut out = build_client_response(&head, StoredStream::new(body.clone()).boxed(), out_len);
+    if let Some(r) = reverse {
+        r.apply(live, out.headers_mut());
+    }
+    live.set_response_body(body);
     let h2 = head.clone();
     live.update(move |d| {
         let now = now_us();
@@ -836,11 +922,7 @@ fn respond_locally(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &Session
     });
     live.finish();
     shared.hooks().on_complete(view);
-    // A HEAD response announces the length of the body a GET would get (a recorded
-    // Content-Length); it never has a body of its own, so 0 would be wrong.
-    let head_request = live.detail().request.method.eq_ignore_ascii_case("HEAD");
-    let len = if head_request && len == 0 && head.headers.get("content-length").is_some() { None } else { Some(len) };
-    build_client_response(&head, StoredStream::new(body).boxed(), len)
+    out
 }
 
 fn record_synthetic_response(shared: &Arc<Shared>, live: &Arc<LiveSession>, resp: &Response<ProxyBody>, error: String) {
@@ -918,7 +1000,7 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
                 return id;
             }
             RequestAction::Respond { head: rh, body, .. } => {
-                let _ = respond_locally(&shared, &live, &view, rh, body);
+                let _ = respond_locally(&shared, &live, &view, rh, body, None);
                 return id;
             }
             RequestAction::Forward { head: h, body: b, delay_ms } => {
@@ -933,7 +1015,7 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
     };
     match send_upstream(&shared, &live, &head, StoredStream::new(body).boxed(), false).await {
         Ok(resp) => {
-            let r = deliver_response(&shared, &live, &view, &head, resp, &mut guard).await;
+            let r = deliver_response(&shared, &live, &view, &head, resp, &mut guard, None).await;
             // Consume the body so it gets recorded.
             let mut b = r.into_body();
             while let Some(f) = b.frame().await {

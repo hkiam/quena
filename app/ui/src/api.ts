@@ -60,10 +60,12 @@ export interface SessionSummary {
   trace?: string;
   /** Session cookie as `NAME #hash`. */
   session?: string;
+  /** Reverse proxy entry the request came through. */
+  via?: string;
 }
 
 /** "Group by" of the session list (crates/quena-index). */
-export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom";
+export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via";
 
 export interface RowGroup {
   start: boolean;
@@ -237,6 +239,57 @@ export interface EngineStatus {
   paused: number;
   autoresponder: boolean;
   rewrite: boolean;
+  /** Listeners besides the proxy port while capturing: reverse proxy entries, SOCKS, transparent. */
+  listeners: ListenerStatus[];
+}
+
+/** A listener while capturing (crates/quena-proxy/src/listener.rs). */
+export interface ListenerStatus {
+  id: string;
+  kind: "reverse" | "socks" | "transparent";
+  name: string;
+  port: number;
+  target: string;
+  /** Addresses it listens on; empty when it could not start. */
+  listen: string[];
+  error: string | null;
+}
+
+export type ClientProtocol = "auto" | "http" | "https";
+
+/** One reverse proxy entry (Capture → Reverse Proxy…). */
+export interface ReverseProxyEntry {
+  id: string;
+  name: string;
+  enabled: boolean;
+  listenPort: number;
+  allowRemote: boolean;
+  clientProtocol: ClientProtocol;
+  /** `http(s)://host[:port][/base path]` */
+  target: string;
+  preserveHost: boolean;
+  /** Certificate name for TLS clients without SNI ("" = localhost). */
+  tlsHost: string;
+  rewriteLocation: boolean;
+  rewriteCookieDomain: boolean;
+  forwardedHeaders: boolean;
+  /** Other targets for some paths; the longest matching prefix wins. */
+  paths: ReversePathEntry[];
+}
+
+export interface ReversePathEntry {
+  /** `/auth`, `/api/v2` … */
+  prefix: string;
+  target: string;
+  /** Drop the prefix from the forwarded path. */
+  stripPrefix: boolean;
+}
+
+/** SOCKS or transparent port (listening while capturing). */
+export interface ListenerSettings {
+  enabled: boolean;
+  port: number;
+  allowRemote: boolean;
 }
 
 export interface Status {
@@ -320,7 +373,8 @@ export type Column =
   | "custom"
   | "method"
   | "duration"
-  | "started";
+  | "started"
+  | "via";
 
 export interface Sort {
   column: Column;
@@ -382,6 +436,12 @@ export interface Settings {
     useSystemPac: boolean;
     pacUrl: string;
   };
+  /** Reverse proxy ports: each forwards everything to one target (while capturing). */
+  reverseProxy: { enabled: boolean; entries: ReverseProxyEntry[] };
+  /** SOCKS5/4 port. */
+  socks: ListenerSettings;
+  /** Port for transparently redirected traffic. */
+  transparent: ListenerSettings;
   https: {
     decrypt: boolean;
     scope: "all" | "browsers" | "nonBrowsers" | "remote";

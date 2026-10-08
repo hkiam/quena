@@ -16,6 +16,7 @@ export function groupMenu(): MenuItem[] {
     ["trace", t("Trace / correlation id")],
     ["session", t("Session cookie")],
     ["custom", t("Custom column")],
+    ["via", t("Via (reverse proxy, SOCKS, transparent)")],
   ];
   const items: MenuItem[] = choices.map(([g, label]) => ({ label, checked: cur === g, action: () => void actions.setGroup(g) }));
   if (cur !== "none") {
@@ -65,6 +66,7 @@ export function sessionMenu(): MenuItem[] {
         { label: t("Mocks from Sessions…"), action: () => import("./panels/autoresponderActions").then((m) => m.mocksFromSelection()) },
       ],
     },
+    { label: t("Reverse Proxy for this Host…"), disabled: !one, action: () => import("./components/ReverseProxyDialog").then((m) => m.reverseProxyForSelection()) },
     {
       label: t("Copy"),
       submenu: [

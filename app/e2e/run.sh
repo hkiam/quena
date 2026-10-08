@@ -38,6 +38,9 @@ node --test --test-reporter=spec "$here/app.test.mjs"
 # Mocks from sessions: dialog → Mock Rules → the proxy answers from the package.
 settings en
 node --test --test-reporter=spec "$here/mocks.test.mjs"
+# Reverse proxy: an entry from the dialog forwards to its target and records.
+settings en
+node --test --test-reporter=spec "$here/reverse.test.mjs"
 # Sanitized export: GDPR preset → HAR without marker values → opened again.
 settings en
 node --test --test-reporter=spec "$here/sanitize.test.mjs"

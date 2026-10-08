@@ -48,6 +48,8 @@ pub enum Field {
     Conn,
     Trace,
     Session,
+    /// Reverse proxy entry (`via == api`).
+    Via,
 }
 
 impl Field {
@@ -74,6 +76,7 @@ impl Field {
             "conn" | "connection" => Field::Conn,
             "trace" | "correlation" => Field::Trace,
             "session" | "sessioncookie" => Field::Session,
+            "via" | "reverse" => Field::Via,
             _ => return None,
         })
     }
@@ -144,6 +147,7 @@ fn text_of(f: Field, s: &SessionSummary) -> String {
         Field::Conn => s.conn.to_string(),
         Field::Trace => s.trace.clone(),
         Field::Session => s.session.clone(),
+        Field::Via => s.via.clone(),
         Field::Id => s.id.to_string(),
         Field::Status => s.status.to_string(),
         Field::Size => s.response_body_len.to_string(),
@@ -476,6 +480,7 @@ mod tests {
             conn: 1_234_567,
             trace: "4bf92f3577b34da6a3ce929d0e0e4736".into(),
             session: "JSESSIONID #1a2b3c4d".into(),
+            via: "api".into(),
             ..Default::default()
         }
     }
@@ -502,6 +507,8 @@ mod tests {
             ("connection > 1234567", false),
             ("trace == 4bf92f3577b34da6a3ce929d0e0e4736", true),
             ("session ~ jsessionid", true),
+            ("via == api", true),
+            ("reverse == other", false),
         ];
         for (src, want) in cases {
             assert_eq!(parse(src).unwrap().eval(&s()), want, "{src}");

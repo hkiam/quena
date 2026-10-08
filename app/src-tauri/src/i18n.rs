@@ -74,6 +74,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Find Sessions…" => "Sessions suchen…",
         "HTTPS Settings…" => "HTTPS-Einstellungen…",
         "Connect Device…" => "Gerät verbinden…",
+        "Reverse Proxy…" => "Reverse Proxy…",
         "Before Requests" => "Vor Requests",
         "After Responses" => "Nach Responses",
         "Off" => "Aus",

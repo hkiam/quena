@@ -20,6 +20,7 @@ export type ColumnKey =
   | "method"
   | "duration"
   | "started"
+  | "via"
   /** The Group column, shown first while the list is grouped (not stored in `columns`). */
   | "group";
 
@@ -47,6 +48,7 @@ export const COLUMN_TITLES: Record<ColumnKey, string> = {
   method: t("Method"),
   duration: t("Duration"),
   started: t("Started"),
+  via: t("Via"),
   group: t("Group"),
 };
 
@@ -74,6 +76,7 @@ export const DEFAULT_COLUMNS: ColumnConf[] = [
   col("custom", 90, false),
   col("caching", 90, false),
   col("started", 90, false),
+  col("via", 80, false),
 ];
 
 /** Classic: a dense list with more columns, for long-time proxy users. */
@@ -92,6 +95,7 @@ export const CLASSIC_COLUMNS: ColumnConf[] = [
   col("comments", 120, true),
   col("custom", 80, false),
   col("started", 90, false),
+  col("via", 80, false),
 ];
 
 export type LayoutPreset = "quena" | "classic";
@@ -204,6 +208,8 @@ export type Dialog =
   | { kind: "connect-device" }
   | { kind: "textwizard"; text?: string }
   | { kind: "https" }
+  /** Capture → Reverse Proxy…; `target` starts a new entry for it (from a session). */
+  | { kind: "reverse-proxy"; target?: string }
   | { kind: "plugins" }
   | { kind: "rules" }
   /** Mocks from sessions; the dialog offers the selected or the visible sessions. */

@@ -32,6 +32,8 @@ export function StatusBar() {
 
   const running = jobs.filter((j) => j.status === "running" || j.status === "queued");
   const eng = status?.engine;
+  const reverse = eng?.listeners?.filter((l) => l.kind === "reverse") ?? [];
+  const others = eng?.listeners?.filter((l) => l.kind !== "reverse") ?? [];
   const procMode = filters?.enabled ? filters.processMode : "all";
   const procLabel = PROC_LABELS[procMode];
 
@@ -77,6 +79,22 @@ export function StatusBar() {
           ✎ {t("Rewrite rules")}
         </div>
       )}
+      {reverse.length > 0 && (
+        <div
+          className={`sb-cell sb-click ${reverse.some((r) => r.error) ? "sb-warn" : ""}`}
+          onClick={() => set({ dialog: { kind: "reverse-proxy" } })}
+          title={reverse.map((r) => `${r.name}: :${r.port} → ${r.target}${r.error ? ` (${r.error})` : ""}`).join("\n")}
+        >
+          ⇄ {plural(reverse.filter((r) => !r.error).length, "{n} reverse proxy", "{n} reverse proxies")}
+          {reverse.some((r) => r.error) && ` · ${t("error")}`}
+        </div>
+      )}
+      {others.map((l) => (
+        <div key={l.id} className={`sb-cell sb-click ${l.error ? "sb-warn" : ""}`} onClick={() => set({ dialog: { kind: "options" } })} title={l.error ?? l.listen.join(", ")}>
+          {l.kind === "socks" ? "SOCKS" : t("Transparent")} :{l.port}
+          {l.error && ` · ${t("error")}`}
+        </div>
+      ))}
       {status?.recordingSuspended && <div className="sb-cell sb-warn">{t("Recording suspended (disk)")}</div>}
       {status?.mockRunning && <div className="sb-cell sb-warn">{t("Mock traffic")}</div>}
       <div className="sb-msg">

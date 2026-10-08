@@ -93,6 +93,9 @@ Export Sessions → HTTP Archive (HAR)…*), and SAZ archives. Packet captures (
   `"embed"` the character encoding of textual bodies is checked as well.
 * **Cypress:** `@neuralegion/cypress-har-generator` (Chromium-based browsers), one file per
   test — see the [example](https://github.com/hkiam/quena/tree/main/examples/ci-cypress).
+* **Services and API tests without a browser:** `quena-cli reverse` in front of the
+  service records what the tests send it — see [below](#sanitize-and-mocks) and
+  [Reverse proxy](reverse-proxy.md#without-a-window-quena-cli-reverse).
 
 All files of one call are analysed together, as one capture. Passing the same file twice is
 an error.
@@ -271,6 +274,17 @@ quena-cli http from-har captures/login.har -o login.http       # captured reques
 | `--name NAME` | only these requests (`# @name`, `### title` or `line:N`; repeatable) |
 | `--save PATH` | also save the requests with their responses (`.har`, `.saz`) |
 | `--timeout SECONDS` | wait at most this long for each response (default 30) |
+
+To record the traffic of integration tests without proxy settings in the tested service,
+run `quena-cli reverse` in front of it and let the tests call Quena's port; the saved
+archive then goes into `diagnose` (see [Reverse proxy](reverse-proxy.md#without-a-window-quena-cli-reverse)):
+
+```sh
+quena-cli reverse --route api=8080=http://localhost:3000 --save api.har &
+npm test                                   # calls http://localhost:8080
+kill -TERM %1 && wait                      # stops and writes api.har
+quena-cli diagnose api.har --fail-on critical
+```
 
 Config files of `sanitize` and `mock` are read strictly: an unknown key (a typo such as
 `"repeat"` or `"emials"`) is an error that names it, instead of being ignored. No output may

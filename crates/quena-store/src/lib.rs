@@ -368,6 +368,9 @@ impl Capture {
             if s.session.is_empty() {
                 s.session = quena_model::correlation::session_key(&d.request.headers);
             }
+            if s.via.is_empty() {
+                s.via = d.via();
+            }
             if !s.state.is_final() {
                 s.state = SessionState::Aborted;
             }

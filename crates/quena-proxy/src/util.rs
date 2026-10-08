@@ -76,6 +76,11 @@ pub fn title_case(name: &str) -> String {
 pub const HOP_BY_HOP: &[&str] = &["connection", "proxy-connection", "keep-alive", "te", "trailer", "transfer-encoding", "upgrade", "proxy-authorization", "proxy-authenticate"];
 
 /// Split `host[:port]` with a default port.
+/// `host:port`, with brackets around an IPv6 address.
+pub fn join_host_port(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') { format!("[{host}]:{port}") } else { format!("{host}:{port}") }
+}
+
 pub fn split_host_port(authority: &str, default: u16) -> (String, u16) {
     if let Some(rest) = authority.strip_prefix('[') {
         if let Some(i) = rest.find(']') {

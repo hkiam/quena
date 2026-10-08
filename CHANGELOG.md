@@ -8,6 +8,42 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Reverse proxy ports for clients that cannot use a proxy** (*Capture → Reverse Proxy…*).
+  Each entry listens on a local port while capturing and forwards every request to one target
+  (`http(s)://host[:port][/base path]`). This suits backends with a fixed API URL, containers,
+  test suites, webhook senders and gRPC. The traffic is recorded like proxied traffic, and
+  breakpoints, Mock Rules, rewrite rules and scripts apply to it.
+  - On the client side, the port accepts HTTPS (certificates from the Quena root
+    certificate), plain HTTP and cleartext HTTP/2 (h2c, gRPC without TLS) on one port.
+  - Options per entry: keep the client's `Host`, point `Location` redirects back to the port,
+    drop cookie domains, add `X-Forwarded-*` headers.
+  - Entries listen on this machine only unless one allows remote computers.
+  - A port refuses `CONNECT`, so it never becomes an open proxy, and a target that is Quena
+    itself is refused.
+  - The new *Via* column, *Group by → Via* and the filter `via == name` show which
+    entry a request came through; the status bar shows the running entries.
+  - Right-clicking a session offers *Reverse Proxy for this Host…*, and agents (MCP) can
+    manage entries.
+  - **Path routes** send some paths of a port to other targets, e.g. `/auth` to the login
+    server and `/api` to the backend. The longest prefix wins, and the prefix can be removed
+    from the forwarded path. Redirects and `Host` follow the chosen target.
+- **SOCKS5/4 port and transparent port** (*Settings → Connections*, off by default).
+  - SOCKS5 (with or without a password) and SOCKS4/4a clients name their target.
+  - Connections a firewall redirects (iptables, pf) need no client setting at all. Quena
+    takes the target from the original destination (Linux), the TLS server name or the
+    `Host` header.
+  - Both are handled like `CONNECT` tunnels: HTTPS is decrypted when decryption is on,
+    plain HTTP is recorded, anything else is passed through.
+  - The *Via* column shows `SOCKS5` or `transparent`, the status bar shows the open ports,
+    and the manual shows the firewall rules for Linux and macOS.
+- **`quena-cli reverse` (also `quena-cli serve`) runs the reverse proxy without a window**,
+  e.g. in CI or as a Docker sidecar:
+  `quena-cli reverse --route api=8080=https://api.example.com --save run.saz`. `--path`
+  adds path routes, and `--socks` and `--transparent` open those ports (`--decrypt` for
+  HTTPS inside them). It
+  prints an access log, stops on Ctrl-C/SIGTERM, after `--duration` or `--max-sessions`, and
+  saves the sessions as `.saz` or `.har` for `quena-cli diagnose` or `mock`. With
+  `--ca-dir` the root certificate stays the same between runs.
 - **Software bill of materials (SBOM) for every release.** Each build lists what the app and
   `quena-cli` are made of as a CycloneDX SBOM (JSON) per platform: Rust crates, the npm
   packages of the user interface and the bundled plugins, with versions, licenses and package

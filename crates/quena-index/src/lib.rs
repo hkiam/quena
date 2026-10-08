@@ -32,6 +32,8 @@ pub enum Column {
     Method,
     Duration,
     Started,
+    /// Reverse proxy entry the request came through.
+    Via,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -58,6 +60,8 @@ pub enum GroupBy {
     Session,
     /// The Custom column (set by rules scripts).
     Custom,
+    /// The reverse proxy entry.
+    Via,
 }
 
 /// Group of a row in a [`RowWindow`].
@@ -90,6 +94,7 @@ fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
         GroupBy::Trace => text(&r.trace, false),
         GroupBy::Session => text(&r.session, false),
         GroupBy::Custom => text(&r.custom, false),
+        GroupBy::Via => text(&r.via, false),
     }
 }
 
@@ -116,6 +121,7 @@ fn compare(a: &SessionSummary, b: &SessionSummary, c: Column) -> Ordering {
         Column::Method => a.method.cmp(&b.method),
         Column::Duration => a.duration_ms.cmp(&b.duration_ms),
         Column::Started => a.started_at.cmp(&b.started_at),
+        Column::Via => a.via.cmp(&b.via),
     };
     o.then(a.id.cmp(&b.id))
 }

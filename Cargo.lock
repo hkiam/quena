@@ -3797,6 +3797,7 @@ dependencies = [
  "quena-app-core",
  "quena-formats",
  "quena-report",
+ "quena-tls",
  "serde",
  "serde_json",
  "tempfile",

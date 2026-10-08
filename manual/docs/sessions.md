@@ -21,6 +21,7 @@ the client process and your own notes. The list handles hundreds of thousands of
 | *Custom* | A value from the [rules script](scripting.md) (`Quena.registerColumn`). |
 | *Caching* | Caching-related response headers. |
 | *Started* | Time the request started. |
+| *Via* | How the request came in besides the proxy port: the [reverse proxy](reverse-proxy.md) entry, `SOCKS5` or `transparent` ([SOCKS and transparent](socks-transparent.md)). |
 
 The Quena layout shows `#`, Method, Status, Host, Path, Type, Size and Duration; the Classic
 layout shows more columns.
@@ -65,6 +66,7 @@ belong together in one block:
 | *Trace / correlation id* | the trace id (`traceparent`, B3, `uber-trace-id`, `X-Amzn-Trace-Id`, `X-Cloud-Trace-Context`) or a correlation header (`X-Correlation-ID` …) — one user action across connections |
 | *Session cookie* | the session cookie (`JSESSIONID`, `PHPSESSID`, `ASP.NET_SessionId`, `connect.sid`, `sessionid` …) — one login |
 | *Custom column* | the value a [rules script](scripting.md) puts into *Custom*: your own grouping |
+| *Via (reverse proxy, SOCKS, transparent)* | the [reverse proxy](reverse-proxy.md) entry, or the [SOCKS or transparent](socks-transparent.md) port the requests came through |
 
 - Groups appear in the order of their first session; **inside each group the list is
   sorted** by the column you click. With `#` descending, the newest groups come first.

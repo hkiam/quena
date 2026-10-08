@@ -16,6 +16,7 @@ const RulesEditor = lazy(() => import("./RulesEditor").then((m) => ({ default: m
 const SanitizeDialog = lazy(() => import("./SanitizeDialog").then((m) => ({ default: m.SanitizeDialog })));
 const SanitizeResult = lazy(() => import("./SanitizeDialog").then((m) => ({ default: m.SanitizeResult })));
 const MocksDialog = lazy(() => import("./MocksDialog").then((m) => ({ default: m.MocksDialog })));
+const ReverseProxyPanel = lazy(() => import("./ReverseProxyDialog").then((m) => ({ default: m.ReverseProxyPanel })));
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { currentLang, plural, t } from "../i18n";
@@ -643,6 +644,47 @@ function OptionsDialog() {
               <span>{t("PAC URL or file")}</span>
               <input placeholder={t("empty = use system PAC; or http://…/proxy.pac, file path")} value={s.proxy.pacUrl} onChange={(e) => up((x) => (x.proxy.pacUrl = e.target.value))} />
             </div>
+            <div className="f-row">
+              <span>{t("Reverse proxy ports")}</span>
+              <span>
+                <button
+                  onClick={async () => {
+                    // Keep what was changed here, then switch to the reverse proxy entries.
+                    try {
+                      await api.settingsSet(s);
+                      set({ settings: s, dialog: { kind: "reverse-proxy" } });
+                    } catch (e) {
+                      say(String(e), "error");
+                    }
+                  }}
+                >
+                  {t("Reverse Proxy…")}
+                </button>{" "}
+                <span className="muted small">{plural(s.reverseProxy?.entries.length ?? 0, "{n} entry", "{n} entries")}</span>
+              </span>
+            </div>
+            {(
+              [
+                ["socks", t("SOCKS5/4 port"), t("Clients that support SOCKS name their target; HTTPS is decrypted like proxied traffic.")],
+                ["transparent", t("Transparent port"), t("For connections the firewall redirects here (iptables, pf): the target is the original destination, the TLS server name or the Host header.")],
+              ] as const
+            ).map(([key, label, hint]) => (
+              <div className="f-row" key={key}>
+                <span>{label}</span>
+                <span className="opt-listener">
+                  <label className="f-check">
+                    <input type="checkbox" checked={s[key].enabled} onChange={(e) => up((x) => (x[key].enabled = e.target.checked))} /> {t("on")}
+                  </label>
+                  <input type="number" min={1} max={65535} value={s[key].port} onChange={(e) => up((x) => (x[key].port = Number(e.target.value)))} />
+                  <label className="f-check">
+                    <input type="checkbox" checked={s[key].allowRemote} onChange={(e) => up((x) => (x[key].allowRemote = e.target.checked))} /> {t("from other computers too")}
+                  </label>
+                  <span className="muted small" title={hint}>
+                    ⓘ
+                  </span>
+                </span>
+              </div>
+            ))}
             <div className="f-sep">{t("Bandwidth simulation")}</div>
             <div className="f-row">
               <span>{t("Throttle (kbit/s)")}</span>
@@ -948,6 +990,12 @@ function DialogBody({ d }: { d: Dialog }) {
       return (
         <Modal title="HTTPS" onClose={close} wide>
           <HttpsPanel />
+        </Modal>
+      );
+    case "reverse-proxy":
+      return (
+        <Modal title={t("Reverse Proxy")} onClose={close} wide>
+          <ReverseProxyPanel target={d.target} />
         </Modal>
       );
     case "plugins":

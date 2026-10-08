@@ -3345,3 +3345,84 @@ table.plugins-table .pl-applies {
   border-top: 1px solid var(--border);
   z-index: 1;
 }
+
+/* Capture → Reverse Proxy */
+.reverse-proxy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.reverse-proxy p {
+  margin: 0;
+}
+.rp-note {
+  color: var(--pill-warn-fg);
+}
+table.rp-list {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.rp-list td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.rp-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rp-route {
+  width: 100%;
+  word-break: break-all;
+}
+.rp-actions {
+  white-space: nowrap;
+}
+.rp-actions button + button {
+  margin-left: 8px;
+}
+.rp-error {
+  color: var(--pill-err-fg);
+  font-size: 11px;
+}
+.rp-tag {
+  font: 600 10px var(--font);
+  padding: 0 6px;
+  border-radius: 8px;
+  margin-left: 6px;
+  white-space: nowrap;
+  color: var(--pill-muted-fg);
+  background: var(--pill-muted-bg);
+}
+.rp-tag.rp-on { color: var(--pill-ok-fg); background: var(--pill-ok-bg); }
+.rp-tag.rp-err { color: var(--pill-err-fg); background: var(--pill-err-bg); }
+.rp-tag.rp-warn { color: var(--pill-warn-fg); background: var(--pill-warn-bg); }
+.rp-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+.rp-path {
+  font-size: 11px;
+  margin-top: 2px;
+}
+.rp-paths > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+.rp-paths .cc-row {
+  width: 100%;
+}
+.rp-prefix {
+  width: 110px;
+}
+.opt-listener {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.opt-listener input[type="number"] {
+  width: 80px;
+}

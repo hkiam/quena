@@ -44,6 +44,8 @@ function groupLabel(r: SessionSummary, first: number): string {
       return r.session ?? "";
     case "custom":
       return r.custom;
+    case "via":
+      return r.via ?? "";
     default:
       return "";
   }
@@ -90,6 +92,8 @@ function cellText(r: SessionSummary, key: ColumnKey): string {
       return r.comment;
     case "custom":
       return r.custom;
+    case "via":
+      return r.via ?? "";
     case "method":
       return r.method;
     case "duration":

@@ -257,6 +257,39 @@ fn mcp_over_http() {
     let (c, _) = tool(addr, "clear_sessions", json!({ "filter": "status == 418" }));
     assert_eq!(c["removed"], 1);
 
+    // --- Reverse proxy entries: add, list, call, remove (never reachable from other machines)
+    let rp_port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let (r, err) = tool(addr, "set_reverse_proxy", json!({ "name": "api", "listen_port": rp_port, "target": format!("http://127.0.0.1:{port}") }));
+    assert!(!err, "{r}");
+    assert_eq!(r["enabled"], true);
+    let entry = r["entries"][0].clone();
+    assert_eq!(entry["allowRemote"], false);
+    assert!(!entry["listen"].as_array().unwrap().is_empty(), "{entry}");
+    let mut s = TcpStream::connect(("127.0.0.1", rp_port)).unwrap();
+    s.write_all(format!("GET /via HTTP/1.1\r\nHost: 127.0.0.1:{rp_port}\r\nConnection: close\r\n\r\n").as_bytes()).unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    assert!(out.contains("/via"), "{out}");
+    let (l, _) = tool(addr, "list_sessions", json!({ "filter": "via == api" }));
+    assert_eq!(l["total"], 1, "{l}");
+    assert_eq!(l["sessions"][0]["via"], "api");
+    let (_, err) = tool(addr, "set_reverse_proxy", json!({ "listen_port": rp_port }));
+    assert!(err, "a new entry needs a target");
+    let (r, err) = tool(addr, "set_reverse_proxy", json!({ "id": entry["id"], "paths": [{ "prefix": "/p", "target": format!("http://127.0.0.1:{port}/x"), "strip_prefix": true }] }));
+    assert!(!err, "{r}");
+    assert_eq!(r["entries"][0]["paths"][0]["prefix"], "/p");
+    let socks_port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let (r, err) = tool(addr, "set_listeners", json!({ "socks": true, "socks_port": socks_port }));
+    assert!(!err, "{r}");
+    assert_eq!(r["socks"]["enabled"], true);
+    assert!(TcpStream::connect(("127.0.0.1", socks_port)).is_ok());
+    let (st, _) = tool(addr, "status", json!({}));
+    assert!(st["listeners"].as_array().unwrap().iter().any(|l| l["kind"] == "socks"), "{st}");
+    let (_, err) = tool(addr, "set_listeners", json!({ "socks": false }));
+    assert!(!err);
+    let (r, err) = tool(addr, "remove_reverse_proxy", json!({ "id": entry["id"] }));
+    assert!(!err && r["entries"].as_array().unwrap().is_empty(), "{r}");
+
     // --- Disabling stops the server
     let mut s = core.settings();
     s.mcp.enabled = false;

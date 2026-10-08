@@ -296,6 +296,64 @@ static TOOLS: &[Tool] = &[
         run: set_mock_options,
     },
     Tool {
+        name: "list_reverse_proxies",
+        description: "Reverse proxy entries (a local port that forwards every request to a target, optionally other targets per path prefix, for clients that cannot use a proxy), and the SOCKS and transparent ports. Shows the settings and, while capturing, whether each listens.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({})),
+        run: list_reverse_proxies,
+    },
+    Tool {
+        name: "set_reverse_proxy",
+        description: "Add a reverse proxy entry, or change one by `id` (only the fields given). `target`: `http(s)://host[:port][/base path]`; `listen_port`: the local port clients call. Entries listen on this machine only and while capturing; `enabled_all` switches reverse proxying on or off as a whole.",
+        write: true,
+        destructive: false,
+        schema: || {
+            obj(json!({
+                "id": { "type": "string", "description": "Entry to change (omit to add one)" },
+                "name": { "type": "string" },
+                "enabled": { "type": "boolean" },
+                "listen_port": { "type": "integer" },
+                "target": { "type": "string" },
+                "client_protocol": { "type": "string", "enum": ["auto", "http", "https"] },
+                "preserve_host": { "type": "boolean" },
+                "rewrite_location": { "type": "boolean" },
+                "rewrite_cookie_domain": { "type": "boolean" },
+                "forwarded_headers": { "type": "boolean" },
+                "paths": {
+                    "type": "array",
+                    "description": "Path routes (replace the entry's list): requests whose path starts with `prefix` go to `target`; `strip_prefix` drops the prefix",
+                    "items": { "type": "object", "properties": { "prefix": { "type": "string" }, "target": { "type": "string" }, "strip_prefix": { "type": "boolean" } }, "required": ["prefix", "target"] }
+                },
+                "enabled_all": { "type": "boolean", "description": "Master switch for all entries" }
+            }))
+        },
+        run: set_reverse_proxy,
+    },
+    Tool {
+        name: "set_listeners",
+        description: "Switch the SOCKS port (SOCKS5/4 clients name their target) or the port for transparently redirected traffic on or off, or move them to another port. They listen on this machine only and while capturing.",
+        write: true,
+        destructive: false,
+        schema: || {
+            obj(json!({
+                "socks": { "type": "boolean" },
+                "socks_port": { "type": "integer" },
+                "transparent": { "type": "boolean" },
+                "transparent_port": { "type": "integer" }
+            }))
+        },
+        run: set_listeners,
+    },
+    Tool {
+        name: "remove_reverse_proxy",
+        description: "Delete a reverse proxy entry by id.",
+        write: true,
+        destructive: true,
+        schema: || req(json!({ "id": { "type": "string" } }), &["id"]),
+        run: remove_reverse_proxy,
+    },
+    Tool {
         name: "mock_from_sessions",
         description: "Create mock rules that answer the URLs of these sessions with their recorded responses.",
         write: true,
@@ -600,6 +658,9 @@ impl View {
         if !s.trace.is_empty() {
             v["trace"] = json!(s.trace);
         }
+        if !s.via.is_empty() {
+            v["via"] = json!(s.via);
+        }
         v
     }
 
@@ -797,6 +858,7 @@ fn status(core: &Arc<AppCore>, _: Value) -> Result<Value> {
         "paused": st.engine.paused,
         "mockRulesActive": r.is_some_and(|r| r.autoresponder_active()),
         "rewriteRulesActive": st.engine.rewrite,
+        "listeners": st.engine.listeners,
         "access": s.mcp.access,
         "secretsRedacted": !s.mcp.include_secrets,
         "filesFolder": files_root(core).map(|p| p.display().to_string()).unwrap_or_default(),
@@ -1247,6 +1309,158 @@ fn set_mock_options(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     })?;
     let s = r.autoresponder();
     Ok(json!({ "enabled": s.enabled, "unmatchedPassthrough": s.unmatched_passthrough, "enableLatency": s.enable_latency }))
+}
+
+fn reverse_json(core: &AppCore) -> Value {
+    let s = core.settings().reverse_proxy;
+    let status = core.status().engine.listeners;
+    let entries: Vec<Value> = s
+        .entries
+        .iter()
+        .map(|e| {
+            let st = status.iter().find(|r| r.id == e.id);
+            json!({
+                "id": e.id, "name": e.name, "enabled": e.enabled, "listenPort": e.listen_port, "target": e.target,
+                "clientProtocol": e.client_protocol, "preserveHost": e.preserve_host, "allowRemote": e.allow_remote,
+                "rewriteLocation": e.rewrite_location, "rewriteCookieDomain": e.rewrite_cookie_domain, "forwardedHeaders": e.forwarded_headers,
+                "paths": e.paths.iter().map(|p| json!({ "prefix": p.prefix, "target": p.target, "stripPrefix": p.strip_prefix })).collect::<Vec<_>>(),
+                "listen": st.map(|r| r.listen.clone()).unwrap_or_default(), "error": st.and_then(|r| r.error.clone()),
+            })
+        })
+        .collect();
+    let all = core.settings();
+    let port = |l: &quena_app_core::settings::ListenerSettings| json!({ "enabled": l.enabled, "port": l.port, "allowRemote": l.allow_remote });
+    json!({ "enabled": s.enabled, "entries": entries, "socks": port(&all.socks), "transparent": port(&all.transparent) })
+}
+
+fn list_reverse_proxies(core: &Arc<AppCore>, _: Value) -> Result<Value> {
+    Ok(reverse_json(core))
+}
+
+#[derive(Deserialize)]
+struct ReverseArgs {
+    id: Option<String>,
+    name: Option<String>,
+    enabled: Option<bool>,
+    listen_port: Option<u16>,
+    target: Option<String>,
+    client_protocol: Option<quena_app_core::settings::ClientProtocol>,
+    preserve_host: Option<bool>,
+    rewrite_location: Option<bool>,
+    rewrite_cookie_domain: Option<bool>,
+    forwarded_headers: Option<bool>,
+    paths: Option<Vec<PathArg>>,
+    enabled_all: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct PathArg {
+    prefix: String,
+    target: String,
+    #[serde(default)]
+    strip_prefix: bool,
+}
+
+fn set_reverse_proxy(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: ReverseArgs = args(a)?;
+    let mut s = core.settings();
+    let rp = &mut s.reverse_proxy;
+    if let Some(v) = a.enabled_all {
+        rp.enabled = v;
+    }
+    let touches_entry = a.id.is_some() || a.target.is_some() || a.listen_port.is_some() || a.paths.is_some();
+    if touches_entry {
+        let i = match &a.id {
+            Some(id) => rp.entries.iter().position(|e| &e.id == id).ok_or_else(|| anyhow!("no reverse proxy entry {id}"))?,
+            None => {
+                let (Some(_), Some(_)) = (&a.target, a.listen_port) else { bail!("a new entry needs `target` and `listen_port`") };
+                let id = format!("mcp-{}", quena_model::now_us());
+                rp.entries.push(quena_app_core::settings::ReverseProxyEntry { id, ..Default::default() });
+                // Adding an entry means using it.
+                if a.enabled_all.is_none() {
+                    rp.enabled = true;
+                }
+                rp.entries.len() - 1
+            }
+        };
+        let e = &mut rp.entries[i];
+        if let Some(v) = a.name {
+            e.name = v;
+        }
+        if let Some(v) = a.enabled {
+            e.enabled = v;
+        }
+        if let Some(v) = a.listen_port {
+            e.listen_port = v;
+        }
+        if let Some(v) = a.target {
+            e.target = v;
+        }
+        if let Some(v) = a.client_protocol {
+            e.client_protocol = v;
+        }
+        if let Some(v) = a.preserve_host {
+            e.preserve_host = v;
+        }
+        if let Some(v) = a.rewrite_location {
+            e.rewrite_location = v;
+        }
+        if let Some(v) = a.rewrite_cookie_domain {
+            e.rewrite_cookie_domain = v;
+        }
+        if let Some(v) = a.forwarded_headers {
+            e.forwarded_headers = v;
+        }
+        if let Some(v) = a.paths {
+            e.paths = v.into_iter().map(|p| quena_app_core::settings::ReversePathEntry { prefix: p.prefix, target: p.target, strip_prefix: p.strip_prefix }).collect();
+        }
+    }
+    core.update_settings(s)?;
+    Ok(reverse_json(core))
+}
+
+#[derive(Deserialize)]
+struct ListenerArgs {
+    socks: Option<bool>,
+    socks_port: Option<u16>,
+    transparent: Option<bool>,
+    transparent_port: Option<u16>,
+}
+
+fn set_listeners(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: ListenerArgs = args(a)?;
+    let mut s = core.settings();
+    if let Some(v) = a.socks {
+        s.socks.enabled = v;
+    }
+    if let Some(v) = a.socks_port {
+        s.socks.port = v;
+    }
+    if let Some(v) = a.transparent {
+        s.transparent.enabled = v;
+    }
+    if let Some(v) = a.transparent_port {
+        s.transparent.port = v;
+    }
+    core.update_settings(s)?;
+    Ok(reverse_json(core))
+}
+
+#[derive(Deserialize)]
+struct ReverseIdArgs {
+    id: String,
+}
+
+fn remove_reverse_proxy(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: ReverseIdArgs = args(a)?;
+    let mut s = core.settings();
+    let before = s.reverse_proxy.entries.len();
+    s.reverse_proxy.entries.retain(|e| e.id != a.id);
+    if s.reverse_proxy.entries.len() == before {
+        bail!("no reverse proxy entry {}", a.id);
+    }
+    core.update_settings(s)?;
+    Ok(reverse_json(core))
 }
 
 #[derive(Deserialize)]

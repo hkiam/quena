@@ -27,9 +27,14 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Handshake with the client after its ClientHello (it may stall or never finish).
 const CLIENT_TLS_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub async fn handle_client(shared: Arc<Shared>, stream: TcpStream, peer: SocketAddr) {
+pub async fn handle_client(shared: Arc<Shared>, stream: TcpStream, peer: SocketAddr, listener: Option<Arc<crate::listener::Listener>>) {
+    use crate::listener::Listener;
     let cfg = shared.cfg();
-    if !cfg.client_allowed(peer.ip()) {
+    let allowed = match &listener {
+        Some(l) => cfg.client_allowed_with(peer.ip(), l.allow_remote()),
+        None => cfg.client_allowed(peer.ip()),
+    };
+    if !allowed {
         tracing::warn!(target: "quena::proxy", "rejected connection from {} (not in the remote allowlist)", peer.ip().to_canonical());
         return;
     }
@@ -58,8 +63,86 @@ pub async fn handle_client(shared: Arc<Shared>, stream: TcpStream, peer: SocketA
         connected_at: now_us(),
         decrypted: false,
         auth_clients: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        reverse: match listener.as_deref() {
+            Some(Listener::Reverse(r)) => Some(r.clone()),
+            _ => None,
+        },
+        via: listener.as_ref().map(|l| l.name()),
     });
-    serve_h1(ctx, stream).await;
+    match listener.as_deref() {
+        None => serve_h1(ctx, stream).await,
+        Some(Listener::Reverse(_)) => crate::reverse::serve(ctx, stream).await,
+        Some(Listener::Socks(_)) => crate::socks::serve(ctx, stream).await,
+        Some(Listener::Transparent(_)) => crate::transparent::serve(ctx, stream).await,
+    }
+}
+
+/// How a tunnel session came about, for its text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TunnelKind {
+    Connect,
+    Socks,
+    Transparent,
+}
+
+impl TunnelKind {
+    fn label(self) -> &'static str {
+        match self {
+            TunnelKind::Connect => "CONNECT tunnel",
+            TunnelKind::Socks => "SOCKS connection",
+            TunnelKind::Transparent => "transparently redirected connection",
+        }
+    }
+}
+
+/// Record a tunnel session (CONNECT, SOCKS, transparent) to `target` and reply nothing yet;
+/// [`tunnel_or_intercept`] finishes it.
+pub(crate) async fn begin_tunnel(ctx: &ConnCtx, target: &str, headers: Headers) -> (Arc<quena_store::LiveSession>, Option<ProcessInfo>) {
+    let shared = ctx.shared.clone();
+    let capture = shared.capture();
+    let process = ctx.process().await;
+    let now = now_us();
+    let head = RequestHead { method: "CONNECT".into(), url: target.to_string(), version: HttpVersion::Http11, headers };
+    let live = capture.begin(SessionKind::Tunnel, |d| {
+        d.request = head;
+        d.process = process.clone();
+        d.connection.client_addr = Some(ctx.client_addr.to_string());
+        d.connection.client_conn_id = Some(ctx.conn_id);
+        d.timers.client_connected = Some(ctx.connected_at);
+        d.timers.client_begin_request = Some(now);
+        d.timers.got_request_headers = Some(now);
+        d.timers.client_done_request = Some(now);
+        d.summary.client_ip = ctx.client_addr.ip().to_canonical().to_string();
+        d.summary.state = SessionState::ReceivingResponse;
+        if ctx.remote {
+            d.summary.flags |= flags::REMOTE_CLIENT;
+        }
+        if let Some(v) = &ctx.via {
+            d.extra_flags.push((quena_model::VIA_FLAG.into(), v.clone()));
+        }
+    });
+    let mut rh = Headers::new();
+    // PAC evaluation may block (script, DNS): keep it off the async workers.
+    let gateway = crate::resolve_upstream(&shared.cfg(), target.to_string()).await;
+    rh.push("Quena-Gateway", gateway.map(|(h, p)| format!("{h}:{p}")).unwrap_or_else(|| "Direct".into()));
+    live.update(|d| {
+        d.response = Some(ResponseHead { status: 200, reason: "Connection Established".into(), version: HttpVersion::Http11, headers: rh });
+        d.timers.got_response_headers = Some(now_us());
+    });
+    (live, process)
+}
+
+/// Run a tunnel that a SOCKS or transparent client opened: decrypt, record plain HTTP, or
+/// pass it through; the session ends with it.
+pub(crate) async fn run_tunnel<S>(ctx: Arc<ConnCtx>, live: Arc<quena_store::LiveSession>, process: Option<ProcessInfo>, io: S, host: String, port: u16, kind: TunnelKind)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let _guard = live.abort_on_drop("the tunnel ended unexpectedly");
+    let target = crate::util::join_host_port(&host, port);
+    let proc_name = process.map(|p| p.display()).unwrap_or_default();
+    let f: Pin<Box<dyn std::future::Future<Output = ()> + Send>> = Box::pin(tunnel_or_intercept(ctx, live, io, host, port, target, proc_name, kind));
+    f.await
 }
 
 /// Bytes a client sent before its first request was parsed, kept so that a request hyper
@@ -143,7 +226,10 @@ where
             *s2.lock() = Vec::new();
         }
         async move {
-            if req.method() == http::Method::CONNECT {
+            if req.method() == http::Method::CONNECT && ctx.reverse.is_some() {
+                // A reverse proxy port forwards to its target only; it is no general proxy.
+                Ok(text(StatusCode::METHOD_NOT_ALLOWED, "CONNECT is not supported on a Quena reverse proxy port\n"))
+            } else if req.method() == http::Method::CONNECT {
                 // Boxed as `dyn Future + Send` to break the type recursion
                 // (CONNECT → intercept → serve_h1 → CONNECT).
                 connect(ctx, req).await
@@ -189,41 +275,9 @@ fn connect(ctx: Arc<ConnCtx>, req: Request<Incoming>) -> RespFuture {
 }
 
 async fn connect_inner(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Response<ProxyBody>, Infallible> {
-    let shared = ctx.shared.clone();
     let target = req.uri().authority().map(|a| a.to_string()).unwrap_or_else(|| req.uri().to_string());
     let (host, port) = split_host_port(&target, 443);
-    let capture = shared.capture();
-    let process = ctx.process().await;
-    let now = now_us();
-    let head = RequestHead {
-        method: "CONNECT".into(),
-        url: target.clone(),
-        version: HttpVersion::Http11,
-        headers: forward::record_headers(req.headers(), true),
-    };
-    let live = capture.begin(SessionKind::Tunnel, |d| {
-        d.request = head;
-        d.process = process.clone();
-        d.connection.client_addr = Some(ctx.client_addr.to_string());
-        d.connection.client_conn_id = Some(ctx.conn_id);
-        d.timers.client_connected = Some(ctx.connected_at);
-        d.timers.client_begin_request = Some(now);
-        d.timers.got_request_headers = Some(now);
-        d.timers.client_done_request = Some(now);
-        d.summary.client_ip = ctx.client_addr.ip().to_canonical().to_string();
-        d.summary.state = SessionState::ReceivingResponse;
-        if ctx.remote {
-            d.summary.flags |= flags::REMOTE_CLIENT;
-        }
-    });
-    let mut rh = Headers::new();
-    // PAC evaluation may block (script, DNS): keep it off the async workers.
-    let gateway = crate::resolve_upstream(&shared.cfg(), target.clone()).await;
-    rh.push("Quena-Gateway", gateway.map(|(h, p)| format!("{h}:{p}")).unwrap_or_else(|| "Direct".into()));
-    live.update(|d| {
-        d.response = Some(ResponseHead { status: 200, reason: "Connection Established".into(), version: HttpVersion::Http11, headers: rh });
-        d.timers.got_response_headers = Some(now_us());
-    });
+    let (live, process) = begin_tunnel(&ctx, &target, forward::record_headers(req.headers(), true)).await;
     let on_upgrade = hyper::upgrade::on(&mut req);
     let proc_name = process.map(|p| p.display()).unwrap_or_default();
     tokio::spawn(async move {
@@ -231,7 +285,7 @@ async fn connect_inner(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<
         let _guard = live.abort_on_drop("the tunnel ended unexpectedly");
         match on_upgrade.await {
             Ok(up) => {
-                let f: Pin<Box<dyn std::future::Future<Output = ()> + Send>> = Box::pin(tunnel_or_intercept(ctx, live, TokioIo::new(up), host, port, target, proc_name));
+                let f: Pin<Box<dyn std::future::Future<Output = ()> + Send>> = Box::pin(tunnel_or_intercept(ctx, live, TokioIo::new(up), host, port, target, proc_name, TunnelKind::Connect));
                 f.await
             }
             Err(e) => {
@@ -261,6 +315,10 @@ pub struct Prefixed<S> {
 impl<S> Prefixed<S> {
     pub fn new(prefix: Vec<u8>, inner: S) -> Self {
         Prefixed { prefix, pos: 0, inner }
+    }
+    /// The first byte still to be read from the prefix.
+    pub fn peek_first(&self) -> Option<u8> {
+        self.prefix.get(self.pos).copied()
     }
 }
 
@@ -301,11 +359,12 @@ async fn tunnel_or_intercept<S>(
     port: u16,
     target: String,
     process: String,
+    kind: TunnelKind,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    let label = kind.label();
     let shared = ctx.shared.clone();
-    let cfg = shared.cfg();
     let mut first = [0u8; 1];
     // TLS (443) clients speak first. On other ports the server may speak first (SMTP,
     // IMAP, FTP, databases): if the client stays silent briefly, just pass the tunnel through.
@@ -314,7 +373,7 @@ async fn tunnel_or_intercept<S>(
         Ok(Ok(n)) => n,
         Ok(Err(_)) => 0,
         Err(_) if port != 443 => {
-            live.set_response_body(tunnel_body(&shared, format!("This is a CONNECT tunnel to {target}.\nThe client did not speak first (server-first protocol); it is passed through.\n")));
+            live.set_response_body(tunnel_body(&shared, format!("This is a {label} to {target}.\nThe client did not speak first (server-first protocol); it is passed through.\n")));
             live.update(|_| {});
             tunnel::raw(&shared, &live, io, &host, port).await;
             return;
@@ -329,11 +388,78 @@ async fn tunnel_or_intercept<S>(
         live.finish();
         return;
     }
-    let io = Prefixed::new(first[..n].to_vec(), io);
-    let ca = shared.ca.read().clone();
     let is_tls = first[0] == 0x16;
+    // SOCKS and transparent clients send plain HTTP straight into the tunnel (port 80):
+    // record it like proxied requests instead of passing it through.
+    let mut seen = first[..n].to_vec();
+    if kind != TunnelKind::Connect && !is_tls && first[0].is_ascii_uppercase() && looks_like_http(&mut io, &mut seen).await {
+        live.set_response_body(tunnel_body(&shared, format!("This is a {label} to {target}.\nIt carries plain HTTP; the requests are recorded as their own sessions.\n")));
+        live.update(|d| {
+            d.summary.state = SessionState::Done;
+            d.timers.client_done_response = Some(now_us());
+        });
+        live.finish();
+        let inner = Arc::new(ConnCtx {
+            shared: shared.clone(),
+            conn_id: ctx.conn_id,
+            client_addr: ctx.client_addr,
+            remote: ctx.remote,
+            process: ctx.process.clone(),
+            scheme: "http",
+            authority: Some(if port == 80 { host.clone() } else { target.clone() }),
+            client_tls: None,
+            connected_at: ctx.connected_at,
+            decrypted: false,
+            auth_clients: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            reverse: None,
+            via: ctx.via.clone(),
+        });
+        serve_h1(inner, Prefixed::new(seen, io)).await;
+        return;
+    }
+    pass_on(ctx, live, Prefixed::new(seen, io), host, port, target, process, kind).await
+}
+
+/// Whether the client starts an HTTP/1 request (`METHOD /…` or `METHOD http…`); reads up to
+/// a few more bytes into `seen`.
+async fn looks_like_http<S: AsyncRead + Unpin>(io: &mut S, seen: &mut Vec<u8>) -> bool {
+    let read = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut b = [0u8; 1];
+        while seen.len() < 12 && !seen.contains(&b' ') {
+            if io.read(&mut b).await.ok()? == 0 {
+                return None;
+            }
+            seen.push(b[0]);
+        }
+        if let Some(sp) = seen.iter().position(|c| *c == b' ') {
+            if seen.len() == sp + 1 && io.read(&mut b).await.ok()? == 1 {
+                seen.push(b[0]);
+            }
+        }
+        Some(())
+    })
+    .await;
+    if !matches!(read, Ok(Some(()))) {
+        return false;
+    }
+    let Some(sp) = seen.iter().position(|c| *c == b' ') else { return false };
+    (3..=7).contains(&sp) && seen[..sp].iter().all(|c| c.is_ascii_uppercase()) && matches!(seen.get(sp + 1), Some(b'/' | b'h' | b'*'))
+}
+
+/// TLS: decrypt when allowed; anything else: pass through.
+#[allow(clippy::too_many_arguments)]
+async fn pass_on<S>(ctx: Arc<ConnCtx>, live: Arc<quena_store::LiveSession>, io: Prefixed<S>, host: String, port: u16, target: String, process: String, kind: TunnelKind)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let shared = ctx.shared.clone();
+    let cfg = shared.cfg();
+    let label = kind.label();
+    let first = io.peek_first().unwrap_or(0);
+    let ca = shared.ca.read().clone();
+    let is_tls = first == 0x16;
     if is_tls && ca.is_some() && cfg.decrypt_host(&host, &process, ctx.remote) {
-        intercept(ctx, live, io, host, port, target, ca.unwrap()).await;
+        intercept(ctx, live, io, host, port, target, ca.unwrap(), kind).await;
     } else {
         let why = if !is_tls {
             "Traffic in this tunnel is not TLS; it is passed through."
@@ -344,62 +470,81 @@ async fn tunnel_or_intercept<S>(
         } else {
             "This host is excluded from decryption."
         };
-        live.set_response_body(tunnel_body(&shared, format!("This is a CONNECT tunnel to {target}.\n{why}\n")));
+        live.set_response_body(tunnel_body(&shared, format!("This is a {label} to {target}.\n{why}\n")));
         live.update(|_| {});
         tunnel::raw(&shared, &live, io, &host, port).await;
     }
 }
 
-async fn intercept<S>(ctx: Arc<ConnCtx>, live: Arc<quena_store::LiveSession>, io: S, host: String, port: u16, target: String, ca: Arc<quena_tls::CertAuthority>)
+/// A client TLS connection Quena terminated with a certificate from its root CA.
+pub(crate) struct AcceptedTls<S> {
+    pub stream: tokio_rustls::server::TlsStream<S>,
+    pub info: TlsInfo,
+    pub cert_host: String,
+    pub alpn_offered: Vec<String>,
+}
+
+/// Run the TLS handshake with a client: the certificate names the SNI host, else
+/// `fallback_host`; HTTP/2 is offered when the client offers it and the host allows it.
+pub(crate) async fn accept_tls<S>(shared: &Shared, io: S, fallback_host: &str, ca: Arc<quena_tls::CertAuthority>) -> Result<AcceptedTls<S>, String>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let shared = ctx.shared.clone();
     let cfg = shared.cfg();
     let acceptor = tokio_rustls::LazyConfigAcceptor::new(rustls::server::Acceptor::default(), io);
     let start = match tokio::time::timeout(std::time::Duration::from_secs(30), acceptor).await {
         Ok(Ok(s)) => s,
-        Ok(Err(e)) => return fail_tunnel(&live, format!("invalid TLS ClientHello: {e}")),
-        Err(_) => return fail_tunnel(&live, "timeout waiting for the TLS ClientHello".into()),
+        Ok(Err(e)) => return Err(format!("invalid TLS ClientHello: {e}")),
+        Err(_) => return Err("timeout waiting for the TLS ClientHello".into()),
     };
     let hello = start.client_hello();
     let sni = hello.server_name().map(|s| s.to_string());
     let offers_h2 = hello.alpn().map(|mut a| a.any(|p| p == b"h2")).unwrap_or(false);
     let alpn_offered: Vec<String> = hello.alpn().map(|a| a.map(|p| String::from_utf8_lossy(p).into_owned()).collect()).unwrap_or_default();
-    let cert_host = sni.clone().unwrap_or_else(|| host.clone());
+    let cert_host = sni.clone().unwrap_or_else(|| fallback_host.to_string());
     let allow_h2 = offers_h2 && cfg.h2_host(&cert_host);
-    let server_cfg = match ca.server_config(&cert_host, allow_h2) {
-        Ok(c) => c,
-        Err(e) => return fail_tunnel(&live, format!("certificate generation failed: {e}")),
-    };
+    let server_cfg = ca.server_config(&cert_host, allow_h2).map_err(|e| format!("certificate generation failed: {e}"))?;
     let tls = match tokio::time::timeout(CLIENT_TLS_TIMEOUT, start.into_stream(server_cfg)).await {
-        Err(_) => return fail_tunnel(&live, format!("TLS handshake with the client timed out after {}s", CLIENT_TLS_TIMEOUT.as_secs())),
+        Err(_) => return Err(format!("TLS handshake with the client timed out after {}s", CLIENT_TLS_TIMEOUT.as_secs())),
         Ok(Ok(t)) => t,
         Ok(Err(e)) => {
-            let msg = format!(
-                "TLS handshake with the client failed: {e}.\nThe client probably does not trust the Quena root certificate (Capture → HTTPS Settings… → Trust root certificate), or it pins certificates for {cert_host}."
-            );
             tracing::info!(target: "quena::proxy", "{cert_host}: client rejected the interception certificate ({e})");
-            return fail_tunnel(&live, msg);
+            return Err(format!(
+                "TLS handshake with the client failed: {e}.\nThe client probably does not trust the Quena root certificate (Capture → HTTPS Settings… → Trust root certificate), or it pins certificates for {cert_host}."
+            ));
         }
     };
     let (_, sconn) = tls.get_ref();
     let alpn = sconn.alpn_protocol().map(|a| String::from_utf8_lossy(a).into_owned());
-    let tinfo = TlsInfo {
+    let info = TlsInfo {
         version: sconn.protocol_version().map(|v| format!("{v:?}").replace("TLSv1_", "TLS 1.")).unwrap_or_default(),
         cipher: sconn.negotiated_cipher_suite().map(|c| format!("{:?}", c.suite())).unwrap_or_default(),
-        sni: sni.clone(),
-        alpn: alpn.clone(),
+        sni,
+        alpn,
         server_chain_pem: vec![],
     };
+    Ok(AcceptedTls { stream: tls, info, cert_host, alpn_offered })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn intercept<S>(ctx: Arc<ConnCtx>, live: Arc<quena_store::LiveSession>, io: S, host: String, port: u16, target: String, ca: Arc<quena_tls::CertAuthority>, kind: TunnelKind)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let shared = ctx.shared.clone();
+    let AcceptedTls { stream: tls, info: tinfo, cert_host, alpn_offered } = match accept_tls(&shared, io, &host, ca).await {
+        Ok(a) => a,
+        Err(e) => return fail_tunnel(&live, e),
+    };
     let info = format!(
-        "This is a CONNECT tunnel to {target}. Quena decrypted the HTTPS traffic inside it.\n\n\
+        "This is a {} to {target}. Quena decrypted the HTTPS traffic inside it.\n\n\
          Client TLS handshake\n  Version: {}\n  Cipher: {}\n  SNI: {}\n  ALPN offered: {}\n  ALPN selected: {}\n",
+        kind.label(),
         tinfo.version,
         tinfo.cipher,
-        sni.as_deref().unwrap_or("(none)"),
+        tinfo.sni.as_deref().unwrap_or("(none)"),
         if alpn_offered.is_empty() { "(none)".into() } else { alpn_offered.join(", ") },
-        alpn.as_deref().unwrap_or("(none)")
+        tinfo.alpn.as_deref().unwrap_or("(none)")
     );
     live.set_response_body(tunnel_body(&shared, info));
     let t2 = tinfo.clone();
@@ -412,6 +557,7 @@ where
     live.finish();
 
     let authority = if port == 443 { cert_host.clone() } else { format!("{cert_host}:{port}") };
+    let h2 = tinfo.alpn.as_deref() == Some("h2");
     let inner = Arc::new(ConnCtx {
         shared: shared.clone(),
         conn_id: ctx.conn_id,
@@ -424,8 +570,19 @@ where
         connected_at: ctx.connected_at,
         decrypted: true,
         auth_clients: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        reverse: None,
+        via: ctx.via.clone(),
     });
-    if alpn.as_deref() == Some("h2") {
+    serve_decrypted(inner, tls, h2).await;
+}
+
+/// Serve the requests of a decrypted client connection (HTTP/2 or HTTP/1).
+pub(crate) async fn serve_decrypted<S>(inner: Arc<ConnCtx>, tls: S, h2: bool)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let shared = inner.shared.clone();
+    if h2 {
         let c2 = inner.clone();
         let svc = service_fn(move |req: Request<Incoming>| forward::handle(c2.clone(), req));
         let mut closing = shared.closing.subscribe();
@@ -464,7 +621,6 @@ fn fail_tunnel(live: &Arc<quena_store::LiveSession>, msg: String) {
     live.finish();
 }
 
-#[allow(dead_code)]
 fn text(status: StatusCode, s: &str) -> Response<ProxyBody> {
     let mut r = Response::new(full(s.to_string()));
     *r.status_mut() = status;

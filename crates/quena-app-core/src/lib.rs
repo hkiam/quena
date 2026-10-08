@@ -126,6 +126,9 @@ pub struct EngineStatus {
     pub autoresponder: bool,
     /// Rewrite rules change real traffic.
     pub rewrite: bool,
+    /// Listeners besides the proxy port while capturing (reverse proxy entries, SOCKS,
+    /// transparent): listening, or why not.
+    pub listeners: Vec<quena_proxy::listener::ListenerStatus>,
 }
 
 pub struct AppCore {
@@ -248,6 +251,18 @@ impl AppCore {
     /// Replace the settings. `sanitize` (the last options of the sanitized export) belongs to
     /// the core: the export writes it, and a caller's copy may be older, so it is kept.
     pub fn update_settings(self: &Arc<Self>, mut s: Settings) -> Result<()> {
+        {
+            // Checked when the entries or the ports they must not take change.
+            let cur = self.settings.read();
+            if s.reverse_proxy != cur.reverse_proxy
+                || s.socks != cur.socks
+                || s.transparent != cur.transparent
+                || s.proxy.port != cur.proxy.port
+                || (s.mcp.enabled, s.mcp.port) != (cur.mcp.enabled, cur.mcp.port)
+            {
+                s.validate_ports().map_err(|e| anyhow!("{e}"))?;
+            }
+        }
         let old = {
             let mut cur = self.settings.write();
             s.sanitize = cur.sanitize.clone();
@@ -256,6 +271,9 @@ impl AppCore {
         s.save(&self.paths.settings).context("save settings")?;
         self.capture().bodies.set_config(s.bodies.to_config());
         if old.proxy != s.proxy
+            || old.reverse_proxy != s.reverse_proxy
+            || old.socks != s.socks
+            || old.transparent != s.transparent
             || old.https != s.https
             || old.throttle_kbps != s.throttle_kbps
             || old.throttle_latency_ms != s.throttle_latency_ms

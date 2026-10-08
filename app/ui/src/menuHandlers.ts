@@ -75,6 +75,8 @@ export async function handleMenu(id: string) {
       return set({ dialog: { kind: "https" } });
     case "tools.connect-device":
       return set({ dialog: { kind: "connect-device" } });
+    case "tools.reverse-proxy":
+      return set({ dialog: { kind: "reverse-proxy" } });
     case "tools.textwizard":
       return set({ dialog: { kind: "textwizard" } });
     case "tools.composer":
@@ -109,6 +111,7 @@ export async function handleMenu(id: string) {
     case "view.group-trace":
     case "view.group-session":
     case "view.group-custom":
+    case "view.group-via":
       return actions.setGroup(id.slice("view.group-".length) as GroupBy);
     case "view.groups-collapse":
       return actions.collapseGroups(true);
@@ -166,5 +169,5 @@ export async function handleMenu(id: string) {
 /** Name mapping for people switching over (descriptive use; see docs/coming-from-fiddler.md). */
 const comingFrom = () =>
   t(
-    "Quena is an independent project, not affiliated with Progress Software.\nYour files, the filter/command syntax and shortcuts carry over; some features have other names.\n\nFiles\n  .saz session archives     File → Import / Export Sessions → SAZ Archive…\n  .farx AutoResponder rules Mock Rules tab → Import… / Export…\n\nNames\n  QuickExec                 Command field in the toolbar (Alt+Q), palette Cmd/Ctrl+K\n  AutoResponder             Mock Rules\n  Inspectors                Inspect\n  TextView / SyntaxView     Plain Text / Body\n  WebForms / HexView        Form Data / Hex\n  ImageView / WebView       Image / Preview\n  Transformer               Encoding\n  TextWizard                Text Tools (Ctrl/Cmd+E)\n  FiddlerScript             Capture → Rules Script…, JavaScript (Ctrl/Cmd+R)\n  Rules menu                Capture menu; Hide … items under View → Hide in List\n  Reissue …                 Replay …\n  Any Process               Process Filter\n  Hide CONNECTs             View → Hide in List → Tunnels (CONNECT)\n  Result / Body columns     Status / Size columns\n\nLayout\n  Prefer a dense list with the request above the response?\n  Settings → General → Layout: Classic.",
+    "Quena is an independent project, not affiliated with Progress Software.\nYour files, the filter/command syntax and shortcuts carry over; some features have other names.\n\nFiles\n  .saz session archives     File → Import / Export Sessions → SAZ Archive…\n  .farx AutoResponder rules Mock Rules tab → Import… / Export…\n\nNames\n  QuickExec                 Command field in the toolbar (Alt+Q), palette Cmd/Ctrl+K\n  AutoResponder             Mock Rules\n  Inspectors                Inspect\n  TextView / SyntaxView     Plain Text / Body\n  WebForms / HexView        Form Data / Hex\n  ImageView / WebView       Image / Preview\n  Transformer               Encoding\n  TextWizard                Text Tools (Ctrl/Cmd+E)\n  FiddlerScript             Capture → Rules Script…, JavaScript (Ctrl/Cmd+R)\n  Rules menu                Capture menu; Hide … items under View → Hide in List\n  Reissue …                 Replay …\n  Any Process               Process Filter\n  Hide CONNECTs             View → Hide in List → Tunnels (CONNECT)\n  Result / Body columns     Status / Size columns\n  Reverse proxy (script)    Capture → Reverse Proxy…\n\nLayout\n  Prefer a dense list with the request above the response?\n  Settings → General → Layout: Classic.",
   );

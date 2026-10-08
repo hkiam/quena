@@ -30,6 +30,9 @@ const EXIT_INTERRUPTED: i32 = 130;
 
 /// The engine's temporary data directory, removed when the run is interrupted.
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+/// `reverse` is running: Ctrl-C / SIGTERM sets [`STOP`] instead of exiting.
+static REVERSE_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Parser)]
 #[command(
@@ -62,6 +65,12 @@ enum Command {
         #[command(subcommand)]
         command: HttpCommand,
     },
+    /// Run Quena without a window as a reverse proxy (clients call a local port, Quena
+    /// forwards to the target), SOCKS proxy or for transparently redirected traffic, and
+    /// record every exchange (saved with --save at the end). Stops on Ctrl-C / SIGTERM,
+    /// after --duration or --max-sessions.
+    #[command(alias = "serve")]
+    Reverse(ReverseArgs),
     /// List the analysis profiles and options of the analyzer.
     Profiles {
         #[arg(long, default_value = "en")]
@@ -167,6 +176,84 @@ struct HttpRunArgs {
     /// Wait at most this many seconds for each response.
     #[arg(long, value_name = "SECONDS", default_value_t = 30)]
     timeout: u64,
+}
+
+#[derive(Args)]
+struct ReverseArgs {
+    /// `[NAME=]PORT=URL`: listen on PORT and forward to URL (`http(s)://host[:port][/path]`);
+    /// repeatable.
+    #[arg(long = "route", value_name = "[NAME=]PORT=URL", required_unless_present_any = ["socks", "transparent"])]
+    routes: Vec<String>,
+    /// `PORT/PREFIX=URL`: requests on the route's PORT whose path starts with PREFIX go to
+    /// URL instead (repeatable; the longest prefix wins).
+    #[arg(long = "path", value_name = "PORT/PREFIX=URL")]
+    paths: Vec<String>,
+    /// Drop the prefix of --path routes from the forwarded path.
+    #[arg(long)]
+    strip_prefix: bool,
+    /// Also accept SOCKS5/4 clients on this port.
+    #[arg(long, value_name = "PORT")]
+    socks: Option<u16>,
+    /// Also accept transparently redirected connections on this port (iptables/pf).
+    #[arg(long, value_name = "PORT")]
+    transparent: Option<u16>,
+    /// Decrypt HTTPS inside SOCKS and transparent connections (clients must trust the root
+    /// certificate, see --ca-dir).
+    #[arg(long)]
+    decrypt: bool,
+    /// What clients speak: auto (TLS or plain HTTP, h2c), http or https.
+    #[arg(long, value_enum, default_value_t = ClientProto::Auto)]
+    protocol: ClientProto,
+    /// Send the client's Host header instead of the target's.
+    #[arg(long)]
+    preserve_host: bool,
+    /// Add X-Forwarded-For, -Proto and -Host.
+    #[arg(long)]
+    forwarded_headers: bool,
+    /// Leave Location headers that name the target unchanged.
+    #[arg(long)]
+    no_rewrite_location: bool,
+    /// Remove the Domain attribute of Set-Cookie.
+    #[arg(long)]
+    rewrite_cookie_domain: bool,
+    /// Listen on all interfaces (Docker, other machines); clients must match --allow.
+    #[arg(long)]
+    bind_all: bool,
+    /// Networks allowed with --bind-all (CIDR, repeatable; default: private ranges).
+    #[arg(long = "allow", value_name = "CIDR")]
+    allow: Vec<String>,
+    /// Keep the root certificate in this folder (created on first use), so clients trust it
+    /// once; without it every run has a new one.
+    #[arg(long, value_name = "DIR")]
+    ca_dir: Option<PathBuf>,
+    /// Do not check the target's certificate.
+    #[arg(long)]
+    insecure: bool,
+    /// Upstream proxy `host:port` for the targets.
+    #[arg(long, value_name = "HOST:PORT")]
+    upstream: Option<String>,
+    /// AutoResponder rules: a Fiddler .farx file or a Quena mock package.
+    #[arg(long, value_name = "PATH")]
+    rules: Option<PathBuf>,
+    /// Save the recorded sessions at the end (.saz or .har).
+    #[arg(long, value_name = "PATH")]
+    save: Option<PathBuf>,
+    /// Stop after this many seconds.
+    #[arg(long, value_name = "SECONDS")]
+    duration: Option<u64>,
+    /// Stop after this many completed sessions.
+    #[arg(long, value_name = "N")]
+    max_sessions: Option<usize>,
+    /// No access log on stdout.
+    #[arg(long, short = 'q')]
+    quiet: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ClientProto {
+    Auto,
+    Http,
+    Https,
 }
 
 #[derive(Args)]
@@ -349,6 +436,10 @@ fn main() -> ExitCode {
     // Interrupted (a cancelled CI job): remove the temporary store, which can hold a copy of
     // the captured traffic. Best effort; without a handler the OS would just kill us.
     let _ = ctrlc::set_handler(|| {
+        // `reverse` stops on the first signal and still saves; a second one ends it now.
+        if REVERSE_RUNNING.load(std::sync::atomic::Ordering::SeqCst) && !STOP.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         if let Some(d) = DATA_DIR.get() {
             let _ = std::fs::remove_dir_all(d);
         }
@@ -361,6 +452,7 @@ fn main() -> ExitCode {
         Command::Mock(a) => mock(a).map(|_| true),
         Command::Http { command: HttpCommand::Run(a) } => http_run(a),
         Command::Http { command: HttpCommand::FromHar(a) } => http_from(a).map(|_| true),
+        Command::Reverse(a) => reverse(a).map(|_| true),
         Command::Profiles { lang, plugins } => profiles(&lang, &plugins).map(|_| true),
     };
     match r {
@@ -747,6 +839,166 @@ fn sanitize(a: SanitizeArgs) -> Result<()> {
     if !a.quiet {
         eprintln!("quena-cli: {} → {}: {}", ids.len(), a.output.display(), log.summary_line());
     }
+    Ok(())
+}
+
+/// `[NAME=]PORT=URL` → (name, port, target).
+fn parse_route(spec: &str) -> Result<(String, u16, String)> {
+    let bad = || usage(format!("--route {spec}: expected [NAME=]PORT=URL, e.g. 8080=https://api.example.com"));
+    let (first, rest) = spec.split_once('=').ok_or_else(bad)?;
+    let (name, port, url) = match first.parse::<u16>() {
+        Ok(p) => (String::new(), p, rest),
+        Err(_) => {
+            let (p, url) = rest.split_once('=').ok_or_else(bad)?;
+            (first.trim().to_string(), p.parse::<u16>().map_err(|_| bad())?, url)
+        }
+    };
+    if port == 0 {
+        return Err(bad());
+    }
+    Ok((name, port, url.trim().to_string()))
+}
+
+/// Reverse proxy without a window: listen, forward, record, print an access log, save.
+fn reverse(a: ReverseArgs) -> Result<()> {
+    use quena_app_core::settings::{ClientProtocol, ListenerSettings, ReversePathEntry, ReverseProxyEntry};
+    let mut entries = Vec::new();
+    for (i, spec) in a.routes.iter().enumerate() {
+        let (name, port, target) = parse_route(spec)?;
+        entries.push(ReverseProxyEntry {
+            id: format!("r{i}"),
+            name: if name.is_empty() { format!(":{port}") } else { name },
+            enabled: true,
+            listen_port: port,
+            allow_remote: a.bind_all,
+            client_protocol: match a.protocol {
+                ClientProto::Auto => ClientProtocol::Auto,
+                ClientProto::Http => ClientProtocol::Http,
+                ClientProto::Https => ClientProtocol::Https,
+            },
+            target,
+            preserve_host: a.preserve_host,
+            tls_host: String::new(),
+            rewrite_location: !a.no_rewrite_location,
+            rewrite_cookie_domain: a.rewrite_cookie_domain,
+            forwarded_headers: a.forwarded_headers,
+            paths: vec![],
+        });
+    }
+    for spec in &a.paths {
+        let bad = || usage(format!("--path {spec}: expected PORT/PREFIX=URL, e.g. 8080/auth=https://sso.example.com"));
+        let (left, url) = spec.split_once('=').ok_or_else(bad)?;
+        let (port, prefix) = left.split_once('/').ok_or_else(bad)?;
+        let port: u16 = port.parse().map_err(|_| bad())?;
+        let entry = entries.iter_mut().find(|e| e.listen_port == port).ok_or_else(|| usage(format!("--path {spec}: no --route on port {port}")))?;
+        entry.paths.push(ReversePathEntry { prefix: format!("/{prefix}"), target: url.trim().to_string(), strip_prefix: a.strip_prefix });
+    }
+    if let Some(p) = &a.save {
+        let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        if ext != "saz" && ext != "har" {
+            return Err(usage(format!("--save {}: use a .saz or .har file", p.display())));
+        }
+    }
+    let engine = Engine::bare()?;
+    let core = engine.core.clone();
+    let data = engine._data.path().to_path_buf();
+    // A kept root certificate: created in --ca-dir on first use, copied into the store.
+    let tls = (!a.routes.is_empty() && !matches!(a.protocol, ClientProto::Http)) || a.decrypt;
+    if let Some(dir) = &a.ca_dir {
+        std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
+        quena_tls::CertAuthority::load_or_create(dir).map_err(|e| usage(format!("--ca-dir {}: {e}", dir.display())))?;
+        for f in [quena_tls::CA_CERT_FILE, quena_tls::CA_KEY_FILE] {
+            std::fs::copy(dir.join(f), data.join(f)).with_context(|| dir.join(f).display().to_string())?;
+        }
+    }
+    let mut s = core.settings();
+    s.proxy.port = 0;
+    s.proxy.act_as_system_proxy = false;
+    s.proxy.remote_allowlist = a.allow.join(";");
+    if let Some(u) = &a.upstream {
+        s.proxy.manual_upstream = u.clone();
+    }
+    s.https.ignore_cert_errors = a.insecure;
+    s.https.decrypt = a.decrypt;
+    s.reverse_proxy.enabled = !entries.is_empty();
+    s.reverse_proxy.entries = entries;
+    let listener = |p: Option<u16>| ListenerSettings { enabled: p.is_some(), port: p.unwrap_or(0), allow_remote: a.bind_all };
+    s.socks = listener(a.socks);
+    s.transparent = listener(a.transparent);
+    // Port 0 for the forward listener: validate against the ports actually requested.
+    s.validate_ports().map_err(usage)?;
+    core.update_settings(s).map_err(|e| usage(format!("{e:#}")))?;
+    let proxy = quena_app_core::engine::ProxyEngine::new(&core)?;
+    core.set_proxy_engine(proxy.clone());
+    if let Some(rules) = &a.rules {
+        let is_farx = rules.extension().is_some_and(|e| e.eq_ignore_ascii_case("farx"));
+        if is_farx {
+            let xml = std::fs::read_to_string(rules).map_err(|e| usage(format!("--rules {}: {e}", rules.display())))?;
+            let mut state = quena_app_core::rules::import_farx(&xml).map_err(|e| usage(format!("--rules {}: {e:#}", rules.display())))?;
+            state.enabled = true;
+            state.unmatched_passthrough = true;
+            core.rules.as_ref().ok_or_else(|| anyhow!("no rules engine"))?.set_autoresponder(state, false)?;
+        } else {
+            core.mock_import_package(rules.clone(), true).map_err(|e| usage(format!("--rules {}: {e:#}", rules.display())))?;
+        }
+    }
+    core.start_capture()?;
+    let status = core.status().engine.listeners;
+    let failed: Vec<String> = status.iter().filter_map(|r| r.error.as_ref().map(|e| format!("{}: {e}", r.name))).collect();
+    if !failed.is_empty() {
+        core.shutdown();
+        return Err(usage(failed.join("; ")));
+    }
+    for r in &status {
+        let addr = r.listen.iter().find(|a| a.starts_with(|c: char| c.is_ascii_digit())).or(r.listen.first()).cloned().unwrap_or_default();
+        eprintln!("quena-cli: {} {addr} → {}", r.name, r.target);
+    }
+    if tls {
+        let ca = data.join(quena_tls::CA_CERT_FILE);
+        match &a.ca_dir {
+            Some(dir) => eprintln!("quena-cli: HTTPS clients must trust {}", dir.join(quena_tls::CA_CERT_FILE).display()),
+            None if ca.exists() => eprintln!("quena-cli: HTTPS clients must trust {} (new for this run; keep one with --ca-dir)", ca.display()),
+            None => {}
+        }
+    }
+    REVERSE_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
+    let started = Instant::now();
+    let cap = core.capture();
+    let mut printed = std::collections::HashSet::new();
+    let mut out = std::io::stdout().lock();
+    loop {
+        cap.index.tick();
+        let mut done: Vec<_> = cap.index.find_all(|s| s.state.is_final() && !printed.contains(&s.id)).into_iter().filter_map(|id| cap.index.get(id)).collect();
+        done.sort_by_key(|s| s.id);
+        for s in done {
+            printed.insert(s.id);
+            if !a.quiet {
+                let status = if s.status == 0 { "ERR".to_string() } else { s.status.to_string() };
+                let time = s.duration_ms.map(|d| format!("{d} ms")).unwrap_or_default();
+                let _ = writeln!(out, "{status:>4} {time:>8}  {:<7} {}  [{}]", s.method, s.full_url(), s.via);
+                let _ = out.flush();
+            }
+        }
+        if STOP.load(std::sync::atomic::Ordering::SeqCst)
+            || a.duration.is_some_and(|d| started.elapsed() >= Duration::from_secs(d))
+            || a.max_sessions.is_some_and(|n| printed.len() >= n)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    core.stop_capture()?;
+    if let Some(path) = &a.save {
+        let job = core.export_archive(Vec::new(), path.clone(), None).map_err(|e| usage(format!("{}: {e}", path.display())))?;
+        match engine.wait(job, &Deadline::after(600), &path.display().to_string()) {
+            Ok(()) => {}
+            Err(JobError::Failed(e)) => bail!(e),
+            Err(JobError::Wait(e)) => return Err(e),
+        }
+        eprintln!("quena-cli: {} session(s) → {}", printed.len(), path.display());
+    }
+    REVERSE_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    core.shutdown();
     Ok(())
 }
 
