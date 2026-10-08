@@ -514,9 +514,36 @@ export interface RwRule {
   phase: "request" | "response";
   status: string;
   contentType: string;
-  ops: ({ op: string } & Record<string, unknown>)[];
+  ops: RwOp[];
   comment: string;
+  /** Named group, switched on and off together ("" = none). */
+  group: string;
   hits: number;
+}
+
+/** One change of a rewrite rule (crates/quena-app-core/src/rewrite.rs `Op`). */
+export type RwOp =
+  | { op: "jsonSet"; path: string; value: unknown }
+  | { op: "jsonRemove"; path: string }
+  | { op: "jsonAppend"; path: string; value?: unknown }
+  | { op: "jsonAppendAll"; value?: unknown }
+  | { op: "regexReplace"; pattern: string; replacement: string }
+  | { op: "setHeader"; name: string; value: string }
+  | { op: "removeHeader"; name: string }
+  | { op: "setStatus"; code: number };
+
+/** A rewrite rule tried on a captured session. */
+export interface RwPreview {
+  matched: boolean;
+  changed: boolean;
+  part: "request" | "response";
+  notes: string[];
+  statusBefore: number | null;
+  statusAfter: number | null;
+  headersBefore: [string, string][];
+  headersAfter: [string, string][];
+  before: string;
+  after: string;
 }
 
 /** What the navigator narrows the session list to (crates/quena-app-core/src/navigator.rs). */
@@ -542,6 +569,8 @@ export interface RwState {
   enabled: boolean;
   maxBodyKb: number;
   rules: RwRule[];
+  /** Groups whose rules are off. */
+  disabledGroups: string[];
 }
 
 export interface McpSettings {
@@ -980,6 +1009,9 @@ export const api = {
   navIds: (scope: NavScope) => invoke<SessionId[]>("nav_ids", { scope }),
   rwGet: () => invoke<RwState>("rw_get"),
   rwSet: (state: RwState) => invoke<RwState>("rw_set", { state }),
+  rwUpdate: (rule: RwRule) => invoke<RwState>("rw_update", { rule }),
+  rwPreview: (rule: RwRule, id: SessionId) => invoke<RwPreview>("rw_preview", { rule, id }),
+  rwApply: (ids: SessionId[], ruleIds?: number[], group?: string) => invoke<{ created: SessionId[]; unchanged: number }>("rw_apply", { ids, ruleIds, group }),
   arSet: (state: ArState) => invoke<void>("ar_set", { state }),
   arAddSessions: (ids: SessionId[], exact: boolean) => invoke<number>("ar_add_sessions", { ids, exact }),
   arImportFarx: (path: string) => invoke<ArState>("ar_import_farx", { path }),

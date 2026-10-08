@@ -11,7 +11,7 @@ use crate::rules::Matcher;
 use anyhow::{Result, anyhow, bail};
 use parking_lot::{Mutex, RwLock};
 use quena_body::Body;
-use quena_model::{Headers, RequestHead, ResponseHead};
+use quena_model::{Headers, RequestHead, ResponseHead, SessionId};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -78,6 +78,8 @@ pub struct RewriteRule {
     pub content_type: String,
     pub ops: Vec<Op>,
     pub comment: String,
+    /// Named group, switched on and off together (empty: none).
+    pub group: String,
     #[serde(skip_deserializing)]
     pub hits: u64,
 }
@@ -93,6 +95,7 @@ impl Default for RewriteRule {
             content_type: String::new(),
             ops: vec![],
             comment: String::new(),
+            group: String::new(),
             hits: 0,
         }
     }
@@ -112,11 +115,20 @@ pub struct RewriteState {
     /// Largest body (raw and decoded) a rule changes, in KiB.
     pub max_body_kb: u64,
     pub rules: Vec<RewriteRule>,
+    /// Groups whose rules are off.
+    pub disabled_groups: Vec<String>,
 }
 
 impl Default for RewriteState {
     fn default() -> Self {
-        RewriteState { enabled: true, max_body_kb: 4096, rules: vec![] }
+        RewriteState { enabled: true, max_body_kb: 4096, rules: vec![], disabled_groups: vec![] }
+    }
+}
+
+impl RewriteState {
+    /// Whether `rule` runs: enabled, and not in a group that is off.
+    pub fn runs(&self, rule: &RewriteRule) -> bool {
+        rule.enabled && (rule.group.trim().is_empty() || !self.disabled_groups.iter().any(|g| g == rule.group.trim()))
     }
 }
 
@@ -369,7 +381,9 @@ impl Rewriter {
             if r.id == 0 {
                 r.id = self.next_id.fetch_add(1, Ordering::Relaxed);
             }
-            if !r.enabled {
+        }
+        for r in &s.rules {
+            if !s.runs(r) {
                 continue;
             }
             let c = compile(r).map_err(|e| anyhow!("rewrite rule {} ('{}'): {e}", r.id, r.match_))?;
@@ -521,46 +535,12 @@ impl Rewriter {
         for x in &rules {
             applied.names.push(name_of(&x.rule));
         }
-        let max = self.max_body();
-        let raw = match read_complete(body, max) {
-            Ok(r) => r,
-            Err(e) => {
-                applied.notes.push(e);
-                return (None, applied);
-            }
-        };
-        let ce = headers.get("content-encoding").map(str::trim).filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("identity"));
-        let decoded = match ce {
-            Some(ce) => match quena_body::decode::decode_bytes(&raw, ce, max + 1) {
-                Ok(d) if d.len() > max => {
-                    applied.notes.push(format!("body larger than {} KiB decoded, unchanged", max >> 10));
-                    return (None, applied);
-                }
-                Ok(d) => d,
-                Err(e) => {
-                    applied.notes.push(format!("cannot decode {ce}: {e}"));
-                    return (None, applied);
-                }
-            },
-            None => raw,
-        };
-        let det = quena_body::charset::detect(ct, &decoded[..decoded.len().min(quena_body::text::DETECT_PREFIX)]);
-        let text = quena_body::charset::decode(&decoded[det.bom_len.min(decoded.len())..], det.encoding).0.into_owned();
-        let (new_text, notes) = transform(&text, &rules);
+        let (out, notes) = transform_body(&rules, headers, body, self.max_body());
         applied.notes.extend(notes);
         for x in rules.iter().filter(|x| !x.head_ops) {
             x.hits.fetch_add(1, Ordering::Relaxed);
         }
-        let Some(new_text) = new_text.filter(|t| *t != text) else { return (None, applied) };
-        let mut h = headers.clone();
-        h.remove("content-encoding");
-        let (bytes, new_ct) = quena_body::text::encode_edited(&new_text, ct, Some(det.name()));
-        if let Some(ct) = new_ct {
-            h.set("Content-Type", ct);
-        }
-        // Validators describe the original bytes.
-        h.remove("content-md5");
-        (Some((h, bytes)), applied)
+        (out, applied)
     }
 
     /// Apply a rule (enabled or not, unsaved) to a captured message without traffic.
@@ -569,6 +549,161 @@ impl Rewriter {
         let (out, notes) = transform(text, &[&c]);
         Ok((out.unwrap_or_else(|| text.to_string()), notes))
     }
+}
+
+/// The body after the body operations of `rules` (decoding Content-Encoding and charset,
+/// encoding the result as text). `None`: unchanged; the reason, if any, in the notes.
+fn transform_body(rules: &[&Compiled], headers: &Headers, body: &Body, max: usize) -> (Option<(Headers, Vec<u8>)>, Vec<String>) {
+    let mut notes = Vec::new();
+    let ct = headers.get("content-type");
+    let raw = match read_complete(body, max) {
+        Ok(r) => r,
+        Err(e) => {
+            notes.push(e);
+            return (None, notes);
+        }
+    };
+    let ce = headers.get("content-encoding").map(str::trim).filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("identity"));
+    let decoded = match ce {
+        Some(ce) => match quena_body::decode::decode_bytes(&raw, ce, max + 1) {
+            Ok(d) if d.len() > max => {
+                notes.push(format!("body larger than {} KiB decoded, unchanged", max >> 10));
+                return (None, notes);
+            }
+            Ok(d) => d,
+            Err(e) => {
+                notes.push(format!("cannot decode {ce}: {e}"));
+                return (None, notes);
+            }
+        },
+        None => raw,
+    };
+    let det = quena_body::charset::detect(ct, &decoded[..decoded.len().min(quena_body::text::DETECT_PREFIX)]);
+    let text = quena_body::charset::decode(&decoded[det.bom_len.min(decoded.len())..], det.encoding).0.into_owned();
+    let (new_text, n) = transform(&text, rules);
+    notes.extend(n);
+    let Some(new_text) = new_text.filter(|t| *t != text) else { return (None, notes) };
+    let mut h = headers.clone();
+    h.remove("content-encoding");
+    let (bytes, new_ct) = quena_body::text::encode_edited(&new_text, ct, Some(det.name()));
+    if let Some(ct) = new_ct {
+        h.set("Content-Type", ct);
+    }
+    // Validators describe the original bytes.
+    h.remove("content-md5");
+    (Some((h, bytes)), notes)
+}
+
+/// A captured exchange after rewrite rules were applied to it ([`apply_offline`]).
+#[derive(Debug, Clone)]
+pub struct Offline {
+    pub request: RequestHead,
+    pub response: Option<ResponseHead>,
+    /// New bodies (identity encoding); `None`: unchanged.
+    pub request_body: Option<Vec<u8>>,
+    pub response_body: Option<Vec<u8>>,
+    /// Names of the rules that changed something.
+    pub names: Vec<String>,
+    pub notes: Vec<String>,
+}
+
+impl Offline {
+    pub fn changed(&self) -> bool {
+        !self.names.is_empty()
+    }
+}
+
+/// Apply `rules` (whether enabled or not) to a captured exchange, without traffic and
+/// without counting hits: match, phase, status and content-type filters as on live traffic.
+pub fn apply_offline(rules: &[RewriteRule], max_body_kb: u64, req: &RequestHead, resp: Option<&ResponseHead>, req_body: &Body, resp_body: &Body) -> Result<Offline> {
+    let compiled: Vec<Compiled> = rules.iter().map(|r| compile(r).map_err(|e| anyhow!("rewrite rule {} ('{}'): {e}", r.id, r.match_))).collect::<Result<_>>()?;
+    let max = (max_body_kb.clamp(1, MAX_BODY_KB) as usize) << 10;
+    let mut out = Offline { request: req.clone(), response: resp.cloned(), request_body: None, response_body: None, names: vec![], notes: vec![] };
+    let note = |names: &mut Vec<String>, x: &Compiled| {
+        let n = name_of(&x.rule);
+        if !names.contains(&n) {
+            names.push(n);
+        }
+    };
+    // Request: headers, then the body.
+    let req_ct = req.headers.get("content-type").map(str::to_string);
+    let req_rules: Vec<&Compiled> = compiled.iter().filter(|x| x.rule.phase == Phase::Request && x.matcher.matches_head(req)).collect();
+    for x in &req_rules {
+        let mut touched = false;
+        for op in &x.ops {
+            match op {
+                COp::SetHeader(n, v) => {
+                    out.request.headers.set(n, v.clone());
+                    touched = true;
+                }
+                COp::RemoveHeader(n) => {
+                    out.request.headers.remove(n);
+                    touched = true;
+                }
+                _ => {}
+            }
+        }
+        if touched {
+            note(&mut out.names, x);
+        }
+    }
+    let body_rules: Vec<&Compiled> = req_rules.iter().copied().filter(|x| x.body_ops && x.type_ok(req_ct.as_deref())).collect();
+    if !body_rules.is_empty() && req_body.len() > 0 {
+        let (b, notes) = transform_body(&body_rules, &out.request.headers, req_body, max);
+        out.notes.extend(notes);
+        if let Some((h, bytes)) = b {
+            out.request.headers = h;
+            out.request.headers.set("Content-Length", bytes.len().to_string());
+            out.request_body = Some(bytes);
+            body_rules.iter().for_each(|x| note(&mut out.names, x));
+        }
+    }
+    // Response: status and headers, then the body; matched on the original request.
+    if let Some(resp) = resp {
+        let ct = resp.headers.get("content-type").map(str::to_string);
+        let rules: Vec<&Compiled> = compiled.iter().filter(|x| x.rule.phase == Phase::Response && x.status_ok(resp.status) && x.matcher.matches_head(req)).collect();
+        let mut head = resp.clone();
+        for x in &rules {
+            let mut touched = false;
+            for op in &x.ops {
+                match op {
+                    COp::SetHeader(n, v) => {
+                        head.headers.set(n, v.clone());
+                        touched = true;
+                    }
+                    COp::RemoveHeader(n) => {
+                        head.headers.remove(n);
+                        touched = true;
+                    }
+                    COp::SetStatus(st) => {
+                        head.status = *st;
+                        head.reason = crate::mock::reason(*st).to_string();
+                        touched = true;
+                    }
+                    _ => {}
+                }
+            }
+            if touched {
+                note(&mut out.names, x);
+            }
+        }
+        let body_rules: Vec<&Compiled> = rules.iter().copied().filter(|x| x.body_ops && x.type_ok(ct.as_deref())).collect();
+        if !body_rules.is_empty() && resp_body.len() > 0 && !partial(&resp.headers, resp.status) {
+            let (b, notes) = transform_body(&body_rules, &head.headers, resp_body, max);
+            out.notes.extend(notes);
+            if let Some((h, bytes)) = b {
+                head.headers = h;
+                if head.headers.get("content-length").is_some() || head.headers.get("transfer-encoding").is_none() {
+                    head.headers.set("Content-Length", bytes.len().to_string());
+                }
+                head.headers.remove("transfer-encoding");
+                out.response_body = Some(bytes);
+                body_rules.iter().for_each(|x| note(&mut out.names, x));
+            }
+        }
+        out.response = Some(head);
+    }
+    Ok(out)
 }
 
 fn name_of(r: &RewriteRule) -> String {
@@ -867,5 +1002,155 @@ mod tests {
         let op: Op = serde_json::from_value(json!({ "op": "regexReplace", "pattern": "a", "replacement": "b" })).unwrap();
         assert!(matches!(op, Op::RegexReplace { .. }));
         assert_eq!(serde_json::to_value(Op::SetStatus { code: 503 }).unwrap(), json!({ "op": "setStatus", "code": 503 }));
+    }
+}
+
+// ------------------------------------------------------------------ editor and offline use
+
+/// A rule tried on a captured session ([`crate::AppCore::rewrite_preview`]).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewritePreview {
+    /// The rule's filters (match, phase, status, content type) take the session.
+    pub matched: bool,
+    /// Something changed.
+    pub changed: bool,
+    pub part: Phase,
+    pub notes: Vec<String>,
+    pub status_before: Option<u16>,
+    pub status_after: Option<u16>,
+    pub headers_before: Headers,
+    pub headers_after: Headers,
+    /// Body text (decoded), cut at [`PREVIEW_TEXT`].
+    pub before: String,
+    pub after: String,
+}
+
+/// Body text shown in a preview, at most.
+const PREVIEW_TEXT: usize = 256 << 10;
+
+/// What [`crate::AppCore::rewrite_apply`] did.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewriteApplied {
+    /// New sessions (copies with the changes).
+    pub created: Vec<SessionId>,
+    /// Sessions no rule changed.
+    pub unchanged: usize,
+}
+
+fn body_text(bytes: &[u8], headers: &Headers) -> String {
+    let det = quena_body::charset::detect(headers.get("content-type"), &bytes[..bytes.len().min(quena_body::text::DETECT_PREFIX)]);
+    let mut t = quena_body::charset::decode(&bytes[det.bom_len.min(bytes.len())..], det.encoding).0.into_owned();
+    if t.len() > PREVIEW_TEXT {
+        let mut cut = PREVIEW_TEXT;
+        while !t.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        t.truncate(cut);
+        t.push_str("\n…");
+    }
+    t
+}
+
+impl crate::AppCore {
+    fn rewriter(&self) -> Result<&Rewriter> {
+        self.rules.as_ref().map(|r| &r.rewrite).ok_or_else(|| anyhow!("rules are not available"))
+    }
+
+    /// Save one rule: a new one (`id` 0) is added at the end, an existing one replaced.
+    /// Locked like the agents' changes, so none is lost.
+    pub fn rewrite_update(&self, rule: RewriteRule) -> Result<RewriteState> {
+        let rw = self.rewriter()?;
+        rw.update(|s| match s.rules.iter_mut().find(|r| r.id == rule.id && rule.id != 0) {
+            Some(r) => *r = RewriteRule { hits: r.hits, ..rule },
+            None => s.rules.push(RewriteRule { id: 0, ..rule }),
+        })?;
+        Ok(rw.state())
+    }
+
+    /// Try `rule` (saved or not, enabled or not) on session `id`, without traffic.
+    pub fn rewrite_preview(&self, rule: RewriteRule, id: SessionId) -> Result<RewritePreview> {
+        let cap = self.capture();
+        let d = cap.detail(id).ok_or_else(|| anyhow!("session #{id} not found"))?;
+        let (req_body, resp_body) = cap.bodies_of(id).ok_or_else(|| anyhow!("session #{id} not found"))?;
+        let max_kb = self.rewriter()?.state().max_body_kb;
+        let part = rule.phase;
+        let off = apply_offline(std::slice::from_ref(&RewriteRule { enabled: true, ..rule.clone() }), max_kb, &d.request, d.response.as_ref(), &req_body, &resp_body)?;
+        let matcher = compile(&rule)?;
+        let matched = matcher.matcher.matches_head(&d.request) && (part == Phase::Request || d.response.as_ref().is_some_and(|r| matcher.status_ok(r.status)));
+        let (headers_before, body, status_before) = match part {
+            Phase::Request => (d.request.headers.clone(), req_body, None),
+            Phase::Response => (d.response.as_ref().map(|r| r.headers.clone()).unwrap_or_default(), resp_body, d.response.as_ref().map(|r| r.status)),
+        };
+        let before_bytes = quena_body::text::decoded_prefix(&body, &crate::dto::spec_of(&headers_before), PREVIEW_TEXT + 1);
+        let before = body_text(&before_bytes, &headers_before);
+        let (headers_after, status_after, after) = match part {
+            Phase::Request => (off.request.headers.clone(), None, off.request_body.as_deref().map(|b| body_text(b, &off.request.headers))),
+            Phase::Response => {
+                let h = off.response.as_ref().map(|r| r.headers.clone()).unwrap_or_default();
+                let a = off.response_body.as_deref().map(|b| body_text(b, &h));
+                (h, off.response.as_ref().map(|r| r.status), a)
+            }
+        };
+        Ok(RewritePreview {
+            matched,
+            changed: off.changed(),
+            part,
+            notes: off.notes,
+            status_before,
+            status_after,
+            headers_before,
+            headers_after,
+            after: after.unwrap_or_else(|| before.clone()),
+            before,
+        })
+    }
+
+    /// Apply rewrite rules to captured sessions: every session a rule changes gets a copy
+    /// with the changes (marked as tampered); the originals stay as they were. Rules:
+    /// `rule_ids`, else the rules of `group`, else the rules that run.
+    pub fn rewrite_apply(&self, ids: &[SessionId], rule_ids: Option<&[u64]>, group: Option<&str>) -> Result<RewriteApplied> {
+        let state = self.rewriter()?.state();
+        let rules: Vec<RewriteRule> = match (rule_ids, group) {
+            (Some(ids), _) => state.rules.iter().filter(|r| ids.contains(&r.id)).cloned().collect(),
+            (None, Some(g)) => state.rules.iter().filter(|r| r.group.trim() == g.trim()).cloned().collect(),
+            (None, None) => state.rules.iter().filter(|r| state.runs(r)).cloned().collect(),
+        };
+        if rules.is_empty() {
+            bail!("no rewrite rules to apply");
+        }
+        let cap = self.capture();
+        let mut out = RewriteApplied::default();
+        for &id in ids {
+            let (Some(d), Some((req_body, resp_body))) = (cap.detail(id), cap.bodies_of(id)) else { continue };
+            if d.summary.kind != quena_model::SessionKind::Http {
+                out.unchanged += 1;
+                continue;
+            }
+            let off = apply_offline(&rules, state.max_body_kb, &d.request, d.response.as_ref(), &req_body, &resp_body)?;
+            if !off.changed() {
+                out.unchanged += 1;
+                continue;
+            }
+            let mut nd = d.clone();
+            nd.request = off.request;
+            nd.response = off.response;
+            nd.summary.flags |= quena_model::flags::TAMPERED;
+            nd.summary.comment = format!("Rewrite of #{id}: {}", off.names.join(", "));
+            nd.extra_flags.retain(|(k, _)| k != "x-quena-rewrite-of");
+            nd.extra_flags.push(("x-quena-rewrite-of".into(), id.to_string()));
+            let req = match off.request_body {
+                Some(b) => cap.bodies.store_bytes(&b),
+                None => req_body,
+            };
+            let resp = match off.response_body {
+                Some(b) => cap.bodies.store_bytes(&b),
+                None => resp_body,
+            };
+            out.created.push(cap.insert(nd, req, resp));
+        }
+        cap.index.tick();
+        Ok(out)
     }
 }

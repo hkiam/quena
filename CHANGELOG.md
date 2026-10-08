@@ -8,6 +8,18 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Rewrite rules have an editor** in the Mock Rules tab: *New rewrite rule…*, a double-click
+  or the context menu.
+  - Every operation has its own fields: JSONPath, a JSON value, regex and replacement,
+    header, status. The form checks what it can before saving.
+  - A preview tries the rule on the selected session and shows the status, header and body
+    before and after.
+  - Rules can be sorted, cloned and put into **groups** that are switched on and off
+    together. The largest body a rule changes can be set.
+- **Rewrite rules can be applied to captured sessions**: *Apply Rewrite Rules…* in the
+  session context menu or on a rule. Each session a rule changes gets a changed copy; the
+  original stays and nothing is sent. MCP has `apply_rewrite_rules`, and rules can have a
+  `group`.
 - **Host remapping** (*Capture → Host Remapping…*): connections to a host or `*.domain` go
   to another host, IP address or port, like a hosts-file entry but only for traffic through
   Quena.

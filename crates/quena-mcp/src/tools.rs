@@ -448,11 +448,28 @@ static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "set_rewrite_options",
-        description: "Switch all rewrite rules on or off, and set the largest body (KiB, default 4096) they change.",
+        description: "Switch all rewrite rules on or off, switch groups of rules off (`disabled_groups`, replaces the list), and set the largest body (KiB, default 4096) they change.",
         write: true,
         destructive: false,
-        schema: || obj(json!({ "enabled": { "type": "boolean" }, "max_body_kb": { "type": "integer" } })),
+        schema: || obj(json!({ "enabled": { "type": "boolean" }, "max_body_kb": { "type": "integer" }, "disabled_groups": { "type": "array", "items": { "type": "string" } } })),
         run: set_rewrite_options,
+    },
+    Tool {
+        name: "apply_rewrite_rules",
+        description: "Apply rewrite rules to captured sessions without sending anything: each session a rule changes gets a new copy with the changes (marked tampered, comment \"Rewrite of #id\"); the originals stay. Rules: `rule_ids`, else those of `group`, else all that run.",
+        write: true,
+        destructive: false,
+        schema: || {
+            req(
+                json!({
+                    "ids": { "type": "array", "items": { "type": "integer" } },
+                    "rule_ids": { "type": "array", "items": { "type": "integer" } },
+                    "group": { "type": "string" }
+                }),
+                &["ids"],
+            )
+        },
+        run: apply_rewrite_rules,
     },
     Tool {
         name: "run_http_file",
@@ -562,6 +579,7 @@ fn rewrite_rule_schema() -> Value {
         "status": { "type": "string", "description": "Response status filter: `200`, `2xx`, `500-599`, comma separated (empty: any)" },
         "content_type": { "type": "string", "description": "Content type substrings, `;` separated (empty: any text type)" },
         "comment": { "type": "string" },
+        "group": { "type": "string", "description": "Named group, switched on and off together (set_rewrite_options disabled_groups)" },
         "ops": {
             "type": "array",
             "items": {
@@ -1050,6 +1068,7 @@ struct RuleArgs {
     #[serde(alias = "contentType")]
     content_type: Option<String>,
     comment: Option<String>,
+    group: Option<String>,
     ops: Option<Vec<Op>>,
 }
 
@@ -1069,6 +1088,9 @@ impl RuleArgs {
         }
         if let Some(v) = self.comment {
             r.comment = v;
+        }
+        if let Some(v) = self.group {
+            r.group = v;
         }
         if let Some(v) = self.ops {
             r.ops = v;
@@ -1681,6 +1703,20 @@ fn remove_rewrite_rule(core: &Arc<AppCore>, a: Value) -> Result<Value> {
 struct RewriteOptionArgs {
     enabled: Option<bool>,
     max_body_kb: Option<u64>,
+    disabled_groups: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct ApplyRewriteArgs {
+    ids: Vec<SessionId>,
+    rule_ids: Option<Vec<u64>>,
+    group: Option<String>,
+}
+
+fn apply_rewrite_rules(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: ApplyRewriteArgs = args(a)?;
+    let out = core.rewrite_apply(&a.ids, a.rule_ids.as_deref(), a.group.as_deref())?;
+    Ok(json!({ "created": out.created, "unchanged": out.unchanged }))
 }
 
 fn set_rewrite_options(core: &Arc<AppCore>, a: Value) -> Result<Value> {
@@ -1693,9 +1729,12 @@ fn set_rewrite_options(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         if let Some(v) = a.max_body_kb {
             s.max_body_kb = v.clamp(1, quena_app_core::rewrite::MAX_BODY_KB);
         }
+        if let Some(v) = a.disabled_groups {
+            s.disabled_groups = v;
+        }
     })?;
     let s = rw.state();
-    Ok(json!({ "enabled": s.enabled, "maxBodyKb": s.max_body_kb }))
+    Ok(json!({ "enabled": s.enabled, "maxBodyKb": s.max_body_kb, "disabledGroups": s.disabled_groups }))
 }
 
 #[derive(Deserialize)]

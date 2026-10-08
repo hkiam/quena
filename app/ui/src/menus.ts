@@ -1,7 +1,7 @@
 import { actions } from "./actions";
 import type { GroupBy } from "./api";
 import type { MenuItem } from "./components/ContextMenu";
-import { get } from "./store";
+import { get, set } from "./store";
 import { modKey } from "./lib/format";
 import { t } from "./i18n";
 
@@ -66,6 +66,7 @@ export function sessionMenu(): MenuItem[] {
         { label: t("Mocks from Sessions…"), action: () => import("./panels/autoresponderActions").then((m) => m.mocksFromSelection()) },
       ],
     },
+    { label: t("Apply Rewrite Rules…"), action: () => set({ dialog: { kind: "rewrite-apply", ids: [...get().selection] } }) },
     { label: t("Reverse Proxy for this Host…"), disabled: !one, action: () => import("./components/ReverseProxyDialog").then((m) => m.reverseProxyForSelection()) },
     {
       label: t("Copy"),

@@ -196,6 +196,20 @@ fn mcp_over_http() {
     assert!(!err);
     let (s, _) = tool(addr, "send_request", json!({ "method": "GET", "url": format!("http://127.0.0.1:{port}/rw") }));
     assert_eq!(s["response"]["body"]["text"], r#"{"path":"/rw","items":[1,2]}"#);
+    // Groups and applying rules to a captured session (a changed copy).
+    let plain_id = s["session"]["id"].as_u64().unwrap();
+    let (_, err) = tool(addr, "update_rewrite_rule", json!({ "id": rw, "enabled": true, "group": "demo" }));
+    assert!(!err);
+    let (o, err) = tool(addr, "set_rewrite_options", json!({ "disabled_groups": ["demo"] }));
+    assert!(!err && o["disabledGroups"][0] == "demo", "{o}");
+    let (s, _) = tool(addr, "send_request", json!({ "method": "GET", "url": format!("http://127.0.0.1:{port}/rw") }));
+    assert_eq!(s["response"]["body"]["text"], r#"{"path":"/rw","items":[1,2]}"#, "group is off");
+    let (a, err) = tool(addr, "apply_rewrite_rules", json!({ "ids": [plain_id], "group": "demo" }));
+    assert!(!err && a["created"].as_array().unwrap().len() == 1, "{a}");
+    let (c, _) = tool(addr, "get_session", json!({ "id": a["created"][0] }));
+    assert_eq!(c["response"]["body"]["text"], r#"{"path":"/rw","items":[1,2,null]}"#, "{c}");
+    let (_, err) = tool(addr, "set_rewrite_options", json!({ "disabled_groups": [] }));
+    assert!(!err);
     let (e, err) = tool(addr, "add_rewrite_rule", json!({ "match": "*", "ops": [{ "op": "jsonSet", "path": "no-dollar", "value": 1 }] }));
     assert!(err && e.as_str().unwrap().contains("JSONPath"), "{e}");
     let (_, err) = tool(addr, "remove_rewrite_rule", json!({ "id": rw }));

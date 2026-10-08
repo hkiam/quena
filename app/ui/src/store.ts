@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { NetworkProfile } from "./lib/diagReport";
-import type { FilterSettings, GroupBy, JobInfo, LogEntry, SanitizedExport, SessionId, Settings, Sort, Status } from "./api";
+import type { FilterSettings, GroupBy, JobInfo, LogEntry, RwRule, SanitizedExport, SessionId, Settings, Sort, Status } from "./api";
 import { t } from "./i18n";
 
 export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "diagnostics";
@@ -208,6 +208,10 @@ export type Dialog =
   | { kind: "connect-device" }
   | { kind: "textwizard"; text?: string }
   | { kind: "https" }
+  /** Rewrite rule editor; without `rule` a new one. */
+  | { kind: "rewrite-rule"; rule?: RwRule }
+  /** Apply rewrite rules to sessions (changed copies). */
+  | { kind: "rewrite-apply"; ids: SessionId[] }
   /** Capture → Host Remapping…: hosts whose connections go elsewhere. */
   | { kind: "host-remap" }
   /** Capture → Start Browser…: installed browsers, a start URL and the terminal. */

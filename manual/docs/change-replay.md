@@ -272,10 +272,38 @@ That tests how an application copes with data it does not expect — an extra, b
 in every list, a missing field, a 500 instead of a 200. Mock Rules, in contrast, answer
 without the server.
 
-An AI agent sets them up over [MCP](mcp.md) (`add_rewrite_rule`, and `preview_rewrite` for
-a dry run on a captured session). The Mock Rules tab lists them while any exist, with *on/off*
-for each rule and for all of them, the hit count and *remove*. They are kept in
-`rewrite.json` in the data folder.
+Rules are made in the **Mock Rules** tab: *New rewrite rule…* opens the editor, a double-click
+on a rule edits it, and a right-click offers *Enable/Disable*, *Clone*, *Move Up/Down*,
+*Apply to selected sessions* and *Remove*. The list shows each rule's hit count, the switch
+for all rules and the largest body a rule changes (*max. body*, default 4096 KiB). Rules are
+kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP](mcp.md)
+(`add_rewrite_rule`, `preview_rewrite`, `apply_rewrite_rules` …).
+
+### The editor
+
+- **Name**, and an optional **group**.
+- **If request matches…**, **Change** (the request or the response), **Only status** and
+  **Only content types**: the filters below.
+- **Changes**, in their order. Each has its own fields: a JSONPath, a value as JSON (`"text"`,
+  `42`, `null`, `{"a":1}`), a regular expression and replacement, a header, a status code. The
+  form says what is wrong before saving.
+- **Preview on #N** tries the rule on the session selected in the list, without sending
+  anything: whether its filters take the session, the status and header changes, and the
+  body before and after.
+
+### Groups
+
+Rules with the same **group** are switched on and off together with the group's chip above
+the list, for example a set of "chaos tests" that you switch on when you need them. A rule
+runs when it is on and its group (if any) is on.
+
+### Apply to captured sessions
+
+*Apply Rewrite Rules…* in a session's context menu, or *Apply to selected sessions* on a rule,
+runs rules on sessions that were already recorded. Nothing is sent. Every session a rule
+changes gets a **new copy** with the changes, marked as tampered with the comment
+*Rewrite of #N*; the original stays as it was. You can choose all rules that are on, a group,
+or one rule.
 
 A rule has:
 

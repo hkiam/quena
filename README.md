@@ -244,7 +244,8 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Sanitized export** (SAZ/HAR) for sharing: credentials, tokens and personal data replaced,
   with a redaction log
 - **Breakpoints & tamper** before request / after response
-- **Rewrite rules**: change real responses and requests by JSONPath, regex, header, status
+- **Rewrite rules**: change real responses and requests by JSONPath, regex, header, status —
+  with an editor and preview, groups, and applied to captured sessions as changed copies
 - **Composer** (parsed, raw, history) with **cURL import**
 - **`.http` request collections** with environments (JetBrains / VS Code format), also headless
 - Replay: again, unconditionally, *n* times, sequentially, with edit

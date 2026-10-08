@@ -652,6 +652,27 @@ async fn rw_set(core: State<'_, Core>, state: quena_app_core::rewrite::RewriteSt
     rules(core.inner())?.rewrite.set(state).map_err(e)
 }
 
+/// Save one rewrite rule (new: `id` 0, appended) without replacing the others.
+#[tauri::command]
+async fn rw_update(core: State<'_, Core>, rule: quena_app_core::rewrite::RewriteRule) -> R<quena_app_core::rewrite::RewriteState> {
+    let c = core.inner().clone();
+    blocking(move || c.rewrite_update(rule).map_err(e)).await
+}
+
+/// Try a rewrite rule on a captured session (before / after), without traffic.
+#[tauri::command]
+async fn rw_preview(core: State<'_, Core>, rule: quena_app_core::rewrite::RewriteRule, id: SessionId) -> R<quena_app_core::rewrite::RewritePreview> {
+    let c = core.inner().clone();
+    blocking(move || c.rewrite_preview(rule, id).map_err(e)).await
+}
+
+/// Apply rewrite rules to captured sessions (changed copies; the originals stay).
+#[tauri::command]
+async fn rw_apply(core: State<'_, Core>, ids: Vec<SessionId>, rule_ids: Option<Vec<u64>>, group: Option<String>) -> R<quena_app_core::rewrite::RewriteApplied> {
+    let c = core.inner().clone();
+    blocking(move || c.rewrite_apply(&ids, rule_ids.as_deref(), group.as_deref()).map_err(e)).await
+}
+
 #[tauri::command]
 async fn ar_add_sessions(core: State<'_, Core>, ids: Vec<SessionId>, exact: bool) -> R<usize> {
     let r = rules(core.inner())?;
@@ -1000,6 +1021,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         sanitize_validate,
         reveal_path,
         browsers_list,
+        rw_update,
+        rw_preview,
+        rw_apply,
         hosts_file_import,
         launch_browser,
         open_terminal,

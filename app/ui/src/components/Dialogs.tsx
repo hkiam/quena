@@ -19,6 +19,8 @@ const MocksDialog = lazy(() => import("./MocksDialog").then((m) => ({ default: m
 const ReverseProxyPanel = lazy(() => import("./ReverseProxyDialog").then((m) => ({ default: m.ReverseProxyPanel })));
 const LaunchPanel = lazy(() => import("./LaunchDialog").then((m) => ({ default: m.LaunchPanel })));
 const HostRemapPanel = lazy(() => import("./HostRemapDialog").then((m) => ({ default: m.HostRemapPanel })));
+const RewriteEditor = lazy(() => import("../panels/RewriteEditor").then((m) => ({ default: m.RewriteEditor })));
+const RewriteApply = lazy(() => import("../panels/RewriteEditor").then((m) => ({ default: m.RewriteApply })));
 import { CommandPalette } from "./CommandPalette";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { currentLang, plural, t } from "../i18n";
@@ -1010,6 +1012,18 @@ function DialogBody({ d }: { d: Dialog }) {
       return (
         <Modal title="HTTPS" onClose={close} wide>
           <HttpsPanel />
+        </Modal>
+      );
+    case "rewrite-rule":
+      return (
+        <Modal title={d.rule?.id ? t("Edit Rewrite Rule") : t("New Rewrite Rule")} onClose={close} wide>
+          <RewriteEditor rule={d.rule} />
+        </Modal>
+      );
+    case "rewrite-apply":
+      return (
+        <Modal title={t("Apply Rewrite Rules")} onClose={close} wide>
+          <RewriteApply ids={d.ids} />
         </Modal>
       );
     case "host-remap":

@@ -13,7 +13,7 @@ import { SessionGrid } from "./grid/SessionGrid";
 import { RightPane } from "./panels/RightPane";
 import { Navigator, ScopeBar } from "./panels/Navigator";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { get, restoreLayout, say, set, useStore, type Layout } from "./store";
+import { get, restoreLayout, say, set, useStore, type Dialog, type Layout } from "./store";
 import { installGlobalKeys } from "./keys";
 import { installFileDrop } from "./lib/dropImport";
 import { forgetInspectorHeaders } from "./inspectors/views";
@@ -43,6 +43,8 @@ function useBoot() {
       load: (path: string) => api.importArchive(path),
       // Select the session in row `i` of the list.
       selectRow: async (i: number) => actions.selectIds(await api.viewIds(i, 1)),
+      // Open a dialog (dialogs reached only through context menus).
+      dialog: (d: Dialog) => set({ dialog: d }),
     };
     if (!isTauri) return;
     const unlisten: Promise<() => void>[] = [];

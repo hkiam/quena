@@ -41,6 +41,9 @@ node --test --test-reporter=spec "$here/mocks.test.mjs"
 # Reverse proxy: an entry from the dialog forwards to its target and records.
 settings en
 node --test --test-reporter=spec "$here/reverse.test.mjs"
+# Rewrite rules: editor with preview, live change, applied to a captured session.
+settings en
+node --test --test-reporter=spec "$here/rewrite.test.mjs"
 # Sanitized export: GDPR preset → HAR without marker values → opened again.
 settings en
 node --test --test-reporter=spec "$here/sanitize.test.mjs"

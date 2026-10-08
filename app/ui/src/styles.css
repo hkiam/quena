@@ -3464,3 +3464,84 @@ table.hr-table input:not([type="checkbox"]) {
 .hr-spacer {
   flex: 1;
 }
+/* Rewrite rules: list bar, editor, preview */
+.rw-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.rw-bar .ar-package.off {
+  opacity: 0.55;
+}
+.rw-max {
+  width: 70px;
+}
+.rw-group {
+  font: 600 10px var(--font);
+  padding: 0 6px;
+  margin-left: 6px;
+  border-radius: 8px;
+  color: var(--pill-info-fg);
+  background: var(--pill-info-bg);
+}
+.ar-rewrite-empty {
+  padding: 4px 2px 8px;
+}
+.rw-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rw-op {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.rw-op select {
+  width: 190px;
+}
+.rw-op .rw-path {
+  width: 200px;
+}
+.rw-op .rw-value {
+  flex: 1;
+  min-width: 0;
+}
+.rw-op .rw-code {
+  width: 80px;
+}
+.rw-op-buttons {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.rw-preview pre,
+.rw-headers {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font: 11px var(--mono);
+}
+.rw-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.rw-sides pre {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+.rw-apply {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rw-apply p {
+  margin: 0;
+}

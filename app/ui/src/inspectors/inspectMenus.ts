@@ -1,6 +1,6 @@
 // Context menus of the inspector views: copying values, paths and bodies, and rewrite rules
 // made from a value of the JSON tree.
-import { api, type Detail, type Part } from "../api";
+import { api, type Detail, type Part, type RwOp } from "../api";
 import { actions, copyText } from "../actions";
 import { confirmAsk, promptText, say, set } from "../store";
 import type { MenuItem } from "../components/ContextMenu";
@@ -59,7 +59,7 @@ export function xpath(el: Element): string {
   return "/" + steps.join("/");
 }
 
-type Op = { op: string } & Record<string, unknown>;
+type Op = RwOp;
 
 /** Add a rewrite rule for this URL and side. Rewriting switched off is switched on only when
  * that does not wake other rules up, or the user agrees. */
@@ -71,7 +71,7 @@ async function addRewrite(detail: Detail, part: Part, op: Op, comment: string) {
       if (others && !(await confirmAsk(t("Switch rewriting on?"), t("Rewriting is switched off. Switching it on also applies {n} other enabled rules.", { n: others }), t("Switch on")))) return;
       state.enabled = true;
     }
-    state.rules.push({ id: 0, enabled: true, match: `exact:${detail.request.url}`, phase: part, status: "", contentType: "", ops: [op], comment, hits: 0 });
+    state.rules.push({ id: 0, enabled: true, match: `exact:${detail.request.url}`, phase: part, status: "", contentType: "", ops: [op], comment, group: "", hits: 0 });
     await api.rwSet(state);
     set({ arNonce: Date.now() }); // the Mock Rules panel reloads
     say(t("Rewrite rule added: {rule}. Mock Rules lists it.", { rule: comment }));
