@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, type LlmPricesInfo, type McpStatus, type Recoverable, type SchemaStatus, type Settings } from "../api";
+import { api, type CacheAdvice, type CacheStatus, type LlmPricesInfo, type McpStatus, type Recoverable, type SchemaStatus, type Settings } from "../api";
 import { actions } from "../actions";
 import { fmtBytes, fmtDateTime, isMac, modKey, osNames } from "../lib/format";
 import { get, say, set, useStore, type Dialog } from "../store";
@@ -516,6 +516,74 @@ function AutoSaveOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void
   );
 }
 
+/** Settings → Bodies & Storage → Agent cache: LLM answers Quena serves again. */
+function AgentCacheOptions() {
+  const [st, setSt] = useState<CacheStatus | null>(null);
+  const [advice, setAdvice] = useState<CacheAdvice[]>([]);
+  const load = () => {
+    api.llmCacheStatus().then(setSt, () => setSt(null));
+    api.llmCacheAdvice().then(setAdvice, () => setAdvice([]));
+  };
+  useEffect(load, []);
+  const run = (p: Promise<CacheStatus>) =>
+    p.then(
+      (s) => {
+        setSt(s);
+        api.llmCacheAdvice().then(setAdvice, () => setAdvice([]));
+      },
+      (e) => say(String(e), "error"),
+    );
+  if (!st) return null;
+  const usd = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
+  return (
+    <fieldset className="f-section">
+      <legend>{t("Agent cache")}</legend>
+      <p className="muted small">{t("Answers of LLM API calls Quena serves again for the same request (URL and JSON body), so an agent or app under development does not pay or wait twice. Cache single calls in the LLM view.")}</p>
+      <label className="f-check">
+        <input type="checkbox" checked={st.auto} onChange={(e) => void run(api.llmCacheAuto(e.target.checked))} /> {t("Cache every LLM call")}
+      </label>
+      <div className="small">
+        {t("{n} cached answer(s), {hits} hit(s): {tokens} tokens, ≈ {usd} and {s} s saved", { n: st.entries.length, hits: st.hits, tokens: st.savedTokens, usd: usd(st.savedUsd), s: Math.round(st.savedMs / 1000) })}
+      </div>
+      {st.entries.length > 0 && (
+        <div className="cache-list">
+          {st.entries.slice(0, 50).map((e) => (
+            <div key={e.key} className="pb-path-row small">
+              <span className="mono pb-path" title={e.url}>
+                {e.model || "?"} · #{e.source} · {t("{n} hit(s)", { n: e.hits })}
+              </span>
+              <button className="linklike" onClick={() => actions.selectIds([e.source])}>
+                {t("Show")}
+              </button>
+              <button className="cc-del" title={t("Remove")} onClick={() => void run(api.llmCacheRemove(e.key))}>
+                ✕
+              </button>
+            </div>
+          ))}
+          <button className="linklike" onClick={() => void run(api.llmCacheRemove())}>
+            {t("Remove all")}
+          </button>
+        </div>
+      )}
+      {advice.length > 0 && (
+        <div className="small">
+          <b>{t("Asked more than once (worth caching):")}</b>
+          {advice.slice(0, 10).map((a) => (
+            <div key={a.sessions.join(",")} className="pb-path-row">
+              <span className="mono pb-path" title={a.url}>
+                {a.model} · {t("{n}×", { n: a.sessions.length })} · {t("{tokens} tokens, ≈ {usd} for the repeats", { tokens: a.repeatTokens, usd: usd(a.repeatUsd) })}
+              </span>
+              <button className="linklike" onClick={() => void api.llmCacheSet(a.sessions[0], true).then(load, (e) => say(String(e), "error"))}>
+                {t("Cache")}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 /** Settings → Bodies & Storage → LLM prices: own ones, a list fetched on request, built-in. */
 function LlmPriceOptions() {
   const [info, setInfo] = useState<LlmPricesInfo | null>(null);
@@ -1028,6 +1096,7 @@ function OptionsDialog() {
             </label>
             <ProtobufOptions s={s} up={up} />
             <LlmPriceOptions />
+            <AgentCacheOptions />
           </>
         )}
       </div>

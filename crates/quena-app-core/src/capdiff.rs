@@ -403,6 +403,10 @@ impl AppCore {
 }
 
 /// JSON with object keys sorted, for comparing content.
+pub(crate) fn canonical_json(v: &serde_json::Value) -> String {
+    canonical(v)
+}
+
 fn canonical(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::Object(m) => {

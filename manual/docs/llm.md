@@ -86,6 +86,30 @@ cached price. Discounts and batch prices are not known, and models without a pri
    as published in 2025, matched like the fetched list (a newer `claude-opus-4-7` does not
    get the price of `claude-opus-4`).
 
+## Agent cache
+
+The agent cache answers a call that was answered before, without asking the model again: an
+agent or an app under development that sends the same prompt twice pays and waits only
+once.
+
+- In the **LLM** view of a successful call, check **Cache this answer**. From then on, the
+  same request is answered by Quena from the kept answer, streamed answers as recorded.
+- *Settings → Bodies & Storage → Agent cache → Cache every LLM call* caches each successful
+  call by itself.
+- "The same request" means the same method and URL (an API key in `?key=` does not count)
+  and the same JSON body; key order, spacing and the fields `user` and `metadata` do not
+  count. Headers and credentials do not count either.
+- A session answered from the cache shows *Answered by Quena from the agent cache* with the
+  tokens, estimated cost and time saved (flag `x-quena-cache`); its tokens and cost are not
+  added up in the columns and *Statistics*, as nothing was spent.
+- The settings list the kept answers with their hits and the total saved, remove single ones
+  or all, and name calls of the capture **asked more than once** that are not cached yet,
+  with what the repeats cost — *Cache* caches them.
+- Mock rules come first: a request a mock rule answers never reaches the cache.
+
+The answers are kept in `llm-cache/` in the data directory and stay over restarts. Agents use
+`llm_cache_status` and, with full control, `cache_llm_calls` ([MCP](mcp.md)).
+
 ## Replay answers without calling the model
 
 To test an application without paying for (or waiting on) the model, answer its calls from

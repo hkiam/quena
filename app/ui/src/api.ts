@@ -1043,6 +1043,37 @@ export interface Msgpack {
   error: string | null;
   truncated: boolean;
 }
+/** Agent cache: LLM answers served again for the same request. */
+export interface CacheEntry {
+  key: string;
+  method: string;
+  url: string;
+  provider: string;
+  model: string;
+  status: number;
+  tokens: number;
+  costUsd: number | null;
+  durationMs: number | null;
+  source: number;
+  created: number;
+  hits: number;
+}
+export interface CacheStatus {
+  auto: boolean;
+  entries: CacheEntry[];
+  hits: number;
+  savedTokens: number;
+  savedUsd: number;
+  savedMs: number;
+  folder: string;
+}
+export interface CacheAdvice {
+  model: string;
+  url: string;
+  sessions: number[];
+  repeatTokens: number;
+  repeatUsd: number;
+}
 /** LLM prices: own file, fetched list, built-in list. */
 export interface LlmPricesInfo {
   path: string;
@@ -1174,6 +1205,13 @@ export const api = {
   autosaveNow: () => invoke<string | null>("autosave_now"),
   mcpSetupClient: (client: "claudeCode" | "vsCode" | "cursor" | "codex") => invoke<string>("mcp_setup_client", { client }),
   mcpInstallSkill: (target: "claudeCode" | "codex") => invoke<string>("mcp_install_skill", { target }),
+  llmCacheStatus: () => invoke<CacheStatus>("llm_cache_status"),
+  llmCacheAdvice: () => invoke<CacheAdvice[]>("llm_cache_advice"),
+  /** Whether session `id` is cached; with `on`, cache or forget it first. */
+  llmCacheSet: (id: number, on?: boolean) => invoke<boolean>("llm_cache_set", { id, on }),
+  llmCacheAuto: (on: boolean) => invoke<CacheStatus>("llm_cache_auto", { on }),
+  /** Remove one entry, or (no key) all. */
+  llmCacheRemove: (key?: string) => invoke<CacheStatus>("llm_cache_remove", { key }),
   llmPricesInfo: () => invoke<LlmPricesInfo>("llm_prices_info"),
   llmPricesUpdate: () => invoke<LlmPricesInfo>("llm_prices_update"),
   llmPricesForget: () => invoke<LlmPricesInfo>("llm_prices_forget"),

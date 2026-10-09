@@ -8,6 +8,12 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Agent cache**: an LLM API call answered before is answered by Quena again, without asking
+  the model (same URL and JSON body; key order, `user` and `metadata` not counting). Cache a
+  call in the *LLM* view or every call (*Settings → Bodies & Storage → Agent cache*); hits
+  show the tokens, cost and time saved and spend nothing in the totals; calls asked more
+  than once are pointed out. Mock rules come first. MCP: `llm_cache_status`,
+  `cache_llm_calls`.
 - **AI agents**: the diagnostics as MCP tools (`run_diagnostics`, `get_diagnostics_report`;
   findings with evidence and session ids, URLs redacted like everything else), MCP prompts
   (`debug_failures`, `analyze_performance`, `explain_session`, `llm_costs`, `mock_endpoint`),

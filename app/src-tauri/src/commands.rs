@@ -491,6 +491,47 @@ async fn autosave_reveal(core: State<'_, Core>) -> R<()> {
     quena_platform::open(&dir.display().to_string()).map_err(e)
 }
 
+#[tauri::command]
+async fn llm_cache_status(core: State<'_, Core>) -> R<quena_app_core::llm_cache::CacheStatus> {
+    let core = core.inner().clone();
+    blocking(move || core.llm_cache_status().map_err(e)).await
+}
+
+#[tauri::command]
+async fn llm_cache_advice(core: State<'_, Core>) -> R<Vec<quena_app_core::llm_cache::CacheAdvice>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.llm_cache_advice())).await
+}
+
+/// Whether session `id` is cached; with `on`, cache or forget it first.
+#[tauri::command]
+async fn llm_cache_set(core: State<'_, Core>, id: u64, on: Option<bool>) -> R<bool> {
+    let core = core.inner().clone();
+    blocking(move || {
+        if let Some(on) = on {
+            core.llm_cache_set(id, on).map_err(e)?;
+        }
+        Ok(core.llm_cached(id))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn llm_cache_auto(core: State<'_, Core>, on: bool) -> R<quena_app_core::llm_cache::CacheStatus> {
+    let core = core.inner().clone();
+    blocking(move || core.llm_cache_set_auto(on).map_err(e)).await
+}
+
+#[tauri::command]
+async fn llm_cache_remove(core: State<'_, Core>, key: Option<String>) -> R<quena_app_core::llm_cache::CacheStatus> {
+    let core = core.inner().clone();
+    blocking(move || match key {
+        Some(k) => core.llm_cache_remove(&k).map_err(e),
+        None => core.llm_cache_clear().map_err(e),
+    })
+    .await
+}
+
 /// Add Quena's MCP server to an agent's configuration.
 #[tauri::command]
 async fn mcp_setup_client(core: State<'_, Core>, client: quena_app_core::mcp_setup::McpClient) -> R<String> {
@@ -1218,6 +1259,11 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         autosave_now,
         llm_prices_info,
         mcp_setup_client,
+        llm_cache_status,
+        llm_cache_advice,
+        llm_cache_set,
+        llm_cache_auto,
+        llm_cache_remove,
         mcp_install_skill,
         llm_prices_update,
         llm_prices_forget,

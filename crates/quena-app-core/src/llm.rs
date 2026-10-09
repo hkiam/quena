@@ -1192,7 +1192,12 @@ impl AppCore {
             return;
         }
         let Some(call) = self.llm(id) else { return };
-        let flags = flags_of(&call);
+        let mut flags = flags_of(&call);
+        // Answered from the agent cache: nothing was spent, so no tokens or cost to add up.
+        let hit = cap.detail(id).is_some_and(|d| d.extra_flags.iter().any(|(k, _)| k == crate::llm_cache::CACHE_FLAG));
+        if hit {
+            flags.retain(|(k, _)| k != LLM_TOKENS_FLAG && k != LLM_COST_FLAG);
+        }
         let set = |d: &mut SessionDetail| {
             d.extra_flags.retain(|(k, _)| !k.starts_with(LLM_FLAG));
             d.extra_flags.extend(flags.iter().cloned());
@@ -1200,10 +1205,13 @@ impl AppCore {
         // Still being written (bodies pending): change the live session, it persists itself.
         if let Some(live) = cap.live(id) {
             live.update(set);
+        } else if !cap.update_detail(id, set) {
+            // Removed meanwhile.
             return;
         }
-        // Only while it is there (not removed meanwhile).
-        cap.update_detail(id, set);
+        if !hit {
+            self.llm_cache_auto(id);
+        }
     }
 }
 

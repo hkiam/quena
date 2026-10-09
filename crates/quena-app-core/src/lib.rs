@@ -18,6 +18,7 @@ pub mod find;
 pub mod grpc;
 pub mod launch;
 pub mod llm;
+pub mod llm_cache;
 pub mod logbuf;
 pub mod mock;
 pub mod mockgen;

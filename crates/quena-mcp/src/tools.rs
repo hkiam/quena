@@ -119,6 +119,14 @@ static TOOLS: &[Tool] = &[
         run: get_llm_call,
     },
     Tool {
+        name: "llm_cache_status",
+        description: "The agent cache: LLM API answers Quena serves again for the same request (entries with model, hits, saved tokens/cost/time), whether every call is cached, and repeated calls in the capture worth caching.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({})),
+        run: llm_cache_status,
+    },
+    Tool {
         name: "get_body",
         description: "Read part of a request or response body: `length` bytes from `offset` of the decoded body (or the raw bytes with `decoded: false`). `more: true` means there is more after this piece.",
         write: false,
@@ -225,6 +233,14 @@ static TOOLS: &[Tool] = &[
         run: get_breakpoints,
     },
     // ----------------------------------------------------------------- write
+    Tool {
+        name: "cache_llm_calls",
+        description: "Agent cache: cache (`on`: true) or forget the answers of LLM API call sessions `ids`; the next identical request (same URL and JSON body, key order and `user`/`metadata` not counting) is answered by Quena without asking the model. `auto` true/false turns caching of every LLM call on or off.",
+        write: true,
+        destructive: false,
+        schema: || obj(json!({ "ids": { "type": "array", "items": { "type": "integer" } }, "on": { "type": "boolean" }, "auto": { "type": "boolean" } })),
+        run: cache_llm_calls,
+    },
     Tool {
         name: "set_capture",
         description: "Start or stop capturing (Quena then acts as system proxy if configured so).",
@@ -1183,6 +1199,52 @@ fn report_json(core: &Arc<AppCore>, all: bool) -> Result<Value> {
         "summary": { "critical": r.summary.critical, "warning": r.summary.warning, "info": r.summary.info, "headline": r.summary.headline.iter().map(|x| t(x)).collect::<Vec<_>>() },
         "findings": findings,
     }))
+}
+
+fn llm_cache_status(core: &Arc<AppCore>, _: Value) -> Result<Value> {
+    let st = core.llm_cache_status()?;
+    let mut view = View::new(core, 0);
+    let entries: Vec<Value> = st
+        .entries
+        .iter()
+        .take(200)
+        .map(|e| json!({ "key": e.key, "url": view.url(&e.url), "model": e.model, "hits": e.hits, "tokens": e.tokens, "costUsd": e.cost_usd, "durationMs": e.duration_ms, "source": e.source }))
+        .collect();
+    let advice: Vec<Value> = core.llm_cache_advice().iter().map(|a| json!({ "model": a.model, "url": view.url(&a.url), "sessions": a.sessions, "repeatTokens": a.repeat_tokens, "repeatUsd": a.repeat_usd })).collect();
+    Ok(json!({ "auto": st.auto, "hits": st.hits, "savedTokens": st.saved_tokens, "savedUsd": st.saved_usd, "savedMs": st.saved_ms, "entries": entries, "worthCaching": advice }))
+}
+
+#[derive(Deserialize)]
+struct CacheArgs {
+    #[serde(default)]
+    ids: Vec<SessionId>,
+    #[serde(default = "yes")]
+    on: bool,
+    auto: Option<bool>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn cache_llm_calls(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: CacheArgs = args(a)?;
+    if let Some(auto) = a.auto {
+        core.llm_cache_set_auto(auto)?;
+    }
+    let mut done = Vec::new();
+    let mut failed = Vec::new();
+    for id in a.ids.iter().take(500) {
+        match core.llm_cache_set(*id, a.on) {
+            Ok(()) => done.push(*id),
+            Err(e) => failed.push(json!({ "id": id, "error": format!("{e:#}") })),
+        }
+    }
+    llm_cache_status(core, Value::Null).map(|mut v| {
+        v["changed"] = json!(done);
+        v["failed"] = json!(failed);
+        v
+    })
 }
 
 fn get_llm_call(core: &Arc<AppCore>, a: Value) -> Result<Value> {

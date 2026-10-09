@@ -103,6 +103,8 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `compare_captures` | | two captures in the list compared: changed, new and gone requests ([Compare captures](analyze.md#compare-captures)) |
 | `get_llm_call` | | an [LLM API call](llm.md) taken apart: model, messages, tools, answer, tokens, estimated cost |
 | `run_diagnostics` | | runs the [diagnostics](diagnostics.md) over all sessions, a filter or chosen ids (profile, hosts, processes) and returns the findings with severity, evidence, recommendations and session ids; the report also shows in the *Diagnostics* tab |
+| `llm_cache_status` | | the [agent cache](llm.md#agent-cache): kept answers with hits and savings, whether every call is cached, repeated calls worth caching |
+| `cache_llm_calls` | yes | cache or forget the answers of LLM call sessions; turn *Cache every LLM call* on or off |
 | `get_diagnostics_report` | | the last diagnostics report as findings, or the analyzer's profiles when there is none |
 | `search_sessions` | | text or regex in URLs, headers, bodies |
 | `statistics` | | bytes, status codes, content types, hosts |

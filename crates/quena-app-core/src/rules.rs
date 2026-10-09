@@ -716,6 +716,8 @@ pub struct Rules {
     script_enabled: AtomicBool,
     /// Rewrite rules (body, header and status changes of real traffic).
     pub rewrite: crate::rewrite::Rewriter,
+    /// Answers to LLM API calls served again (agent cache).
+    pub llm_cache: crate::llm_cache::LlmCache,
 }
 
 fn parse_head_text(text: &str) -> (String, Headers) {
@@ -802,6 +804,7 @@ impl Rules {
             script_path: data_dir.join("rules.js"),
             script_enabled: AtomicBool::new(false),
             rewrite: crate::rewrite::Rewriter::load(data_dir),
+            llm_cache: crate::llm_cache::LlmCache::load(data_dir),
         });
         let _ = r.set_autoresponder(ar, false);
         r
@@ -1363,6 +1366,12 @@ impl Rules {
     }
 
     /// Bytes as a new body of the current capture.
+    /// Whether the agent cache looks at this request (an LLM API call while it holds answers
+    /// or caches every call).
+    fn cache_wants(&self, head: &RequestHead) -> bool {
+        self.llm_cache.active() && crate::llm::api_of(&head.method, &head.url).is_some()
+    }
+
     fn store_bytes(&self, bytes: &[u8]) -> Option<Body> {
         Some(self.core()?.capture().bodies.store_bytes(bytes))
     }
@@ -1461,7 +1470,7 @@ fn fix_length(h: &mut Headers, body: &Body) {
 
 impl Interceptor for Rules {
     fn request_mode(&self, s: &SessionView, head: &RequestHead) -> Mode {
-        if self.bp_request(s, head) || self.needs_request_body() || self.rewrite.request_needs_body(head) {
+        if self.bp_request(s, head) || self.needs_request_body() || self.rewrite.request_needs_body(head) || self.cache_wants(head) {
             Mode::Buffer
         } else {
             Mode::Stream
@@ -1470,7 +1479,12 @@ impl Interceptor for Rules {
 
     fn request_hold_limit(&self, s: &SessionView, head: &RequestHead) -> Option<u64> {
         // Breakpoints and body matchers need the whole body; only rewriting can give up.
-        if self.bp_request(s, head) || self.needs_request_body() { None } else { Some(self.rewrite.max_body() as u64) }
+        if self.bp_request(s, head) || self.needs_request_body() {
+            None
+        } else {
+            let cache = if self.cache_wants(head) { crate::llm_cache::MAX_REQUEST as u64 } else { 0 };
+            Some((self.rewrite.max_body() as u64).max(cache))
+        }
     }
 
     fn on_request(&self, s: SessionView, head: RequestHead, body: Option<Body>) -> BoxFuture<RequestAction> {
@@ -1531,6 +1545,27 @@ impl Interceptor for Rules {
                 && let Some((h, b)) = this.synthetic(404, "text/plain; charset=utf-8", b"[Quena] Mock Rules: no rule matched and unmatched requests are not passed through", &[])
             {
                 return RequestAction::Respond { head: h, body: b, delay_ms: 0 };
+            }
+            // 1a. Agent cache: the same LLM API call answered before (mock rules came first).
+            if let Some(b) = &body
+                && this.cache_wants(&head)
+            {
+                let bytes = quena_body::text::decoded_prefix(b, &crate::dto::spec_of(&head.headers), crate::llm_cache::MAX_REQUEST + 1);
+                if bytes.len() <= crate::llm_cache::MAX_REQUEST
+                    && let Some(key) = crate::llm_cache::key_of(&head.method, &head.url, &bytes)
+                    && let Some((e, answer)) = this.llm_cache.hit(key)
+                    && let Some(body) = this.store_bytes(&answer)
+                {
+                    let flag = crate::llm_cache::hit_flag(&e);
+                    s.live.update(|d| {
+                        d.extra_flags.retain(|(k, _)| k != crate::llm_cache::CACHE_FLAG);
+                        d.extra_flags.push((crate::llm_cache::CACHE_FLAG.into(), flag.clone()));
+                        if d.summary.comment.is_empty() {
+                            d.summary.comment = format!("Agent cache: answer of #{}", e.source);
+                        }
+                    });
+                    return RequestAction::Respond { head: crate::llm_cache::response_of(&e), body, delay_ms: 0 };
+                }
             }
             // 1b. Script onBeforeRequest (heads/metadata only; bodies keep streaming).
             if this.script_active() && this.script.has_request_hook() {

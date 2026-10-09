@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, type Detail, type LlmCall, type LlmPart } from "../api";
 import { fmtInt, fmtUsd } from "../lib/format";
 import { t } from "../i18n";
+import { say } from "../store";
 
 /** URLs of LLM APIs (mirrors the core's recognition; POST only). */
 export function llmCandidate(detail: Detail): boolean {
@@ -82,6 +83,34 @@ function Usage({ c }: { c: LlmCall }) {
   );
 }
 
+/** Agent cache: this call answered from the cache, or a switch to cache its answer. */
+function CacheBar({ detail }: { detail: Detail }) {
+  const id = detail.summary.id;
+  const hit = detail.extraFlags.find(([k]) => k === "x-quena-cache")?.[1];
+  const [cached, setCached] = useState<boolean | null>(null);
+  const done = detail.summary.state === "done" && detail.summary.status >= 200 && detail.summary.status < 300;
+  useEffect(() => {
+    if (hit || !done) return;
+    api.llmCacheSet(id).then(setCached, () => setCached(null));
+  }, [id, hit, done]);
+  if (hit) return <div className="llm-cache llm-cache-hit">{t("Answered by Quena from the agent cache: {what}", { what: hit })}</div>;
+  if (!done || cached === null) return null;
+  return (
+    <label className="f-check llm-cache" title={t("The same request (URL and JSON body; key order, user and metadata do not count) is then answered by Quena without asking the model. Settings → Bodies & Storage → Agent cache.")}>
+      <input
+        type="checkbox"
+        checked={cached}
+        onChange={(e) =>
+          api.llmCacheSet(id, e.target.checked).then(setCached, (err) => {
+            say(String(err), "error");
+          })
+        }
+      />{" "}
+      {t("Cache this answer (agent cache)")}
+    </label>
+  );
+}
+
 export function LlmView({ detail }: { detail: Detail }) {
   const [c, setC] = useState<LlmCall | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +140,7 @@ export function LlmView({ detail }: { detail: Detail }) {
         <span className="tp-spacer" />
         <Usage c={c} />
       </div>
+      <CacheBar detail={detail} />
       {c.error && <div className="mocks-error">{c.error}</div>}
       {c.notes.map((n) => (
         <div key={n} className="muted small">
