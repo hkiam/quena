@@ -28,6 +28,7 @@ pub mod wsframe;
 pub mod util;
 
 pub use body::{BoxError, ProxyBody, empty, full};
+pub use connector::cert_warning;
 pub use forward::{ExecuteOptions, Upstream, execute, execute_with};
 pub use hooks::{Interceptor, NoInterceptor, RequestAction, ResponseAction, ResponseHeadAction, SessionView};
 pub use auth::{CredentialResolver, NoCredentials};
@@ -79,6 +80,8 @@ pub struct ProxyConfig {
     pub skip_decryption: Vec<String>,
     pub ignore_cert_errors: bool,
     pub ignore_cert_errors_hosts: Vec<String>,
+    /// Sessions whose server certificate expires within this many days are flagged (0: never).
+    pub cert_warn_days: u32,
     pub enable_http2: bool,
     pub http2_downgrade_hosts: Vec<String>,
     pub upstream: Option<(String, u16)>,
@@ -124,6 +127,7 @@ impl Default for ProxyConfig {
             skip_decryption: vec![],
             ignore_cert_errors: false,
             ignore_cert_errors_hosts: vec![],
+            cert_warn_days: 30,
             enable_http2: true,
             http2_downgrade_hosts: vec![],
             upstream: None,

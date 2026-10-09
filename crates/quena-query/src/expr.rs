@@ -50,6 +50,8 @@ pub enum Field {
     Session,
     /// Reverse proxy entry (`via == api`).
     Via,
+    /// Days until the server certificate expires (0: expired).
+    CertDays,
 }
 
 impl Field {
@@ -77,11 +79,12 @@ impl Field {
             "trace" | "correlation" => Field::Trace,
             "session" | "sessioncookie" => Field::Session,
             "via" | "reverse" => Field::Via,
+            "certdays" | "cert" => Field::CertDays,
             _ => return None,
         })
     }
     fn numeric(self) -> bool {
-        matches!(self, Field::Id | Field::Status | Field::Size | Field::ReqSize | Field::Duration | Field::Conn)
+        matches!(self, Field::Id | Field::Status | Field::Size | Field::ReqSize | Field::Duration | Field::Conn | Field::CertDays)
     }
 }
 
@@ -153,6 +156,7 @@ fn text_of(f: Field, s: &SessionSummary) -> String {
         Field::Size => s.response_body_len.to_string(),
         Field::ReqSize => s.request_body_len.to_string(),
         Field::Duration => s.duration_ms.map(|d| d.to_string()).unwrap_or_default(),
+        Field::CertDays => cert_days(s).map(|d| d.to_string()).unwrap_or_default(),
     }
 }
 
@@ -164,8 +168,15 @@ fn num_of(f: Field, s: &SessionSummary) -> Option<u64> {
         Field::ReqSize => s.request_body_len,
         Field::Duration => s.duration_ms? as u64,
         Field::Conn => s.conn,
+        Field::CertDays => cert_days(s)?,
         _ => return None,
     })
+}
+
+/// Whole days until the server certificate expires; 0 once it has.
+fn cert_days(s: &SessionSummary) -> Option<u64> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    Some((s.cert_expires? - now).max(0) as u64 / 86_400)
 }
 
 fn eval_cmp(f: Field, op: Op, v: &Value, s: &SessionSummary) -> bool {

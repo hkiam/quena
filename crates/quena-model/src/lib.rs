@@ -241,6 +241,16 @@ pub struct TlsInfo {
     pub alpn: Option<String>,
     /// Upstream certificate chain (PEM), leaf first.
     pub server_chain_pem: Vec<String>,
+    /// The server certificate's end of validity (Unix seconds), subject and issuer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_after: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
+    /// The server certificate expired or expires soon ([`CERT_FLAG`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -315,6 +325,9 @@ pub struct SessionSummary {
     /// (empty: the proxy port, or Quena's own request).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub via: String,
+    /// End of validity of the server's certificate (Unix seconds), for HTTPS sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_expires: Option<i64>,
 }
 
 impl SessionSummary {
@@ -358,6 +371,9 @@ pub struct SessionDetail {
 /// proxy entry, `SOCKS5` or `transparent`.
 pub const VIA_FLAG: &str = "x-quena-via";
 
+/// Session flag: the server's certificate expired or expires soon (the text says when).
+pub const CERT_FLAG: &str = "x-quena-cert";
+
 impl SessionDetail {
     /// The listener the request came through (reverse proxy entry, SOCKS5, transparent), if any.
     pub fn via(&self) -> String {
@@ -382,6 +398,7 @@ impl SessionDetail {
         s.trace = correlation::trace_id(&self.request.headers);
         s.session = correlation::session_key(&self.request.headers);
         s.via = self.extra_flags.iter().find(|(k, _)| k == VIA_FLAG).map(|(_, v)| v.clone()).unwrap_or_default();
+        s.cert_expires = self.connection.server_tls.as_ref().and_then(|t| t.not_after);
         s.request_body_len = self.request_body.wire_len();
         if let Some(resp) = &self.response {
             s.status = resp.status;

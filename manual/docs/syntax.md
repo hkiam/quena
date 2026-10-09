@@ -64,6 +64,7 @@ not kind == tunnel
 | `trace` | `correlation` | trace or correlation id of the request |
 | `session` | `sessioncookie` | session cookie as `NAME #hash` |
 | `via` | `reverse` | how the request came in: a [reverse proxy](reverse-proxy.md) entry, `SOCKS5` or `transparent` |
+| `certdays` | `cert` | days until the server's certificate expires (`0`: expired); e.g. `certdays < 30` |
 
 ### Operators
 

@@ -8,7 +8,7 @@ use parking_lot::{Mutex, RwLock};
 use quena_proxy::util::{Cidr, split_host_port, split_list};
 use quena_proxy::{DecryptScope, Proxy, ProxyConfig, UpstreamResolver};
 use quena_tls::CertAuthority;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -54,6 +54,37 @@ pub struct CaInfo {
     pub sha256: String,
     pub path: String,
     pub pem: String,
+    /// Common name of the CA certificate.
+    pub name: String,
+    pub issuer: String,
+    /// End of validity (Unix seconds).
+    pub not_after: i64,
+    /// Certificates above the CA sent along (an imported intermediate CA).
+    pub chain: usize,
+    /// Quena created this CA (not imported).
+    pub generated: bool,
+}
+
+/// Where an imported CA comes from: a PEM certificate and key, or a PKCS#12 file.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CaImport {
+    pub cert_path: String,
+    pub key_path: String,
+    pub p12_path: String,
+    pub password: String,
+}
+
+/// Export formats of the CA.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CaExportFormat {
+    /// Certificate only, PEM.
+    Pem,
+    /// Certificate only, DER.
+    Der,
+    /// Certificate, chain and private key, password protected.
+    P12,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +144,7 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, system_bypass
         skip_decryption: split_list(&s.https.skip_decryption),
         ignore_cert_errors: s.https.ignore_cert_errors,
         ignore_cert_errors_hosts: split_list(&s.https.ignore_cert_errors_hosts),
+        cert_warn_days: s.https.cert_warn_days,
         enable_http2: s.https.enable_http2,
         http2_downgrade_hosts: split_list(&s.https.http2_downgrade_hosts),
         upstream,
@@ -208,14 +240,22 @@ impl ProxyEngine {
 
     pub fn ca_info(&self) -> CaInfo {
         match self.ca.read().clone() {
-            Some(ca) => CaInfo {
-                exists: true,
-                trusted: quena_platform::is_root_ca_trusted(&ca.cert_path()),
-                sha256: ca.sha256_fingerprint(),
-                path: ca.cert_path().display().to_string(),
-                pem: ca.cert_pem().to_string(),
-            },
-            None => CaInfo { exists: false, trusted: false, sha256: String::new(), path: String::new(), pem: String::new() },
+            Some(ca) => {
+                let f = ca.facts();
+                CaInfo {
+                    exists: true,
+                    trusted: quena_platform::is_root_ca_trusted(&ca.cert_path()),
+                    sha256: ca.sha256_fingerprint(),
+                    path: ca.cert_path().display().to_string(),
+                    pem: ca.cert_pem().to_string(),
+                    name: ca.common_name(),
+                    generated: f.common_name.as_deref() == Some(quena_tls::CA_COMMON_NAME) && f.subject.contains("Quena"),
+                    issuer: f.issuer,
+                    not_after: f.not_after,
+                    chain: ca.chain_len(),
+                }
+            }
+            None => CaInfo { exists: false, trusted: false, sha256: String::new(), path: String::new(), pem: String::new(), name: String::new(), issuer: String::new(), not_after: 0, chain: 0, generated: true },
         }
     }
 
@@ -243,14 +283,39 @@ impl ProxyEngine {
         Ok(self.ca_info())
     }
 
-    pub fn ca_export(&self, path: PathBuf, der: bool) -> Result<()> {
+    pub fn ca_export(&self, path: PathBuf, format: CaExportFormat, password: &str) -> Result<()> {
         let ca = self.ensure_ca()?;
-        if der {
-            std::fs::write(path, ca.cert_der())?;
-        } else {
-            std::fs::write(path, ca.cert_pem())?;
+        match format {
+            CaExportFormat::Der => std::fs::write(path, ca.cert_der())?,
+            CaExportFormat::Pem => std::fs::write(path, ca.cert_pem())?,
+            CaExportFormat::P12 => {
+                let data = ca.to_p12(password)?;
+                std::fs::write(&path, data)?;
+                tracing::warn!(target: "quena", "root CA exported with its private key to {}", path.display());
+            }
         }
         Ok(())
+    }
+
+    /// Use an existing CA (e.g. the company's interception CA) instead of the current one.
+    /// The current CA's files are kept as `*.bak-<time>` in the data directory.
+    pub fn ca_import(&self, src: &CaImport) -> Result<CaInfo> {
+        let read = |p: &str| std::fs::read(p.trim()).with_context(|| format!("cannot read {p}"));
+        let m = if !src.p12_path.trim().is_empty() {
+            quena_tls::ca_from_p12(&read(&src.p12_path)?, &src.password)?
+        } else {
+            if src.cert_path.trim().is_empty() || src.key_path.trim().is_empty() {
+                return Err(anyhow!("choose the certificate and its private key, or a .p12 file"));
+            }
+            let cert = String::from_utf8_lossy(&read(&src.cert_path)?).into_owned();
+            let key = String::from_utf8_lossy(&read(&src.key_path)?).into_owned();
+            quena_tls::ca_from_pem(&cert, &key)?
+        };
+        let ca = Arc::new(CertAuthority::import(&self.data_dir, &m)?);
+        tracing::info!(target: "quena", "root CA replaced by {}", ca.common_name());
+        *self.ca.write() = Some(ca.clone());
+        self.proxy.set_ca(Some(ca));
+        Ok(self.ca_info())
     }
 
     pub fn device_info(&self, core: &AppCore) -> DeviceInfo {

@@ -34,6 +34,8 @@ pub enum Column {
     Started,
     /// Reverse proxy entry the request came through.
     Via,
+    /// End of validity of the server certificate.
+    Cert,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -122,6 +124,7 @@ fn compare(a: &SessionSummary, b: &SessionSummary, c: Column) -> Ordering {
         Column::Duration => a.duration_ms.cmp(&b.duration_ms),
         Column::Started => a.started_at.cmp(&b.started_at),
         Column::Via => a.via.cmp(&b.via),
+        Column::Cert => a.cert_expires.cmp(&b.cert_expires),
     };
     o.then(a.id.cmp(&b.id))
 }

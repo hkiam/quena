@@ -1,9 +1,12 @@
 //! TLS for Quena: a local root CA, on-the-fly leaf certificates for HTTPS
 //! interception and client configurations for upstream connections.
 //!
-//! Security: the CA private key is stored with 0600
-//! permissions in the data directory and never exported; the CA can be
-//! removed and regenerated at any time.
+//! Security: the CA private key is stored with 0600 permissions in the data directory.
+//! It leaves it only when the user exports it on purpose (`.p12` with a password); the CA
+//! can be removed, regenerated or replaced by an imported one at any time.
+
+mod import;
+pub use import::{CaMaterial, CertFacts, ca_from_p12, ca_from_pem, cert_facts, check_ca, date};
 
 use parking_lot::Mutex;
 use rcgen::{
@@ -36,6 +39,8 @@ pub type Result<T> = std::result::Result<T, TlsError>;
 pub const CA_CERT_FILE: &str = "quena-root-ca.pem";
 pub const CA_KEY_FILE: &str = "quena-root-ca.key";
 pub const CA_COMMON_NAME: &str = "Quena Root CA";
+/// Certificates above an imported intermediate CA, sent along with every leaf.
+pub const CA_CHAIN_FILE: &str = "quena-root-ca-chain.pem";
 
 static INIT: Once = Once::new();
 
@@ -56,6 +61,8 @@ pub struct CertAuthority {
     cert_pem: String,
     cert_der: CertificateDer<'static>,
     issuer: Issuer<'static, KeyPair>,
+    /// Chain above the CA (imported intermediate CAs), sent after it.
+    chain: Vec<CertificateDer<'static>>,
     /// One key pair shared by all leaf certificates (fast issuance).
     leaf_key: KeyPair,
     leaf_signing: Arc<dyn rustls::sign::SigningKey>,
@@ -166,6 +173,10 @@ impl CertAuthority {
             .next()
             .ok_or_else(|| TlsError::Other("CA certificate missing".into()))??;
         let issuer = Issuer::from_ca_cert_pem(&cert_pem, key)?;
+        let chain = match std::fs::read(dir.join(CA_CHAIN_FILE)) {
+            Ok(pem) => rustls_pemfile::certs(&mut pem.as_slice()).collect::<std::result::Result<Vec<_>, _>>()?,
+            Err(_) => Vec::new(),
+        };
         let leaf_key = KeyPair::generate()?;
         let pk = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(leaf_key.serialize_der()));
         let leaf_signing = rustls::crypto::ring::sign::any_supported_type(&pk)?;
@@ -174,6 +185,7 @@ impl CertAuthority {
             cert_pem,
             cert_der: der,
             issuer,
+            chain,
             leaf_key,
             leaf_signing,
             leaves: Mutex::new(lru::LruCache::new(NonZeroUsize::new(2048).unwrap())),
@@ -186,6 +198,7 @@ impl CertAuthority {
         let dir = dir.into();
         let _ = std::fs::remove_file(dir.join(CA_CERT_FILE));
         let _ = std::fs::remove_file(dir.join(CA_KEY_FILE));
+        let _ = std::fs::remove_file(dir.join(CA_CHAIN_FILE));
         Self::load_or_create(dir)
     }
 
@@ -254,7 +267,9 @@ impl CertAuthority {
         p.not_after = now + time::Duration::days(390);
         p.serial_number = Some(random_serial());
         let cert = p.signed_by(&self.leaf_key, &self.issuer)?;
-        let ck = Arc::new(CertifiedKey::new(vec![cert.der().clone(), self.cert_der.clone()], self.leaf_signing.clone()));
+        let mut chain = vec![cert.der().clone(), self.cert_der.clone()];
+        chain.extend(self.chain.iter().cloned());
+        let ck = Arc::new(CertifiedKey::new(chain, self.leaf_signing.clone()));
         self.leaves.lock().put(host, ck.clone());
         Ok(ck)
     }
@@ -282,6 +297,7 @@ impl CertAuthority {
         let b64 = base64::engine::general_purpose::STANDARD.encode(self.cert_der());
         let uuid1 = uuid_like(&self.sha1_fingerprint(), 1);
         let uuid2 = uuid_like(&self.sha1_fingerprint(), 2);
+        let name = self.common_name().replace('&', "&amp;").replace('<', "&lt;");
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -293,7 +309,7 @@ impl CertAuthority {
       <key>PayloadCertificateFileName</key><string>quena-root-ca.cer</string>
       <key>PayloadContent</key><data>{b64}</data>
       <key>PayloadDescription</key><string>Adds the Quena root certificate for HTTPS inspection</string>
-      <key>PayloadDisplayName</key><string>{CA_COMMON_NAME}</string>
+      <key>PayloadDisplayName</key><string>{name}</string>
       <key>PayloadIdentifier</key><string>io.github.hkiam.quena.ca.{uuid1}</string>
       <key>PayloadType</key><string>com.apple.security.root</string>
       <key>PayloadUUID</key><string>{uuid1}</string>

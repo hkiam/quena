@@ -688,6 +688,11 @@ pub(crate) fn record_response_head(live: &Arc<LiveSession>, resp: &Response<Inco
             d.connection.server_conn_reused = reused;
             d.connection.gateway = i.gateway.clone();
             d.connection.server_tls = i.tls.clone();
+            if let Some(w) = i.tls.as_ref().and_then(|t| t.warning.clone())
+                && !d.extra_flags.iter().any(|(k, _)| k == quena_model::CERT_FLAG)
+            {
+                d.extra_flags.push((quena_model::CERT_FLAG.into(), w));
+            }
             if !reused {
                 d.timers.dns_ms = Some(i.dns_ms);
                 d.timers.tcp_connect_ms = Some(i.tcp_ms);

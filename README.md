@@ -207,6 +207,9 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 
 ### Capture
 - HTTP/1.1, **HTTP/2**, HTTPS (on-the-fly certificates), CONNECT tunnels
+- **Use the company CA**: import an existing CA (`.p12`/`.pfx` or PEM, also intermediate CAs
+  with their chain) or export Quena's with its key; sessions to servers whose certificate
+  expires soon are flagged (`certdays < 30`)
 - **Start a browser or terminal** that uses Quena, without the system proxy: Chrome, Edge,
   Brave, Vivaldi, Chromium or Firefox with their own profile, or a shell with proxy and
   root-certificate variables for Node.js, Python, curl and Git

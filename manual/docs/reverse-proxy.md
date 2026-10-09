@@ -152,6 +152,7 @@ can go straight into [`quena-cli diagnose`](ci.md) or into
 | `--preserve-host`, `--forwarded-headers`, `--rewrite-cookie-domain`, `--no-rewrite-location` | as the options above |
 | `--bind-all`, `--allow CIDR` | listen on all interfaces; clients from these networks (default: private ranges) |
 | `--ca-dir DIR` | keep the root certificate in `DIR`, so clients trust it once (otherwise every run makes a new one and prints its path) |
+| `--ca-p12 FILE` | use an existing CA from a PKCS#12 file (password in `QUENA_CA_PASSWORD`), e.g. the company CA clients already trust; see [Use an existing CA](https.md#use-an-existing-ca) |
 | `--insecure` | do not check the target's certificate |
 | `--upstream HOST:PORT` | upstream proxy for the targets |
 | `--rules PATH` | Mock Rules from a Fiddler `.farx` file or a Quena mock package |

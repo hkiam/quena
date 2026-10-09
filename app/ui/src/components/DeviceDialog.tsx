@@ -29,6 +29,10 @@ export function DeviceAssistant() {
   const [iface, setIface] = useState(0);
   const [os, setOs] = useState<"ios" | "android" | "other">("ios");
   const [seen, setSeen] = useState<{ ip: string; https: boolean } | null>(null);
+  const [caName, setCaName] = useState("Quena Root CA");
+  useEffect(() => {
+    api.caInfo().then((c) => c.name && setCaName(c.name), () => {});
+  }, []);
   const version = useStore((s) => s.listVersion);
   const total = useStore((s) => s.listTotal);
 
@@ -94,7 +98,7 @@ export function DeviceAssistant() {
                 <li>{fill(t("Settings → Wi-Fi → (i) of your network → Configure Proxy → Manual: server {addr}, port {port}."), { addr: <b>{addr}</b>, port: <b>{info.port}</b> })}</li>
                 <li>{fill(t("Scan the QR code (or open {url} in Safari) and download the {file} profile."), { url: <span className="mono">{url}</span>, file: <i>.mobileconfig</i> })}</li>
                 <li>{t("Settings → General → VPN & Device Management → install the Quena profile.")}</li>
-                <li>{t("Settings → General → About → Certificate Trust Settings → enable full trust for “Quena Root CA”.")}</li>
+                <li>{t("Settings → General → About → Certificate Trust Settings → enable full trust for “{name}”.", { name: caName })}</li>
               </>
             )}
             {os === "android" && (

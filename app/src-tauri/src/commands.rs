@@ -419,9 +419,16 @@ async fn ca_regenerate(engine: State<'_, Engine>) -> R<CaInfo> {
 }
 
 #[tauri::command]
-async fn ca_export(engine: State<'_, Engine>, path: String, der: bool) -> R<()> {
+async fn ca_export(engine: State<'_, Engine>, path: String, format: quena_app_core::engine::CaExportFormat, password: Option<String>) -> R<()> {
     let e = engine.inner().clone();
-    blocking(move || e.ca_export(path.into(), der).map_err(|x| x.to_string())).await
+    blocking(move || e.ca_export(path.into(), format, password.as_deref().unwrap_or("")).map_err(|x| x.to_string())).await
+}
+
+/// Replace the root CA by an existing one (PEM pair or .p12).
+#[tauri::command]
+async fn ca_import(engine: State<'_, Engine>, source: quena_app_core::engine::CaImport) -> R<CaInfo> {
+    let e = engine.inner().clone();
+    blocking(move || e.ca_import(&source).map_err(|x| x.to_string())).await
 }
 
 #[tauri::command]
@@ -1029,6 +1036,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         ca_remove,
         ca_regenerate,
         ca_export,
+        ca_import,
         device_info,
         replay,
         compose,

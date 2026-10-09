@@ -52,8 +52,9 @@ arrangement.
 
 *Decrypt HTTPS traffic* (off by default), *Decrypt traffic from*, *Skip decryption for*,
 *Ignore server certificate errors (unsafe)*, *Ignore certificate errors for*,
-*Enable HTTP/2*, *Downgrade to HTTP/1.1 for*, and **Certificate management…** — see
-[HTTPS and devices](https.md).
+*Enable HTTP/2*, *Downgrade to HTTP/1.1 for*, and **Certificate management…** (trust,
+export, [import an existing CA](https.md#use-an-existing-ca), *Warn about server
+certificates expiring within (days)*, default 30) — see [HTTPS and devices](https.md).
 
 *Packet captures* holds a **TLS key log file** (`SSLKEYLOGFILE`) used to decrypt HTTPS in
 every imported `.pcap`/`.pcapng` — see [Packet captures](packet-captures.md#decrypting-https).

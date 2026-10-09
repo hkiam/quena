@@ -231,6 +231,10 @@ struct ReverseArgs {
     /// once; without it every run has a new one.
     #[arg(long, value_name = "DIR")]
     ca_dir: Option<PathBuf>,
+    /// Use this CA (e.g. the company's, which clients already trust): a PKCS#12 file with
+    /// certificate and key; the password comes from QUENA_CA_PASSWORD.
+    #[arg(long, value_name = "FILE", conflicts_with = "ca_dir")]
+    ca_p12: Option<PathBuf>,
     /// Do not check the target's certificate.
     #[arg(long)]
     insecure: bool,
@@ -915,6 +919,16 @@ fn reverse(a: ReverseArgs) -> Result<()> {
         for f in [quena_tls::CA_CERT_FILE, quena_tls::CA_KEY_FILE] {
             std::fs::copy(dir.join(f), data.join(f)).with_context(|| dir.join(f).display().to_string())?;
         }
+        if dir.join(quena_tls::CA_CHAIN_FILE).exists() {
+            std::fs::copy(dir.join(quena_tls::CA_CHAIN_FILE), data.join(quena_tls::CA_CHAIN_FILE))?;
+        }
+    }
+    if let Some(p12) = &a.ca_p12 {
+        let bytes = std::fs::read(p12).map_err(|e| usage(format!("--ca-p12 {}: {e}", p12.display())))?;
+        let password = std::env::var("QUENA_CA_PASSWORD").unwrap_or_default();
+        let m = quena_tls::ca_from_p12(&bytes, &password).map_err(|e| usage(format!("--ca-p12 {}: {e}", p12.display())))?;
+        let ca = quena_tls::CertAuthority::import(&data, &m).map_err(|e| usage(format!("--ca-p12 {}: {e}", p12.display())))?;
+        eprintln!("quena-cli: using the CA {}", ca.common_name());
     }
     let mut s = core.settings();
     s.proxy.port = 0;
@@ -968,6 +982,7 @@ fn reverse(a: ReverseArgs) -> Result<()> {
         let ca = data.join(quena_tls::CA_CERT_FILE);
         match &a.ca_dir {
             Some(dir) => eprintln!("quena-cli: HTTPS clients must trust {}", dir.join(quena_tls::CA_CERT_FILE).display()),
+            None if a.ca_p12.is_some() => {}
             None if ca.exists() => eprintln!("quena-cli: HTTPS clients must trust {} (new for this run; keep one with --ca-dir)", ca.display()),
             None => {}
         }

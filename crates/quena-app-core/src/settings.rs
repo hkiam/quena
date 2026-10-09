@@ -305,6 +305,13 @@ pub struct HttpsSettings {
     /// TLS key log (`SSLKEYLOGFILE`, NSS format) used to decrypt packet captures; empty: none.
     #[serde(default)]
     pub tls_key_log_file: String,
+    /// Flag sessions whose server certificate expires within this many days (0: off).
+    #[serde(default = "default_cert_warn_days")]
+    pub cert_warn_days: u32,
+}
+
+fn default_cert_warn_days() -> u32 {
+    30
 }
 
 /// A client certificate (mTLS) for hosts matching `host` (glob).
@@ -331,6 +338,7 @@ impl Default for HttpsSettings {
             http2_downgrade_hosts: String::new(),
             client_certs: Vec::new(),
             tls_key_log_file: String::new(),
+            cert_warn_days: default_cert_warn_days(),
         }
     }
 }

@@ -1,17 +1,116 @@
 // Capture → HTTPS Settings: decryption options and root certificate management.
 import { useEffect, useState } from "react";
 import { save, open } from "@tauri-apps/plugin-dialog";
-import { api, type CaInfo } from "../api";
+import { api, type CaImport, type CaInfo } from "../api";
 import { say, set, useStore } from "../store";
 import { patchSettings } from "../settingsActions";
-import { osNames } from "../lib/format";
+import { fmtDate, osNames } from "../lib/format";
 import { t } from "../i18n";
 import { baseName, keyLogFilters } from "../lib/importFormats";
+
+const plain = { spellCheck: false, autoCorrect: "off", autoCapitalize: "off" } as const;
+const name = (p?: string) => (p ? p.split(/[\\/]/).pop() : "");
+
+/** Use an existing CA instead of Quena's: a PEM certificate with its key, or a .p12 file. */
+function CaImportForm({ ca, onDone, onCancel }: { ca: CaInfo | null; onDone: (c: CaInfo) => void; onCancel: () => void }) {
+  const [src, setSrc] = useState<CaImport>({});
+  const [kind, setKind] = useState<"p12" | "pem">("p12");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pick = async (key: keyof CaImport, exts: string[], label: string) => {
+    const p = await open({ multiple: false, filters: [{ name: label, extensions: exts }] });
+    if (typeof p === "string") setSrc((x) => ({ ...x, [key]: p }));
+  };
+  const ready = kind === "p12" ? !!src.p12Path : !!src.certPath && !!src.keyPath;
+  const go = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const out = await api.caImport(kind === "p12" ? { p12Path: src.p12Path, password: src.password ?? "" } : { certPath: src.certPath, keyPath: src.keyPath });
+      onDone(out);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="ca-form">
+      <p className="small muted">{t("Quena then issues its certificates with this CA, e.g. the company's interception CA that every machine already trusts. The current CA's files are kept in the data folder.")}</p>
+      {ca?.trusted && <p className="small err">{t("The current certificate is trusted: remove it from the trust store first if it is no longer needed.")}</p>}
+      <div className="f-inline">
+        <label className="f-check">
+          <input type="radio" checked={kind === "p12"} onChange={() => setKind("p12")} /> {t("PKCS#12 file (.p12, .pfx)")}
+        </label>
+        <label className="f-check">
+          <input type="radio" checked={kind === "pem"} onChange={() => setKind("pem")} /> {t("Certificate and key (PEM)")}
+        </label>
+      </div>
+      {kind === "p12" ? (
+        <div className="cc-row">
+          <button className="cc-file" onClick={() => void pick("p12Path", ["p12", "pfx"], "PKCS#12")}>
+            {name(src.p12Path) || t("Choose .p12 file…")}
+          </button>
+          <input {...plain} type="password" placeholder={t("password")} value={src.password ?? ""} onChange={(e) => setSrc({ ...src, password: e.target.value })} />
+        </div>
+      ) : (
+        <div className="cc-row">
+          <button className="cc-file" title={src.certPath} onClick={() => void pick("certPath", ["pem", "crt", "cer"], "PEM")}>
+            {name(src.certPath) || t("Certificate…")}
+          </button>
+          <button className="cc-file" title={src.keyPath} onClick={() => void pick("keyPath", ["pem", "key"], "PEM")}>
+            {name(src.keyPath) || t("Private key…")}
+          </button>
+        </div>
+      )}
+      {error && <div className="mocks-error">{error}</div>}
+      <div className="btn-row">
+        <button className="primary" disabled={!ready || busy} onClick={() => void go()}>
+          {t("Use this CA")}
+        </button>
+        <button onClick={onCancel}>{t("Cancel")}</button>
+      </div>
+    </div>
+  );
+}
+
+/** Export the CA with its private key, password protected. */
+function P12ExportForm({ onCancel }: { onCancel: () => void }) {
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const go = async () => {
+    const p = await save({ defaultPath: "quena-root-ca.p12", filters: [{ name: "PKCS#12", extensions: ["p12", "pfx"] }] });
+    if (!p) return;
+    try {
+      await api.caExport(p, "p12", pw);
+      say(t("Exported to {path}", { path: p }));
+      onCancel();
+    } catch (e) {
+      say(String(e), "error");
+    }
+  };
+  return (
+    <div className="ca-form">
+      <p className="small err">{t("The file contains the private key: whoever has it and the password can read HTTPS traffic of every device that trusts this certificate. Share it only with people who should debug with it.")}</p>
+      <div className="cc-row">
+        <input {...plain} type="password" placeholder={t("password")} value={pw} onChange={(e) => setPw(e.target.value)} />
+        <input {...plain} type="password" placeholder={t("repeat password")} value={pw2} onChange={(e) => setPw2(e.target.value)} />
+      </div>
+      <div className="btn-row">
+        <button className="primary" disabled={pw.length < 4 || pw !== pw2} title={pw !== pw2 ? t("The passwords differ") : undefined} onClick={() => void go()}>
+          {t("Export .p12…")}
+        </button>
+        <button onClick={onCancel}>{t("Cancel")}</button>
+      </div>
+    </div>
+  );
+}
 
 export function HttpsPanel() {
   const settings = useStore((s) => s.settings);
   const [ca, setCa] = useState<CaInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState<"import" | "p12" | null>(null);
   const load = () => api.caInfo().then(setCa);
   useEffect(() => {
     load();
@@ -50,6 +149,10 @@ export function HttpsPanel() {
       <label className="f-check">
         <input type="checkbox" checked={h.ignoreCertErrors} onChange={(e) => patchSettings((s) => (s.https.ignoreCertErrors = e.target.checked))} /> {t("Ignore server certificate errors (unsafe)")}
       </label>
+      <div className="f-row">
+        <span>{t("Warn about server certificates expiring within (days)")}</span>
+        <input type="number" min={0} max={3650} defaultValue={h.certWarnDays ?? 30} onBlur={(e) => patchSettings((s) => (s.https.certWarnDays = Math.max(0, Number(e.target.value) || 0)))} />
+      </div>
       <label className="f-check">
         <input type="checkbox" checked={h.enableHttp2} onChange={(e) => patchSettings((s) => (s.https.enableHttp2 = e.target.checked))} /> {t("Enable HTTP/2")}
       </label>
@@ -126,6 +229,12 @@ export function HttpsPanel() {
               {t("Status:")}{" "}
               {ca.trusted ? <b className="ok">{t("trusted by {os}", { os: osNames.os })}</b> : <b className="err">{t("not trusted – browsers will show certificate errors")}</b>}
             </div>
+            <div>
+              <b>{ca.name}</b>
+              {!ca.generated && <span className="muted small"> · {t("imported")}</span>}
+              {ca.chain > 0 && <span className="muted small"> · {t("with {n} chain certificates", { n: ca.chain })}</span>}
+            </div>
+            <div className="small muted">{t("Valid until {date}", { date: fmtDate(ca.notAfter * 1_000_000) })}</div>
             <div className="mono small muted" style={{ wordBreak: "break-all" }}>
               SHA-256 {ca.sha256}
             </div>
@@ -149,11 +258,17 @@ export function HttpsPanel() {
             onClick={async () => {
               const p = await save({ defaultPath: "quena-root-ca.crt", filters: [{ name: t("Certificate"), extensions: ["crt", "pem", "cer", "der"] }] });
               if (!p) return;
-              await api.caExport(p, /\.(cer|der)$/i.test(p));
+              await api.caExport(p, /\.(cer|der)$/i.test(p) ? "der" : "pem");
               say(t("Exported to {path}", { path: p }));
             }}
           >
             {t("Export…")}
+          </button>
+          <button disabled={busy || !ca?.exists} title={t("Certificate and private key, password protected – for another machine or a colleague")} onClick={() => setForm(form === "p12" ? null : "p12")}>
+            {t("Export with key (.p12)…")}
+          </button>
+          <button disabled={busy} title={t("Use an existing CA, e.g. the company's")} onClick={() => setForm(form === "import" ? null : "import")}>
+            {t("Import CA…")}
           </button>
           <button
             disabled={busy || !ca?.exists}
@@ -168,8 +283,20 @@ export function HttpsPanel() {
             {t("Regenerate")}
           </button>
         </div>
+        {form === "import" && (
+          <CaImportForm
+            ca={ca}
+            onCancel={() => setForm(null)}
+            onDone={(c) => {
+              setCa(c);
+              setForm(null);
+              say(t("Quena now uses the CA {name}", { name: c.name }));
+            }}
+          />
+        )}
+        {form === "p12" && <P12ExportForm onCancel={() => setForm(null)} />}
         <p className="small muted">
-          {t("The private key never leaves {machine} (stored with owner-only permissions). Only trust it on machines you use for debugging; remove it afterwards.", { machine: osNames.machine })}
+          {t("The private key stays on {machine} (stored with owner-only permissions) unless you export it as .p12. Only trust the certificate on machines you use for debugging; remove it afterwards.", { machine: osNames.machine })}
         </p>
       </fieldset>
       <p>

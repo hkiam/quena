@@ -62,6 +62,8 @@ export interface SessionSummary {
   session?: string;
   /** Reverse proxy entry the request came through. */
   via?: string;
+  /** End of validity of the server certificate (Unix seconds). */
+  certExpires?: number | null;
 }
 
 /** "Group by" of the session list (crates/quena-index). */
@@ -193,6 +195,11 @@ export interface TlsInfo {
   sni: string | null;
   alpn: string | null;
   serverChainPem: string[];
+  /** Server certificate: end of validity (Unix seconds), subject, issuer, expiry warning. */
+  notAfter?: number | null;
+  subject?: string | null;
+  issuer?: string | null;
+  warning?: string | null;
 }
 
 export interface ConnectionInfo {
@@ -395,7 +402,8 @@ export type Column =
   | "method"
   | "duration"
   | "started"
-  | "via";
+  | "via"
+  | "cert";
 
 export interface Sort {
   column: Column;
@@ -476,6 +484,8 @@ export interface Settings {
     clientCerts: { host: string; certPath: string; keyPath: string }[];
     /** TLS key log (SSLKEYLOGFILE) for decrypting packet captures; "" = none. */
     tlsKeyLogFile: string;
+    /** Flag sessions whose server certificate expires within this many days (0: off). */
+    certWarnDays: number;
   };
   /** Protobuf schemas for gRPC/protobuf bodies: .proto files or folders, import paths, server reflection. */
   protobuf: { protoPaths: string[]; includePaths: string[]; reflection: boolean };
@@ -926,6 +936,20 @@ export interface CaInfo {
   sha256: string;
   path: string;
   pem: string;
+  name: string;
+  issuer: string;
+  /** End of validity (Unix seconds). */
+  notAfter: number;
+  /** Certificates above the CA (imported intermediate). */
+  chain: number;
+  /** Created by Quena (not imported). */
+  generated: boolean;
+}
+export interface CaImport {
+  certPath?: string;
+  keyPath?: string;
+  p12Path?: string;
+  password?: string;
 }
 
 export interface DeviceInfo {
@@ -1008,7 +1032,8 @@ export const api = {
   caTrust: () => invoke<CaInfo>("ca_trust"),
   caRemove: () => invoke<CaInfo>("ca_remove"),
   caRegenerate: () => invoke<CaInfo>("ca_regenerate"),
-  caExport: (path: string, der: boolean) => invoke<void>("ca_export", { path, der }),
+  caExport: (path: string, format: "pem" | "der" | "p12", password?: string) => invoke<void>("ca_export", { path, format, password: password ?? null }),
+  caImport: (source: CaImport) => invoke<CaInfo>("ca_import", { source }),
   exportArchive: (ids: SessionId[], path: string) => invoke<number>("export_archive", { ids, path }),
   importArchive: (path: string) => invoke<number>("import_archive", { path }),
   /** A packet capture again with a TLS key log, replacing the sessions of its first import

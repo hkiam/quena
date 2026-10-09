@@ -13,7 +13,9 @@ man-in-the-middle with certificates it issues on the fly from its own root certi
    system.
 
 The certificate and its private key are generated on your machine and stored in Quena's
-data directory with owner-only permissions. They never leave the computer.
+data directory with owner-only permissions. The key leaves the computer only if you export
+it yourself (*Export with key (.p12)…*). Instead of Quena's own certificate you can also
+[use an existing CA](#use-an-existing-ca), e.g. your company's.
 
 | Platform | Where *Trust* adds the certificate |
 |---|---|
@@ -32,9 +34,53 @@ data directory with owner-only permissions. They never leave the computer.
 | *Trust root certificate…* / *Re-trust* | Add the certificate to the trust store. |
 | *Remove from trust store* | Remove it again. |
 | *Export…* | Save it as `.crt`/`.pem` (PEM) or `.cer`/`.der` (DER), e.g. for Java or another machine. |
+| *Export with key (.p12)…* | Save certificate, chain and private key as a password-protected PKCS#12 file — to use the same CA on a second machine or in [`quena-cli --ca-p12`](reverse-proxy.md). Whoever has the file and the password can read the HTTPS traffic of every device that trusts the certificate. |
+| *Import CA…* | [Use an existing CA](#use-an-existing-ca) instead. |
 | *Regenerate* | Create a new root certificate. Remove the current one from the trust store first. |
 
-The dialog also shows the certificate's SHA-256 fingerprint and file path.
+The dialog also shows the certificate's name, validity, SHA-256 fingerprint and file path.
+
+## Use an existing CA
+
+Many companies already run a CA for TLS inspection that every company machine trusts. With
+it, Quena's certificates are accepted without trusting anything new — on managed devices,
+in containers and in test environments that have the company CA built in.
+
+*Capture → HTTPS Settings… → Import CA…* takes either
+
+- a **PKCS#12 file** (`.p12`, `.pfx`) with its password — also older files with 3DES/RC2
+  encryption, as Windows and OpenSSL write them; or
+- a **certificate and its private key** as PEM files. The key must not be encrypted
+  (`PRIVATE KEY`, `RSA PRIVATE KEY` or `EC PRIVATE KEY`). The certificate file may contain
+  the chain up to the root as well.
+
+Quena checks that the certificate is a CA allowed to sign certificates (`CA:TRUE`,
+`keyCertSign`), that the key belongs to it and that it is valid now. RSA, ECDSA (P-256,
+P-384) and Ed25519 keys work. An **intermediate CA** is fine: the certificates above it are
+sent along with every certificate Quena issues, so clients that trust the root accept them.
+
+The previous CA's files stay in the data directory as `quena-root-ca.*.bak-<time>`.
+*Regenerate* switches back to a CA of Quena's own.
+
+Headless: `quena-cli reverse --ca-p12 company-ca.p12` with the password in
+`QUENA_CA_PASSWORD`.
+
+## Expiring server certificates
+
+Sessions to servers whose certificate expires within 30 days get the flag `x-quena-cert`
+(*expires on 2026-11-02 (in 24 days)*); with *Ignore server certificate errors* an
+already expired certificate is flagged too (*expired on …*). The number of days is set in
+*Capture → HTTPS Settings… → Warn about server certificates expiring within (days)*; `0`
+switches the warning off.
+
+- The column **Cert. until** (right-click the column headers) shows the end of validity and
+  sorts by it.
+- The filter `certdays < 30` lists sessions to servers whose certificate expires within 30
+  days (`certdays == 0`: expired).
+- *Properties* shows the server certificate's subject, issuer and validity.
+
+Without *Ignore server certificate errors*, an expired server certificate makes the TLS
+handshake fail; the session's error says so.
 
 ## Choose what is decrypted
 

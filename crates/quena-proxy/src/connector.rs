@@ -231,13 +231,29 @@ async fn connect_via_proxy_inner(s: &mut TcpStream, host: &str, port: u16) -> st
 }
 
 pub fn tls_info(conn: &rustls::ClientConnection, sni: &str) -> TlsInfo {
+    let facts = conn.peer_certificates().and_then(|c| c.first()).and_then(|c| quena_tls::cert_facts(c.as_ref()));
     TlsInfo {
+        not_after: facts.as_ref().map(|f| f.not_after),
+        subject: facts.as_ref().map(|f| f.subject.clone()),
+        issuer: facts.as_ref().map(|f| f.issuer.clone()),
+        warning: None,
         version: conn.protocol_version().map(|v| format!("{v:?}").replace('_', ".").replace("TLSv", "TLS ")).unwrap_or_default(),
         cipher: conn.negotiated_cipher_suite().map(|c| format!("{:?}", c.suite())).unwrap_or_default(),
         sni: Some(sni.to_string()),
         alpn: conn.alpn_protocol().map(|a| String::from_utf8_lossy(a).into_owned()),
         server_chain_pem: conn.peer_certificates().map(|c| c.iter().map(|d| quena_tls::der_to_pem(d.as_ref())).collect()).unwrap_or_default(),
     }
+}
+
+/// The warning for a server certificate ending at `not_after` (Unix seconds): expired, or
+/// expiring within `days`.
+pub fn cert_warning(not_after: Option<i64>, days: u32, now: i64) -> Option<String> {
+    let na = not_after?;
+    if na < now {
+        return Some(format!("certificate expired on {}", quena_tls::date(na)));
+    }
+    let left = (na - now) / 86_400;
+    (days > 0 && left < days as i64).then(|| format!("certificate expires on {} (in {left} days)", quena_tls::date(na)))
 }
 
 impl tower_service::Service<Uri> for Connector {
@@ -300,7 +316,8 @@ impl tower_service::Service<Uri> for Connector {
             let tls_ms = t.elapsed().as_millis() as u32;
             let (_, conn) = s.get_ref();
             let negotiated_h2 = conn.alpn_protocol() == Some(b"h2");
-            let ti = tls_info(conn, &host);
+            let mut ti = tls_info(conn, &host);
+            ti.warning = cert_warning(ti.not_after, cfg.cert_warn_days, quena_model::now_us() / 1_000_000);
             Ok(MaybeTls { stream: Stream::Tls(Box::new(TokioIo::new(s))), proxied: false, h2: negotiated_h2, info: info(tls_ms, Some(ti)) })
         })
     }

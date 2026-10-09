@@ -19,6 +19,9 @@ sha2.workspace = true
 hex.workspace = true
 lru = "0.16"
 base64 = "0.22"
+# Corporate CA import/export (.p12/.pfx) and certificate facts (validity, names).
+p12-keystore = "0.3"
+x509-parser = "0.18"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -8,6 +8,20 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Use an existing CA** (*Capture → HTTPS Settings… → Import CA…*), e.g. the company's
+  interception CA that machines already trust: a PKCS#12 file (`.p12`/`.pfx`, also legacy
+  3DES/RC2) or a PEM certificate with its key (PKCS#8, PKCS#1 RSA, SEC1 EC).
+  - Quena checks that it is a CA allowed to sign certificates, that the key belongs to it
+    and that it is valid. An intermediate CA sends its chain along with every leaf.
+  - The previous CA's files are kept. Headless: `quena-cli reverse --ca-p12` with
+    `QUENA_CA_PASSWORD`.
+- **Export the CA with its key** as a password-protected `.p12` (for a second machine).
+  The dialog shows the CA's name and validity; the device assistant and the iOS profile use
+  the CA's real name.
+- **Expiring server certificates**: sessions to servers whose certificate expires within 30
+  days (setting) are flagged `x-quena-cert`, expired ones too when certificate errors are
+  ignored. New column *Cert. until*, filter field `certdays`, and the server certificate's
+  subject, issuer and validity in *Properties*.
 - **gRPC and Protobuf with a schema**: with `.proto` files (*Settings → Bodies & Storage →
   Protobuf schemas*, files or folders, import paths) the *gRPC* view shows field names,
   schema types, enum values by name and nested message types; unknown fields stay by

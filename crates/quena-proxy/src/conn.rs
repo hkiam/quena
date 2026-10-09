@@ -522,6 +522,7 @@ where
         sni,
         alpn,
         server_chain_pem: vec![],
+        ..Default::default()
     };
     Ok(AcceptedTls { stream: tls, info, cert_host, alpn_offered })
 }

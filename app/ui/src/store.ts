@@ -21,6 +21,7 @@ export type ColumnKey =
   | "duration"
   | "started"
   | "via"
+  | "cert"
   /** The Group column, shown first while the list is grouped (not stored in `columns`). */
   | "group";
 
@@ -49,6 +50,7 @@ export const COLUMN_TITLES: Record<ColumnKey, string> = {
   duration: t("Duration"),
   started: t("Started"),
   via: t("Via"),
+  cert: t("Cert. until"),
   group: t("Group"),
 };
 
@@ -77,6 +79,7 @@ export const DEFAULT_COLUMNS: ColumnConf[] = [
   col("caching", 90, false),
   col("started", 90, false),
   col("via", 80, false),
+  col("cert", 84, false),
 ];
 
 /** Classic: a dense list with more columns, for long-time proxy users. */
@@ -96,6 +99,7 @@ export const CLASSIC_COLUMNS: ColumnConf[] = [
   col("custom", 80, false),
   col("started", 90, false),
   col("via", 80, false),
+  col("cert", 84, false),
 ];
 
 export type LayoutPreset = "quena" | "classic";

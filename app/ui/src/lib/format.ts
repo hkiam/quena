@@ -34,6 +34,12 @@ export function fmtTime(us: number | null | undefined): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 }
 
+/** Date of a microsecond timestamp, in the UI language. */
+export function fmtDate(us: number | null | undefined): string {
+  if (!us) return "";
+  return new Date(us / 1000).toLocaleDateString(currentLang() === "de" ? "de-DE" : undefined);
+}
+
 export function fmtDateTime(us: number | null | undefined): string {
   if (!us) return "";
   const d = new Date(us / 1000);
