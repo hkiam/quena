@@ -35,7 +35,7 @@ impl std::fmt::Display for GrpcError {
 pub async fn call(shared: &Arc<Shared>, url: &str, message: &[u8]) -> Result<Vec<Vec<u8>>, GrpcError> {
     let other = |e: &dyn std::fmt::Display| GrpcError::Other(e.to_string());
     let client: Client<Connector, crate::ProxyBody> =
-        Client::builder(TokioExecutor::new()).http2_only(true).build(Connector { cfg: shared.cfg(), tls: shared.tls_clients.clone() });
+        Client::builder(TokioExecutor::new()).http2_only(true).build(Connector { cfg: shared.cfg(), tls: shared.tls_clients.clone(), force_h2: Some(true) });
     let mut framed = Vec::with_capacity(message.len() + 5);
     framed.push(0);
     framed.extend_from_slice(&(message.len() as u32).to_be_bytes());

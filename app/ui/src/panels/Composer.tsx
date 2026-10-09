@@ -1,40 +1,19 @@
 // Composer (F9): build a request from scratch or from a session.
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, type ComposeRequest } from "../api";
+import { api, type Collection, type ComposeRequest } from "../api";
 import { CodeView } from "../inspectors/CodeView";
 import { loadBody, sameCharset } from "../lib/bodytext";
 import { fmtBytes, latin1ToUtf8 } from "../lib/format";
-import { say, useStore } from "../store";
+import { promptText, say, useStore } from "../store";
 import { actions } from "../actions";
 import { t } from "../i18n";
+import { CollectionsView } from "./Collections";
+import { defaultName, EMPTY, hasVariables, toCollectionRequest, toRaw, VERSIONS, type Draft } from "./composerDraft";
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"];
 const HISTORY_KEY = "quena.composer.history";
 const INLINE_BODY_LIMIT = 1 << 20;
-
-interface Draft {
-  method: string;
-  url: string;
-  headers: string;
-  body: string;
-  bodyFromSession: number | null;
-  bodyFromSessionLen: number;
-  bodyFile: string | null;
-  /** Charset the body text was loaded in (from a session); edits are encoded in the
-   * declared charset, else in this one. */
-  bodyCharset?: string | null;
-}
-
-const EMPTY: Draft = {
-  method: "GET",
-  url: "https://",
-  headers: "User-Agent: Quena\nAccept: */*",
-  body: "",
-  bodyFromSession: null,
-  bodyFromSessionLen: 0,
-  bodyFile: null,
-};
 
 function loadHistory(): (Draft & { at: number })[] {
   try {
@@ -44,21 +23,8 @@ function loadHistory(): (Draft & { at: number })[] {
   }
 }
 
-function toRaw(d: Draft): string {
-  const u = (() => {
-    try {
-      return new URL(d.url);
-    } catch {
-      return null;
-    }
-  })();
-  const path = u ? u.pathname + u.search : d.url;
-  const hasHost = /^host\s*:/im.test(d.headers);
-  return `${d.method} ${u ? d.url : path} HTTP/1.1\n${hasHost || !u ? "" : `Host: ${u.host}\n`}${d.headers.trim()}\n\n${d.body}`;
-}
-
 export default function ComposerPanel() {
-  const [tab, setTab] = useState<"parsed" | "raw" | "history">("parsed");
+  const [tab, setTab] = useState<"parsed" | "raw" | "history" | "collections">("parsed");
   const [d, setD] = useState<Draft>(() => {
     try {
       return { ...EMPTY, ...JSON.parse(localStorage.getItem("quena.composer.draft") ?? "{}") };
@@ -72,6 +38,22 @@ export default function ComposerPanel() {
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState(loadHistory);
   const [over, setOver] = useState(false);
+  const [env, setEnvState] = useState(() => {
+    try {
+      return localStorage.getItem("quena.composer.env") ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const setEnv = (e: string) => {
+    setEnvState(e);
+    try {
+      localStorage.setItem("quena.composer.env", e);
+    } catch {
+      /* ignore */
+    }
+  };
+  const [collNonce, setCollNonce] = useState(0);
   const load = useStore((s) => s.composerLoad);
   // The session whose body the text shows: sent byte for byte as long as the text is unchanged.
   const loaded = useRef<{ id: number; text: string } | null>(null);
@@ -93,6 +75,8 @@ export default function ComposerPanel() {
     const body = b?.text ?? "";
     loaded.current = b ? { id, text: body } : null;
     setD({
+      version: "",
+      coll: null,
       method: det.request.method,
       url: det.request.url,
       headers,
@@ -118,6 +102,13 @@ export default function ComposerPanel() {
       // Unchanged text of a session body: send its original bytes (not the text re-encoded).
       const orig = loaded.current;
       const same = orig != null && draft.bodyFromSession == null && !draft.bodyFile && draft.body === orig.text;
+      let id: number;
+      // With a collection or {{variables}}: substituted like a collection request.
+      if ((draft.coll || hasVariables(draft)) && draft.bodyFromSession == null && !same) {
+        const res = await api.collectionSend(draft.coll?.name ?? null, toCollectionRequest(draft, draft.coll?.title ?? ""), env);
+        if (res.session == null) throw new Error(res.error ?? "not sent");
+        id = res.session;
+      } else {
       const req: ComposeRequest = {
         method: draft.method,
         url: draft.url,
@@ -127,8 +118,10 @@ export default function ComposerPanel() {
         bodyFromSession: same ? orig.id : draft.bodyFromSession,
         bodyFile: draft.bodyFile,
         fixContentLength: fixLen,
+        version: (draft.version || null) as ComposeRequest["version"],
       };
-      const id = await api.compose(req);
+      id = await api.compose(req);
+      }
       const h = [{ ...draft, body: draft.body.slice(0, 64 * 1024), at: Date.now() }, ...history.filter((x) => x.url !== draft.url || x.method !== draft.method)].slice(0, 50);
       setHistory(h);
       try {
@@ -150,11 +143,46 @@ export default function ComposerPanel() {
     }
   };
 
+  /** Save the draft into a collection: back where it came from, or (`as`) a chosen one. */
+  const saveToCollection = async (as: boolean) => {
+    if (d.bodyFromSession != null) return say(t("A session body cannot be saved in a collection; use text or a file."), "error");
+    try {
+      let name = d.coll?.name ?? "";
+      let title = d.coll?.title ?? "";
+      let index = d.coll?.index ?? -1;
+      if (as || !d.coll) {
+        const existing = await api.collectionsList();
+        const n = await promptText(t("Save to collection"), t("Collection (existing or new): {names}", { names: existing.map((c) => c.name).join(", ") || "–" }), name || existing[0]?.name || t("My requests"));
+        if (!n?.trim()) return;
+        const r = await promptText(t("Save to collection"), t("Name of the request"), title || defaultName(d));
+        if (r == null) return;
+        name = n.trim();
+        title = r.trim();
+        index = -1;
+      }
+      let c: Collection;
+      try {
+        c = await api.collectionRead(name);
+      } catch {
+        c = { name, variables: [], requests: [] };
+      }
+      const req = toCollectionRequest(d, title);
+      const requests = index >= 0 && index < c.requests.length ? c.requests.map((x, i) => (i === index ? req : x)) : [...c.requests, req];
+      await api.collectionSave({ ...c, requests });
+      setD({ ...d, coll: { name, index: index >= 0 ? index : requests.length - 1, title } });
+      setCollNonce((n) => n + 1);
+      say(t("Saved to collection {name}", { name }));
+    } catch (e) {
+      say(String(e), "error");
+    }
+  };
+
   const executeCurrent = async () => {
     if (tab === "raw") {
       try {
         const p = await api.parseRawRequest(raw);
-        const nd = { ...d, method: p.method, url: p.url, headers: p.headers, body: p.body, bodyFromSession: null, bodyFile: null };
+        const version = p.version.toUpperCase().startsWith("HTTP/2") ? "HTTP/2" : d.version === "HTTP/2" ? "" : d.version;
+        const nd = { ...d, method: p.method, url: p.url, version, headers: p.headers, body: p.body, bodyFromSession: null, bodyFile: null };
         setD(nd);
         await execute(nd);
       } catch (e) {
@@ -181,7 +209,7 @@ export default function ComposerPanel() {
     >
       <div className="lt-bar">
         <div className="tabs-inline">
-          {(["parsed", "raw", "history"] as const).map((k) => (
+          {(["parsed", "raw", "history", "collections"] as const).map((k) => (
             <span
               key={k}
               className={`insp-tab ${tab === k ? "active" : ""}`}
@@ -190,11 +218,19 @@ export default function ComposerPanel() {
                 setTab(k);
               }}
             >
-              {{ parsed: t("Parsed"), raw: t("Raw"), history: t("History") }[k]}
+              {{ parsed: t("Parsed"), raw: t("Raw"), history: t("History"), collections: t("Collections") }[k]}
             </span>
           ))}
         </div>
         <span className="tp-spacer" />
+        <button title={d.coll ? t("Save back to {name}", { name: d.coll.name }) : t("Save the request in a collection")} onClick={() => void saveToCollection(false)}>
+          {d.coll ? t("Save") : t("Save to collection…")}
+        </button>
+        {d.coll && (
+          <button className="linklike" onClick={() => void saveToCollection(true)}>
+            {t("Save as…")}
+          </button>
+        )}
         <label className="f-check">
           <input type="checkbox" checked={fixLen} onChange={(e) => setFixLen(e.target.checked)} /> {t("Fix Content-Length")}
         </label>
@@ -206,15 +242,30 @@ export default function ComposerPanel() {
         </button>
       </div>
       {tab === "parsed" && (
-        <div className="cmp-parsed">
+        <div className={`cmp-parsed ${d.coll ? "with-coll" : ""}`}>
           <div className="cmp-line">
             <select value={d.method} onChange={(e) => setD({ ...d, method: e.target.value })}>
-              {METHODS.map((m) => (
+              {(METHODS.includes(d.method) ? METHODS : [d.method, ...METHODS]).map((m) => (
                 <option key={m}>{m}</option>
               ))}
             </select>
-            <input className="mono" value={d.url} onChange={(e) => setD({ ...d, url: e.target.value })} onKeyDown={(e) => e.key === "Enter" && executeCurrent()} spellCheck={false} />
+            <input className="mono" value={d.url} onChange={(e) => setD({ ...d, url: e.target.value })} onKeyDown={(e) => e.key === "Enter" && executeCurrent()} spellCheck={false} autoCorrect="off" autoCapitalize="off" />
+            <select value={d.version ?? ""} title={t("HTTP version: automatic uses what the server offers")} onChange={(e) => setD({ ...d, version: e.target.value })}>
+              {VERSIONS.map((v) => (
+                <option key={v} value={v}>
+                  {v || t("Automatic")}
+                </option>
+              ))}
+            </select>
           </div>
+          {d.coll && (
+            <div className="muted small">
+              {t("From collection {name}: {title}", { name: d.coll.name, title: d.coll.title || d.url })}{" "}
+              <button className="linklike" onClick={() => setD({ ...d, coll: null })}>
+                {t("Detach")}
+              </button>
+            </div>
+          )}
           <div className="cmp-label">{t("Request Headers")}</div>
           <textarea className="mono cmp-headers" value={d.headers} spellCheck={false} onChange={(e) => setD({ ...d, headers: e.target.value })} />
           <div className="cmp-label">
@@ -273,6 +324,18 @@ export default function ComposerPanel() {
           </div>
           <CodeView text={raw} editable onChange={setRaw} />
         </div>
+      )}
+      {tab === "collections" && (
+        <CollectionsView
+          env={env}
+          setEnv={setEnv}
+          nonce={collNonce}
+          onLoad={(nd) => {
+            loaded.current = null;
+            setD(nd);
+            setTab("parsed");
+          }}
+        />
       )}
       {tab === "history" && (
         <div className="scroll pad">

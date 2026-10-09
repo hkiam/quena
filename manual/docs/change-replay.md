@@ -25,6 +25,12 @@ recorded one.
 - **Raw** — the whole request as text. Paste a raw HTTP request, or paste a **cURL command**
   and click **Import as cURL** to turn it into a parsed request.
 - **History** — the last requests you issued. Click to load, double-click to send again.
+- **Collections** — saved requests, see [Collections in the Composer](#collections-in-the-composer).
+
+Next to the URL, the **HTTP version** is *Automatic* (what the server offers, as for
+proxied traffic), *HTTP/1.1* or *HTTP/2*. HTTP/2 over `https://` insists on HTTP/2 (an
+error if the server does not offer it); over `http://` it is cleartext HTTP/2 with prior
+knowledge (h2c), e.g. for gRPC servers without TLS.
 
 Click **▶ Execute** (or press `Enter` in the URL field). Options:
 
@@ -79,8 +85,34 @@ Content-Type: application/json
   supported; scripts are skipped with a warning, an unknown variable stops that request with
   its name and line.
 
+A version after the URL (`GET {{base}}/users HTTP/2`) is used as in the Composer.
+
+### Collections in the Composer
+
+The Composer's **Collections** tab keeps requests as `.http` files in the `collections`
+folder of the data directory — one file per collection, so they can be opened in an editor
+or put under version control (*Open folder*).
+
+- **Save to collection…** in the Composer's toolbar asks for a collection (an existing one
+  or a new name) and a name for the request. A request loaded from a collection is saved
+  back with **Save**; *Save as…* puts a copy elsewhere.
+- Click a request to load it into the Composer. **▶** sends it, **▶ Run all** sends the
+  collection's requests one after the other and lists status and time; click a result to
+  select its session.
+- Requests can be moved, duplicated and removed; **Variables** of the collection
+  (`name = value`, used as `{{name}}`) are edited below its requests.
+- **Environment** picks the environment of `http-client.env.json` /
+  `http-client.private.env.json` in the collections folder.
+- **Import .http…** copies an existing file (and its environment files, if the folder has
+  none yet) into the collections.
+
+A request with `{{variables}}` — from a collection or typed into the Composer — is sent with
+the collection's variables and the chosen environment. Quena writes the files itself:
+comments and response handler scripts of an imported file are not kept when it is saved.
+
 AI agents use them over [MCP](mcp.md) (`list_http_requests`, `run_http_file`,
-`sessions_to_http_file`). On the command line:
+`sessions_to_http_file`; `collection:NAME` names a Composer collection, `list_collections`
+lists them). On the command line:
 
 ```sh
 quena-cli http run api.http --env dev            # all requests, one after the other

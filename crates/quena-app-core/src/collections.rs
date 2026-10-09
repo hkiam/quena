@@ -6,7 +6,7 @@ use crate::compose::ComposeRequest;
 use anyhow::{Context, Result, anyhow, bail};
 use quena_formats::http_file::{self, Access, Body, Captured};
 use quena_model::SessionId;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -99,10 +99,14 @@ impl AppCore {
         if chosen.is_empty() {
             bail!("no requests{} in {}", if names.is_empty() { String::new() } else { format!(" named {}", names.join(", ")) }, path.display());
         }
-        let mut out = Vec::new();
-        for raw in chosen {
+        Ok(chosen.into_iter().map(|raw| self.run_one(&f, raw, &vars, &dir, wait, access)).collect())
+    }
+
+    /// Resolve and send one request of `f`, waiting up to `wait` for its response.
+    fn run_one(self: &Arc<Self>, f: &http_file::HttpFile, raw: &http_file::RawRequest, vars: &std::collections::HashMap<String, String>, dir: &Path, wait: Duration, access: &Access) -> HttpRunResult {
+        {
             let mut res = HttpRunResult { name: raw.name.clone(), line: raw.line, method: raw.method.clone(), url: raw.url.clone(), session: None, status: None, duration_ms: None, pending: false, error: None };
-            let sent = http_file::resolve(&f, raw, &vars, &dir, access).map_err(|e| anyhow!(e)).and_then(|r| {
+            let sent = http_file::resolve(f, raw, vars, dir, access).map_err(|e| anyhow!(e)).and_then(|r| {
                 res.url = r.url.clone();
                 let (body, body_file) = match r.body {
                     Body::None => (String::new(), None),
@@ -112,7 +116,7 @@ impl AppCore {
                 self.compose(ComposeRequest {
                     method: r.method,
                     url: r.url,
-                    version: None,
+                    version: r.version.as_deref().and_then(quena_model::HttpVersion::parse),
                     headers: r.headers.iter().map(|(n, v)| format!("{n}: {v}")).collect::<Vec<_>>().join("\n"),
                     body,
                     body_charset: None,
@@ -136,9 +140,8 @@ impl AppCore {
                 }
                 Err(e) => res.error = Some(format!("{e:#}")),
             }
-            out.push(res);
+            res
         }
-        Ok(out)
     }
 
     /// Write sessions as a `.http` file. A shared scheme and host becomes `{{host}}` in the
@@ -236,5 +239,234 @@ impl AppCore {
             env_files.push(p.display().to_string());
         }
         Ok(HttpWritten { path: path.display().to_string(), requests: reqs.len(), env_files, secrets_redacted: redact })
+    }
+}
+
+// ------------------------------------------------------------------ collections
+
+/// Folder of the Composer's collections: one `.http` file per collection, the environments
+/// (`http-client.env.json`, `http-client.private.env.json`) shared by all.
+pub const COLLECTIONS_DIR: &str = "collections";
+
+/// A collection in the list.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectionInfo {
+    pub name: String,
+    pub path: String,
+    pub requests: usize,
+}
+
+/// One request of a collection, as the Composer edits it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CollectionRequest {
+    pub name: String,
+    pub method: String,
+    pub url: String,
+    /// `HTTP/1.1`, `HTTP/2`; empty: automatic.
+    pub version: String,
+    /// `Name: value` lines.
+    pub headers: String,
+    pub body: String,
+    /// `< path` (relative to the collections folder): the body is this file.
+    pub body_file: String,
+    /// With `body_file`: substitute variables in the file (`<@ path`).
+    pub body_template: bool,
+}
+
+/// A collection: its variables and requests.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Collection {
+    pub name: String,
+    /// `@name = value` lines.
+    pub variables: Vec<(String, String)>,
+    pub requests: Vec<CollectionRequest>,
+    /// Lines of the file Quena could not read (shown, and dropped when saving).
+    #[serde(skip_deserializing)]
+    pub warnings: Vec<String>,
+    /// Environments of the collections folder.
+    #[serde(skip_deserializing)]
+    pub environments: Vec<String>,
+}
+
+fn check_name(name: &str) -> Result<&str> {
+    let n = name.trim();
+    if n.is_empty() || n.len() > 100 || n.starts_with('.') || n.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) || n.chars().any(char::is_control) {
+        bail!("invalid collection name: {name:?}");
+    }
+    Ok(n)
+}
+
+fn to_raw(r: &CollectionRequest) -> http_file::RawRequest {
+    let headers = r.headers.lines().filter(|l| !l.trim().is_empty()).map(|l| match l.split_once(':') {
+        Some((n, v)) => (n.trim().to_string(), v.trim().to_string()),
+        None => (l.trim().to_string(), String::new()),
+    });
+    let body = if !r.body_file.trim().is_empty() {
+        if r.body_template { http_file::BodySource::FileWithVariables(r.body_file.trim().into()) } else { http_file::BodySource::File(r.body_file.trim().into()) }
+    } else if r.body.trim().is_empty() {
+        http_file::BodySource::None
+    } else {
+        http_file::BodySource::Text(r.body.trim_end().to_string())
+    };
+    http_file::RawRequest {
+        name: Some(r.name.trim().to_string()).filter(|n| !n.is_empty()),
+        line: 0,
+        method: r.method.trim().to_ascii_uppercase(),
+        url: r.url.trim().to_string(),
+        version: Some(r.version.trim().to_ascii_uppercase()).filter(|v| !v.is_empty()),
+        headers: headers.collect(),
+        body,
+    }
+}
+
+fn from_raw(r: &http_file::RawRequest) -> CollectionRequest {
+    let (body, body_file, body_template) = match &r.body {
+        http_file::BodySource::None => (String::new(), String::new(), false),
+        http_file::BodySource::Text(t) => (t.clone(), String::new(), false),
+        http_file::BodySource::File(p) => (String::new(), p.clone(), false),
+        http_file::BodySource::FileWithVariables(p) => (String::new(), p.clone(), true),
+    };
+    CollectionRequest {
+        name: r.name.clone().unwrap_or_default(),
+        method: r.method.clone(),
+        url: r.url.clone(),
+        version: r.version.clone().unwrap_or_default(),
+        headers: r.headers.iter().map(|(n, v)| format!("{n}: {v}")).collect::<Vec<_>>().join("\n"),
+        body,
+        body_file,
+        body_template,
+    }
+}
+
+impl AppCore {
+    pub fn collections_dir(&self) -> PathBuf {
+        self.paths.data.join(COLLECTIONS_DIR)
+    }
+
+    /// The `.http` file of collection `name`.
+    pub fn collection_path(&self, name: &str) -> Result<PathBuf> {
+        Ok(self.collections_dir().join(format!("{}.http", check_name(name)?)))
+    }
+
+    /// The collections, by name.
+    pub fn collections_list(&self) -> Result<Vec<CollectionInfo>> {
+        let dir = self.collections_dir();
+        let mut out = Vec::new();
+        let Ok(rd) = std::fs::read_dir(&dir) else { return Ok(out) };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("http") || x.eq_ignore_ascii_case("rest"))
+                && let Some(name) = p.file_stem().map(|s| s.to_string_lossy().into_owned())
+            {
+                let requests = read(&p).map(|f| f.requests.len()).unwrap_or(0);
+                out.push(CollectionInfo { name, path: p.display().to_string(), requests });
+            }
+        }
+        out.sort_by_key(|c| c.name.to_lowercase());
+        Ok(out)
+    }
+
+    pub fn collection_read(&self, name: &str) -> Result<Collection> {
+        let path = self.collection_path(name)?;
+        let f = read(&path)?;
+        Ok(Collection {
+            name: check_name(name)?.to_string(),
+            variables: f.variables.clone(),
+            requests: f.requests.iter().map(from_raw).collect(),
+            warnings: f.warnings,
+            environments: http_file::environments(&self.collections_dir()).unwrap_or_default(),
+        })
+    }
+
+    /// Write a collection (creating or replacing it).
+    pub fn collection_save(&self, c: &Collection) -> Result<CollectionInfo> {
+        let path = self.collection_path(&c.name)?;
+        let mut f = http_file::HttpFile { variables: Vec::new(), requests: Vec::new(), warnings: Vec::new() };
+        for (n, v) in &c.variables {
+            let n = n.trim();
+            if n.is_empty() || !n.chars().all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.') || v.contains(['\n', '\r']) {
+                bail!("invalid variable {n:?}");
+            }
+            f.variables.push((n.to_string(), v.trim().to_string()));
+        }
+        for (i, r) in c.requests.iter().enumerate() {
+            let raw = to_raw(r);
+            http_file::check_writable(&raw).map_err(|e| anyhow!("request {} ({}): {e}", i + 1, if r.name.is_empty() { &raw.url } else { &r.name }))?;
+            f.requests.push(raw);
+        }
+        std::fs::create_dir_all(self.collections_dir())?;
+        let tmp = path.with_extension("http.tmp");
+        std::fs::write(&tmp, http_file::write_file(&f))?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(CollectionInfo { name: check_name(&c.name)?.to_string(), path: path.display().to_string(), requests: f.requests.len() })
+    }
+
+    pub fn collection_rename(&self, from: &str, to: &str) -> Result<()> {
+        let (a, b) = (self.collection_path(from)?, self.collection_path(to)?);
+        if b.exists() && !a.eq(&b) {
+            bail!("a collection named {to} exists already");
+        }
+        std::fs::rename(a, b)?;
+        Ok(())
+    }
+
+    pub fn collection_delete(&self, name: &str) -> Result<()> {
+        std::fs::remove_file(self.collection_path(name)?)?;
+        Ok(())
+    }
+
+    /// Copy a `.http` file into the collections (and its environment files, where the
+    /// collections have none yet). Returns the new collection's name.
+    pub fn collection_import(&self, src: &Path) -> Result<String> {
+        let text = std::fs::read_to_string(src).with_context(|| format!("read {}", src.display()))?;
+        if http_file::parse(&text).requests.is_empty() {
+            bail!("{} contains no requests", src.display());
+        }
+        let stem = src.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "imported".into());
+        let base: String = stem.chars().map(|c| if c.is_control() || "/\\:*?\"<>|".contains(c) { '_' } else { c }).collect();
+        let base = base.trim_start_matches('.').to_string();
+        let mut name = if base.is_empty() { "imported".to_string() } else { base };
+        let mut n = 2;
+        while self.collection_path(&name)?.exists() {
+            name = format!("{} {n}", name.trim_end_matches(|c: char| c.is_ascii_digit()).trim_end());
+            n += 1;
+        }
+        let dir = self.collections_dir();
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(self.collection_path(&name)?, text)?;
+        for env in [http_file::ENV_FILE, http_file::PRIVATE_ENV_FILE] {
+            let from = dir_of(src).join(env);
+            if from.is_file() && !dir.join(env).exists() {
+                std::fs::copy(&from, dir.join(env))?;
+            }
+        }
+        Ok(name)
+    }
+
+    /// Send one request as the Composer edits it (saved or not), with the variables of
+    /// collection `name` and environment `env`. Returns at once with the session.
+    pub fn collection_send(self: &Arc<Self>, name: Option<&str>, req: &CollectionRequest, env: Option<&str>) -> Result<HttpRunResult> {
+        let dir = self.collections_dir();
+        let variables = match name.filter(|n| !n.trim().is_empty()) {
+            Some(n) => read(&self.collection_path(n)?)?.variables,
+            None => Vec::new(),
+        };
+        let raw = to_raw(req);
+        let f = http_file::HttpFile { variables, requests: vec![raw.clone()], warnings: Vec::new() };
+        let vars = http_file::load_environment(&dir, env).map_err(|e| anyhow!(e))?;
+        let res = self.run_one(&f, &raw, &vars, &dir, Duration::ZERO, &Access { process_env: true, root: None });
+        match (&res.session, &res.error) {
+            (None, Some(e)) => Err(anyhow!("{e}")),
+            _ => Ok(res),
+        }
+    }
+
+    /// Run requests of a collection (all, or those named): see [`AppCore::run_http_file`].
+    pub fn collection_run(self: &Arc<Self>, name: &str, names: &[String], env: Option<&str>, wait: Duration) -> Result<Vec<HttpRunResult>> {
+        let path = self.collection_path(name)?;
+        self.run_http_file(&path, env, names, wait, &Access { process_env: true, root: None })
     }
 }

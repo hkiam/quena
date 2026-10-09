@@ -158,6 +158,7 @@ impl AppCore {
                         flags: flags::REPLAYED | if o.breakpoint { flags::BREAKPOINTED } else { 0 },
                         comment: Some(format!("Replay of #{orig}")),
                         hooks: true,
+                        force_h2: None,
                     };
                     let f = quena_proxy::execute(shared.clone(), head.clone(), body.clone(), opts);
                     if sequential {
@@ -218,9 +219,16 @@ impl AppCore {
         if headers.get("host").is_none() {
             headers.0.insert(0, ("Host".into(), uri.authority.clone()));
         }
-        let head = RequestHead { method: r.method.trim().to_ascii_uppercase(), url, version: HttpVersion::Http11, headers };
+        // A chosen version is forced; without one the connection decides (ALPN), as for proxied traffic.
+        let (version, force_h2) = match r.version {
+            None => (HttpVersion::Http11, None),
+            Some(HttpVersion::Http2) => (HttpVersion::Http2, Some(true)),
+            Some(HttpVersion::Http3) => return Err(anyhow!("HTTP/3 is not supported; choose HTTP/1.1 or HTTP/2")),
+            Some(v) => (v, Some(false)),
+        };
+        let head = RequestHead { method: r.method.trim().to_ascii_uppercase(), url, version, headers };
         let shared = engine.proxy.shared.clone();
-        let opts = ExecuteOptions { flags: flags::COMPOSED | if r.breakpoint { flags::BREAKPOINTED } else { 0 }, comment: None, hooks: true };
+        let opts = ExecuteOptions { flags: flags::COMPOSED | if r.breakpoint { flags::BREAKPOINTED } else { 0 }, comment: None, hooks: true, force_h2 };
         let rt = engine.proxy.runtime().handle().clone();
         let (tx, rx) = std::sync::mpsc::channel();
         rt.spawn(async move {

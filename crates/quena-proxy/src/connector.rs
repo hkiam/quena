@@ -101,6 +101,9 @@ impl hyper::rt::Write for MaybeTls {
 pub struct Connector {
     pub cfg: Arc<ProxyConfig>,
     pub tls: Arc<ClientConfigs>,
+    /// Force the HTTP version: `Some(true)` HTTP/2 (ALPN `h2` only, cleartext with prior
+    /// knowledge), `Some(false)` HTTP/1.1; `None`: as configured per host.
+    pub force_h2: Option<bool>,
 }
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -268,6 +271,7 @@ impl tower_service::Service<Uri> for Connector {
     fn call(&mut self, uri: Uri) -> Self::Future {
         let cfg = self.cfg.clone();
         let tls = self.tls.clone();
+        let force_h2 = self.force_h2;
         Box::pin(async move {
             let https = uri.scheme_str() == Some("https") || uri.scheme_str() == Some("wss");
             let host = uri.host().ok_or("URI without host")?.trim_matches(['[', ']']).to_string();
@@ -300,14 +304,25 @@ impl tower_service::Service<Uri> for Connector {
                 connected_at: quena_model::now_us(),
             };
             if !https {
-                return Ok(MaybeTls { stream: Stream::Plain(TokioIo::new(tcp)), proxied: upstream.is_some(), h2: false, info: info(0, None) });
+                // Cleartext HTTP/2 (h2c) only when forced, and never through a proxy that
+                // expects absolute-form HTTP/1.1.
+                let h2c = force_h2 == Some(true);
+                if h2c && upstream.is_some() {
+                    return Err("HTTP/2 without TLS (h2c) cannot go through the upstream proxy".into());
+                }
+                return Ok(MaybeTls { stream: Stream::Plain(TokioIo::new(tcp)), proxied: upstream.is_some(), h2: h2c, info: info(0, None) });
             }
             if upstream.is_some() {
                 connect_via_proxy(&mut tcp, &host, port).await?;
             }
             let t = Instant::now();
-            let h2 = cfg.h2_host(&host);
-            let config = tls.for_host(&host, cfg.insecure_host(&host), h2, quena_query::glob_match);
+            let h2 = force_h2.unwrap_or_else(|| cfg.h2_host(&host));
+            let mut config = tls.for_host(&host, cfg.insecure_host(&host), h2, quena_query::glob_match);
+            if force_h2 == Some(true) {
+                let mut c = (*config).clone();
+                c.alpn_protocols = vec![b"h2".to_vec()];
+                config = Arc::new(c);
+            }
             let name = quena_tls::server_name(&host)?;
             let s = tokio::time::timeout(CONNECT_TIMEOUT, tokio_rustls::TlsConnector::from(config).connect(name, tcp))
                 .await
@@ -316,6 +331,9 @@ impl tower_service::Service<Uri> for Connector {
             let tls_ms = t.elapsed().as_millis() as u32;
             let (_, conn) = s.get_ref();
             let negotiated_h2 = conn.alpn_protocol() == Some(b"h2");
+            if force_h2 == Some(true) && !negotiated_h2 {
+                return Err(format!("{host} does not offer HTTP/2").into());
+            }
             let mut ti = tls_info(conn, &host);
             ti.warning = cert_warning(ti.not_after, cfg.cert_warn_days, quena_model::now_us() / 1_000_000);
             Ok(MaybeTls { stream: Stream::Tls(Box::new(TokioIo::new(s))), proxied: false, h2: negotiated_h2, info: info(tls_ms, Some(ti)) })

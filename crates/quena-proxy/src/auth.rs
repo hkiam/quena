@@ -100,7 +100,7 @@ pub fn pinned_client(ctx: &ConnCtx, host: &str, port: u16) -> Arc<Client<Connect
         .http1_preserve_header_case(true)
         .http2_only(false)
         .set_host(true)
-        .build(Connector { cfg, tls: ctx.shared.tls_clients.clone() });
+        .build(Connector { cfg, tls: ctx.shared.tls_clients.clone(), force_h2: None });
     let client = Arc::new(client);
     map.insert(key, client.clone());
     client

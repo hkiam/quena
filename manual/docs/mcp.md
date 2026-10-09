@@ -99,6 +99,7 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `set_breakpoints`, `resume_session`, `resume_all` | ✓ | [breakpoints](change-replay.md) |
 | `list_http_requests` | | the requests of a [`.http` file](change-replay.md#request-collections-http-files), resolved for an environment |
 | `run_http_file` | ✓ | send a `.http` collection (or some of its requests) through Quena |
+| `list_collections` | | the Composer's collections; `collection:NAME` as `path` above names one |
 | `sessions_to_http_file` | ✓ | write captured sessions as a `.http` file with environment files |
 | `export_archive` | ✓ | save sessions as `.har` or `.saz` in the agents' folder (existing files only with `overwrite`) |
 | `list_host_remaps` | | [host remapping](host-remapping.md) entries |

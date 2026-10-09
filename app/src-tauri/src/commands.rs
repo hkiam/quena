@@ -855,6 +855,66 @@ async fn grpc(core: State<'_, Core>, id: SessionId, part: Part, type_name: Optio
     blocking(move || Ok(core.grpc(id, part, type_name.as_deref()))).await
 }
 
+/// The Composer's collections.
+#[tauri::command]
+async fn collections_list(core: State<'_, Core>) -> R<Vec<quena_app_core::collections::CollectionInfo>> {
+    let core = core.inner().clone();
+    blocking(move || core.collections_list().map_err(e)).await
+}
+
+#[tauri::command]
+async fn collection_read(core: State<'_, Core>, name: String) -> R<quena_app_core::collections::Collection> {
+    let core = core.inner().clone();
+    blocking(move || core.collection_read(&name).map_err(e)).await
+}
+
+#[tauri::command]
+async fn collection_save(core: State<'_, Core>, collection: quena_app_core::collections::Collection) -> R<quena_app_core::collections::CollectionInfo> {
+    let core = core.inner().clone();
+    blocking(move || core.collection_save(&collection).map_err(e)).await
+}
+
+#[tauri::command]
+async fn collection_rename(core: State<'_, Core>, from: String, to: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.collection_rename(&from, &to).map_err(e)).await
+}
+
+#[tauri::command]
+async fn collection_delete(core: State<'_, Core>, name: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.collection_delete(&name).map_err(e)).await
+}
+
+/// Copy a `.http` file into the collections; returns its name there.
+#[tauri::command]
+async fn collection_import(core: State<'_, Core>, path: String) -> R<String> {
+    let core = core.inner().clone();
+    blocking(move || core.collection_import(std::path::Path::new(&path)).map_err(e)).await
+}
+
+/// Send a request as edited in the Composer, with the variables of a collection.
+#[tauri::command]
+async fn collection_send(core: State<'_, Core>, name: Option<String>, request: quena_app_core::collections::CollectionRequest, env: Option<String>) -> R<quena_app_core::collections::HttpRunResult> {
+    let core = core.inner().clone();
+    blocking(move || core.collection_send(name.as_deref(), &request, env.as_deref().filter(|e| !e.is_empty())).map_err(e)).await
+}
+
+/// Run requests of a collection one after the other (all, or those named).
+#[tauri::command]
+async fn collection_run(core: State<'_, Core>, name: String, names: Vec<String>, env: Option<String>) -> R<Vec<quena_app_core::collections::HttpRunResult>> {
+    let core = core.inner().clone();
+    blocking(move || core.collection_run(&name, &names, env.as_deref().filter(|e| !e.is_empty()), std::time::Duration::from_secs(30)).map_err(e)).await
+}
+
+/// Open the collections folder in the file manager.
+#[tauri::command]
+async fn collections_reveal(core: State<'_, Core>) -> R<()> {
+    let dir = core.collections_dir();
+    std::fs::create_dir_all(&dir).map_err(|x| x.to_string())?;
+    quena_platform::open(&dir.display().to_string()).map_err(e)
+}
+
 /// A MessagePack body as a tree (`None`: not MessagePack).
 #[tauri::command]
 async fn msgpack(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<quena_app_core::msgpack::Msgpack>> {
@@ -1051,6 +1111,15 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         reveal_path,
         browsers_list,
         msgpack,
+        collections_list,
+        collection_read,
+        collection_save,
+        collection_rename,
+        collection_delete,
+        collection_import,
+        collection_run,
+        collection_send,
+        collections_reveal,
         protobuf_status,
         grpc_reflect,
         rw_update,

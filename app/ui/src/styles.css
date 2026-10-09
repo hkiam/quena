@@ -1927,10 +1927,66 @@ pre {
   padding: 6px;
   min-height: 0;
 }
+.cmp-parsed.with-coll {
+  grid-template-rows: auto auto auto minmax(80px, 30%) auto 1fr auto;
+}
 .cmp-line {
   display: grid;
-  grid-template-columns: 100px 1fr;
+  grid-template-columns: 100px 1fr 110px;
   gap: 6px;
+}
+/* collections */
+.coll-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.coll-item {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+}
+.coll-head,
+.coll-req,
+.coll-results-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+}
+.coll-head {
+  background: var(--toolbar-bg);
+}
+.coll-req {
+  border-top: 1px solid var(--grid-line);
+}
+.coll-req:hover {
+  background: var(--active-line);
+}
+.coll-method {
+  font-weight: 600;
+  min-width: 60px;
+}
+.coll-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.coll-vars {
+  display: grid;
+  gap: 2px;
+  padding: 4px 6px;
+  border-top: 1px solid var(--grid-line);
+}
+.coll-results {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-top: 8px;
+}
+.coll-table tr.clickable {
+  cursor: pointer;
 }
 .cmp-label {
   font-weight: 600;

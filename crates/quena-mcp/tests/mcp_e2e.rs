@@ -253,6 +253,21 @@ fn mcp_over_http() {
     assert_eq!(r["results"].as_array().unwrap().len(), 1);
     assert_eq!(r["results"][0]["status"], 200, "{r}");
 
+    // Composer collections by name.
+    core.collection_save(&quena_app_core::collections::Collection {
+        name: "Coll".into(),
+        variables: vec![("base".into(), format!("http://127.0.0.1:{port}"))],
+        requests: vec![quena_app_core::collections::CollectionRequest { name: "one".into(), method: "GET".into(), url: "{{base}}/coll/one".into(), ..Default::default() }],
+        ..Default::default()
+    })
+    .unwrap();
+    let (l, _) = tool(addr, "list_collections", json!({}));
+    assert_eq!(l["collections"][0]["name"], "Coll", "{l}");
+    let (r, err) = tool(addr, "run_http_file", json!({ "path": "collection:Coll" }));
+    assert!(!err && r["results"][0]["status"] == 200, "{r}");
+    let (e, err) = tool(addr, "run_http_file", json!({ "path": "collection:../x" }));
+    assert!(err, "{e}");
+
     // --- Search, statistics, export, clear
     let (f, _) = tool(addr, "search_sessions", json!({ "text": "hello", "examine": "bodies" }));
     assert_eq!(f["total"], 1);

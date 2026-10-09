@@ -163,11 +163,19 @@ static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "list_http_requests",
-        description: "The requests of a .http file (JetBrains HTTP Client / VS Code REST Client format) with variables resolved for an environment of http-client.env.json (and http-client.private.env.json) next to it; also lists the environments and parse warnings. `path` is relative to the agents' folder (see `status`) or inside it.",
+        description: "The requests of a .http file (JetBrains HTTP Client / VS Code REST Client format) with variables resolved for an environment of http-client.env.json (and http-client.private.env.json) next to it; also lists the environments and parse warnings. `path` is relative to the agents' folder (see `status`) or inside it, or `collection:NAME` for one of the Composer's collections (see list_collections).",
         write: false,
         destructive: false,
         schema: || req(json!({ "path": { "type": "string" }, "env": { "type": "string", "description": "Environment name" } }), &["path"]),
         run: list_http_requests,
+    },
+    Tool {
+        name: "list_collections",
+        description: "The Composer's request collections (name, number of requests). Use `collection:NAME` as `path` in list_http_requests and run_http_file.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({})),
+        run: list_collections,
     },
     Tool {
         name: "get_breakpoints",
@@ -473,7 +481,7 @@ static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "run_http_file",
-        description: "Send the requests of a .http file through Quena, one after the other (all, or those in `names`: `# @name` / `### title`, or `line:N`), with an environment's variables. Returns per request the session id, status, duration or error; read details with get_session.",
+        description: "Send the requests of a .http file (or `collection:NAME`, a Composer collection) through Quena, one after the other (all, or those in `names`: `# @name` / `### title`, or `line:N`), with an environment's variables. Returns per request the session id, status, duration or error; read details with get_session.",
         write: true,
         destructive: false,
         schema: || {
@@ -1143,10 +1151,30 @@ struct HttpListArgs {
     env: Option<String>,
 }
 
+/// The `.http` file named by `path` and the folder its body files must be in: a Composer
+/// collection (`collection:NAME`) or a file in the agents' folder.
+fn http_source(core: &AppCore, path: &str) -> Result<(PathBuf, PathBuf)> {
+    match path.trim().strip_prefix("collection:") {
+        Some(name) => {
+            let file = core.collection_path(name)?;
+            if !file.is_file() {
+                bail!("there is no collection {name:?}");
+            }
+            Ok((file, core.collections_dir()))
+        }
+        None => Ok((inside(core, path)?, files_root(core)?)),
+    }
+}
+
+fn list_collections(core: &Arc<AppCore>, _: Value) -> Result<Value> {
+    let l = core.collections_list()?;
+    Ok(json!({ "collections": l.iter().map(|c| json!({ "name": c.name, "requests": c.requests })).collect::<Vec<_>>() }))
+}
+
 fn list_http_requests(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: HttpListArgs = args(a)?;
-    let root = files_root(core)?;
-    let mut l = core.http_requests(&inside(core, &a.path)?, a.env.as_deref(), &http_access(&root))?;
+    let (file, root) = http_source(core, &a.path)?;
+    let mut l = core.http_requests(&file, a.env.as_deref(), &http_access(&root))?;
     let mut view = View::new(core, 0);
     for r in &mut l.requests {
         r.url = view.url(&r.url);
@@ -1166,8 +1194,8 @@ struct HttpRunArgs {
 fn run_http_file(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: HttpRunArgs = args(a)?;
     let wait = Duration::from_millis(a.wait_ms.unwrap_or(30_000).min(300_000));
-    let root = files_root(core)?;
-    let mut results = core.run_http_file(&inside(core, &a.path)?, a.env.as_deref(), &a.names, wait, &http_access(&root))?;
+    let (file, root) = http_source(core, &a.path)?;
+    let mut results = core.run_http_file(&file, a.env.as_deref(), &a.names, wait, &http_access(&root))?;
     let mut view = View::new(core, 0);
     for r in &mut results {
         r.url = view.url(&r.url);

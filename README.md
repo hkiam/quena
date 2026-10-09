@@ -252,7 +252,9 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Rewrite rules**: change real responses and requests by JSONPath, regex, header, status —
   with an editor and preview, groups, and applied to captured sessions as changed copies
 - **Composer** (parsed, raw, history) with **cURL import**
-- **`.http` request collections** with environments (JetBrains / VS Code format), also headless
+- **Request collections** as `.http` files (JetBrains / VS Code format) with variables and
+  environments: saved and run in the Composer, by AI agents and headless; HTTP/1.1, HTTP/2 or
+  h2c chosen per request
 - Replay: again, unconditionally, *n* times, sequentially, with edit
 - **JavaScript rules** with hot reload,
   custom menu commands and a custom column

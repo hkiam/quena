@@ -722,6 +722,46 @@ export interface ComposeRequest {
   bodyFile?: string | null;
   fixContentLength: boolean;
   breakpoint?: boolean;
+  /** Force `HTTP/1.1` or `HTTP/2`; absent: as negotiated. */
+  version?: "HTTP/1.1" | "HTTP/2" | null;
+}
+
+export interface CollectionInfo {
+  name: string;
+  path: string;
+  requests: number;
+}
+/** A request of a collection, as the Composer edits it. */
+export interface CollectionRequest {
+  name: string;
+  method: string;
+  url: string;
+  /** `HTTP/1.1`, `HTTP/2`; empty: automatic. */
+  version: string;
+  headers: string;
+  body: string;
+  /** Body from this file (relative to the collections folder or absolute). */
+  bodyFile: string;
+  /** Substitute variables in the body file. */
+  bodyTemplate: boolean;
+}
+export interface Collection {
+  name: string;
+  variables: [string, string][];
+  requests: CollectionRequest[];
+  warnings?: string[];
+  environments?: string[];
+}
+export interface HttpRunResult {
+  name: string | null;
+  line: number;
+  method: string;
+  url: string;
+  session: SessionId | null;
+  status: number | null;
+  durationMs: number | null;
+  pending: boolean;
+  error: string | null;
 }
 
 export interface ArRule {
@@ -1107,6 +1147,15 @@ export const api = {
   replay: (ids: SessionId[], options: { unconditional?: boolean; count?: number; breakpoint?: boolean; sequential?: boolean }) =>
     invoke<number>("replay", { ids, options }),
   compose: (request: ComposeRequest) => invoke<SessionId>("compose", { request }),
+  collectionsList: () => invoke<CollectionInfo[]>("collections_list"),
+  collectionRead: (name: string) => invoke<Collection>("collection_read", { name }),
+  collectionSave: (collection: Collection) => invoke<CollectionInfo>("collection_save", { collection }),
+  collectionRename: (from: string, to: string) => invoke<void>("collection_rename", { from, to }),
+  collectionDelete: (name: string) => invoke<void>("collection_delete", { name }),
+  collectionImport: (path: string) => invoke<string>("collection_import", { path }),
+  collectionRun: (name: string, names: string[], env: string) => invoke<HttpRunResult[]>("collection_run", { name, names, env }),
+  collectionSend: (name: string | null, request: CollectionRequest, env: string) => invoke<HttpRunResult>("collection_send", { name, request, env }),
+  collectionsReveal: () => invoke<void>("collections_reveal"),
   parseRawRequest: (raw: string) => invoke<{ method: string; url: string; version: string; headers: string; body: string }>("parse_raw_request", { raw }),
   parseCurl: (cmd: string) => invoke<{ method: string; url: string; version: string; headers: string; body: string }>("parse_curl", { cmd }),
   scriptGet: () => invoke<ScriptState>("script_get"),

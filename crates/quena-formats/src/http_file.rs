@@ -60,6 +60,8 @@ pub struct RawRequest {
     pub line: usize,
     pub method: String,
     pub url: String,
+    /// `HTTP/1.1`, `HTTP/2` … after the URL, if written.
+    pub version: Option<String>,
     pub headers: Vec<(String, String)>,
     pub body: BodySource,
 }
@@ -79,6 +81,7 @@ pub struct Request {
     pub line: usize,
     pub method: String,
     pub url: String,
+    pub version: Option<String>,
     pub headers: Vec<(String, String)>,
     pub body: Body,
 }
@@ -114,7 +117,7 @@ fn file_variable(l: &str) -> Option<(String, String)> {
 
 /// `METHOD URL [HTTP/x]` or a bare URL (GET). The URL is everything up to an HTTP version,
 /// so variables with arguments (`{{$randomInt 1 9}}`) stay whole.
-fn request_line(l: &str) -> Option<(String, String)> {
+fn request_line(l: &str) -> Option<(String, String, Option<String>)> {
     let t = l.trim();
     let first = t.split_whitespace().next()?;
     let (method, rest) = if METHODS.contains(&first.to_ascii_uppercase().as_str()) {
@@ -124,11 +127,11 @@ fn request_line(l: &str) -> Option<(String, String)> {
     } else {
         return None;
     };
-    let url = match rest.rsplit_once(char::is_whitespace) {
-        Some((u, v)) if v.to_ascii_uppercase().starts_with("HTTP/") => u.trim_end(),
-        _ => rest,
+    let (url, version) = match rest.rsplit_once(char::is_whitespace) {
+        Some((u, v)) if v.to_ascii_uppercase().starts_with("HTTP/") => (u.trim_end(), Some(v.to_ascii_uppercase())),
+        _ => (rest, None),
     };
-    (!url.is_empty()).then(|| (method, url.to_string()))
+    (!url.is_empty()).then(|| (method, url.to_string(), version))
 }
 
 pub fn parse(text: &str) -> HttpFile {
@@ -157,7 +160,7 @@ fn parse_block(lines: &[&str], offset: usize, title: Option<String>, out: &mut H
     let mut name = title;
     let mut i = 0;
     // Before the request line: blank lines, comments, `@name` tags, file variables.
-    let (method, mut url, line) = loop {
+    let (method, mut url, version, line) = loop {
         let Some(l) = lines.get(i) else { return };
         i += 1;
         if l.trim().is_empty() {
@@ -175,7 +178,7 @@ fn parse_block(lines: &[&str], offset: usize, title: Option<String>, out: &mut H
             continue;
         }
         match request_line(l) {
-            Some((m, u)) => break (m, u, offset + i),
+            Some((m, u, v)) => break (m, u, v, offset + i),
             None => {
                 out.warnings.push(format!("line {}: not a request line: {}", offset + i, l.trim()));
                 return;
@@ -235,7 +238,7 @@ fn parse_block(lines: &[&str], offset: usize, title: Option<String>, out: &mut H
         [one] if one.trim_start().starts_with("< ") => BodySource::File(one.trim_start()[2..].trim().to_string()),
         all => BodySource::Text(all.join("\n")),
     };
-    out.requests.push(RawRequest { name, line, method, url, headers, body });
+    out.requests.push(RawRequest { name, line, method, url, version, headers, body });
 }
 
 // ------------------------------------------------------------- environments
@@ -423,10 +426,86 @@ pub fn resolve(file: &HttpFile, req: &RawRequest, env: &HashMap<String, String>,
             }
         }
     };
-    Ok(Request { name: req.name.clone(), line: req.line, method: req.method.clone(), url, headers, body })
+    Ok(Request { name: req.name.clone(), line: req.line, method: req.method.clone(), url, version: req.version.clone(), headers, body })
 }
 
 // ------------------------------------------------------------------ writing
+
+/// Write a parsed file back as `.http` text: file variables first, then each request with
+/// its name as `###` title. `parse` reads it back to the same variables and requests
+/// (comments and response handlers of the original are not kept).
+pub fn write_file(f: &HttpFile) -> String {
+    let mut out = String::new();
+    for (n, v) in &f.variables {
+        out.push_str(&format!("@{n} = {v}\n"));
+    }
+    if !f.variables.is_empty() {
+        out.push('\n');
+    }
+    for (i, r) in f.requests.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        match &r.name {
+            Some(n) => out.push_str(&format!("### {}\n", n.replace('\n', " "))),
+            None => out.push_str("###\n"),
+        }
+        out.push_str(&r.method);
+        out.push(' ');
+        out.push_str(&r.url);
+        if let Some(v) = &r.version {
+            out.push(' ');
+            out.push_str(v);
+        }
+        out.push('\n');
+        for (n, v) in &r.headers {
+            out.push_str(&format!("{n}: {v}\n"));
+        }
+        match &r.body {
+            BodySource::None => {}
+            BodySource::Text(t) => {
+                out.push('\n');
+                out.push_str(t);
+                out.push('\n');
+            }
+            BodySource::File(p) => out.push_str(&format!("\n< {p}\n")),
+            BodySource::FileWithVariables(p) => out.push_str(&format!("\n<@ {p}\n")),
+        }
+    }
+    out
+}
+
+/// Why a request cannot be written so that it reads back the same, if it cannot.
+pub fn check_writable(r: &RawRequest) -> Result<(), String> {
+    let one_line = |what: &str, s: &str| if s.contains(['\n', '\r']) { Err(format!("the {what} must be one line")) } else { Ok(()) };
+    one_line("URL", &r.url)?;
+    if let Some(n) = &r.name {
+        one_line("name", n)?;
+    }
+    if request_line(&format!("{} {}", r.method, r.url)).is_none_or(|(m, _, _)| m != r.method.to_ascii_uppercase()) {
+        return Err(format!("{} is not a method the .http format knows", r.method));
+    }
+    for (n, v) in &r.headers {
+        if n.is_empty() || n.contains([' ', ':', '\n']) {
+            return Err(format!("invalid header name: {n}"));
+        }
+        one_line("header value", v)?;
+    }
+    if let BodySource::Text(t) = &r.body {
+        for l in t.lines() {
+            let l = l.trim_start();
+            if l.starts_with("###") || l.starts_with("> ") || l.starts_with(">> ") || l.starts_with("<> ") || l.starts_with("> {%") {
+                return Err(format!("a body line may not start with {}", &l[..l.len().min(3)]));
+            }
+        }
+        if let [one] = t.lines().collect::<Vec<_>>().as_slice()
+            && (one.trim_start().starts_with("< ") || one.trim_start().starts_with("<@"))
+        {
+            return Err("a one-line body starting with < reads as a file reference".into());
+        }
+    }
+    Ok(())
+}
 
 /// A captured request for [`write`].
 #[derive(Debug, Clone)]
@@ -636,5 +715,33 @@ Content-Type: application/json
         assert_eq!(r.headers[0], ("Authorization".into(), "Bearer abc".into()));
         let r = resolve(&f, &f.requests[1], &env, Path::new("."), &all()).unwrap();
         assert_eq!((r.method.as_str(), r.body), ("POST", Body::Text("{}".into())));
+    }
+
+    #[test]
+    fn write_file_reads_back_the_same() {
+        let text = "@host = https://api.example.com\n@token = abc\n\n### List users\nGET {{host}}/users?page=1 HTTP/2\nAuthorization: Bearer {{token}}\n\n### Create\nPOST {{host}}/users\nContent-Type: application/json\n\n{\n  \"name\": \"{{$uuid}}\"\n}\n\n###\nPUT {{host}}/upload\n\n< ./data.bin\n\n### tmpl\nPOST {{host}}/t\n\n<@ ./t.json\n";
+        let f = parse(text);
+        assert_eq!(f.requests[0].version.as_deref(), Some("HTTP/2"));
+        assert_eq!(f.requests[1].version, None);
+        let out = write_file(&f);
+        let back = parse(&out);
+        assert_eq!(back.variables, f.variables);
+        let strip = |r: &RawRequest| RawRequest { line: 0, ..r.clone() };
+        assert_eq!(back.requests.iter().map(strip).collect::<Vec<_>>(), f.requests.iter().map(strip).collect::<Vec<_>>());
+        assert_eq!(write_file(&back), out, "stable");
+        for r in &f.requests {
+            check_writable(r).unwrap();
+        }
+    }
+
+    #[test]
+    fn unwritable_requests_are_refused() {
+        let ok = RawRequest { name: Some("a".into()), line: 0, method: "GET".into(), url: "https://x/".into(), version: None, headers: vec![], body: BodySource::None };
+        check_writable(&ok).unwrap();
+        assert!(check_writable(&RawRequest { url: "https://x/\nGET y".into(), ..ok.clone() }).is_err());
+        assert!(check_writable(&RawRequest { body: BodySource::Text("a\n### b".into()), ..ok.clone() }).is_err());
+        assert!(check_writable(&RawRequest { body: BodySource::Text("< file".into()), ..ok.clone() }).is_err());
+        assert!(check_writable(&RawRequest { headers: vec![("Bad Name".into(), "v".into())], ..ok.clone() }).is_err());
+        assert!(check_writable(&RawRequest { method: "FETCH".into(), ..ok.clone() }).is_err());
     }
 }

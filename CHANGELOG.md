@@ -8,6 +8,14 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Collections in the Composer**: requests are saved as `.http` files in the data folder
+  (one per collection; JetBrains/VS Code format).
+  - Load, send, run all with a result list, sort, duplicate and remove requests; edit the
+    collection's variables and choose an environment; import existing `.http` files.
+  - Requests with `{{variables}}` are sent with the collection's variables. MCP:
+    `list_collections`, `collection:NAME` in `run_http_file` / `list_http_requests`.
+- **HTTP version per Composer request**: automatic, HTTP/1.1 or HTTP/2 (also cleartext
+  h2c). `.http` files keep a version written after the URL.
 - **Use an existing CA** (*Capture → HTTPS Settings… → Import CA…*), e.g. the company's
   interception CA that machines already trust: a PKCS#12 file (`.p12`/`.pfx`, also legacy
   3DES/RC2) or a PEM certificate with its key (PKCS#8, PKCS#1 RSA, SEC1 EC).

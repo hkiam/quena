@@ -22,13 +22,33 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-/// Pooled upstream client.
+/// Pooled upstream clients.
 pub struct Upstream {
     pub client: Client<Connector, ProxyBody>,
+    /// For requests that must use HTTP/1.1 or HTTP/2 (Composer); own pools, so a pooled
+    /// connection of the other version is never reused for them.
+    pub http1: Client<Connector, ProxyBody>,
+    pub http2: Client<Connector, ProxyBody>,
 }
 
 impl Upstream {
     pub fn new(cfg: Arc<ProxyConfig>, tls: Arc<ClientConfigs>) -> Upstream {
+        let builder = || {
+            let mut b = Client::builder(TokioExecutor::new());
+            b.pool_idle_timeout(Duration::from_secs(90))
+                .pool_max_idle_per_host(32)
+                .http1_allow_spaces_after_header_name_in_responses(true)
+                .http1_allow_obsolete_multiline_headers_in_responses(true)
+                .http1_ignore_invalid_headers_in_responses(true)
+                .http1_max_headers(1000)
+                .pool_timer(hyper_util::rt::TokioTimer::new())
+                .http1_preserve_header_case(true)
+                .http1_title_case_headers(false)
+                .set_host(true);
+            b
+        };
+        let http1 = builder().build(Connector { cfg: cfg.clone(), tls: tls.clone(), force_h2: Some(false) });
+        let http2 = builder().http2_only(true).http2_adaptive_window(true).build(Connector { cfg: cfg.clone(), tls: tls.clone(), force_h2: Some(true) });
         let client = Client::builder(TokioExecutor::new())
             .pool_idle_timeout(Duration::from_secs(90))
             .pool_max_idle_per_host(32)
@@ -44,8 +64,8 @@ impl Upstream {
             .http2_adaptive_window(true)
             .retry_canceled_requests(true)
             .set_host(true)
-            .build(Connector { cfg, tls });
-        Upstream { client }
+            .build(Connector { cfg, tls, force_h2: None });
+        Upstream { client, http1, http2 }
     }
 }
 
@@ -632,11 +652,23 @@ pub(crate) async fn send_upstream(
     body: ProxyBody,
     upgrade: bool,
 ) -> Result<Response<Incoming>, String> {
+    send_upstream_as(shared, live, head, body, upgrade, None).await
+}
+
+/// [`send_upstream`] with the HTTP version forced (`Some(true)`: HTTP/2, `Some(false)`: HTTP/1.1).
+pub(crate) async fn send_upstream_as(
+    shared: &Arc<Shared>,
+    live: &Arc<LiveSession>,
+    head: &RequestHead,
+    body: ProxyBody,
+    upgrade: bool,
+    force_h2: Option<bool>,
+) -> Result<Response<Incoming>, String> {
     let uri: http::Uri = head.url.parse().map_err(|e| format!("invalid URL {}: {e}", head.url))?;
     let mut req = Request::builder()
         .method(http::Method::from_bytes(head.method.as_bytes()).map_err(|e| e.to_string())?)
         .uri(uri)
-        .version(Version::HTTP_11)
+        .version(if force_h2 == Some(true) { Version::HTTP_2 } else { Version::HTTP_11 })
         .body(body)
         .map_err(|e| e.to_string())?;
     *req.headers_mut() = to_header_map(&head.headers, true, upgrade);
@@ -646,8 +678,13 @@ pub(crate) async fn send_upstream(
         d.summary.state = SessionState::AwaitingResponse;
     });
     let up = shared.upstream();
+    let client = match force_h2 {
+        Some(true) => &up.http2,
+        Some(false) => &up.http1,
+        None => &up.client,
+    };
     let sent = now_us();
-    let result = match tokio::time::timeout(RESPONSE_HEAD_TIMEOUT, up.client.request(req)).await {
+    let result = match tokio::time::timeout(RESPONSE_HEAD_TIMEOUT, client.request(req)).await {
         Ok(r) => r,
         Err(_) => return Err(format!("no response from the server within {} s", RESPONSE_HEAD_TIMEOUT.as_secs())),
     };
@@ -985,6 +1022,8 @@ pub struct ExecuteOptions {
     pub comment: Option<String>,
     /// Run the request through the interceptor (breakpoints, AutoResponder).
     pub hooks: bool,
+    /// Force the HTTP version: `Some(true)` HTTP/2, `Some(false)` HTTP/1.1, `None` as usual.
+    pub force_h2: Option<bool>,
 }
 
 /// Issue a request from Quena (Composer/Replay) and record it as a new session.
@@ -1035,7 +1074,7 @@ pub async fn execute_with(shared: Arc<Shared>, head: RequestHead, body: StoredBo
     } else {
         (head, body)
     };
-    match send_upstream(&shared, &live, &head, StoredStream::new(body).boxed(), false).await {
+    match send_upstream_as(&shared, &live, &head, StoredStream::new(body).boxed(), false, opts.force_h2).await {
         Ok(resp) => {
             let r = deliver_response(&shared, &live, &view, &head, resp, &mut guard, None).await;
             // Consume the body so it gets recorded.
