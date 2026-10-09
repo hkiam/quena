@@ -27,6 +27,20 @@ recorded one.
 - **History** — the last requests you issued. Click to load, double-click to send again.
 - **Collections** — saved requests, see [Collections in the Composer](#collections-in-the-composer).
 
+Each request has its own **tab** above the editor: **+** opens a new one, a request loaded
+from a session or a collection opens in a new tab (an untouched one is reused), `×` or a
+middle-click closes one. Tabs and their drafts are kept over restarts.
+
+- **Query Parameters** lists the URL's parameters as a table, decoded: edit names and values,
+  add a row, or uncheck one to leave it out of the URL without losing it.
+- **Request Headers** as a **Table** (a checkbox per header: unchecked ones are not sent) or as
+  **Text** (`Name: value` per line; a line starting with `#` is not sent).
+- **Follow redirects** sends the request at a `Location` of a 3xx answer too, each hop as its
+  own session (comment *Redirect n from #id*), up to 10: 307/308 keep method and body, 303
+  and a POST answered with 301/302 continue as GET without a body; credentials and cookies
+  are not sent to another host.
+- The methods include `QUERY` (a safe request with a body).
+
 Next to the URL, the **HTTP version** is *Automatic* (what the server offers, as for
 proxied traffic), *HTTP/1.1* or *HTTP/2*. HTTP/2 over `https://` insists on HTTP/2 (an
 error if the server does not offer it); over `http://` it is cleartext HTTP/2 with prior

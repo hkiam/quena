@@ -8,6 +8,9 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Composer**: request **tabs** (kept over restarts), query parameters and headers as
+  **tables** with a checkbox to leave one out (`#` in the text form), **Follow redirects**
+  (each hop its own session; also MCP `send_request` `follow_redirects`), method `QUERY`.
 - **Inspecting and replaying**: *Statistics* show median, mean, p90/p95/p99, standard
   deviation, throughput, header bytes and the summed DNS, connect, TLS and waiting times; a
   **Params** view lists the query parameters; **Decode Value… / Decode Selection…** in the

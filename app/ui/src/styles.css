@@ -3776,3 +3776,80 @@ tr.capdiff-changed td:first-child {
   margin-bottom: 6px;
   word-break: break-all;
 }
+
+/* Composer request tabs and name/value tables. */
+.cmp-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.cmp-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cmp-tab.active {
+  background: var(--panel-bg);
+  color: var(--fg);
+  font-weight: 600;
+}
+.cmp-tab-x,
+.cmp-tab-add {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 3px;
+  cursor: pointer;
+}
+.cmp-tab-x:hover,
+.cmp-tab-add:hover {
+  color: var(--fg);
+}
+.cmp-rows {
+  width: 100%;
+  border-collapse: collapse;
+}
+.cmp-rows td {
+  padding: 1px 2px;
+}
+.cmp-rows td:first-child,
+.cmp-rows td:last-child {
+  width: 22px;
+}
+.cmp-rows input:not([type="checkbox"]) {
+  width: 100%;
+  box-sizing: border-box;
+}
+.cmp-rows tr.off input:not([type="checkbox"]) {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+.cmp-headers-table {
+  max-height: 220px;
+  overflow: auto;
+}
+.cmp-mode {
+  display: inline-flex;
+  gap: 2px;
+}
+.cmp-mode > span {
+  padding: 0 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.cmp-mode > span.active {
+  background: var(--panel-bg);
+  color: var(--fg);
+  font-weight: 600;
+}

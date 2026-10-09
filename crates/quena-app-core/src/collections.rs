@@ -124,6 +124,7 @@ impl AppCore {
                     body_file,
                     fix_content_length: true,
                     breakpoint: false,
+                    follow_redirects: false,
                 })
             });
             match sent {

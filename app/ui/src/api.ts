@@ -813,6 +813,8 @@ export interface ComposeRequest {
   breakpoint?: boolean;
   /** Force `HTTP/1.1` or `HTTP/2`; absent: as negotiated. */
   version?: "HTTP/1.1" | "HTTP/2" | null;
+  /** Follow redirects, each hop its own session. */
+  followRedirects?: boolean;
 }
 
 export interface CollectionInfo {

@@ -18,6 +18,8 @@ export interface Draft {
   bodyTemplate?: boolean;
   /** The collection request this draft was loaded from (saved back there). */
   coll?: { name: string; index: number; title: string } | null;
+  /** Query parameters switched off in the Params table (`name=value` as in the URL). */
+  offParams?: string[];
 }
 
 export const EMPTY: Draft = {
@@ -44,8 +46,9 @@ export function toRaw(d: Draft): string {
     }
   })();
   const path = u ? u.pathname + u.search : d.url;
-  const hasHost = /^host\s*:/im.test(d.headers);
-  return `${d.method} ${u ? d.url : path} ${d.version || "HTTP/1.1"}\n${hasHost || !u ? "" : `Host: ${u.host}\n`}${d.headers.trim()}\n\n${d.body}`;
+  const headers = activeHeaders(d.headers);
+  const hasHost = /^host\s*:/im.test(headers);
+  return `${d.method} ${u ? d.url : path} ${d.version || "HTTP/1.1"}\n${hasHost || !u ? "" : `Host: ${u.host}\n`}${headers.trim()}\n\n${d.body}`;
 }
 
 /** `{{name}}` somewhere: the request needs a collection's variables or an environment. */
@@ -59,7 +62,7 @@ export function toCollectionRequest(d: Draft, name: string): CollectionRequest {
     method: d.method,
     url: d.url,
     version: d.version ?? "",
-    headers: d.headers,
+    headers: activeHeaders(d.headers),
     body: d.bodyFile ? "" : d.body,
     bodyFile: d.bodyFile ?? "",
     bodyTemplate: !!d.bodyFile && !!d.bodyTemplate,
@@ -95,4 +98,70 @@ export function moved<T>(list: T[], i: number, dir: -1 | 1): T[] {
   const next = [...list];
   [next[i], next[j]] = [next[j], next[i]];
   return next;
+}
+
+// ---- Header and parameter tables ----
+
+export interface Row {
+  on: boolean;
+  name: string;
+  value: string;
+}
+
+/** Header lines that are on (`#` turns one off). */
+export function activeHeaders(text: string): string {
+  return text
+    .split("\n")
+    .filter((l) => !l.trimStart().startsWith("#"))
+    .join("\n");
+}
+
+/** The header text as table rows. */
+export function headerRows(text: string): Row[] {
+  return text
+    .split("\n")
+    .filter((l) => l.trim())
+    .map((l) => {
+      const off = l.trimStart().startsWith("#");
+      const line = off ? l.trimStart().replace(/^#\s?/, "") : l;
+      const i = line.indexOf(":");
+      return { on: !off, name: (i < 0 ? line : line.slice(0, i)).trim(), value: i < 0 ? "" : line.slice(i + 1).trim() };
+    });
+}
+
+/** Table rows as header text (rows switched off as `# Name: value`, empty rows left out). */
+export function headerText(rows: Row[]): string {
+  return rows
+    .filter((r) => r.name.trim() || r.value.trim())
+    .map((r) => `${r.on ? "" : "# "}${r.name.trim()}: ${r.value}`)
+    .join("\n");
+}
+
+const enc = (s: string) => encodeURIComponent(s).replace(/%20/g, "+");
+const dec = (s: string) => {
+  try {
+    return decodeURIComponent(s.replace(/\+/g, " "));
+  } catch {
+    return s;
+  }
+};
+
+/** The query parameters of `url` (on) and those switched off, decoded. */
+export function queryRows(url: string, off: string[] = []): Row[] {
+  const q = url.split("#")[0].split("?").slice(1).join("?");
+  const pair = (p: string, on: boolean): Row => {
+    const i = p.indexOf("=");
+    return { on, name: dec(i < 0 ? p : p.slice(0, i)), value: i < 0 ? "" : dec(p.slice(i + 1)) };
+  };
+  return [...q.split("&").filter(Boolean).map((p) => pair(p, true)), ...off.map((p) => pair(p, false))];
+}
+
+/** `url` with the query of the rows that are on; the others as `offParams`. */
+export function withQuery(url: string, rows: Row[]): { url: string; offParams: string[] } {
+  const [beforeHash, ...hash] = url.split("#");
+  const base = beforeHash.split("?")[0];
+  const encode = (r: Row) => (r.value === "" && !r.name.includes("=") ? enc(r.name) : `${enc(r.name)}=${enc(r.value)}`);
+  const used = rows.filter((r) => r.name.trim() || r.value.trim());
+  const on = used.filter((r) => r.on).map(encode);
+  return { url: `${base}${on.length ? `?${on.join("&")}` : ""}${hash.length ? `#${hash.join("#")}` : ""}`, offParams: used.filter((r) => !r.on).map(encode) };
 }

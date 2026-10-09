@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultName, EMPTY, fromCollectionRequest, hasVariables, moved, toCollectionRequest, toRaw } from "./composerDraft";
+import { activeHeaders, defaultName, EMPTY, fromCollectionRequest, hasVariables, headerRows, headerText, moved, queryRows, toCollectionRequest, toRaw, withQuery } from "./composerDraft";
 
 describe("composer draft", () => {
   it("writes the chosen HTTP version into the raw request", () => {
@@ -29,5 +29,26 @@ describe("composer draft", () => {
     expect(moved([1, 2, 3], 0, 1)).toEqual([2, 1, 3]);
     const l = [1, 2];
     expect(moved(l, 0, -1)).toBe(l);
+  });
+  it("edits headers as a table, rows switched off with #", () => {
+    const rows = headerRows("Accept: */*\n# X-Debug: 1\nX-Empty:");
+    expect(rows).toEqual([{ on: true, name: "Accept", value: "*/*" }, { on: false, name: "X-Debug", value: "1" }, { on: true, name: "X-Empty", value: "" }]);
+    expect(headerText([...rows, { on: true, name: "", value: "" }])).toBe("Accept: */*\n# X-Debug: 1\nX-Empty: ");
+    expect(activeHeaders("A: 1\n# B: 2")).toBe("A: 1");
+    expect(toRaw({ ...EMPTY, url: "https://x/", headers: "A: 1\n# B: 2" })).not.toContain("B: 2");
+    expect(toCollectionRequest({ ...EMPTY, headers: "A: 1\n# B: 2" }, "n").headers).toBe("A: 1");
+  });
+  it("edits query parameters as a table", () => {
+    const rows = queryRows("https://x/s?q=a+b&lang=de&flag#top", ["debug=1"]);
+    expect(rows).toEqual([
+      { on: true, name: "q", value: "a b" },
+      { on: true, name: "lang", value: "de" },
+      { on: true, name: "flag", value: "" },
+      { on: false, name: "debug", value: "1" },
+    ]);
+    const next = withQuery("https://x/s?q=a+b&lang=de&flag#top", rows.map((r) => (r.name === "lang" ? { ...r, on: false } : r.name === "debug" ? { ...r, on: true } : r)));
+    expect(next).toEqual({ url: "https://x/s?q=a+b&flag&debug=1#top", offParams: ["lang=de"] });
+    expect(withQuery("https://x/s?a=1", []).url).toBe("https://x/s");
+    expect(withQuery("https://x/s", [{ on: true, name: "a&b", value: "ä" }]).url).toBe("https://x/s?a%26b=%C3%A4");
   });
 });

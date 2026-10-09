@@ -9,9 +9,65 @@ import { promptText, say, useStore } from "../store";
 import { actions } from "../actions";
 import { t } from "../i18n";
 import { CollectionsView } from "./Collections";
-import { defaultName, EMPTY, hasVariables, toCollectionRequest, toRaw, VERSIONS, type Draft } from "./composerDraft";
+import { defaultName, EMPTY, hasVariables, headerRows, headerText, queryRows, toCollectionRequest, toRaw, VERSIONS, withQuery, type Draft, type Row } from "./composerDraft";
 
-const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"];
+const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "QUERY", "TRACE"];
+const MAX_TABS = 20;
+
+function stored<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v == null ? fallback : (JSON.parse(v) as T);
+  } catch {
+    return fallback;
+  }
+}
+
+function keep(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** The tab title of a draft: method and the end of the path. */
+function tabTitle(d: Draft): string {
+  const path = d.url.replace(/^[a-z]+:\/\/[^/]*/i, "").split("?")[0];
+  const last = path.split("/").filter(Boolean).pop() ?? (d.url.replace(/^[a-z]+:\/\//i, "").split("/")[0] || "/");
+  return `${d.method} ${last}`.slice(0, 32);
+}
+
+/** Name/value rows with a switch each; an empty row at the end adds one. */
+function RowTable({ rows, onChange, placeholder }: { rows: Row[]; onChange: (rows: Row[]) => void; placeholder: [string, string] }) {
+  const all = [...rows, { on: true, name: "", value: "" }];
+  const set = (i: number, r: Row) => onChange(all.map((x, j) => (j === i ? r : x)).filter((x, j) => j < rows.length || x.name || x.value));
+  const plain = { spellCheck: false, autoCorrect: "off", autoCapitalize: "off" } as const;
+  return (
+    <table className="cmp-rows">
+      <tbody>
+        {all.map((r, i) => (
+          <tr key={i} className={r.on ? "" : "off"}>
+            <td>{i < rows.length && <input type="checkbox" checked={r.on} title={t("Send this one")} onChange={(e) => set(i, { ...r, on: e.target.checked })} />}</td>
+            <td>
+              <input {...plain} className="mono" placeholder={placeholder[0]} value={r.name} onChange={(e) => set(i, { ...r, name: e.target.value })} />
+            </td>
+            <td>
+              <input {...plain} className="mono" placeholder={placeholder[1]} value={r.value} onChange={(e) => set(i, { ...r, value: e.target.value })} />
+            </td>
+            <td>
+              {i < rows.length && (
+                <button className="cc-del" title={t("Remove")} onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+                  ✕
+                </button>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 const HISTORY_KEY = "quena.composer.history";
 const INLINE_BODY_LIMIT = 1 << 20;
 
@@ -25,13 +81,27 @@ function loadHistory(): (Draft & { at: number })[] {
 
 export default function ComposerPanel() {
   const [tab, setTab] = useState<"parsed" | "raw" | "history" | "collections">("parsed");
-  const [d, setD] = useState<Draft>(() => {
-    try {
-      return { ...EMPTY, ...JSON.parse(localStorage.getItem("quena.composer.draft") ?? "{}") };
-    } catch {
-      return EMPTY;
-    }
+  // Request tabs (one draft each); earlier versions kept a single draft.
+  const [drafts, setDrafts] = useState<Draft[]>(() => {
+    const list = stored<Draft[] | null>("quena.composer.drafts", null);
+    if (Array.isArray(list) && list.length) return list.map((x) => ({ ...EMPTY, ...x }));
+    return [{ ...EMPTY, ...stored<Partial<Draft>>("quena.composer.draft", {}) }];
   });
+  const [activeTab, setActiveTab] = useState(() => stored<number>("quena.composer.active", 0));
+  const cur = Math.max(0, Math.min(activeTab, drafts.length - 1));
+  const d = drafts[cur];
+  const setD = (x: Draft | ((v: Draft) => Draft)) => setDrafts((list) => list.map((v, i) => (i === cur ? (typeof x === "function" ? x(v) : x) : v)));
+  const [headerMode, setHeaderModeState] = useState<"table" | "text">(() => stored("quena.composer.headerMode", "table"));
+  const setHeaderMode = (m: "table" | "text") => {
+    setHeaderModeState(m);
+    keep("quena.composer.headerMode", m);
+  };
+  const [follow, setFollowState] = useState(() => stored("quena.composer.follow", false));
+  const setFollow = (v: boolean) => {
+    setFollowState(v);
+    keep("quena.composer.follow", v);
+  };
+  const [showParams, setShowParams] = useState(true);
   const [raw, setRaw] = useState("");
   const [fixLen, setFixLen] = useState(true);
   const [inspect, setInspect] = useState(true);
@@ -59,12 +129,30 @@ export default function ComposerPanel() {
   const loaded = useRef<{ id: number; text: string } | null>(null);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("quena.composer.draft", JSON.stringify({ ...d, body: d.body.length < 256 * 1024 ? d.body : "" }));
-    } catch {
-      /* ignore */
-    }
-  }, [d]);
+    keep("quena.composer.drafts", drafts.map((x) => ({ ...x, body: x.body.length < 256 * 1024 ? x.body : "" })));
+    keep("quena.composer.active", cur);
+  }, [drafts, cur]);
+
+  const switchTo = (i: number) => {
+    loaded.current = null;
+    setActiveTab(i);
+    if (tab === "raw") setRaw(toRaw(drafts[i]));
+  };
+  const addTab = (nd: Draft = EMPTY) => {
+    loaded.current = null;
+    setDrafts((list) => {
+      // An untouched tab is reused.
+      const pristine = list.length > 0 && JSON.stringify(list[cur]) === JSON.stringify(EMPTY);
+      const next = pristine ? list.map((v, i) => (i === cur ? nd : v)) : [...list, nd].slice(-MAX_TABS);
+      setActiveTab(pristine ? cur : next.length - 1);
+      return next;
+    });
+  };
+  const closeTab = (i: number) => {
+    loaded.current = null;
+    setDrafts((list) => (list.length > 1 ? list.filter((_, j) => j !== i) : [EMPTY]));
+    setActiveTab((a) => (i < a ? a - 1 : a === i ? Math.max(0, a - 1) : a));
+  };
 
   const fromSession = async (id: number) => {
     const det = await api.detail(id);
@@ -73,8 +161,7 @@ export default function ComposerPanel() {
     const big = det.requestBody.len > INLINE_BODY_LIMIT || !det.requestBody.isText;
     const b = big || det.requestBody.len === 0 ? null : await loadBody(id, "request", det.requestBody, INLINE_BODY_LIMIT, "raw");
     const body = b?.text ?? "";
-    loaded.current = b ? { id, text: body } : null;
-    setD({
+    addTab({
       version: "",
       coll: null,
       method: det.request.method,
@@ -87,6 +174,7 @@ export default function ComposerPanel() {
       // Transcoded text (UTF-16) came as UTF-8; edits go back in the body's own charset.
       bodyCharset: b ? (det.requestBody.charset?.name ?? b.charset) : null,
     });
+    loaded.current = b ? { id, text: body } : null;
     setTab("parsed");
     say(t("Loaded #{id} into the Composer", { id }));
   };
@@ -119,6 +207,7 @@ export default function ComposerPanel() {
         bodyFile: draft.bodyFile,
         fixContentLength: fixLen,
         version: (draft.version || null) as ComposeRequest["version"],
+        followRedirects: follow,
       };
       id = await api.compose(req);
       }
@@ -240,10 +329,43 @@ export default function ComposerPanel() {
         <label className="f-check">
           <input type="checkbox" checked={inspect} onChange={(e) => setInspect(e.target.checked)} /> {t("Inspect session")}
         </label>
+        <label className="f-check" title={t("Follow redirects (3xx with Location), each as its own session, up to 10; a POST answered with 301/302/303 continues as a GET")}>
+          <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> {t("Follow redirects")}
+        </label>
         <button className="primary" disabled={busy} onClick={executeCurrent}>
           ▶ {t("Execute")}
         </button>
       </div>
+      {(tab === "parsed" || tab === "raw") && (
+        <div className="cmp-tabs">
+          {drafts.map((x, i) => (
+            <span
+              key={i}
+              className={`cmp-tab ${i === cur ? "active" : ""}`}
+              title={`${x.method} ${x.url}`}
+              onClick={() => switchTo(i)}
+              onAuxClick={(e) => e.button === 1 && closeTab(i)}
+            >
+              {tabTitle(x)}
+              {drafts.length > 1 && (
+                <button
+                  className="cmp-tab-x"
+                  title={t("Close")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(i);
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ))}
+          <button className="cmp-tab-add" title={t("New request tab")} onClick={() => addTab()}>
+            +
+          </button>
+        </div>
+      )}
       {tab === "parsed" && (
         <div className={`cmp-parsed ${d.coll ? "with-coll" : ""}`}>
           <div className="cmp-line">
@@ -269,8 +391,47 @@ export default function ComposerPanel() {
               </button>
             </div>
           )}
-          <div className="cmp-label">{t("Request Headers")}</div>
-          <textarea className="mono cmp-headers" value={d.headers} spellCheck={false} onChange={(e) => setD({ ...d, headers: e.target.value })} />
+          {(() => {
+            const params = queryRows(d.url, d.offParams);
+            return (
+              <>
+                <div className="cmp-label">
+                  <span className="linklike" onClick={() => setShowParams(!showParams)}>
+                    {showParams ? "▾" : "▸"} {t("Query Parameters")} {params.length ? `(${params.filter((p) => p.on).length})` : ""}
+                  </span>
+                </div>
+                {showParams && (
+                  <RowTable
+                    rows={params}
+                    placeholder={[t("Name"), t("Value")]}
+                    onChange={(rows) => {
+                      const q = withQuery(d.url, rows);
+                      setD({ ...d, url: q.url, offParams: q.offParams });
+                    }}
+                  />
+                )}
+              </>
+            );
+          })()}
+          <div className="cmp-label">
+            {t("Request Headers")}
+            <span className="tp-spacer" />
+            <span className="cmp-mode small">
+              <span className={headerMode === "table" ? "active" : ""} onClick={() => setHeaderMode("table")}>
+                {t("Table")}
+              </span>
+              <span className={headerMode === "text" ? "active" : ""} onClick={() => setHeaderMode("text")}>
+                {t("Text")}
+              </span>
+            </span>
+          </div>
+          {headerMode === "table" ? (
+            <div className="cmp-headers-table">
+              <RowTable rows={headerRows(d.headers)} placeholder={[t("Header"), t("Value")]} onChange={(rows) => setD({ ...d, headers: headerText(rows) })} />
+            </div>
+          ) : (
+            <textarea className="mono cmp-headers" value={d.headers} spellCheck={false} placeholder={t("Name: value — a line starting with # is not sent")} onChange={(e) => setD({ ...d, headers: e.target.value })} />
+          )}
           <div className="cmp-label">
             {t("Request Body")}
             {d.bodyCharset && !sameCharset(d.bodyCharset, "UTF-8") && d.bodyFromSession == null && !d.bodyFile && (
@@ -334,8 +495,7 @@ export default function ComposerPanel() {
           setEnv={setEnv}
           nonce={collNonce}
           onLoad={(nd) => {
-            loaded.current = null;
-            setD(nd);
+            addTab(nd);
             setTab("parsed");
           }}
         />

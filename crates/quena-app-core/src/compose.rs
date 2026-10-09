@@ -24,6 +24,34 @@ pub struct ReplayOptions {
     pub parallel: u32,
 }
 
+/// Most redirects the Composer follows.
+pub const MAX_REDIRECTS: usize = 10;
+
+/// `location` of a response to `base` as an absolute URL.
+pub fn resolve_location(base: &str, location: &str) -> Option<String> {
+    let loc = location.trim();
+    if loc.is_empty() {
+        return None;
+    }
+    if loc.starts_with("http://") || loc.starts_with("https://") {
+        return Some(loc.to_string());
+    }
+    let (scheme, rest) = base.split_once("://")?;
+    let (authority, path) = rest.find('/').map(|i| (&rest[..i], &rest[i..])).unwrap_or((rest, "/"));
+    let path = path.split('#').next().unwrap_or(path);
+    Some(if let Some(l) = loc.strip_prefix("//") {
+        format!("{scheme}://{l}")
+    } else if loc.starts_with('/') {
+        format!("{scheme}://{authority}{loc}")
+    } else if loc.starts_with('?') {
+        format!("{scheme}://{authority}{}{loc}", path.split('?').next().unwrap_or(path))
+    } else {
+        let dir = path.split('?').next().unwrap_or(path);
+        let dir = &dir[..dir.rfind('/').map_or(0, |i| i + 1)];
+        format!("{scheme}://{authority}{}{loc}", if dir.is_empty() { "/" } else { dir })
+    })
+}
+
 /// Most repeats of one replay, and most requests in flight at once.
 pub const MAX_REPEAT: u32 = 100_000;
 pub const MAX_PARALLEL: u32 = 100;
@@ -54,6 +82,9 @@ pub struct ComposeRequest {
     pub fix_content_length: bool,
     #[serde(default)]
     pub breakpoint: bool,
+    /// Follow redirects (3xx with `Location`), each as its own session, up to [`MAX_REDIRECTS`].
+    #[serde(default)]
+    pub follow_redirects: bool,
 }
 
 fn yes() -> bool {
@@ -101,11 +132,18 @@ pub fn parse_curl(cmd: &str) -> Result<ParsedRequest> {
     Ok(ParsedRequest { method: c.method, url: c.url, version: "HTTP/1.1".into(), headers, body: c.body })
 }
 
+/// `host[:port]` of an absolute URL.
+fn authority_of(url: &str) -> Option<String> {
+    let rest = url.split_once("://")?.1;
+    Some(rest.split(['/', '?', '#']).next().unwrap_or(rest).to_ascii_lowercase())
+}
+
 fn parse_header_lines(s: &str) -> Headers {
     let mut h = Headers::new();
     for line in s.lines() {
         let line = line.trim_end_matches('\r');
-        if line.trim().is_empty() {
+        // `#` turns a header off (the Composer's header table).
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
             continue;
         }
         if let Some((k, v)) = line.split_once(':') {
@@ -264,12 +302,57 @@ impl AppCore {
         let opts = ExecuteOptions { flags: flags::COMPOSED | if r.breakpoint { flags::BREAKPOINTED } else { 0 }, comment: None, hooks: true, force_h2 };
         let rt = engine.proxy.runtime().handle().clone();
         let (tx, rx) = std::sync::mpsc::channel();
+        let follow = r.follow_redirects;
+        let core = Arc::downgrade(self);
         rt.spawn(async move {
-            let id = quena_proxy::execute_with(shared, head, body, opts, move |id| {
+            let first = head.clone();
+            let mut id = quena_proxy::execute_with(shared.clone(), head, body, opts, move |id| {
                 let _ = tx.send(id);
             })
             .await;
-            let _ = id;
+            if !follow {
+                return;
+            }
+            let mut req = first;
+            for hop in 1..=MAX_REDIRECTS {
+                let Some(core) = core.upgrade() else { return };
+                let Some(d) = core.capture().detail(id) else { return };
+                let Some(resp) = d.response else { return };
+                if !matches!(resp.status, 301 | 302 | 303 | 307 | 308) {
+                    return;
+                }
+                let Some(next) = resp.headers.get("location").and_then(|l| resolve_location(&req.url, l)) else { return };
+                let same_host = authority_of(&next) == authority_of(&req.url);
+                // 303 (except for HEAD), and 301/302 after a POST, become a GET without a body
+                // (as browsers do); otherwise method and body stay.
+                let keep_body = match resp.status {
+                    303 => req.method == "HEAD",
+                    301 | 302 => req.method != "POST",
+                    _ => true,
+                };
+                let mut headers = req.headers.clone();
+                headers.remove("host");
+                if !same_host {
+                    for h in ["authorization", "cookie", "proxy-authorization"] {
+                        headers.remove(h);
+                    }
+                }
+                let body = if keep_body {
+                    core.capture().bodies_of(id).map(|(b, _)| b).unwrap_or_else(|| core.capture().bodies.store_bytes(b""))
+                } else {
+                    for h in ["content-length", "content-type", "transfer-encoding", "content-encoding"] {
+                        headers.remove(h);
+                    }
+                    core.capture().bodies.store_bytes(b"")
+                };
+                if let Some(a) = authority_of(&next) {
+                    headers.0.insert(0, ("Host".into(), a));
+                }
+                req = RequestHead { method: if keep_body { req.method.clone() } else { "GET".into() }, url: next, version: req.version, headers };
+                let opts = ExecuteOptions { flags: flags::COMPOSED, comment: Some(format!("Redirect {hop} from #{id}")), hooks: true, force_h2 };
+                drop(core);
+                id = quena_proxy::execute_with(shared.clone(), req.clone(), body, opts, |_| {}).await;
+            }
         });
         rx.recv_timeout(std::time::Duration::from_secs(5)).map_err(|_| anyhow!("composer request did not start"))
     }
@@ -327,5 +410,18 @@ mod tests {
         assert_eq!(p.method, "POST");
         assert_eq!(p.body, "hello");
         assert!(p.headers.contains("Content-Type"));
+    }
+
+    #[test]
+    fn locations_resolve() {
+        let b = "https://a.example.com/x/y/z?q=1";
+        assert_eq!(resolve_location(b, "https://b.example.com/").unwrap(), "https://b.example.com/");
+        assert_eq!(resolve_location(b, "//c.example.com/p").unwrap(), "https://c.example.com/p");
+        assert_eq!(resolve_location(b, "/root").unwrap(), "https://a.example.com/root");
+        assert_eq!(resolve_location(b, "next").unwrap(), "https://a.example.com/x/y/next");
+        assert_eq!(resolve_location(b, "?page=2").unwrap(), "https://a.example.com/x/y/z?page=2");
+        assert_eq!(resolve_location("http://h:8080", "a").unwrap(), "http://h:8080/a");
+        assert!(resolve_location(b, " ").is_none());
+        assert_eq!(parse_header_lines("A: 1\n# B: 2\n  #C: 3\nD: 4").0.len(), 2, "`#` lines are off");
     }
 }

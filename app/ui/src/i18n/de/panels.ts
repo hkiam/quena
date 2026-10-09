@@ -413,4 +413,12 @@ export const panels: Record<string, string> = {
   "Waiting for the first byte": "Warten auf das erste Byte",
   "{ms} in {n} sessions (\u2300 {avg})": "{ms} in {n} Sessions (\u2300 {avg})",
   "Phases and header bytes of the first {n} sessions.": "Phasen und Header-Bytes der ersten {n} Sessions.",
+  "Send this one": "Diesen senden",
+  "Follow redirects (3xx with Location), each as its own session, up to 10; a POST answered with 301/302/303 continues as a GET": "Weiterleitungen folgen (3xx mit Location), jede als eigene Session, bis zu 10; ein POST mit 301/302/303 als Antwort geht als GET weiter",
+  "Follow redirects": "Weiterleitungen folgen",
+  "New request tab": "Neuer Request-Tab",
+  "Query Parameters": "Query-Parameter",
+  "Text": "Text",
+  "Header": "Header",
+  "Name: value \u2014 a line starting with # is not sent": "Name: Wert \u2014 eine Zeile mit # am Anfang wird nicht gesendet",
 };

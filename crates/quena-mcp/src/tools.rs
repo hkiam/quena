@@ -270,6 +270,7 @@ static TOOLS: &[Tool] = &[
                     "headers": { "type": "object", "additionalProperties": { "type": "string" } },
                     "body": { "type": "string" },
                     "wait_ms": { "type": "integer", "description": "Wait this long for the response (default 30000; 0: do not wait)" },
+                    "follow_redirects": { "type": "boolean", "description": "Follow redirects, each as its own session (returns the first)" },
                     "max_body_bytes": { "type": "integer", "description": "Response body limit (default 16384)" }
                 }),
                 &["method", "url"],
@@ -1537,6 +1538,8 @@ struct SendArgs {
     body: String,
     wait_ms: Option<u64>,
     max_body_bytes: Option<usize>,
+    #[serde(default)]
+    follow_redirects: bool,
 }
 
 fn send_request(core: &Arc<AppCore>, a: Value) -> Result<Value> {
@@ -1553,6 +1556,7 @@ fn send_request(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         body_file: None,
         fix_content_length: true,
         breakpoint: false,
+        follow_redirects: a.follow_redirects,
     })?;
     let wait = Duration::from_millis(a.wait_ms.unwrap_or(30_000).min(300_000));
     let finished = core.wait_session(id, wait);
