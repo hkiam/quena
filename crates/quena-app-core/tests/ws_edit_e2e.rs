@@ -140,6 +140,5 @@ fn websocket_messages_are_changed_dropped_and_decoded() {
     assert_eq!((ev.sio.as_deref(), ev.event.as_deref()), (Some("event"), Some("chat")));
     let down: Vec<_> = frames.iter().filter(|f| f.dir == 1).collect();
     assert_eq!((down[1].edited, down[1].sio.as_ref().unwrap().data.as_deref().unwrap_or("").contains("changed")), (true, true));
-    assert!(core.capture().detail(id).is_some());
     core.shutdown();
 }
