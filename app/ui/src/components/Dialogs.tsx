@@ -81,6 +81,51 @@ function PromptDialog({ title, label, initial, secret, resolve }: { title: strin
   );
 }
 
+/** Advanced replay: how often, one after the other or N at a time. */
+function ReplayDialog({ ids }: { ids: number[] }) {
+  const [count, setCount] = useState("10");
+  const [mode, setMode] = useState<"sequential" | "parallel">("sequential");
+  const [parallel, setParallel] = useState("5");
+  const [unconditional, setUnconditional] = useState(false);
+  const n = Math.max(1, Math.min(100000, Math.floor(Number(count)) || 1));
+  const p = Math.max(1, Math.min(100, Math.floor(Number(parallel)) || 1));
+  const go = () => {
+    close();
+    void import("../replay").then((m) => m.startReplay(ids, { count: n, unconditional, sequential: mode === "sequential", parallel: mode === "parallel" ? p : 0 }));
+  };
+  return (
+    <Modal
+      title={t("Advanced Replay")}
+      onClose={close}
+      footer={
+        <>
+          <button onClick={close}>{t("Cancel")}</button>
+          <button className="primary" onClick={go}>
+            {t("Replay")}
+          </button>
+        </>
+      }
+    >
+      <p className="muted small">{plural(ids.length, "{n} selected request", "{n} selected requests")}</p>
+      <div className="f-row">
+        <span>{t("Times each (up to 100,000)")}</span>
+        <input autoFocus type="number" min={1} max={100000} value={count} onChange={(e) => setCount(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
+      </div>
+      <label className="f-check">
+        <input type="radio" checked={mode === "sequential"} onChange={() => setMode("sequential")} /> {t("One after the other")}
+      </label>
+      <label className="f-check">
+        <input type="radio" checked={mode === "parallel"} onChange={() => setMode("parallel")} /> {t("In parallel, at most")}{" "}
+        <input type="number" className="num-small" min={1} max={100} value={parallel} onChange={(e) => setParallel(e.target.value)} disabled={mode !== "parallel"} /> {t("at a time")}
+      </label>
+      <label className="f-check">
+        <input type="checkbox" checked={unconditional} onChange={(e) => setUnconditional(e.target.checked)} /> {t("Unconditionally (without If-None-Match / If-Modified-Since)")}
+      </label>
+      <p className="muted small">{t("{n} requests in all; Stop in the message or Replay → Stop Replay ends it.", { n: (n * ids.length).toLocaleString() })}</p>
+    </Modal>
+  );
+}
+
 /** Yes/no question; Enter confirms, Esc or closing cancels. */
 function ConfirmDialog({ title, message, confirm, resolve }: { title: string; message: string; confirm: string; resolve: (ok: boolean) => void }) {
   const answered = useRef(false);
@@ -1273,6 +1318,8 @@ function DialogBody({ d }: { d: Dialog }) {
       return <ImportExistingDialog key="import-existing" total={d.total} what={d.what} resolve={d.resolve} />;
     case "prompt":
       return <PromptDialog title={d.title} label={d.label} initial={d.initial} secret={d.secret} resolve={d.resolve} />;
+    case "replay":
+      return <ReplayDialog ids={d.ids} />;
     case "comment":
       return <CommentDialog ids={d.ids} initial={d.initial} />;
     case "help":

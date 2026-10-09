@@ -350,4 +350,5 @@ export const inspectors: Record<string, string> = {
   "Filter: {expr}": "Filter: {expr}",
   "Add {name} as a Column": "{name} als Spalte hinzuf\u00fcgen",
   "Filter Sessions with this {name}": "Sessions mit diesem {name} filtern",
+  "Params": "Parameter",
 };

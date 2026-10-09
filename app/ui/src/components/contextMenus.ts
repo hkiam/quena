@@ -8,7 +8,7 @@ import { copyText } from "../actions";
 import { isTauri } from "../api";
 import { editTargetFor, type EditTarget } from "../lib/editTargets";
 import { modKey } from "../lib/format";
-import { say } from "../store";
+import { say, set } from "../store";
 import { t } from "../i18n";
 
 export async function readClipboard(): Promise<string> {
@@ -94,6 +94,7 @@ export function editorMenu(ed: EditTarget): MenuItem[] {
       { label: t("Cut"), shortcut: keys("X"), disabled: !selected, action: () => void copyText(selected).then(() => ed.replaceSelection("")) },
     );
   items.push({ label: t("Copy"), shortcut: keys("C"), disabled: !selected, action: () => void copyText(selected) });
+  if (selected.trim()) items.push(decodeItem(selected, t("Decode Selection…")));
   if (editable) items.push({ label: t("Paste"), shortcut: keys("V"), action: pasteInto((text) => ed.replaceSelection(text)) });
   items.push({ separator: true }, { label: t("Select All"), shortcut: keys("A"), action: () => ed.selectAll() });
   return items;
@@ -117,8 +118,14 @@ export function defaultMenu(target: Element | null): MenuItem[] {
   const ed = editTargetFor(target);
   if (ed) return editorMenu(ed);
   const text = selectedText(target);
-  if (text) return [{ label: t("Copy"), shortcut: keys("C"), action: () => void copyText(text) }];
+  if (text) return [{ label: t("Copy"), shortcut: keys("C"), action: () => void copyText(text) }, decodeItem(text, t("Decode Selection…"))];
   return [];
+}
+
+/** Open the Text Tools with `text`, the likely decoding chosen (Base64, URL, HTML, hex,
+ * escapes, JWT, Unix time). */
+export function decodeItem(text: string, label = t("Decode Value…")): MenuItem {
+  return { label, action: () => set({ dialog: { kind: "textwizard", text } }) };
 }
 
 /** The Edit items of a field, editor or selection under `target` (if any), a separator, then

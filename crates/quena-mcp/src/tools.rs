@@ -288,7 +288,8 @@ static TOOLS: &[Tool] = &[
                     "ids": { "type": "array", "items": { "type": "integer" } },
                     "count": { "type": "integer", "description": "Times each (default 1)" },
                     "unconditional": { "type": "boolean", "description": "Remove If-None-Match / If-Modified-Since …" },
-                    "sequential": { "type": "boolean" }
+                    "sequential": { "type": "boolean" },
+                    "parallel": { "type": "integer", "description": "At most this many at a time (1-100)" }
                 }),
                 &["ids"],
             )
@@ -1570,12 +1571,13 @@ struct ReplayArgs {
     unconditional: bool,
     #[serde(default)]
     sequential: bool,
+    parallel: Option<u32>,
 }
 
 fn replay_sessions(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: ReplayArgs = args(a)?;
     let since = core.capture().index.find_all(|_| true).into_iter().max().unwrap_or(0);
-    let n = core.replay(a.ids, ReplayOptions { unconditional: a.unconditional, count: a.count.unwrap_or(1).clamp(1, 1000), breakpoint: false, sequential: a.sequential })?;
+    let n = core.replay(a.ids, ReplayOptions { unconditional: a.unconditional, count: a.count.unwrap_or(1).clamp(1, 1000), breakpoint: false, sequential: a.sequential, parallel: a.parallel.unwrap_or(0) })?;
     Ok(json!({ "started": n, "hint": format!("new sessions appear with ids above {since} (list_sessions since_id={since})") }))
 }
 

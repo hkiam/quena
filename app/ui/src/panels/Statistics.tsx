@@ -30,8 +30,46 @@ export function StatisticsPanel() {
           <tr><td>{t("Sequence (clock) duration")}</td><td>{elapsed != null ? fmtMs(Math.round(elapsed)) : ""}</td></tr>
           <tr><td>{t("Aggregate Session time")}</td><td>{fmtMs(st.aggregateMs)}</td></tr>
           <tr><td>{t("In flight / aborted")}</td><td>{st.inFlight} / {st.aborted}</td></tr>
+          {st.requestsPerS != null && <tr><td>{t("Throughput")}</td><td>{t("{r} requests/s · {b}/s", { r: st.requestsPerS.toFixed(st.requestsPerS < 10 ? 2 : 0), b: fmtBytes(Math.round(st.bytesPerS ?? 0)) })}</td></tr>}
+          <tr><td>{t("Header bytes sent / received")}</td><td>{fmtBytes(st.requestHeaderBytes)} / {fmtBytes(st.responseHeaderBytes)}</td></tr>
         </tbody>
       </table>
+      {st.timing && (
+        <>
+          <h4>{t("Durations")}</h4>
+          <table className="kv">
+            <tbody>
+              <tr><td>{t("Median / mean")}</td><td>{fmtMs(st.timing.median)} / {fmtMs(Math.round(st.timing.mean))}</td></tr>
+              <tr><td>p90 / p95 / p99</td><td>{fmtMs(st.timing.p90)} / {fmtMs(st.timing.p95)} / {fmtMs(st.timing.p99)}</td></tr>
+              <tr><td>{t("Min / max")}</td><td>{fmtMs(st.timing.min)} / {fmtMs(st.timing.max)}</td></tr>
+              <tr><td>{t("Standard deviation")}</td><td>{fmtMs(Math.round(st.timing.stddev))}</td></tr>
+            </tbody>
+          </table>
+        </>
+      )}
+      {st.phases && (st.phases.dnsCount > 0 || st.phases.connectCount > 0 || st.phases.tlsCount > 0 || st.phases.waitCount > 0) && (
+        <>
+          <h4>{t("Connection phases (sum)")}</h4>
+          <table className="kv">
+            <tbody>
+              {(
+                [
+                  [t("DNS lookup"), st.phases.dnsMs, st.phases.dnsCount],
+                  [t("TCP connect"), st.phases.connectMs, st.phases.connectCount],
+                  [t("TLS handshake"), st.phases.tlsMs, st.phases.tlsCount],
+                  [t("Waiting for the first byte"), st.phases.waitMs, st.phases.waitCount],
+                ] as const
+              ).map(([label, ms, n]) => (
+                <tr key={label}>
+                  <td>{label}</td>
+                  <td>{n > 0 ? t("{ms} in {n} sessions (⌀ {avg})", { ms: fmtMs(ms), n: fmtInt(n), avg: fmtMs(Math.round(ms / n)) }) : "–"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {st.phases.sampled > 0 && <p className="muted small">{t("Phases and header bytes of the first {n} sessions.", { n: fmtInt(st.phases.sampled) })}</p>}
+        </>
+      )}
       <h4>{t("Response Codes")}</h4>
       <table className="kv">
         <tbody>

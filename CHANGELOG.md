@@ -8,6 +8,13 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Inspecting and replaying**: *Statistics* show median, mean, p90/p95/p99, standard
+  deviation, throughput, header bytes and the summed DNS, connect, TLS and waiting times; a
+  **Params** view lists the query parameters; **Decode Value… / Decode Selection…** in the
+  context menus open the *Text Tools* with the likely decoding; the *Auth* view decodes
+  **SAML** requests and responses (Redirect and POST bindings, also in an identity
+  provider's HTML form); **Advanced Replay** sends up to 100,000 repeats one after the other
+  or 1–100 at a time and can be stopped (MCP `replay_sessions` takes `parallel`).
 - **Filters and columns**: filter on request and response headers (`reqheader.NAME`,
   `resheader.NAME`, `header.NAME`), cookies (`cookie.NAME`), bodies (`reqbody`, `resbody`),
   TLS version (`tls`), server IP (`ip`) and HTTP version (`http`), also in the command field

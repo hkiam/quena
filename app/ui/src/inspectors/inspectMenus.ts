@@ -1,5 +1,6 @@
 // Context menus of the inspector views: copying values, paths and bodies, and rewrite rules
 // made from a value of the JSON tree.
+import { decodeItem } from "../components/contextMenus";
 import { api, type Detail, type Part, type RwOp } from "../api";
 import { actions, copyText } from "../actions";
 import { confirmAsk, promptText, say, set } from "../store";
@@ -32,6 +33,7 @@ export function tableItems(row: string[], rows: string[][], head?: string[]): Me
     copyItem(t("Copy Value"), row[1] ?? row[0] ?? ""),
     copyItem(t("Copy Row"), tsv(row)),
     copyItem(t("Copy All"), [...(head ? [tsv(head)] : []), ...rows.map(tsv)].join("\n")),
+    ...((row[1] ?? row[0] ?? "").trim() ? [decodeItem(row[1] ?? row[0] ?? "")] : []),
   ];
 }
 

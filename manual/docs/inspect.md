@@ -48,11 +48,14 @@ remembered, are the same in both.
 | Body, Raw, Hex, Image | Copy (selection), Select All, *Copy Body*, *Save Body…*; in the body also *Wrap* and *Format* |
 | JSON tree | Copy value, key or **JSONPath**; Expand / Collapse All; **change or remove this value, or append a broken element to this list, in later messages of the same URL** (adds a [rewrite rule](change-replay.md)) |
 | XML tree (also SOAP) | Copy text, **XPath** or the element as XML; Expand / Collapse All |
-| Tables (form data, cookies, encoding) | Copy value, row or all rows (tab-separated) |
+| Tables (form data, cookies, encoding) | Copy value, row or all rows (tab-separated); *Decode Value…* |
 | WebSocket frame, SSE event, multipart part | Copy the message / data / event; save the part |
 | Text fields and editors | Undo, Redo, Cut, Copy, Paste, Select All |
 
-Elsewhere a right-click shows nothing, or *Copy* for selected text.
+Elsewhere a right-click shows nothing, or *Copy* for selected text. **Decode Value…** (header
+rows, tables) and **Decode Selection…** (selected text anywhere) open the *Text Tools* with the
+likely decoding chosen: Base64, URL encoding, HTML entities, hex, JavaScript escapes, a JWT or
+a Unix time.
 
 ## Views
 
@@ -61,6 +64,7 @@ Elsewhere a right-click shows nothing, or *Copy* for selected text.
 | *Headers* | ✅ | ✅ | Start line and a header table in wire order, with a filter box, topic tags (auth, cookie, cache, cors, body, conn, fetch, policy), optional A–Z sorting, a raw mode and *Copy*. Double-click a value to copy it. |
 | *Plain Text* | ✅ | ✅ | The body as plain text. |
 | *Body* | ✅ | ✅ | The body with syntax highlighting and a *Format* switch for pretty-printing (JSON, XML …). |
+| *Params* | ✅ | | The query parameters of the URL as a table, decoded, in their order (under *Headers*). |
 | *Form Data* | ✅ | | URL-encoded form fields as a table. |
 | *Hex* | ✅ | ✅ | Hex dump of any size; jump to an offset (hex or decimal). |
 | *Auth* | ✅ | ✅ | Authentication headers, decoded (see below). |
@@ -168,6 +172,13 @@ The **Auth** view shows `Authorization`/`Proxy-Authorization` (request) and
 
 Tokens a plugin recognises in cookies or other headers are listed below the authentication
 headers.
+
+**SAML** messages of a single sign-on are decoded too: `SAMLRequest` / `SAMLResponse` in the
+URL (HTTP-Redirect binding, inflated), in a form body (HTTP-POST binding) and in the
+auto-submitting form of an identity provider's HTML answer. The table shows the message type,
+ID, destination, `InResponseTo`, issuer, status, `NameID`, the validity of the conditions, the
+audience, the attributes, whether it is signed and whether the assertion is encrypted, plus
+`RelayState`; the XML is below. Signatures are not checked.
 
 ## gRPC and Protobuf with a schema
 

@@ -8,7 +8,7 @@ Select one or more sessions and replay their requests:
 |---|---|---|
 | *Replay Requests* | `R` | Send the requests again. |
 | *Replay Unconditionally* | `U` | Send them again without conditional headers (`If-Modified-Since`, `If-None-Match`, `If-Match`, `If-Unmodified-Since`, `If-Range`), so the server sends a full response. |
-| *Replay Sequentially…* | `Shift R` | Ask for a repeat count (up to 10,000) and send the requests that many times, one after another. |
+| *Advanced Replay…* | `Shift R` | Send the requests up to 100,000 times each, one after the other or in parallel with at most 1–100 at a time, optionally unconditionally. *Stop* in the message or *Stop Replay* ends a running replay (requests on the way finish). |
 | *Replay and Edit* | | Send the request with a breakpoint, so you can change it before it goes out. |
 | *Replay from Composer* | | Load the request into the Composer. |
 

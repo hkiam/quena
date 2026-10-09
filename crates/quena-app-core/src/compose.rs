@@ -19,7 +19,14 @@ pub struct ReplayOptions {
     pub breakpoint: bool,
     /// Run sequentially (one after the other) instead of in parallel.
     pub sequential: bool,
+    /// At most this many at a time (0: all at once for a single round, one at a time for
+    /// repeats; capped at [`MAX_PARALLEL`]).
+    pub parallel: u32,
 }
+
+/// Most repeats of one replay, and most requests in flight at once.
+pub const MAX_REPEAT: u32 = 100_000;
+pub const MAX_PARALLEL: u32 = 100;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -146,14 +153,31 @@ impl AppCore {
             jobs.push((id, head, req_body));
         }
         let n = jobs.len();
-        let count = o.count.max(1);
+        let count = o.count.clamp(1, MAX_REPEAT);
         let shared = engine.proxy.shared.clone();
-        let sequential = o.sequential || count > 1;
+        let at_once = if o.sequential {
+            1
+        } else if o.parallel > 0 {
+            o.parallel.min(MAX_PARALLEL) as usize
+        } else if count > 1 {
+            1
+        } else {
+            n.clamp(1, MAX_PARALLEL as usize)
+        };
+        // Stop ends the replays running (requests in flight finish).
+        let generation = self.replay_generation.load(std::sync::atomic::Ordering::SeqCst);
+        let core = Arc::downgrade(self);
+        let current = move || core.upgrade().is_some_and(|c| c.replay_generation.load(std::sync::atomic::Ordering::SeqCst) == generation);
         let rt = engine.proxy.runtime().handle().clone();
         rt.spawn(async move {
+            let slots = Arc::new(tokio::sync::Semaphore::new(at_once));
             let mut handles = Vec::new();
-            for _ in 0..count {
+            'rounds: for _ in 0..count {
                 for (orig, head, body) in &jobs {
+                    if !current() {
+                        break 'rounds;
+                    }
+                    let Ok(permit) = slots.clone().acquire_owned().await else { break 'rounds };
                     let opts = ExecuteOptions {
                         flags: flags::REPLAYED | if o.breakpoint { flags::BREAKPOINTED } else { 0 },
                         comment: Some(format!("Replay of #{orig}")),
@@ -161,10 +185,13 @@ impl AppCore {
                         force_h2: None,
                     };
                     let f = quena_proxy::execute(shared.clone(), head.clone(), body.clone(), opts);
-                    if sequential {
+                    handles.push(tokio::spawn(async move {
                         f.await;
-                    } else {
-                        handles.push(tokio::spawn(f));
+                        drop(permit);
+                    }));
+                    // Finished tasks need not be kept (100 000 repeats).
+                    if handles.len() > 4 * MAX_PARALLEL as usize {
+                        handles.retain(|h| !h.is_finished());
                     }
                 }
             }
@@ -173,6 +200,11 @@ impl AppCore {
             }
         });
         Ok(n * count as usize)
+    }
+
+    /// Stop the running replays (requests in flight finish).
+    pub fn replay_stop(&self) {
+        self.replay_generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Execute a Composer request. Returns the new session id.

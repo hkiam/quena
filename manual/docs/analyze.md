@@ -7,6 +7,13 @@ nothing is selected — and updates while traffic arrives:
 
 - request count, bytes sent and received (bodies), first request and last response,
   clock duration of the sequence, aggregate session time, in-flight and aborted sessions;
+- **throughput** (requests and response bytes per second over that duration) and the bytes
+  of request and response headers;
+- **Durations** of the finished sessions: median and mean, p90 / p95 / p99, minimum and
+  maximum, standard deviation;
+- **Connection phases (sum)**: DNS lookup, TCP connect, TLS handshake and waiting for the
+  first byte, each summed with the number of sessions that had it and the average (a
+  selection of more than 20,000 sessions reads the first 20,000 for this);
 - **Response Codes**;
 - **Response Bytes (by Content-Type)** as bars;
 - **Hosts** and **Processes**.

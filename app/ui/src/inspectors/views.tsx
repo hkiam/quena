@@ -1,5 +1,6 @@
 // Smaller inspectors: WebForms, Auth, Cookies, Caching, Image, WebView,
 // Transformer, Raw, JSON and XML trees.
+import { decodeSaml, findSaml, findSamlInHtml, samlFacts } from "../lib/saml";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { api, bodyUrl, type Detail, type HeaderInspection, type Part, type Variant } from "../api";
 import { fmtBytes, fmtInt, headerValue, latin1ToUtf8 } from "../lib/format";
@@ -95,6 +96,21 @@ function useBodyText(detail: Detail, part: Part, limit: number) {
     };
   }, [detail.summary.id, part, info.len, info.complete, override]);
   return { text, bytes, info, error };
+}
+
+/** Params: the query parameters of the request URL, decoded, in their order. */
+export function ParamsView({ detail }: { detail: Detail }) {
+  const url = detail.request.url;
+  const i = url.indexOf("?");
+  const rows = useMemo(() => (i < 0 ? [] : parseQuery(url.slice(i + 1).split("#")[0])), [url, i]);
+  return (
+    <div className="scroll pad">
+      <div className="muted small mono params-path" title={url}>
+        {i < 0 ? url : url.slice(0, i)}
+      </div>
+      {rows.length ? <Table rows={rows} /> : <div className="muted">{t("No query string")}</div>}
+    </div>
+  );
 }
 
 export function WebFormsView({ detail }: { detail: Detail }) {
@@ -262,6 +278,53 @@ function useInspectorHeaders(): Set<string> {
   return names;
 }
 
+/** SAML messages of the session, decoded (Auth view). */
+function SamlSection({ detail, part }: { detail: Detail; part: Part }) {
+  const ct = ((part === "request" ? headerValue(detail.request.headers, "content-type") : headerValue(detail.response?.headers ?? [], "content-type")) ?? "").toLowerCase();
+  const wantBody = part === "request" ? ct.includes("x-www-form-urlencoded") : ct.includes("html");
+  const { text } = useBodyText(detail, part, wantBody ? 1 << 20 : 0);
+  const messages = useMemo(() => {
+    if (part === "request") return findSaml(detail.request.url, wantBody ? text ?? "" : undefined);
+    return wantBody && text ? findSamlInHtml(text) : [];
+  }, [detail.request.url, part, wantBody, text]);
+  const [decoded, setDecoded] = useState<(string | Error)[]>([]);
+  useEffect(() => {
+    let alive = true;
+    Promise.all(messages.map((m) => decodeSaml(m).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e)))))).then((r) => alive && setDecoded(r));
+    return () => {
+      alive = false;
+    };
+  }, [messages]);
+  if (!messages.length) return null;
+  return (
+    <>
+      {messages.map((m, i) => {
+        const xml = decoded[i];
+        return (
+          <div key={i} className="saml">
+            <h4>
+              {m.name} <span className="muted small">({m.binding === "redirect" ? "HTTP-Redirect" : "HTTP-POST"})</span>
+            </h4>
+            {xml instanceof Error ? (
+              <div className="err small">{t("Could not decode: {error}", { error: xml.message })}</div>
+            ) : xml ? (
+              <>
+                <Table rows={[...samlFacts(xml), ...(m.relay ? [["RelayState", m.relay]] : [])]} />
+                <details>
+                  <summary className="small">XML</summary>
+                  <pre className="mono small saml-xml">{xml}</pre>
+                </details>
+              </>
+            ) : (
+              <div className="muted small">{t("Decoding…")}</div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 export function AuthView({ detail, part }: { detail: Detail; part: Part }) {
   const h = part === "request" ? detail.request.headers : detail.response?.headers ?? [];
   const names = part === "request" ? ["authorization", "proxy-authorization"] : ["www-authenticate", "proxy-authenticate"];
@@ -272,6 +335,7 @@ export function AuthView({ detail, part }: { detail: Detail; part: Part }) {
   return (
     <div className="scroll pad">
       {found.length === 0 && <div className="muted">{t("No {header} headers are present.", { header: part === "request" ? "Authorization" : "WWW-Authenticate" })}</div>}
+      <SamlSection detail={detail} part={part} />
       {found.map(([k, v], i) => {
         const value = latin1ToUtf8(v);
         return <PluginHeader key={i} name={k} value={value} fallback={part === "request" ? authValue(value) : <pre>{value}</pre>} />;

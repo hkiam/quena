@@ -473,6 +473,14 @@ export interface Statistics {
   llmModels: [string, number, number, number][];
   llmTokens: number;
   llmCost: number;
+  /** Durations of finished sessions (ms). */
+  timing: { count: number; min: number; max: number; mean: number; median: number; p90: number; p95: number; p99: number; stddev: number } | null;
+  requestsPerS: number | null;
+  bytesPerS: number | null;
+  /** Connection phases summed (ms) and how many sessions had each; `sampled`: only the first sessions were read. */
+  phases: { dnsMs: number; dnsCount: number; connectMs: number; connectCount: number; tlsMs: number; tlsCount: number; waitMs: number; waitCount: number; sampled: number } | null;
+  requestHeaderBytes: number;
+  responseHeaderBytes: number;
 }
 
 export type DiffSource = { kind: "live" } | { kind: "archive"; name: string } | { kind: "ids"; name: SessionId[] };
@@ -1305,7 +1313,8 @@ export const api = {
   multipart: (id: SessionId, part: Part) => invoke<Multipart | null>("multipart", { id, part }),
   wsFrames: (id: SessionId, start: number, count: number) => invoke<WsMessages>("ws_frames", { id, start, count }),
   deviceInfo: () => invoke<DeviceInfo>("device_info"),
-  replay: (ids: SessionId[], options: { unconditional?: boolean; count?: number; breakpoint?: boolean; sequential?: boolean }) =>
+  replayStop: () => invoke<void>("replay_stop"),
+  replay: (ids: SessionId[], options: { unconditional?: boolean; count?: number; breakpoint?: boolean; sequential?: boolean; parallel?: number }) =>
     invoke<number>("replay", { ids, options }),
   compose: (request: ComposeRequest) => invoke<SessionId>("compose", { request }),
   collectionsList: () => invoke<CollectionInfo[]>("collections_list"),

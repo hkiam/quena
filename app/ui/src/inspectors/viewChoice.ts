@@ -99,7 +99,7 @@ export const SECTIONS = ["headers", "body", "cookies", "auth", "raw"] as const;
 export type Section = (typeof SECTIONS)[number];
 
 export function sectionOf(view: string): Section {
-  if (view === "headers" || view === "caching") return "headers";
+  if (view === "headers" || view === "caching" || view === "params") return "headers";
   if (view === "cookies" || view === "auth" || view === "raw") return view;
   return "body";
 }

@@ -7,7 +7,7 @@ import { extParams, requestLine } from "../lib/http";
 import { CodeView } from "./CodeView";
 import { plural, t } from "../i18n";
 import { copyText } from "../actions";
-import { openMenu, withSelection } from "../components/contextMenus";
+import { decodeItem, openMenu, withSelection } from "../components/contextMenus";
 import { copyItem } from "./inspectMenus";
 import { addHeaderColumn } from "../headerColumns";
 import { api } from "../api";
@@ -152,6 +152,7 @@ export function HeadersView({ detail, part }: { detail: Detail; part: Part }) {
                         copyItem(t("Copy Name"), h.k),
                         copyItem(t("Copy Header"), `${h.k}: ${h.v}`),
                         copyItem(t("Copy All Headers"), text("\r\n")),
+                        decodeItem(h.v),
                         { separator: true },
                         { label: t("Show Only {name}", { name: h.k }), action: () => setFilter(h.k) },
                         { label: t("Add {name} as a Column", { name: h.k }), action: () => void addHeaderColumn(part === "response", h.k) },

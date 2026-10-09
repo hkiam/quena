@@ -436,6 +436,12 @@ async fn device_info(core: State<'_, Core>, engine: State<'_, Engine>) -> R<Devi
     Ok(engine.device_info(core.inner()))
 }
 
+/// Stop the running replays (requests in flight finish).
+#[tauri::command]
+fn replay_stop(core: State<'_, Core>) {
+    core.replay_stop();
+}
+
 #[tauri::command]
 async fn replay(core: State<'_, Core>, ids: Vec<SessionId>, options: quena_app_core::compose::ReplayOptions) -> R<usize> {
     let core = core.inner().clone();
@@ -1267,6 +1273,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         autosave_now,
         llm_prices_info,
         mcp_setup_client,
+        replay_stop,
         count_filters,
         llm_cache_status,
         llm_cache_advice,

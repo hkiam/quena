@@ -7,7 +7,7 @@ import { Splitter } from "../App";
 import { HeadersView } from "./HeadersView";
 import { BodyText } from "./BodyText";
 import { HexView } from "./HexView";
-import { AuthView, CachingView, CookiesView, ImageView, JsonView, RawView, TransformerView, WebFormsView, WebViewPane, XmlView } from "./views";
+import { AuthView, CachingView, CookiesView, ImageView, JsonView, ParamsView, RawView, TransformerView, WebFormsView, WebViewPane, XmlView } from "./views";
 import { actions } from "../actions";
 import { patchSettings } from "../settingsActions";
 import { TamperBar, TamperEditor, pausedPart, type TamperEdits } from "./Tamper";
@@ -30,13 +30,14 @@ import { CharsetPicker, useCharsetOverride } from "./CharsetPicker";
 import { effectiveCharset, textVariant } from "../lib/bodytext";
 import { t } from "../i18n";
 
-const REQUEST_TABS = ["headers", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
+const REQUEST_TABS = ["headers", "params", "textview", "syntaxview", "webforms", "hexview", "auth", "cookies", "raw", "json", "xml"] as const;
 const RESPONSE_TABS = ["transformer", "headers", "textview", "syntaxview", "imageview", "hexview", "webview", "auth", "caching", "cookies", "raw", "json", "xml"] as const;
 const TITLES: Record<string, string> = {
   headers: t("Headers"),
   textview: t("Plain Text"),
   syntaxview: t("Body"),
   webforms: t("Form Data"),
+  params: t("Params"),
   hexview: "Hex",
   auth: t("Auth"),
   cookies: t("Cookies"),
@@ -322,6 +323,9 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
       case "caching":
         content = <CachingView detail={detail} />;
         break;
+      case "params":
+        content = <ParamsView detail={detail} />;
+        break;
       case "atom":
         content = atom ? <AtomView detail={detail} part={part} /> : <div className="placeholder">{t("Not an Atom/OData document.")}</div>;
         break;
@@ -392,7 +396,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
       const others = body.filter((b) => !good.includes(b.view));
       cycle = good;
       if (good.length > 1 || others.length) subRow = <ViewTabs className="view-sub" views={good} active={tab} title={(v) => SUB_TITLES[v] ?? title(v)} onSelect={setTab} others={others} />;
-    } else if (detail && section === "headers" && tabs.includes("caching")) {
+    } else if (detail && section === "headers" && (tabs.includes("caching") || tabs.includes("params"))) {
       cycle = sectionViews("headers", tabs, body);
       subRow = <ViewTabs className="view-sub" views={sectionViews("headers", tabs, body)} active={tab} title={(v) => SUB_TITLES[v] ?? title(v)} onSelect={setTab} />;
     }

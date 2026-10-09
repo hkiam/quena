@@ -114,7 +114,7 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `set_capture` | ✓ | start or stop capturing |
 | `clear_sessions` | ✓ | remove sessions matching a filter, or all |
 | `send_request` | ✓ | send a request through Quena and return the session |
-| `replay_sessions` | ✓ | send captured requests again |
+| `replay_sessions` | ✓ | send captured requests again (`count`, one after the other or `parallel` 1–100 at a time) |
 | `add_mock_rule`, `update_mock_rule`, `remove_mock_rule`, `set_mock_options` | ✓ | [Mock Rules](change-replay.md#mock-rules) |
 | `mock_from_sessions` | ✓ | rules that answer with recorded responses |
 | `add_rewrite_rule`, `update_rewrite_rule`, `remove_rewrite_rule`, `set_rewrite_options` | ✓ | change real requests and responses (JSONPath, regex, headers, status); rules can have a `group`, and `set_rewrite_options` switches groups off |

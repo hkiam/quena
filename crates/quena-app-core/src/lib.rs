@@ -176,6 +176,8 @@ pub struct AppCore {
     pub(crate) llm_prices: Mutex<Option<((Option<(Option<std::time::SystemTime>, u64)>, Option<(Option<std::time::SystemTime>, u64)>), Arc<llm::PriceList>)>>,
     /// Archives loaded into the list: (file name, capture numbering, session ids).
     pub(crate) imports: Mutex<Vec<(String, u64, Vec<SessionId>)>>,
+    /// The running replay (a newer one or Stop ends it).
+    pub(crate) replay_generation: std::sync::atomic::AtomicU64,
     started: Instant,
     shut_down: std::sync::atomic::AtomicBool,
     /// Serializes starting and stopping the capture (the startup thread and the UI can race).
@@ -218,6 +220,7 @@ impl AppCore {
             autosave: Mutex::new(Default::default()),
             llm_prices: Mutex::new(None),
             imports: Mutex::new(Vec::new()),
+            replay_generation: std::sync::atomic::AtomicU64::new(0),
             started: Instant::now(),
             shut_down: std::sync::atomic::AtomicBool::new(false),
         });

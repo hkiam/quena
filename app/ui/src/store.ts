@@ -278,6 +278,7 @@ export type Dialog =
   | { kind: "sanitize-result"; result: SanitizedExport }
   | { kind: "compare"; a: string; b: string; titleA: string; titleB: string }
   | { kind: "prompt"; title: string; label: string; initial: string; secret?: boolean; resolve: (v: string | null) => void }
+  | { kind: "replay"; ids: SessionId[] }
   | { kind: "confirm"; title: string; message: string; confirm: string; resolve: (ok: boolean) => void }
   | {
       kind: "import-existing";

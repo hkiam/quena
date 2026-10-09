@@ -94,9 +94,21 @@ function run(op: Op, s: string, charset: string): string {
   }
 }
 
+/** The decoding that most likely fits `s` (for *Decode…* in context menus). */
+export function guessDecode(s: string): Op {
+  const v = s.trim();
+  if (/^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(v)) return "Decode JWT";
+  if (/^\d{10}(\d{3})?$/.test(v)) return "Unix time → Date";
+  if (/%[0-9A-Fa-f]{2}/.test(v) || (/\+/.test(v) && /=/.test(v) && /&/.test(v))) return "URLDecode";
+  if (/&(#\d+|#x[0-9a-f]+|[a-z]+);/i.test(v)) return "HTML Decode";
+  if (/\\(u[0-9a-f]{4}|x[0-9a-f]{2}|[nrt"'\\])/i.test(v)) return "JS String Unescape";
+  if (v.length >= 8 && v.length % 2 === 0 && /^[0-9a-f]+$/i.test(v) && /[a-f]/i.test(v) && /\d/.test(v)) return "From Hex";
+  return "From Base64";
+}
+
 export function TextWizard({ initial }: { initial?: string }) {
   const [input, setInput] = useState(initial ?? "");
-  const [op, setOp] = useState<Op>("From Base64");
+  const [op, setOp] = useState<Op>(initial ? guessDecode(initial) : "From Base64");
   const [charset, setCharset] = useState("UTF-8");
   const out = useMemo(() => run(op, input, charset), [op, input, charset]);
   return (

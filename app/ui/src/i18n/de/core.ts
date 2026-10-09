@@ -26,4 +26,8 @@ export const core: Record<string, string> = {
   "Header 1": "Header 1",
   "Header 2": "Header 2",
   "Header 3": "Header 3",
+  "Advanced Replay\u2026": "Erweitertes Replay\u2026",
+  "Stop Replay": "Replay stoppen",
+  "Replay stopped (requests on the way still finish)": "Replay gestoppt (Requests unterwegs laufen noch zu Ende)",
+  "Stop": "Stopp",
 };
