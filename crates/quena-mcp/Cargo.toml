@@ -11,6 +11,7 @@ quena-model.workspace = true
 quena-body.workspace = true
 quena-query.workspace = true
 quena-formats.workspace = true
+quena-report.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

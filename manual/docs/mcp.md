@@ -22,8 +22,25 @@ can look at failing requests, set mock rules and breakpoints, send requests and 
       --header "Authorization: Bearer <token>"
     ```
 
-    Other MCP clients need the same three things: the URL, the transport *Streamable HTTP*
-    and the `Authorization` header.
+    Or click **Set up for** *Claude Code*, *VS Code*, *Cursor* or *Codex*: Quena adds itself
+    with the token to that program's user configuration and keeps a copy of the file
+    (`.bak`):
+
+    | Client | What Quena changes |
+    |---|---|
+    | Claude Code | runs `claude mcp add --scope user …` (the `claude` command must be installed) |
+    | VS Code | `servers.quena` in the user `mcp.json` (`~/Library/Application Support/Code/User/` on macOS, `%APPDATA%\Code\User\` on Windows, `~/.config/Code/User/` on Linux) |
+    | Cursor | `mcpServers.quena` in `~/.cursor/mcp.json` |
+    | Codex | the table `[mcp_servers.quena]` in `~/.codex/config.toml` (`url`, `http_headers`) |
+
+    Other entries stay as they are; a file that is no valid JSON is left alone. After *New
+    token*, click the button again. Other MCP clients need the same three things: the URL,
+    the transport *Streamable HTTP* and the `Authorization` header.
+
+5. Optional: **Agent skill** → *Claude Code* or *Codex* installs the skill
+   `quena-traffic-debugging` (`~/.claude/skills/…/SKILL.md`, `~/.codex/skills/…/SKILL.md`). It
+   tells the agent when to use Quena and how: which filters find failing or slow requests,
+   when to run the diagnostics, how to read LLM calls and mock endpoints.
 
 The settings of the tab:
 
@@ -85,6 +102,8 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `get_body` | | a piece of a body: `offset`, `length`, decoded or raw |
 | `compare_captures` | | two captures in the list compared: changed, new and gone requests ([Compare captures](analyze.md#compare-captures)) |
 | `get_llm_call` | | an [LLM API call](llm.md) taken apart: model, messages, tools, answer, tokens, estimated cost |
+| `run_diagnostics` | | runs the [diagnostics](diagnostics.md) over all sessions, a filter or chosen ids (profile, hosts, processes) and returns the findings with severity, evidence, recommendations and session ids; the report also shows in the *Diagnostics* tab |
+| `get_diagnostics_report` | | the last diagnostics report as findings, or the analyzer's profiles when there is none |
 | `search_sessions` | | text or regex in URLs, headers, bodies |
 | `statistics` | | bytes, status codes, content types, hosts |
 | `list_mock_rules`, `get_breakpoints` | | rules with hit counts; breakpoints and paused sessions |
@@ -114,6 +133,18 @@ apart from the proxy, so agent calls never slow down forwarding.
 Lists return at most 200 rows and bodies at most 1 MB per call (reading from up to 8 MB into
 a body), so an agent never pulls a whole capture at once. A tool error comes back as a result with `isError`, so the agent sees
 the message, for example a filter syntax error.
+
+## Prompts
+
+MCP clients show Quena's prompts as commands (in Claude Code `/mcp__quena__debug_failures` …):
+
+| Prompt | Arguments | Task |
+|---|---|---|
+| `debug_failures` | `filter` (optional) | find failing requests, group them by endpoint and explain the cause |
+| `analyze_performance` | `filter` (optional) | run the diagnostics and statistics, name the most important problems with a change for each |
+| `explain_session` | `id` | explain one request and its response in plain words |
+| `llm_costs` | | LLM calls per model, tokens, estimated cost and where to save |
+| `mock_endpoint` | `url` | mock an endpoint from its recorded response (needs full control) |
 
 ## Examples for an agent
 

@@ -707,6 +707,60 @@ function McpOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => 
           <button onClick={() => navigator.clipboard.writeText(command)}>{t("Copy")}</button>
         </div>
       )}
+      {m.token && (
+        <div className="f-row">
+          <span>{t("Set up for")}</span>
+          <div className="f-inline">
+            {(
+              [
+                ["claudeCode", "Claude Code"],
+                ["vsCode", "VS Code"],
+                ["cursor", "Cursor"],
+                ["codex", "Codex"],
+              ] as const
+            ).map(([c, name]) => (
+              <button
+                key={c}
+                title={t("Writes the Quena server with its token into the user configuration of {name} (a copy of the file is kept as .bak). Click OK first so the server runs with these settings.", { name })}
+                onClick={async () => {
+                  try {
+                    say(t("Added Quena: {where}", { where: await api.mcpSetupClient(c) }));
+                  } catch (e) {
+                    say(String(e), "error");
+                  }
+                }}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="f-row">
+        <span>{t("Agent skill")}</span>
+        <div className="f-inline">
+          {(
+            [
+              ["claudeCode", "Claude Code"],
+              ["codex", "Codex"],
+            ] as const
+          ).map(([c, name]) => (
+            <button
+              key={c}
+              title={t("Installs a skill that tells the agent how to debug traffic with Quena's tools (failing and slow requests, diagnostics, LLM calls, mocks).")}
+              onClick={async () => {
+                try {
+                  say(t("Skill installed: {path}", { path: await api.mcpInstallSkill(c) }));
+                } catch (e) {
+                  say(String(e), "error");
+                }
+              }}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      </div>
       {status && (
         <p className="muted small">
           {status.running ? t("Running at {url}", { url: status.url ?? "" }) : status.error ? t("Not running: {error}", { error: status.error }) : t("Not running")}

@@ -11,6 +11,7 @@ pub mod collections;
 pub mod ws;
 pub mod compose;
 pub mod diagnostics;
+pub mod mcp_setup;
 pub mod dto;
 pub mod engine;
 pub mod find;

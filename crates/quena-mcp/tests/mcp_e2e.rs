@@ -338,3 +338,60 @@ fn mcp_over_http() {
     assert!(TcpStream::connect(addr).is_err());
     core.shutdown();
 }
+
+/// Prompts, and the diagnostics as tools (with the webdiag plugin when it is built).
+#[test]
+fn mcp_prompts_and_diagnostics() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("settings.json"),
+        serde_json::to_string(&json!({
+            "proxy": { "port": 0, "actAsSystemProxy": false, "captureOnStartup": false, "useSystemUpstream": false },
+            "mcp": { "enabled": true, "port": 0, "token": TOKEN }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let mcp = quena_mcp::McpService::new();
+    mcp.apply(&core);
+    let addr = mcp.addr().expect("MCP server running");
+
+    let r = rpc(addr, "initialize", json!({ "protocolVersion": "2025-06-18" }));
+    assert!(r["result"]["capabilities"]["prompts"].is_object());
+    let names: Vec<String> = rpc(addr, "prompts/list", json!({}))["result"]["prompts"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_string()).collect();
+    assert!(names.contains(&"debug_failures".to_string()) && names.contains(&"analyze_performance".to_string()), "{names:?}");
+    let r = rpc(addr, "prompts/get", json!({ "name": "explain_session", "arguments": { "id": "3" } }));
+    assert!(r["result"]["messages"][0]["content"]["text"].as_str().unwrap().contains("session 3"));
+    assert!(rpc(addr, "prompts/get", json!({ "name": "explain_session" }))["error"].is_object());
+
+    // No report yet.
+    let (v, err) = tool(addr, "get_diagnostics_report", json!({}));
+    assert!(!err && v["report"].is_null(), "{v}");
+
+    let dist = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugins/dist");
+    if !dist.join("webdiag").exists() {
+        eprintln!("webdiag plugin not built – run plugins/build.sh");
+        return;
+    }
+    core.init_plugins(Some(dist)).unwrap();
+    let (v, err) = tool(addr, "run_diagnostics", json!({}));
+    assert!(err && v.as_str().unwrap_or("").contains("no sessions"), "{v}");
+    let cap = core.capture();
+    for i in 0..20 {
+        let mut d = quena_model::SessionDetail::default();
+        d.request = quena_model::RequestHead { method: "GET".into(), url: format!("https://api.example.com/items/{i}?token=secret{i}"), ..Default::default() };
+        d.response = Some(quena_model::ResponseHead { status: if i % 2 == 0 { 500 } else { 200 }, ..Default::default() });
+        d.refresh_summary();
+        let (a, b) = (cap.bodies.store_bytes(b""), cap.bodies.store_bytes(b"{}"));
+        cap.insert(d, a, b);
+    }
+    cap.index.tick();
+    let (v, err) = tool(addr, "run_diagnostics", json!({ "wait_s": 60, "all": true }));
+    assert!(!err, "{v}");
+    assert_eq!(v["sessions"], 20, "{v}");
+    assert!(v["findings"].as_array().is_some_and(|f| !f.is_empty()), "{v}");
+    assert!(!v.to_string().contains("secret1"), "URLs in findings are redacted: {v}");
+    let (again, _) = tool(addr, "get_diagnostics_report", json!({ "all": true }));
+    assert_eq!(again["findings"], v["findings"]);
+}

@@ -1,4 +1,4 @@
-//! JSON-RPC 2.0 messages of the Model Context Protocol (lifecycle, ping, tools).
+//! JSON-RPC 2.0 messages of the Model Context Protocol (lifecycle, ping, tools, prompts).
 
 use quena_app_core::AppCore;
 use serde_json::{Value, json};
@@ -48,7 +48,7 @@ pub fn handle_message(core: &Arc<AppCore>, msg: Value) -> Option<Value> {
                 id,
                 json!({
                     "protocolVersion": version,
-                    "capabilities": { "tools": { "listChanged": false } },
+                    "capabilities": { "tools": { "listChanged": false }, "prompts": { "listChanged": false } },
                     "serverInfo": { "name": "quena", "title": "Quena", "version": env!("CARGO_PKG_VERSION") },
                     "instructions": INSTRUCTIONS,
                 }),
@@ -66,9 +66,17 @@ pub fn handle_message(core: &Arc<AppCore>, msg: Value) -> Option<Value> {
                 None => error_response(id, -32602, &format!("unknown tool: {name}")),
             }
         }
-        // Clients may probe these; we offer neither.
+        "prompts/list" => result_response(id, json!({ "prompts": crate::prompts::list() })),
+        "prompts/get" => {
+            let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            match crate::prompts::get(name, params.get("arguments").unwrap_or(&Value::Null)) {
+                Some(Ok(r)) => result_response(id, r),
+                Some(Err(e)) => error_response(id, -32602, &e),
+                None => error_response(id, -32602, &format!("unknown prompt: {name}")),
+            }
+        }
+        // Clients may probe this; we offer none.
         "resources/list" => result_response(id, json!({ "resources": [] })),
-        "prompts/list" => result_response(id, json!({ "prompts": [] })),
         m => error_response(id, -32601, &format!("method not found: {m}")),
     })
 }

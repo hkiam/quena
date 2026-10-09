@@ -4208,6 +4208,7 @@ dependencies = [
  "quena-formats",
  "quena-model",
  "quena-query",
+ "quena-report",
  "rand 0.9.5",
  "serde",
  "serde_json",

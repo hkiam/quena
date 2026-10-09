@@ -8,6 +8,12 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **AI agents**: the diagnostics as MCP tools (`run_diagnostics`, `get_diagnostics_report`;
+  findings with evidence and session ids, URLs redacted like everything else), MCP prompts
+  (`debug_failures`, `analyze_performance`, `explain_session`, `llm_costs`, `mock_endpoint`),
+  *Set up for* Claude Code, VS Code, Cursor or Codex in one click (the server with its token
+  added to the user configuration, a copy of the file kept), and an agent skill
+  `quena-traffic-debugging` for Claude Code and Codex.
 - **Compare captures** (*Tools → Compare Captures…*): the live capture and archives loaded
   into the list, side by side.
   - Requests are paired by method, host and normalized path and marked new, gone or

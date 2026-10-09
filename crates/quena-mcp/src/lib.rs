@@ -8,6 +8,7 @@
 //! [`McpAccess`](quena_app_core::settings::McpAccess), read on every call.
 
 mod http;
+mod prompts;
 mod rpc;
 mod tools;
 

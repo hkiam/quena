@@ -491,6 +491,20 @@ async fn autosave_reveal(core: State<'_, Core>) -> R<()> {
     quena_platform::open(&dir.display().to_string()).map_err(e)
 }
 
+/// Add Quena's MCP server to an agent's configuration.
+#[tauri::command]
+async fn mcp_setup_client(core: State<'_, Core>, client: quena_app_core::mcp_setup::McpClient) -> R<String> {
+    let core = core.inner().clone();
+    blocking(move || core.mcp_setup_client(client).map_err(e)).await
+}
+
+/// Write the agent skill; returns its path.
+#[tauri::command]
+async fn mcp_install_skill(core: State<'_, Core>, target: quena_app_core::mcp_setup::SkillTarget) -> R<String> {
+    let core = core.inner().clone();
+    blocking(move || core.mcp_install_skill(target).map(|p| p.display().to_string()).map_err(e)).await
+}
+
 #[tauri::command]
 async fn llm_prices_info(core: State<'_, Core>) -> R<quena_app_core::llm::LlmPricesInfo> {
     let core = core.inner().clone();
@@ -1203,6 +1217,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         import_dropped,
         autosave_now,
         llm_prices_info,
+        mcp_setup_client,
+        mcp_install_skill,
         llm_prices_update,
         llm_prices_forget,
         llm_prices_open,

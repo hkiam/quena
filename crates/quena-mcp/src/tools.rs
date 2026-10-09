@@ -88,6 +88,29 @@ static TOOLS: &[Tool] = &[
         run: compare_captures,
     },
     Tool {
+        name: "run_diagnostics",
+        description: "Run Quena's diagnostics over sessions (all, those matching `filter`, or `ids`) and return the findings: slow or failing endpoints, retries, caching, compression, redirects, TLS and connection problems … each with severity, observation, impact, recommendations and the session ids. Takes up to `wait_s` seconds (default 120); the report also appears in Quena's Diagnostics tab.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({
+            "filter": { "type": "string", "description": "Quena filter expression; default all sessions" },
+            "ids": { "type": "array", "items": { "type": "integer" } },
+            "hosts": { "type": "array", "items": { "type": "string" }, "description": "Only these hosts (`*.example.com` allowed)" },
+            "processes": { "type": "array", "items": { "type": "string" } },
+            "profile": { "type": "string", "description": "Analyzer profile (see get_diagnostics_report without a report for the list)" },
+            "wait_s": { "type": "integer" }
+        })),
+        run: run_diagnostics,
+    },
+    Tool {
+        name: "get_diagnostics_report",
+        description: "The last diagnostics report (from run_diagnostics or the Diagnostics tab) as findings, and the analyzer's profiles.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({ "all": { "type": "boolean", "description": "Also findings of severity info" } })),
+        run: get_diagnostics_report,
+    },
+    Tool {
         name: "get_llm_call",
         description: "A call to an LLM API (OpenAI, Anthropic, Gemini, Ollama and OpenAI-compatible) taken apart: provider, model, system prompt, the messages sent, tools, parameters, the answer (assembled from a stream), tool calls, stop reason, token usage and an estimated cost. Find such sessions with the filter `llm ~ claude` or `tokens > 1000`.",
         write: false,
@@ -725,6 +748,23 @@ impl View {
         }
     }
 
+    /// Free text (a finding, a fact): URLs in it redacted like [`View::url`].
+    fn text(&mut self, s: &str) -> String {
+        if self.red.is_none() || !s.contains("://") {
+            return s.to_string();
+        }
+        let mut out = String::with_capacity(s.len());
+        let mut rest = s;
+        while let Some(i) = rest.find("http://").into_iter().chain(rest.find("https://")).min() {
+            out.push_str(&rest[..i]);
+            let end = rest[i..].find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')' | ']' | '`')).map_or(rest.len(), |e| i + e);
+            out.push_str(&self.url(&rest[i..end]));
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        out
+    }
+
     /// A difference of a comparison: a redirect target (`header location: A → B`) can carry
     /// a code or token.
     fn change(&mut self, c: &str) -> String {
@@ -1050,6 +1090,99 @@ fn compare_captures(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         })
         .collect();
     Ok(json!({ "counts": d.counts, "sessionsA": d.sessions_a, "sessionsB": d.sessions_b, "entries": entries }))
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct DiagArgs {
+    filter: Option<String>,
+    ids: Option<Vec<SessionId>>,
+    hosts: Vec<String>,
+    processes: Vec<String>,
+    profile: Option<String>,
+    wait_s: Option<u64>,
+    all: bool,
+}
+
+/// The analyzer (the first one) and its description (`options`, `profiles`).
+fn analyzer(core: &AppCore) -> Result<(u16, Value)> {
+    let a = core.diag_analyzers().into_iter().next().ok_or_else(|| anyhow!("no diagnostics analyzer is installed"))?;
+    let desc: Value = serde_json::from_str(&core.diag_describe(a.index, "en")?).unwrap_or(Value::Null);
+    Ok((a.index, desc))
+}
+
+fn profiles(desc: &Value) -> Value {
+    Value::Array(desc.get("profiles").and_then(|p| p.as_array()).map(|a| a.iter().map(|p| json!({ "id": p.get("id"), "name": p.get("name") })).collect()).unwrap_or_default())
+}
+
+fn run_diagnostics(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: DiagArgs = args(a)?;
+    let (index, desc) = analyzer(core)?;
+    let mut options = desc.get("options").cloned().filter(|o| o.is_object()).unwrap_or_else(|| json!({}));
+    options["lang"] = json!("en");
+    if let Some(p) = &a.profile {
+        if !desc.get("profiles").and_then(|x| x.as_array()).is_some_and(|ps| ps.iter().any(|x| x.get("id").and_then(|i| i.as_str()) == Some(p))) {
+            bail!("unknown profile {p:?}; profiles: {}", profiles(&desc));
+        }
+        options["profile"] = json!(p);
+    }
+    let ids = match a.ids {
+        Some(ids) => ids,
+        None => matching_ids(core, a.filter.as_deref(), 0)?,
+    };
+    if ids.is_empty() {
+        bail!("no sessions to analyse");
+    }
+    let filter = quena_app_core::diagnostics::DiagFilter { hosts: a.hosts, processes: a.processes };
+    let job = core.diag_run(index, options.to_string(), Some(ids), filter)?;
+    let wait = Duration::from_secs(a.wait_s.unwrap_or(120).clamp(5, 600));
+    let info = core.jobs.wait(job, wait).map_err(|_| anyhow!("diagnostics did not finish within {} s (it goes on in Quena; read it later with get_diagnostics_report)", wait.as_secs()))?;
+    if let Some(e) = info.error.filter(|e| !e.is_empty()) {
+        bail!("diagnostics failed: {e}");
+    }
+    report_json(core, a.all)
+}
+
+fn get_diagnostics_report(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: DiagArgs = args(a)?;
+    match core.diag_report() {
+        Some(_) => report_json(core, a.all),
+        None => {
+            let profiles = analyzer(core).map(|(_, d)| profiles(&d)).unwrap_or(Value::Null);
+            Ok(json!({ "report": null, "hint": "no report yet: call run_diagnostics", "profiles": profiles }))
+        }
+    }
+}
+
+/// The last report, findings first (info findings only with `all`), redacted like sessions.
+fn report_json(core: &Arc<AppCore>, all: bool) -> Result<Value> {
+    let text = core.diag_report().ok_or_else(|| anyhow!("no diagnostics report"))?;
+    let (_, r) = quena_report::parse(&text).map_err(|e| anyhow!("report: {e}"))?;
+    let mut view = View::new(core, 0);
+    let mut t = |s: &str| view.text(s);
+    let findings: Vec<Value> = r
+        .findings
+        .iter()
+        .filter(|f| all || f.severity != quena_report::Severity::Info)
+        .take(100)
+        .map(|f| {
+            json!({
+                "title": t(&f.title), "severity": f.severity, "confidence": f.confidence, "categories": f.categories,
+                "observation": t(&f.observation), "impact": t(&f.impact),
+                "hypotheses": f.hypotheses.iter().map(|x| t(x)).collect::<Vec<_>>(),
+                "recommendations": f.recommendations.iter().map(|x| t(x)).collect::<Vec<_>>(),
+                "nextSteps": f.next_steps.iter().map(|x| t(x)).collect::<Vec<_>>(),
+                "facts": f.facts.iter().map(|x| json!({ "label": t(&x.label), "value": t(&x.value) })).collect::<Vec<_>>(),
+                "sessions": f.sessions.iter().take(50).map(|x| *x as u64).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Ok(json!({
+        "profile": r.profile.name,
+        "sessions": r.range.sessions as u64,
+        "summary": { "critical": r.summary.critical, "warning": r.summary.warning, "info": r.summary.info, "headline": r.summary.headline.iter().map(|x| t(x)).collect::<Vec<_>>() },
+        "findings": findings,
+    }))
 }
 
 fn get_llm_call(core: &Arc<AppCore>, a: Value) -> Result<Value> {
