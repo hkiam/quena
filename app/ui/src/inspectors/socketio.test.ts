@@ -17,9 +17,12 @@ describe("Socket.IO", () => {
     expect(isHeartbeat(frame({ sio: { eio: "message", sio: "event", event: "x" } }))).toBe(false);
   });
   it("recognises polling sessions", () => {
-    const d = (url: string) => ({ request: { url } }) as unknown as Detail;
-    expect(socketioCandidate(d("https://x.example/socket.io/?EIO=4&transport=polling&t=abc"))).toBe(true);
-    expect(socketioCandidate(d("https://x.example/socket.io/?EIO=4&transport=websocket"))).toBe(false);
-    expect(socketioCandidate(d("https://x.example/api"))).toBe(false);
+    const d = (url: string, len = 0) => ({ request: { url }, requestBody: { len } }) as unknown as Detail;
+    const poll = "https://x.example/socket.io/?EIO=4&transport=polling&t=abc";
+    expect(socketioCandidate(d(poll), "response")).toBe(true);
+    expect(socketioCandidate(d(poll), "request")).toBe(false);
+    expect(socketioCandidate(d(poll, 20), "request")).toBe(true);
+    expect(socketioCandidate(d("https://x.example/socket.io/?EIO=4&transport=websocket"), "response")).toBe(false);
+    expect(socketioCandidate(d("https://x.example/api"), "response")).toBe(false);
   });
 });

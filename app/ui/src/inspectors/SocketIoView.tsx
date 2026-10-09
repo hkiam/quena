@@ -5,8 +5,10 @@ import { api, type Detail, type Part, type SioPacket } from "../api";
 import { sioLabel } from "./WebSocketView";
 import { plural, t } from "../i18n";
 
-export function socketioCandidate(detail: Detail): boolean {
+export function socketioCandidate(detail: Detail, part: Part): boolean {
   const u = detail.request.url;
+  // Polls are GETs without a body; only sends (POST) carry packets in the request.
+  if (part === "request" && !detail.requestBody?.len) return false;
   return (u.includes("/socket.io/") || u.includes("EIO=")) && u.includes("transport=polling");
 }
 
@@ -35,8 +37,9 @@ export function SocketIoView({ detail, part }: { detail: Detail; part: Part }) {
       {packets.map((p, i) => (
         <div key={i} className="grpc-msg">
           <div className="grpc-msg-head muted">
-            <b>{sioLabel(p)}</b> · {p.eio}
-            {p.sio && ` / ${p.sio}`}
+            <b>{sioLabel(p)}</b>
+            {sioLabel(p) !== p.eio && ` · ${p.eio}`}
+            {p.sio && sioLabel(p) !== p.sio && ` / ${p.sio}`}
             {p.namespace && ` · ${p.namespace}`}
             {p.ack != null && ` · ack ${p.ack}`}
           </div>

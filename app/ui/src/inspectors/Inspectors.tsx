@@ -235,7 +235,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   const grpc = detail ? grpcCandidate(detail, part) : false;
   const msgpack = detail ? msgpackCandidate(detail, part) : false;
   const llm = detail ? llmCandidate(detail) : false;
-  const sio = detail ? socketioCandidate(detail) : false;
+  const sio = detail ? socketioCandidate(detail, part) : false;
   const special = [llm ? "llm" : "", sio ? "socketio" : "", isWs ? "websocket" : "", isSse ? "sse" : "", grpc ? "grpc" : "", msgpack ? "msgpack" : "", mp ? "multipart" : "", soap ? "soap" : "", atom ? "atom" : ""].filter(Boolean);
   const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...special, ...pluginTabs.map((t) => t.key)];
   const family = detail ? viewFamily(detail, part, special, pluginTabs.map((t) => t.key)) : null;
