@@ -131,7 +131,7 @@ export function GrpcView({ detail, part }: { detail: Detail; part: Part }) {
       </div>
       <div className="grpc-schema small">
         <span className="muted">{t("Schema")}: </span>
-        {g.schema ?? <span className="muted">{t("none – field numbers only (.proto files under Settings → Bodies & Storage)")}</span>}
+        {g.schema ?? <span className="muted">{t("none – field numbers only (.proto files under Options → Bodies & Storage)")}</span>}
         {types.length > 0 && (
           <>
             {" · "}

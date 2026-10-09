@@ -476,7 +476,7 @@ function ProtobufOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void
       <legend>{t("Protobuf schemas")}</legend>
       <p className="muted small">{t("With .proto files the gRPC and protobuf view shows field names, types and enum values instead of field numbers. Folders are searched for .proto files; imports are resolved against them and the import paths.")}</p>
       {pb.protoPaths.map((p) => (
-        <div key={p} className="f-row">
+        <div key={p} className="pb-path-row">
           <span className="mono small pb-path" title={p}>
             {p}
           </span>
@@ -506,12 +506,12 @@ function ProtobufOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void
         <p className={status.error ? "mocks-error" : "muted small"}>
           {status.error
             ? status.error
-            : t("{files} files, {messages} message types, {services} services; {reflected} fetched from servers", {
-                files: status.files,
-                messages: status.messages,
-                services: status.services.length,
-                reflected: status.reflected.length,
-              })}
+            : [
+                plural(status.files, "{n} file", "{n} files"),
+                plural(status.messages, "{n} message type", "{n} message types"),
+                plural(status.services.length, "{n} service", "{n} services"),
+                plural(status.reflected.length, "{n} schema fetched from servers", "{n} schemas fetched from servers"),
+              ].join(" · ")}
         </p>
       )}
     </fieldset>

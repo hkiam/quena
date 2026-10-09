@@ -3567,8 +3567,15 @@ table.hr-table input:not([type="checkbox"]) {
 .rw-apply p {
   margin: 0;
 }
+.pb-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
 .pb-path {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

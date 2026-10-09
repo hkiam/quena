@@ -521,5 +521,12 @@ export const components: Record<string, string> = {
   "Add folder…": "Ordner hinzufügen…",
   "Import paths (one per line)": "Importpfade (einer pro Zeile)",
   "Allow fetching schemas from gRPC servers (server reflection, on request in the gRPC view)": "Schemas von gRPC-Servern holen erlauben (Server Reflection, auf Anforderung in der gRPC-Ansicht)",
-  "{files} files, {messages} message types, {services} services; {reflected} fetched from servers": "{files} Dateien, {messages} Nachrichtentypen, {services} Services; {reflected} von Servern geholt",
+  "{n} file": "{n} Datei",
+  "{n} files": "{n} Dateien",
+  "{n} message type": "{n} Nachrichtentyp",
+  "{n} message types": "{n} Nachrichtentypen",
+  "{n} service": "{n} Service",
+  "{n} services": "{n} Services",
+  "{n} schema fetched from servers": "{n} Schema von Servern geholt",
+  "{n} schemas fetched from servers": "{n} Schemas von Servern geholt",
 };

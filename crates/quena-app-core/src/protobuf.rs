@@ -346,7 +346,7 @@ impl crate::AppCore {
             }
             other => other,
         }
-        .map_err(|e| anyhow!("{e}"))?;
+        .map_err(|e| anyhow!("{service}: the server did not answer gRPC server reflection ({e})"))?;
         let mut files: Vec<prost_types::FileDescriptorProto> = Vec::new();
         for m in &first {
             files.extend(reflection_files(m)?);

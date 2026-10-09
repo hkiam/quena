@@ -298,7 +298,7 @@ export const inspectors: Record<string, string> = {
   "Schema of {service} fetched ({n} files)": "Schema von {service} geholt ({n} Dateien)",
   "not everything shown": "nicht alles angezeigt",
   "Schema": "Schema",
-  "none – field numbers only (.proto files under Settings → Bodies & Storage)": "keins – nur Feldnummern (.proto-Dateien unter Einstellungen → Bodies & Speicher)",
+  "none – field numbers only (.proto files under Options → Bodies & Storage)": "keins – nur Feldnummern (.proto-Dateien unter Optionen → Bodies & Speicher)",
   "message type (automatic)": "Nachrichtentyp (automatisch)",
   "Decode with this message type instead of the one the method names": "Mit diesem Nachrichtentyp dekodieren statt mit dem der Methode",
   "Ask the server for its schema (gRPC server reflection); Quena sends this request itself": "Den Server nach seinem Schema fragen (gRPC Server Reflection); Quena sendet diese Anfrage selbst",
