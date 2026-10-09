@@ -552,4 +552,7 @@ export const components: Record<string, string> = {
   "Quena now uses the CA {name}": "Quena verwendet jetzt die CA {name}",
   "The private key stays on {machine} (stored with owner-only permissions) unless you export it as .p12. Only trust the certificate on machines you use for debugging; remove it afterwards.": "Der private Schlüssel bleibt auf {machine} (nur für den Besitzer lesbar gespeichert), außer er wird als .p12 exportiert. Dem Zertifikat nur auf Rechnern vertrauen, die zum Debuggen dienen; danach wieder entfernen.",
   "Cert. until": "Zert. bis",
+  "LLM model": "LLM-Modell",
+  "Tokens": "Tokens",
+  "Cost": "Kosten",
 };

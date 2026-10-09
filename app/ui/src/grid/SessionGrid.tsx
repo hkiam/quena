@@ -3,7 +3,7 @@
 // cache; React only renders the header.
 import { useEffect, useRef, useState } from "react";
 import { api, type SessionSummary } from "../api";
-import { fmtDate, fmtInt, fmtMs, fmtTime } from "../lib/format";
+import { fmtDate, fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
 import { get, set, useStore, type ColumnConf, type ColumnKey } from "../store";
 import { RowCache } from "./rowCache";
 import { methodPill, readPalette, rowStyle, stateMark, statusPill, type Palette, type Pill } from "./style";
@@ -102,6 +102,12 @@ function cellText(r: SessionSummary, key: ColumnKey): string {
       return fmtTime(r.startedAt);
     case "cert":
       return r.certExpires ? fmtDate(r.certExpires * 1_000_000) : "";
+    case "llm":
+      return r.llm ?? "";
+    case "tokens":
+      return r.llmTokens != null ? fmtInt(r.llmTokens) : "";
+    case "cost":
+      return r.llmCostMicros != null ? fmtUsd(r.llmCostMicros / 1_000_000) : "";
     case "group":
       return "";
   }

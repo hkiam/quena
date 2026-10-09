@@ -36,6 +36,10 @@ pub enum Column {
     Via,
     /// End of validity of the server certificate.
     Cert,
+    /// LLM provider/model, tokens and estimated cost of LLM API calls.
+    Llm,
+    Tokens,
+    Cost,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -64,6 +68,8 @@ pub enum GroupBy {
     Custom,
     /// The reverse proxy entry.
     Via,
+    /// The LLM provider/model.
+    Llm,
 }
 
 /// Group of a row in a [`RowWindow`].
@@ -97,6 +103,7 @@ fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
         GroupBy::Session => text(&r.session, false),
         GroupBy::Custom => text(&r.custom, false),
         GroupBy::Via => text(&r.via, false),
+        GroupBy::Llm => text(&r.llm, false),
     }
 }
 
@@ -125,6 +132,9 @@ fn compare(a: &SessionSummary, b: &SessionSummary, c: Column) -> Ordering {
         Column::Started => a.started_at.cmp(&b.started_at),
         Column::Via => a.via.cmp(&b.via),
         Column::Cert => a.cert_expires.cmp(&b.cert_expires),
+        Column::Llm => a.llm.cmp(&b.llm),
+        Column::Tokens => a.llm_tokens.cmp(&b.llm_tokens),
+        Column::Cost => a.llm_cost_micros.cmp(&b.llm_cost_micros),
     };
     o.then(a.id.cmp(&b.id))
 }

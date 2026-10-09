@@ -155,7 +155,7 @@ export function FiltersPanel() {
             onChange={(e) => update({ expression: e.target.value })}
           />
           <div className="muted small">
-            {t("Fields")}: host url path method status type process size reqsize time comment protocol color kind client custom via certdays · {t("Operators")}: == != ~= ({t("wildcard")}) ~ ({t("contains")}) !~ =~ (regex) &lt; &lt;= &gt; &gt;= · and or not ( ) · status == 4xx · size &gt; 10k · time &gt; 1s
+            {t("Fields")}: host url path method status type process size reqsize time comment protocol color kind client custom via certdays llm tokens · {t("Operators")}: == != ~= ({t("wildcard")}) ~ ({t("contains")}) !~ =~ (regex) &lt; &lt;= &gt; &gt;= · and or not ( ) · status == 4xx · size &gt; 10k · time &gt; 1s
           </div>
         </Section>
       </fieldset>

@@ -384,4 +384,9 @@ export const panels: Record<string, string> = {
   "Automatic": "Automatisch",
   "From collection {name}: {title}": "Aus Collection {name}: {title}",
   "Detach": "Lösen",
+  "LLM calls": "LLM-Aufrufe",
+  "{n} tokens": "{n} Tokens",
+  "(cost estimated from list prices)": "(Kosten nach Listenpreisen geschätzt)",
+  "{n} call": "{n} Aufruf",
+  "{n} calls": "{n} Aufrufe",
 };

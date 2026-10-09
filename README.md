@@ -233,6 +233,9 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 ### Inspect
 - Headers, Text, Pretty, Form Data, Hex, Auth, Cookies,
   Raw, JSON, XML, Caching, Image, Preview, Encoding
+- **LLM traffic**: calls to OpenAI, Anthropic, Gemini, Ollama and compatible APIs as a
+  conversation — system prompt, messages, tool calls, the answer assembled from streams,
+  tokens and estimated cost; columns, filters and statistics per model
 - Auto-detected inspectors: **WebSocket**, **SSE**, **gRPC / gRPC-Web / Protobuf**
   (field names from `.proto` files or server reflection, schemaless otherwise),
   **MessagePack**, **Multipart / MTOM**, **SOAP**, **Atom / OData**

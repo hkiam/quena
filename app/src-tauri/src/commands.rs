@@ -915,6 +915,13 @@ async fn collections_reveal(core: State<'_, Core>) -> R<()> {
     quena_platform::open(&dir.display().to_string()).map_err(e)
 }
 
+/// A session as an LLM API call (`None`: it is not one).
+#[tauri::command]
+async fn llm_call(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_core::llm::LlmCall>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.llm(id))).await
+}
+
 /// A MessagePack body as a tree (`None`: not MessagePack).
 #[tauri::command]
 async fn msgpack(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<quena_app_core::msgpack::Msgpack>> {
@@ -1111,6 +1118,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         reveal_path,
         browsers_list,
         msgpack,
+        llm_call,
         collections_list,
         collection_read,
         collection_save,

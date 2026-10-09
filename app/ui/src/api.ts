@@ -64,10 +64,14 @@ export interface SessionSummary {
   via?: string;
   /** End of validity of the server certificate (Unix seconds). */
   certExpires?: number | null;
+  /** LLM API call: `provider/model`, tokens, estimated cost in millionths of a dollar. */
+  llm?: string;
+  llmTokens?: number | null;
+  llmCostMicros?: number | null;
 }
 
 /** "Group by" of the session list (crates/quena-index). */
-export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via";
+export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via" | "llm";
 
 export interface RowGroup {
   start: boolean;
@@ -403,7 +407,10 @@ export type Column =
   | "duration"
   | "started"
   | "via"
-  | "cert";
+  | "cert"
+  | "llm"
+  | "tokens"
+  | "cost";
 
 export interface Sort {
   column: Column;
@@ -450,6 +457,33 @@ export interface Statistics {
   processes: [string, number][];
   aborted: number;
   inFlight: number;
+  /** LLM calls: [provider/model, calls, tokens, estimated USD]. */
+  llmModels: [string, number, number, number][];
+  llmTokens: number;
+  llmCost: number;
+}
+
+export interface LlmPart {
+  kind: "text" | "image" | "toolCall" | "toolResult" | "thinking" | "other";
+  text: string;
+  name?: string;
+  id?: string;
+}
+export interface LlmCall {
+  provider: string;
+  api: "chat" | "responses" | "messages" | "gemini" | "ollamaChat" | "ollamaGenerate" | "embeddings";
+  model: string;
+  stream: boolean;
+  system: string[];
+  messages: { role: string; parts: LlmPart[] }[];
+  tools: { name: string; description: string }[];
+  params: [string, string][];
+  output: LlmPart[];
+  stopReason: string | null;
+  usage: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number } | null;
+  cost: { usd: number; price: string } | null;
+  error: string | null;
+  notes: string[];
 }
 
 export interface Settings {
@@ -1138,6 +1172,7 @@ export const api = {
   saveBodyRange: (id: SessionId, part: Part, offset: number, len: number, path: string) =>
     invoke<number>("save_body_range", { id, part, offset, len, path }),
   grpc: (id: SessionId, part: Part, typeName?: string) => invoke<Grpc | null>("grpc", { id, part, typeName: typeName ?? null }),
+  llmCall: (id: SessionId) => invoke<LlmCall | null>("llm_call", { id }),
   msgpack: (id: SessionId, part: Part) => invoke<Msgpack | null>("msgpack", { id, part }),
   protobufStatus: () => invoke<SchemaStatus>("protobuf_status"),
   grpcReflect: (id: SessionId) => invoke<{ service: string; files: string[] }>("grpc_reflect", { id }),

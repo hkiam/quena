@@ -114,3 +114,22 @@ describe("gRPC and MessagePack", () => {
     expect(shown(withType("application/grpc"), ["grpc"])[0]).toBe("grpc");
   });
 });
+
+describe("LLM calls", () => {
+  const call = (url: string, method = "POST", llm = "") => ({ summary: { llm }, request: { method, url, headers: [] }, requestBody: body({}), responseBody: body({}) }) as unknown as Detail;
+  it("are recognised by URL or by their mark", async () => {
+    const { llmCandidate } = await import("./LlmView");
+    expect(llmCandidate(call("https://api.openai.com/v1/chat/completions"))).toBe(true);
+    expect(llmCandidate(call("https://api.anthropic.com/v1/messages"))).toBe(true);
+    expect(llmCandidate(call("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"))).toBe(true);
+    expect(llmCandidate(call("http://localhost:11434/api/chat"))).toBe(true);
+    expect(llmCandidate(call("https://api.openai.com/v1/chat/completions", "GET"))).toBe(false);
+    expect(llmCandidate(call("https://example.com/api/users"))).toBe(false);
+    expect(llmCandidate(call("https://proxy.example/x", "POST", "OpenAI/gpt-4o"))).toBe(true);
+  });
+  it("open in the LLM view", () => {
+    const d = call("https://api.openai.com/v1/chat/completions");
+    expect(viewFamily(d, "response", ["llm", "sse"], [])).toBe("llm");
+    expect(defaultView("llm", "request", [...REQUEST, "llm"])).toBe("llm");
+  });
+});

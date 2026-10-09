@@ -83,6 +83,7 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `list_sessions` | | compact rows; `filter` (see [syntax](syntax.md#filter-expressions)), `since_id`, paging |
 | `get_session` | | request and response heads, timers, bodies as text (decoded, cut at 16 KB by default) |
 | `get_body` | | a piece of a body: `offset`, `length`, decoded or raw |
+| `get_llm_call` | | an [LLM API call](llm.md) taken apart: model, messages, tools, answer, tokens, estimated cost |
 | `search_sessions` | | text or regex in URLs, headers, bodies |
 | `statistics` | | bytes, status codes, content types, hosts |
 | `list_mock_rules`, `get_breakpoints` | | rules with hit counts; breakpoints and paused sessions |

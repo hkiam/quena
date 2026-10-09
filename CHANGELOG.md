@@ -8,6 +8,15 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **LLM traffic**: calls to OpenAI (Chat Completions, Responses), Anthropic Messages,
+  Google Gemini, Ollama and OpenAI-compatible APIs are recognised.
+  - The **LLM** view shows provider and model, system prompt, the messages with tool calls
+    and results, the answer (assembled from server-sent events, JSON lines or arrays),
+    stop reason, token usage (cache, reasoning) and an estimated cost (built-in list
+    prices, own ones in `llm-prices.json`).
+  - Finished calls get flags; new columns *LLM*, *Tokens*, *Cost*, grouping by model,
+    filter fields `llm` and `tokens`, per-model totals in *Statistics*. MCP:
+    `get_llm_call`.
 - **Collections in the Composer**: requests are saved as `.http` files in the data folder
   (one per collection; JetBrains/VS Code format).
   - Load, send, run all with a result list, sort, duplicate and remove requests; edit the

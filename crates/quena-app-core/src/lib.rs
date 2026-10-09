@@ -14,6 +14,7 @@ pub mod engine;
 pub mod find;
 pub mod grpc;
 pub mod launch;
+pub mod llm;
 pub mod logbuf;
 pub mod mock;
 pub mod mockgen;

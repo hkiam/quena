@@ -1,0 +1,85 @@
+# LLM traffic
+
+Applications that use large language models talk to their APIs over HTTPS like any other
+client. Quena recognises these calls and shows them as what they are: a conversation with
+a model, its tools, the answer and what it cost — also when the answer came as a stream.
+
+## What is recognised
+
+| API | Recognised by |
+|---|---|
+| OpenAI Chat Completions and every OpenAI-compatible API (Azure OpenAI, Mistral, Groq, OpenRouter, DeepSeek, xAI, Together, Fireworks, LM Studio, vLLM, LiteLLM …) | `POST …/chat/completions` |
+| OpenAI Responses | `POST …/responses` |
+| Anthropic Messages | `POST …/v1/messages` |
+| Google Gemini and Vertex AI | `POST …:generateContent`, `…:streamGenerateContent` |
+| Ollama | `POST …/api/chat`, `…/api/generate` |
+| Embeddings | `POST …/embeddings`, `…/api/embed`, `…:embedContent` |
+
+The provider is named by the API's host (`OpenAI`, `Anthropic`, `Google Gemini`, …); other
+hosts — a company gateway, a local server — keep their host name. HTTPS decryption must be
+on, as for any HTTPS content.
+
+## The LLM view
+
+Selecting such a session opens the **LLM** view (on both the request and the response
+side):
+
+- a header with provider, model, whether the answer was streamed, the stop reason
+  (`stop`, `end_turn`, `tool_calls`, `max_tokens` …), the **token usage** — input, output,
+  read from and written to the provider's cache, reasoning — and the **estimated cost**;
+- the **system prompt** (also `instructions`, `systemInstruction`);
+- the **messages** sent, by role: text, images as placeholders, **tool calls** with their
+  arguments and **tool results** with the call they answer;
+- the **answer**: text, thinking or reasoning summaries (collapsed), tool calls. Streams
+  (server-sent events, Ollama's JSON lines, Gemini's array) are put together;
+- **tools and parameters**: the tool definitions offered and the parameters sent
+  (`temperature`, `max_tokens`, `reasoning_effort`, `thinking` …).
+
+An error the API answered with (rate limit, invalid request) is shown at the top. Texts
+longer than 200,000 characters are shortened in this view; the body views show them
+whole. A stream that ended early says so.
+
+## In the session list
+
+When a call is done, it gets the flags `x-quena-llm` (`provider/model`),
+`x-quena-llm-tokens`, `x-quena-llm-usage` and `x-quena-llm-cost`. They are kept in `.saz`
+archives.
+
+- Columns **LLM**, **Tokens** and **Cost** (right-click the column headers); they sort.
+- *Group by → LLM model* puts the calls of each model together.
+- Filters: `llm ~ claude`, `llm == "OpenAI/gpt-4o"`, `tokens > 10000` (see
+  [syntax](syntax.md#filter-expressions)).
+- *Statistics* lists calls, tokens and estimated cost per model for the selection.
+
+## Costs
+
+The cost is an estimate: tokens times the model's list price, with cached input at the
+cached price. Quena knows the list prices of common OpenAI, Anthropic, Google, Mistral and
+DeepSeek models as published in 2025; prices change, discounts and batch prices are not
+known, and models without a price show *cost unknown*.
+
+Own or newer prices go into `llm-prices.json` in the [data directory](settings.md#data-directory),
+in US dollars per million tokens, by model name prefix (the longest prefix wins, and these
+come before the built-in ones):
+
+```json
+{
+  "gpt-5.1": { "input": 1.25, "output": 10, "cacheRead": 0.125 },
+  "claude-opus-4-5": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 },
+  "llama": { "input": 0, "output": 0 }
+}
+```
+
+## Replay answers without calling the model
+
+To test an application without paying for (or waiting on) the model, answer its calls from
+recorded sessions: select them and use *Mock Rules → Mocks from Sessions…* (see
+[mocks from a capture](mocks.md)). With *Match request bodies* each prompt gets its own
+recorded answer (JSON compared regardless of key order); without it, *In recorded order*
+answers the calls one after the other. Streamed answers are replayed as recorded.
+
+## AI agents
+
+Over [MCP](mcp.md), `get_llm_call` returns a call taken apart the same way; the session
+rows carry `llm` and `tokens`. Unless agents may see secrets, the bodies are redacted first
+(credentials and secret fields), as for `get_session`.

@@ -328,6 +328,14 @@ pub struct SessionSummary {
     /// End of validity of the server's certificate (Unix seconds), for HTTPS sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cert_expires: Option<i64>,
+    /// LLM API call: `provider/model` (empty: not one).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub llm: String,
+    /// Its tokens (input + output) and estimated cost in millionths of a dollar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_cost_micros: Option<u64>,
 }
 
 impl SessionSummary {
@@ -399,6 +407,10 @@ impl SessionDetail {
         s.session = correlation::session_key(&self.request.headers);
         s.via = self.extra_flags.iter().find(|(k, _)| k == VIA_FLAG).map(|(_, v)| v.clone()).unwrap_or_default();
         s.cert_expires = self.connection.server_tls.as_ref().and_then(|t| t.not_after);
+        let flag = |k: &str| self.extra_flags.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        s.llm = flag("x-quena-llm").unwrap_or_default().to_string();
+        s.llm_tokens = flag("x-quena-llm-tokens").and_then(|v| v.parse().ok());
+        s.llm_cost_micros = flag("x-quena-llm-cost").and_then(|v| v.parse::<f64>().ok()).map(|c| (c * 1_000_000.0).round() as u64);
         s.request_body_len = self.request_body.wire_len();
         if let Some(resp) = &self.response {
             s.status = resp.status;

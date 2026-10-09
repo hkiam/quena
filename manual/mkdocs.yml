@@ -84,6 +84,7 @@ nav:
       - Diagnostics in CI: ci.md
       - Archives and copying: archives.md
       - Packet captures: packet-captures.md
+      - LLM traffic: llm.md
   - Advanced:
       - Rules scripts: scripting.md
       - Automatic authentication: authentication.md

@@ -52,6 +52,10 @@ pub enum Field {
     Via,
     /// Days until the server certificate expires (0: expired).
     CertDays,
+    /// LLM provider/model (`llm ~ claude`).
+    Llm,
+    /// Tokens of an LLM call (input + output).
+    Tokens,
 }
 
 impl Field {
@@ -80,11 +84,13 @@ impl Field {
             "session" | "sessioncookie" => Field::Session,
             "via" | "reverse" => Field::Via,
             "certdays" | "cert" => Field::CertDays,
+            "llm" | "model" => Field::Llm,
+            "tokens" => Field::Tokens,
             _ => return None,
         })
     }
     fn numeric(self) -> bool {
-        matches!(self, Field::Id | Field::Status | Field::Size | Field::ReqSize | Field::Duration | Field::Conn | Field::CertDays)
+        matches!(self, Field::Id | Field::Status | Field::Size | Field::ReqSize | Field::Duration | Field::Conn | Field::CertDays | Field::Tokens)
     }
 }
 
@@ -157,6 +163,8 @@ fn text_of(f: Field, s: &SessionSummary) -> String {
         Field::ReqSize => s.request_body_len.to_string(),
         Field::Duration => s.duration_ms.map(|d| d.to_string()).unwrap_or_default(),
         Field::CertDays => cert_days(s).map(|d| d.to_string()).unwrap_or_default(),
+        Field::Llm => s.llm.clone(),
+        Field::Tokens => s.llm_tokens.map(|t| t.to_string()).unwrap_or_default(),
     }
 }
 
@@ -169,6 +177,7 @@ fn num_of(f: Field, s: &SessionSummary) -> Option<u64> {
         Field::Duration => s.duration_ms? as u64,
         Field::Conn => s.conn,
         Field::CertDays => cert_days(s)?,
+        Field::Tokens => s.llm_tokens?,
         _ => return None,
     })
 }

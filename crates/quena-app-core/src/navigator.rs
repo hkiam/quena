@@ -34,6 +34,7 @@ pub fn group_value(s: &SessionSummary, by: GroupBy) -> Option<std::borrow::Cow<'
         GroupBy::Session => text(&s.session).map(|_| s.session.as_str().into()),
         GroupBy::Custom => text(&s.custom).map(|_| s.custom.as_str().into()),
         GroupBy::Via => text(&s.via).map(|_| s.via.as_str().into()),
+        GroupBy::Llm => text(&s.llm).map(|_| s.llm.as_str().into()),
     }
 }
 

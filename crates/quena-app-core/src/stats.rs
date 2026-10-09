@@ -21,6 +21,10 @@ pub struct Statistics {
     pub processes: Vec<(String, usize)>,
     pub aborted: usize,
     pub in_flight: usize,
+    /// LLM API calls: (provider/model, calls, tokens, estimated cost in USD), by tokens.
+    pub llm_models: Vec<(String, usize, u64, f64)>,
+    pub llm_tokens: u64,
+    pub llm_cost: f64,
 }
 
 impl AppCore {
@@ -31,6 +35,7 @@ impl AppCore {
         let mut cts: HashMap<String, (usize, u64)> = HashMap::new();
         let mut hosts: HashMap<String, (usize, u64)> = HashMap::new();
         let mut procs: HashMap<String, usize> = HashMap::new();
+        let mut models: HashMap<String, (usize, u64, u64)> = HashMap::new();
         cap.index.for_each(|s| {
             if !set.is_empty() && !set.contains(&s.id) {
                 return;
@@ -62,7 +67,19 @@ impl AppCore {
             if !s.process.is_empty() {
                 *procs.entry(s.process.clone()).or_default() += 1;
             }
+            if !s.llm.is_empty() {
+                let m = models.entry(s.llm.clone()).or_default();
+                m.0 += 1;
+                m.1 += s.llm_tokens.unwrap_or(0);
+                m.2 += s.llm_cost_micros.unwrap_or(0);
+            }
         });
+        st.llm_tokens = models.values().map(|m| m.1).sum();
+        st.llm_cost = models.values().map(|m| m.2).sum::<u64>() as f64 / 1_000_000.0;
+        let mut m: Vec<_> = models.into_iter().map(|(k, (c, t, cost))| (k, c, t, cost as f64 / 1_000_000.0)).collect();
+        m.sort_by(|a, b| b.2.cmp(&a.2).then(b.1.cmp(&a.1)));
+        m.truncate(50);
+        st.llm_models = m;
         let mut v: Vec<_> = cts.into_iter().map(|(k, (c, b))| (k, c, b)).collect();
         v.sort_by(|a, b| b.2.cmp(&a.2).then(b.1.cmp(&a.1)));
         v.truncate(50);

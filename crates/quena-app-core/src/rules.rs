@@ -1823,6 +1823,14 @@ impl Interceptor for Rules {
 
     fn on_complete(&self, s: &SessionView) {
         self.break_response.lock().remove(&s.id);
+        // Calls to LLM APIs get their model, tokens and cost (parsed off the proxy's threads).
+        let summary = s.live.summary();
+        if crate::llm::api_of(&summary.method, &summary.full_url()).is_some()
+            && let Some(core) = self.core()
+        {
+            let id = s.id;
+            let _ = std::thread::Builder::new().name("quena-llm".into()).spawn(move || core.llm_mark(id));
+        }
         if self.script_active() && self.script.has_complete_hook() {
             let d = s.live.detail();
             self.script.on_complete(serde_json::json!({

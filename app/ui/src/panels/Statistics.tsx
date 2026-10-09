@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Statistics } from "../api";
-import { fmtBytes, fmtDateTime, fmtInt, fmtMs } from "../lib/format";
+import { fmtBytes, fmtDateTime, fmtInt, fmtMs, fmtUsd } from "../lib/format";
 import { useStore } from "../store";
 import { plural, t } from "../i18n";
 import { openMenu, withSelection } from "../components/contextMenus";
@@ -64,6 +64,36 @@ export function StatisticsPanel() {
           ))}
         </tbody>
       </table>
+      {st.llmModels.length > 0 && (
+        <>
+          <h4>{t("LLM calls")}</h4>
+          <table className="kv">
+            <tbody>
+              {st.llmModels.map(([m, n, tok, usd]) => (
+                <tr key={m}>
+                  <td>{m}</td>
+                  <td>
+                    {plural(n, "{n} call", "{n} calls")} · {t("{n} tokens", { n: fmtInt(tok) })}
+                    {usd > 0 && ` · ${fmtUsd(usd)}`}
+                  </td>
+                </tr>
+              ))}
+              <tr>
+                <td>
+                  <b>{t("Total")}</b>
+                </td>
+                <td>
+                  <b>
+                    {t("{n} tokens", { n: fmtInt(st.llmTokens) })}
+                    {st.llmCost > 0 && ` · ${fmtUsd(st.llmCost)}`}
+                  </b>{" "}
+                  <span className="muted small">{t("(cost estimated from list prices)")}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </>
+      )}
       {st.processes.length > 0 && (
         <>
           <h4>{t("Processes")}</h4>

@@ -80,6 +80,14 @@ static TOOLS: &[Tool] = &[
         run: get_session,
     },
     Tool {
+        name: "get_llm_call",
+        description: "A call to an LLM API (OpenAI, Anthropic, Gemini, Ollama and OpenAI-compatible) taken apart: provider, model, system prompt, the messages sent, tools, parameters, the answer (assembled from a stream), tool calls, stop reason, token usage and an estimated cost. Find such sessions with the filter `llm ~ claude` or `tokens > 1000`.",
+        write: false,
+        destructive: false,
+        schema: || req(json!({ "id": { "type": "integer" } }), &["id"]),
+        run: get_llm_call,
+    },
+    Tool {
         name: "get_body",
         description: "Read part of a request or response body: `length` bytes from `offset` of the decoded body (or the raw bytes with `decoded: false`). `more: true` means there is more after this piece.",
         write: false,
@@ -737,6 +745,10 @@ impl View {
         if !s.via.is_empty() {
             v["via"] = json!(s.via);
         }
+        if !s.llm.is_empty() {
+            v["llm"] = json!(s.llm);
+            v["tokens"] = json!(s.llm_tokens);
+        }
         v
     }
 
@@ -983,6 +995,18 @@ struct BodyArgs {
     offset: Option<u64>,
     length: Option<usize>,
     decoded: Option<bool>,
+}
+
+fn get_llm_call(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: IdArgs = args(a)?;
+    const WINDOW: usize = 16 << 20;
+    // The bodies as an agent may see them (secrets replaced unless allowed).
+    let s = View::new(core, WINDOW).session(core, a.id, WINDOW, true)?;
+    let d = &s.detail;
+    let ct = d.response.as_ref().and_then(|r| r.headers.get("content-type")).unwrap_or("").to_ascii_lowercase();
+    let call = quena_app_core::llm::parse(&d.request.method, &d.request.url, &s.req, d.response.as_ref().map(|_| (s.resp.as_slice(), ct.as_str())), &core.llm_prices())
+        .ok_or_else(|| anyhow!("session #{} is not a call to an LLM API", a.id))?;
+    Ok(serde_json::to_value(call)?)
 }
 
 fn get_body(core: &Arc<AppCore>, a: Value) -> Result<Value> {

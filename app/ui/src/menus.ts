@@ -17,6 +17,7 @@ export function groupMenu(): MenuItem[] {
     ["session", t("Session cookie")],
     ["custom", t("Custom column")],
     ["via", t("Via (reverse proxy, SOCKS, transparent)")],
+    ["llm", t("LLM model")],
   ];
   const items: MenuItem[] = choices.map(([g, label]) => ({ label, checked: cur === g, action: () => void actions.setGroup(g) }));
   if (cur !== "none") {

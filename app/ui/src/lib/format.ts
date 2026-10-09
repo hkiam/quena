@@ -34,6 +34,12 @@ export function fmtTime(us: number | null | undefined): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 }
 
+/** An estimated amount in US dollars: small amounts with enough digits to be useful. */
+export function fmtUsd(usd: number): string {
+  const digits = usd >= 1 ? 2 : usd >= 0.01 ? 4 : 6;
+  return `$${usd.toLocaleString(currentLang() === "de" ? "de-DE" : "en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+}
+
 /** Date of a microsecond timestamp, in the UI language. */
 export function fmtDate(us: number | null | undefined): string {
   if (!us) return "";

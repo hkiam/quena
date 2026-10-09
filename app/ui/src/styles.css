@@ -3636,3 +3636,71 @@ table.hr-table input:not([type="checkbox"]) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* LLM view */
+.llm-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.llm-usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+.llm-usage > span {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 7px;
+}
+.llm-msg {
+  border-left: 3px solid var(--border);
+  padding: 2px 0 4px 8px;
+  margin: 8px 0;
+}
+.llm-user {
+  border-left-color: var(--row-blue);
+}
+.llm-assistant,
+.llm-answer {
+  border-left-color: var(--accent);
+}
+.llm-tool,
+.llm-system {
+  border-left-color: var(--muted);
+}
+.llm-role {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.llm-part {
+  margin: 2px 0;
+}
+.llm-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  font-family: inherit;
+}
+pre.llm-text.mono {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+}
+.llm-tool-head {
+  font-size: 12px;
+}
+.llm-thinking .llm-text {
+  color: var(--muted);
+  font-style: italic;
+}
+.llm-details {
+  margin-top: 10px;
+}

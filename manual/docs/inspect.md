@@ -87,6 +87,7 @@ These views appear only when the content fits:
 | *WebSocket* | WebSocket sessions | the frame log with direction, type, size and payload; *All frames* or *Text messages* only |
 | *SSE* | `text/event-stream` responses | the stream split into events, live |
 | *gRPC* | gRPC, gRPC-Web and Protobuf messages | message frames and their fields; with a [schema](#grpc-and-protobuf-with-a-schema) field names, types and enum values |
+| *LLM* | calls to LLM APIs (OpenAI, Anthropic, Gemini, Ollama, compatible) | the conversation, tool calls, the answer (also from a stream), tokens and estimated cost — see [LLM traffic](llm.md) |
 | *MessagePack* | `application/msgpack`, `x-msgpack`, `vnd.msgpack` | the values as a tree, like *JSON*, plus binary data, extension types and timestamps |
 | *Parts* | `multipart/*` bodies, including MTOM | the parts of `multipart/related`, `form-data` and `mixed` |
 | *SOAP* | SOAP envelopes | SOAP version, action, operation, body and SOAP faults |
