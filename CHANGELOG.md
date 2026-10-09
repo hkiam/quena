@@ -8,6 +8,14 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Compare captures** (*Tools → Compare Captures…*): the live capture and archives loaded
+  into the list, side by side.
+  - Requests are paired by method, host and normalized path and marked new, gone or
+    changed (status, type, time, headers, body; JSON by content).
+  - Requests that now fail are counted apart. Double-click compares two sessions; *Copy as
+    Markdown*.
+  - Headless: `quena-cli diff before after --fail-on errors|changes`. MCP:
+    `compare_captures`.
 - **AutoSave** (*Settings → General*): all sessions are saved as `.saz` every few minutes
   when something changed, into the data folder or a chosen one; the newest archives are
   kept (10 by default). *Save now*, *Open folder*.
@@ -17,6 +25,7 @@ contain breaking changes (settings, file formats, plugin API).
   saying why.
 
 ### Fixed
+- Hiding the navigator right after choosing a group could leave the list narrowed to it.
 - A session that just finished could briefly not be found (its details vanished for a
   moment between recording and storage).
 - **Socket.IO**: the WebSocket view shows the event name or packet type and the arguments

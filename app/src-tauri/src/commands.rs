@@ -950,6 +950,20 @@ async fn socketio_polling(core: State<'_, Core>, id: SessionId, part: Part) -> R
     blocking(move || Ok(core.socketio_polling(id, part))).await
 }
 
+/// The sides one can compare (live, each archive in the list).
+#[tauri::command]
+async fn compare_sources(core: State<'_, Core>) -> R<Vec<quena_app_core::capdiff::SourceInfo>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.compare_sources())).await
+}
+
+/// Compare two captures in the list.
+#[tauri::command]
+async fn compare_captures(core: State<'_, Core>, a: quena_app_core::capdiff::Source, b: quena_app_core::capdiff::Source) -> R<quena_app_core::capdiff::CaptureDiff> {
+    let core = core.inner().clone();
+    blocking(move || core.compare_captures(&a, &b).map_err(e)).await
+}
+
 /// A MessagePack body as a tree (`None`: not MessagePack).
 #[tauri::command]
 async fn msgpack(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<quena_app_core::msgpack::Msgpack>> {
@@ -1146,6 +1160,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         reveal_path,
         browsers_list,
         msgpack,
+        compare_sources,
+        compare_captures,
         socketio_polling,
         llm_call,
         collections_list,

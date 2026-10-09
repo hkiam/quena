@@ -56,6 +56,10 @@ enum Command {
     Diagnose(Diagnose),
     /// Compare two saved JSON reports (no new analysis) and apply the quality gate.
     Compare(CompareArgs),
+    /// Compare two captures (.saz, .har, .pcap): requests that are new, gone or answer
+    /// differently (status, type, time, headers, body). Exit code 1 with --fail-on when
+    /// such a difference is found.
+    Diff(DiffArgs),
     /// Write a sanitized copy of captures for sharing (support, vendors): credentials,
     /// tokens and, with `--preset gdpr`, personal data are replaced.
     Sanitize(SanitizeArgs),
@@ -436,6 +440,74 @@ impl std::fmt::Display for Usage {
 }
 impl std::error::Error for Usage {}
 
+#[derive(clap::Args)]
+struct DiffArgs {
+    /// The capture before (e.g. the last release).
+    before: PathBuf,
+    /// The capture after.
+    after: PathBuf,
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = DiffFormat::Md)]
+    format: DiffFormat,
+    /// Also list requests that did not change.
+    #[arg(long)]
+    all: bool,
+    /// Fail (exit code 1) on: `errors` (a request that succeeded now fails), `changes`
+    /// (anything changed, new or gone), `none`.
+    #[arg(long, value_enum, default_value_t = DiffFail::None)]
+    fail_on: DiffFail,
+    /// Write the result to this file instead of stdout.
+    #[arg(long, short = 'o')]
+    out: Option<PathBuf>,
+    /// Seconds for loading.
+    #[arg(long, default_value_t = 600)]
+    timeout: u64,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum DiffFormat {
+    Md,
+    Json,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum DiffFail {
+    None,
+    Errors,
+    Changes,
+}
+
+fn diff(a: DiffArgs) -> Result<bool> {
+    use quena_app_core::capdiff::{Source, to_markdown};
+    let deadline = Deadline::after(a.timeout);
+    let engine = Engine::bare()?;
+    let mut names = Vec::new();
+    for f in [&a.before, &a.after] {
+        if !f.is_file() {
+            return Err(usage(format!("{}: no such file", f.display())));
+        }
+        engine.import(f, &[], &deadline)?;
+        let label = engine.core.compare_sources().last().map(|s| s.label.clone()).ok_or_else(|| usage(format!("{}: no sessions", f.display())))?;
+        names.push(label);
+    }
+    let d = engine.core.compare_captures(&Source::Archive(names[0].clone()), &Source::Archive(names[1].clone())).map_err(|e| usage(format!("{e:#}")))?;
+    let text = match a.format {
+        DiffFormat::Md => to_markdown(&d, &a.before.display().to_string(), &a.after.display().to_string(), a.all),
+        DiffFormat::Json => serde_json::to_string_pretty(&d)?,
+    };
+    match &a.out {
+        Some(p) => std::fs::write(p, &text).map_err(|e| usage(format!("{}: {e}", p.display())))?,
+        None => println!("{text}"),
+    }
+    let c = &d.counts;
+    eprintln!("quena-cli: {} changed, {} new, {} gone, {} same; {} now fail", c.changed, c.added, c.removed, c.same, c.new_errors);
+    Ok(match a.fail_on {
+        DiffFail::None => true,
+        DiffFail::Errors => c.new_errors == 0,
+        DiffFail::Changes => c.changed + c.added + c.removed == 0,
+    })
+}
+
 fn usage(msg: impl Into<String>) -> anyhow::Error {
     Usage(msg.into()).into()
 }
@@ -457,6 +529,7 @@ fn main() -> ExitCode {
     let r = match cli.command {
         Command::Diagnose(a) => diagnose(a),
         Command::Compare(a) => compare(a),
+        Command::Diff(a) => diff(a),
         Command::Sanitize(a) => sanitize(a).map(|_| true),
         Command::Mock(a) => mock(a).map(|_| true),
         Command::Http { command: HttpCommand::Run(a) } => http_run(a),

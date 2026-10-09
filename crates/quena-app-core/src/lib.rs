@@ -6,6 +6,7 @@ pub mod archive;
 pub mod auth;
 pub mod autosave;
 pub mod bodies;
+pub mod capdiff;
 pub mod collections;
 pub mod ws;
 pub mod compose;
@@ -167,6 +168,8 @@ pub struct AppCore {
     /// Protobuf schemas (`.proto` files, reflection), compiled when needed.
     pub(crate) protobuf: protobuf::Schemas,
     pub(crate) autosave: Mutex<autosave::State>,
+    /// Archives loaded into the list: (file name, capture numbering, session ids).
+    pub(crate) imports: Mutex<Vec<(String, u64, Vec<SessionId>)>>,
     started: Instant,
     shut_down: std::sync::atomic::AtomicBool,
     /// Serializes starting and stopping the capture (the startup thread and the UI can race).
@@ -206,6 +209,7 @@ impl AppCore {
             diag_report: Mutex::new(Default::default()),
             protobuf: protobuf::Schemas::default(),
             autosave: Mutex::new(Default::default()),
+            imports: Mutex::new(Vec::new()),
             started: Instant::now(),
             shut_down: std::sync::atomic::AtomicBool::new(false),
         });

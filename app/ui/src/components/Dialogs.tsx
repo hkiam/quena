@@ -19,6 +19,7 @@ const MocksDialog = lazy(() => import("./MocksDialog").then((m) => ({ default: m
 const ReverseProxyPanel = lazy(() => import("./ReverseProxyDialog").then((m) => ({ default: m.ReverseProxyPanel })));
 const LaunchPanel = lazy(() => import("./LaunchDialog").then((m) => ({ default: m.LaunchPanel })));
 const HostRemapPanel = lazy(() => import("./HostRemapDialog").then((m) => ({ default: m.HostRemapPanel })));
+const CaptureDiffPanel = lazy(() => import("./CaptureDiffDialog").then((m) => ({ default: m.CaptureDiffPanel })));
 const RewriteEditor = lazy(() => import("../panels/RewriteEditor").then((m) => ({ default: m.RewriteEditor })));
 const RewriteApply = lazy(() => import("../panels/RewriteEditor").then((m) => ({ default: m.RewriteApply })));
 import { CommandPalette } from "./CommandPalette";
@@ -1145,6 +1146,12 @@ function DialogBody({ d }: { d: Dialog }) {
       return (
         <Modal title={t("Apply Rewrite Rules")} onClose={close} wide>
           <RewriteApply ids={d.ids} />
+        </Modal>
+      );
+    case "capdiff":
+      return (
+        <Modal title={t("Compare Captures")} onClose={close} wide>
+          <CaptureDiffPanel />
         </Modal>
       );
     case "host-remap":

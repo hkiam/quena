@@ -188,6 +188,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "tools.options", "Options…", None)?,
             &item(app, "tools.textwizard", "Text Tools…", Some("CmdOrCtrl+E"))?,
             &item(app, "tools.composer", "Composer", Some("F9"))?,
+            &item(app, "tools.compare-captures", "Compare Captures…", None)?,
             &sep()?,
             &item(app, "tools.plugins", "Plugins…", None)?,
         ],

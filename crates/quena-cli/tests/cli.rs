@@ -671,3 +671,25 @@ fn sanitize_and_mock_honour_the_timeout() {
     let o = run(&["mock", input.to_str().unwrap(), "--package", d.path().join("m.quena-mocks").to_str().unwrap(), "--timeout", "0"]);
     assert_eq!(code(&o), 3, "{}", text(&o));
 }
+
+#[test]
+fn diff_of_two_captures_and_its_gate() {
+    let d = tempfile::tempdir().unwrap();
+    let before = har(d.path(), "before.har", 3, 0);
+    let after = har(d.path(), "after.har", 3, 2);
+    let o = run(&["diff", before.to_str().unwrap(), after.to_str().unwrap()]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let md = String::from_utf8_lossy(&o.stdout);
+    assert!(md.contains("| + | `GET shop.example.com/api/save`"), "{md}");
+    // A request that worked before and fails now.
+    let fixed = har(d.path(), "fixed.har", 3, 0);
+    std::fs::write(&fixed, std::fs::read_to_string(&before).unwrap().replacen("\"status\":200", "\"status\":503", 1)).unwrap();
+    let o = run(&["diff", before.to_str().unwrap(), fixed.to_str().unwrap(), "--fail-on", "errors", "--format", "json"]);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["counts"]["newErrors"], 1);
+    // The same capture twice: nothing changed.
+    let o = run(&["diff", before.to_str().unwrap(), before.to_str().unwrap(), "--fail-on", "changes"]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert_eq!(code(&run(&["diff", "/no/such.har", before.to_str().unwrap()])), 2);
+}

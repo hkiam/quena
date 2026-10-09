@@ -80,6 +80,14 @@ static TOOLS: &[Tool] = &[
         run: get_session,
     },
     Tool {
+        name: "compare_captures",
+        description: "Compare two captures in the list: `a` (before) and `b` (after) are `live` (recorded sessions) or the file name of an archive loaded into the list (without `a`/`b`: the sides are listed). Returns requests that changed (status, type, time, headers, body), are new or gone, paired by method, host and normalized path.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({ "a": { "type": "string" }, "b": { "type": "string" }, "all": { "type": "boolean", "description": "Also unchanged requests" } })),
+        run: compare_captures,
+    },
+    Tool {
         name: "get_llm_call",
         description: "A call to an LLM API (OpenAI, Anthropic, Gemini, Ollama and OpenAI-compatible) taken apart: provider, model, system prompt, the messages sent, tools, parameters, the answer (assembled from a stream), tool calls, stop reason, token usage and an estimated cost. Find such sessions with the filter `llm ~ claude` or `tokens > 1000`.",
         write: false,
@@ -996,6 +1004,41 @@ struct BodyArgs {
     offset: Option<u64>,
     length: Option<usize>,
     decoded: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct DiffArgs {
+    a: Option<String>,
+    b: Option<String>,
+    #[serde(default)]
+    all: bool,
+}
+
+fn compare_captures(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    use quena_app_core::capdiff::{DiffKind, Source};
+    let a: DiffArgs = args(a)?;
+    let sources = core.compare_sources();
+    let (Some(x), Some(y)) = (&a.a, &a.b) else {
+        return Ok(json!({ "sides": sources.iter().map(|s| json!({ "name": s.label, "sessions": s.sessions })).collect::<Vec<_>>() }));
+    };
+    let side = |n: &str| if n.eq_ignore_ascii_case("live") { Source::Live } else { Source::Archive(n.to_string()) };
+    let d = core.compare_captures(&side(x), &side(y))?;
+    let mut view = View::new(core, 0);
+    let entries: Vec<Value> = d
+        .entries
+        .iter()
+        .filter(|e| a.all || e.kind != DiffKind::Same)
+        .take(500)
+        .map(|e| {
+            json!({
+                "kind": e.kind, "method": e.method,
+                "urlA": e.url_a.as_deref().map(|u| view.url(u)), "urlB": e.url_b.as_deref().map(|u| view.url(u)),
+                "idA": e.id_a, "idB": e.id_b, "statusA": e.status_a, "statusB": e.status_b,
+                "msA": e.ms_a, "msB": e.ms_b, "changes": e.changes,
+            })
+        })
+        .collect();
+    Ok(json!({ "counts": d.counts, "sessionsA": d.sessions_a, "sessionsB": d.sessions_b, "entries": entries }))
 }
 
 fn get_llm_call(core: &Arc<AppCore>, a: Value) -> Result<Value> {

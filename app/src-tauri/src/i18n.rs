@@ -88,6 +88,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Options…" => "Optionen…",
         "Text Tools…" => "Text-Werkzeuge…",
         "Composer" => "Composer",
+        "Compare Captures…" => "Mitschnitte vergleichen…",
         "Plugins…" => "Plugins…",
         "Command Palette…" => "Befehlspalette…",
         "Focus Command Field" => "Befehlsfeld fokussieren",

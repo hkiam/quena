@@ -463,6 +463,35 @@ export interface Statistics {
   llmCost: number;
 }
 
+export type DiffSource = { kind: "live" } | { kind: "archive"; name: string } | { kind: "ids"; name: SessionId[] };
+export interface DiffSourceInfo {
+  source: DiffSource;
+  label: string;
+  sessions: number;
+}
+export interface DiffEntry {
+  kind: "changed" | "added" | "removed" | "same";
+  method: string;
+  key: string;
+  idA: SessionId | null;
+  idB: SessionId | null;
+  urlA: string | null;
+  urlB: string | null;
+  statusA: number | null;
+  statusB: number | null;
+  sizeA: number | null;
+  sizeB: number | null;
+  msA: number | null;
+  msB: number | null;
+  changes: string[];
+}
+export interface CaptureDiff {
+  sessionsA: number;
+  sessionsB: number;
+  counts: { changed: number; added: number; removed: number; same: number; newErrors: number };
+  entries: DiffEntry[];
+}
+
 export interface LlmPart {
   kind: "text" | "image" | "toolCall" | "toolResult" | "thinking" | "other";
   text: string;
@@ -1194,6 +1223,8 @@ export const api = {
   saveBodyRange: (id: SessionId, part: Part, offset: number, len: number, path: string) =>
     invoke<number>("save_body_range", { id, part, offset, len, path }),
   grpc: (id: SessionId, part: Part, typeName?: string) => invoke<Grpc | null>("grpc", { id, part, typeName: typeName ?? null }),
+  compareSources: () => invoke<DiffSourceInfo[]>("compare_sources"),
+  compareCaptures: (a: DiffSource, b: DiffSource) => invoke<CaptureDiff>("compare_captures", { a, b }),
   llmCall: (id: SessionId) => invoke<LlmCall | null>("llm_call", { id }),
   socketioPolling: (id: SessionId, part: Part) => invoke<SioPacket[] | null>("socketio_polling", { id, part }),
   msgpack: (id: SessionId, part: Part) => invoke<Msgpack | null>("msgpack", { id, part }),

@@ -257,6 +257,9 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Breakpoints & tamper** before request / after response
 - **Rewrite rules**: change real responses and requests by JSONPath, regex, header, status —
   with an editor and preview, groups, and applied to captured sessions as changed copies
+- **Compare captures**: two captures (live or archives) side by side — new, gone and
+  changed requests (status, type, time, headers, body), as Markdown; `quena-cli diff` as a
+  CI gate
 - **AutoSave** every few minutes with rotation, and **password-protected SAZ** archives
   (AES-256, as Fiddler and 7-Zip read them)
 - **Composer** (parsed, raw, history) with **cURL import**

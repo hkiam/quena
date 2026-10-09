@@ -230,6 +230,7 @@ export type Dialog =
   | { kind: "rewrite-apply"; ids: SessionId[] }
   /** Capture → Host Remapping…: hosts whose connections go elsewhere. */
   | { kind: "host-remap" }
+  | { kind: "capdiff" }
   /** Capture → Start Browser…: installed browsers, a start URL and the terminal. */
   | { kind: "launch" }
   /** Capture → Reverse Proxy…; `target` starts a new entry for it (from a session). */

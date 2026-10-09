@@ -50,6 +50,36 @@ Select exactly **two** sessions and choose **Compare** from the context menu. Qu
 both sessions — request line, headers and bodies (up to 256 KB each) — side by side as a
 diff.
 
+## Compare captures
+
+*Tools → Compare Captures…* puts two captures side by side: what changed since the last
+release, why staging works and production does not, what a new build requests that the old
+one did not.
+
+1. Load the captures into the list — *Keep and load* when Quena asks — or use **Load
+   archive…** in the dialog. The live capture (what was recorded, not imported) is a side too.
+2. Choose **Before** and **After**, then **Compare**.
+
+Requests are paired by method, host and path; numbers and ids in the path
+(`/users/123`, UUIDs, long hex ids) and the values of query parameters do not count, and the
+n-th call of an endpoint meets the n-th on the other side. The result lists
+
+| Mark | Meaning |
+|---|---|
+| `~` changed | the status, content type, a response header (added, removed, or the value of `Content-Type`, `Cache-Control`, `Location`, CORS and security headers) or the body differs, or the time is more than twice as long or short (and at least 200 ms apart) |
+| `+` new | only in *After* |
+| `−` gone | only in *Before* |
+| `=` same | nothing of the above (hidden unless chosen) |
+
+Headers that change on every response (`Date`, `ETag`, request ids, `Set-Cookie` …) are
+ignored; JSON bodies are compared by content, so key order and spacing do not count.
+Requests that answered successfully before and fail now are counted apart. Click a row to
+select its session; double-click a changed one for the [text comparison](#compare) of both.
+**Copy as Markdown** puts the result into a ticket or a pull request.
+
+In CI: [`quena-cli diff`](ci.md#comparing-two-captures); for AI agents: the MCP tool
+`compare_captures`.
+
 ## Text Tools
 
 **Text Tools** (`Ctrl/⌘ E`, *Tools → Text Tools…*, or the wand in the toolbar) convert text

@@ -240,6 +240,7 @@ impl AppCore {
                 }),
             };
             let ids = ids.map_err(|e| e.to_string())?;
+            core.note_import(&name, &ids);
             tracing::info!(target: "quena", "loaded {} session(s) from {name}", ids.len());
             Ok(())
         }))

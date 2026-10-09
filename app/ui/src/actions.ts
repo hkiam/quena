@@ -38,6 +38,10 @@ function confirmRemove(title: string): Promise<boolean> {
   return confirmAsk(title, t("They are removed from the list and from the recorded data. This cannot be undone."), t("Remove"));
 }
 
+/** Narrowing changes in flight, run in order (see `actions.setScope`). */
+let scopeChain: Promise<unknown> = Promise.resolve();
+let scopePending = 0;
+
 export const actions = {
   // ---------------------------------------------------------------- selection
   async selectIndex(i: number, mode: "single" | "toggle" | "range") {
@@ -123,21 +127,32 @@ export const actions = {
     setTimeout(() => actions.refocus(), 80);
   },
 
-  /** Narrow the list to a navigator group or path (`null`: all sessions again). */
+  /** Narrow the list to a navigator group or path (`null`: all sessions again). Changes run
+   * one after the other, so a quick click and "show all" (or hiding the navigator) end with
+   * the last one, in the backend and in the list. */
   async setScope(scope: NavScope | null, label = "") {
-    if (!scope && !get().scope) return; // nothing to widen: keep the list as it is
-    await api.setScope(scope);
-    set({ scope: scope ? { scope, label } : null });
-    rowCache.clear();
-    set((s) => ({ gridNonce: s.gridNonce + 1 }));
+    if (!scope && !get().scope && scopePending === 0) return; // nothing to widen: keep the list as it is
+    scopePending++;
+    const run = scopeChain.then(async () => {
+      await api.setScope(scope);
+      set({ scope: scope ? { scope, label } : null });
+      rowCache.clear();
+      set((s) => ({ gridNonce: s.gridNonce + 1 }));
+    });
+    scopeChain = run.catch(() => {});
+    try {
+      await run;
+    } finally {
+      scopePending--;
+    }
   },
 
   /** Show or hide the navigator (`mode`: also switch it to structure or groups). */
   showNavigator(open: boolean, mode?: "structure" | "groups") {
     set((s) => ({ layout: { ...s.layout, navOpen: open, ...(mode ? { navMode: mode } : {}) } }));
     actions.saveLayout();
-    // Hidden, it must not keep narrowing the list unseen.
-    if (!open && get().scope) void actions.setScope(null);
+    // Hidden, it must not keep narrowing the list unseen (also a narrowing still on its way).
+    if (!open && (get().scope || scopePending > 0)) void actions.setScope(null);
   },
 
   /** Collapse or expand the group of the row at a list position. */

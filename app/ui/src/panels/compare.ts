@@ -6,7 +6,12 @@ import { loadText } from "../lib/bodytext";
 export async function compareSelected() {
   const ids = [...get().selection].sort((a, b) => a - b);
   if (ids.length !== 2) return;
-  const [a, b] = await Promise.all(ids.map((id) => api.detail(id)));
+  await compareSessions(ids[0], ids[1]);
+}
+
+/** The text diff of two sessions (request and response, side by side). */
+export async function compareSessions(idA: number, idB: number) {
+  const [a, b] = await Promise.all([idA, idB].map((id) => api.detail(id)));
   if (!a || !b) return;
   const text = async (d: NonNullable<typeof a>) => {
     const req = await loadText(d.summary.id, "request", d.requestBody, 256 * 1024);

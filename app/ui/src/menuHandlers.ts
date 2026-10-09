@@ -79,6 +79,8 @@ export async function handleMenu(id: string) {
       return set({ dialog: { kind: "reverse-proxy" } });
     case "tools.host-remap":
       return set({ dialog: { kind: "host-remap" } });
+    case "tools.compare-captures":
+      return set({ dialog: { kind: "capdiff" } });
     case "tools.launch-browser":
       return set({ dialog: { kind: "launch" } });
     case "tools.open-terminal":

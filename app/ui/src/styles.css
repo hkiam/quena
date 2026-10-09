@@ -3720,3 +3720,22 @@ pre.llm-text.mono {
 .autosave {
   margin: 4px 0;
 }
+/* compare captures */
+.capdiff-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+.capdiff-table {
+  max-height: 50vh;
+  overflow: auto;
+}
+tr.capdiff-added td:first-child {
+  color: var(--ok, green);
+}
+tr.capdiff-removed td:first-child,
+tr.capdiff-changed td:first-child {
+  color: var(--err, #c33);
+}

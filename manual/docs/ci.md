@@ -294,6 +294,25 @@ may not hold a capture in its `mappings` or `__files`. Exit code 2 for these, fo
 unreadable captures, a wrong output type or an invalid pattern; 3 for a timeout and other
 failures.
 
+## Comparing two captures
+
+`quena-cli diff before.har after.har` compares two captures of the same test run — the last
+release and this build — the way [Compare Captures](analyze.md#compare-captures) does in the
+app, and writes the result as Markdown (or `--format json`):
+
+```sh
+quena-cli diff release-1.4.har build.har -o diff.md --fail-on errors
+```
+
+| Option | Effect |
+|---|---|
+| `--fail-on errors` | exit code 1 when a request that succeeded before now answers with an error |
+| `--fail-on changes` | exit code 1 on any change, new or gone request |
+| `--all` | also list the requests that stayed the same |
+| `-o FILE` | write the result to a file (for a PR comment) |
+
+`.saz`, `.har`, `.pcap` and `.pcapng` work, as for `diagnose`.
+
 ## Exit codes
 
 | Code | Meaning |
