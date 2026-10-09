@@ -48,7 +48,10 @@ fn get(port: u16, path: &str) -> String {
             write!(s, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").unwrap();
             let mut out = String::new();
             let _ = s.read_to_string(&mut out);
-            return out;
+            // Listening already, but closed before answering (still starting): try again.
+            if out.starts_with("HTTP/") {
+                return out;
+            }
         }
         assert!(t.elapsed() < Duration::from_secs(20), "reverse port {port} never listened");
         std::thread::sleep(Duration::from_millis(50));
@@ -67,8 +70,10 @@ fn records_and_saves_after_max_sessions() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    assert!(get(port, "/one").ends_with("hello /base/one"));
-    assert!(get(port, "/two?x=1").ends_with("hello /base/two?x=1"));
+    let one = get(port, "/one");
+    assert!(one.ends_with("hello /base/one"), "{one}");
+    let two = get(port, "/two?x=1");
+    assert!(two.ends_with("hello /base/two?x=1"), "{two}");
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);

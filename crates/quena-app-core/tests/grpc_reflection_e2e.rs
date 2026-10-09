@@ -167,7 +167,8 @@ fn reflection_names_the_fields_of_captured_calls() {
     assert_eq!(String::from_utf8_lossy(&o.stdout), "200", "{}", String::from_utf8_lossy(&o.stderr));
     let t = std::time::Instant::now();
     let id = loop {
-        if let Some(id) = (1..20).find(|&i| core.capture().detail(i).is_some_and(|d| d.request.url.ends_with("/shop.Shop/Get") && d.response.is_some())) {
+        // Done: the response body is recorded too (not only its head).
+        if let Some(id) = (1..20).find(|&i| core.capture().detail(i).is_some_and(|d| d.request.url.ends_with("/shop.Shop/Get") && d.summary.state.is_final())) {
             break id;
         }
         assert!(t.elapsed().as_secs() < 10, "session not captured");
