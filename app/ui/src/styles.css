@@ -552,6 +552,11 @@ kbd,
   margin-left: 4px;
   color: var(--muted);
 }
+.gh-funnel {
+  font-size: 9px;
+  margin-left: 3px;
+  color: var(--accent, #3a7bd5);
+}
 .gh-resize {
   position: absolute;
   right: -3px;
@@ -1568,6 +1573,13 @@ pre {
   gap: 10px;
   align-items: center;
   margin-bottom: 6px;
+}
+.f-saved {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
 }
 .f-section {
   border: 1px solid var(--border);

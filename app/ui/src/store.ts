@@ -25,6 +25,12 @@ export type ColumnKey =
   | "llm"
   | "tokens"
   | "cost"
+  | "tls"
+  | "remoteIp"
+  | "http"
+  | "header1"
+  | "header2"
+  | "header3"
   /** The Group column, shown first while the list is grouped (not stored in `columns`). */
   | "group";
 
@@ -57,8 +63,21 @@ export const COLUMN_TITLES: Record<ColumnKey, string> = {
   llm: "LLM",
   tokens: t("Tokens"),
   cost: t("Cost"),
+  tls: "TLS",
+  remoteIp: t("Server IP"),
+  http: t("HTTP version"),
+  header1: t("Header 1"),
+  header2: t("Header 2"),
+  header3: t("Header 3"),
   group: t("Group"),
 };
+
+/** The header columns' titles name their header (`↓ Server`, `↑ X-Api-Version`). */
+export function columnTitle(key: ColumnKey, headerColumns?: { response: boolean; name: string }[]): string {
+  const i = key === "header1" ? 0 : key === "header2" ? 1 : key === "header3" ? 2 : -1;
+  const h = i >= 0 ? headerColumns?.[i] : undefined;
+  return h ? `${h.response ? "↓" : "↑"} ${h.name}` : COLUMN_TITLES[key];
+}
 
 const col = (key: ColumnKey, width: number, visible: boolean, align?: "left" | "right"): ColumnConf => ({
   key,
@@ -89,6 +108,12 @@ export const DEFAULT_COLUMNS: ColumnConf[] = [
   col("llm", 140, false),
   col("tokens", 64, false, "right"),
   col("cost", 64, false, "right"),
+  col("tls", 64, false),
+  col("remoteIp", 110, false),
+  col("http", 70, false),
+  col("header1", 110, false),
+  col("header2", 110, false),
+  col("header3", 110, false),
 ];
 
 /** Classic: a dense list with more columns, for long-time proxy users. */
@@ -112,6 +137,12 @@ export const CLASSIC_COLUMNS: ColumnConf[] = [
   col("llm", 140, false),
   col("tokens", 64, false, "right"),
   col("cost", 64, false, "right"),
+  col("tls", 64, false),
+  col("remoteIp", 110, false),
+  col("http", 70, false),
+  col("header1", 110, false),
+  col("header2", 110, false),
+  col("header3", 110, false),
 ];
 
 export type LayoutPreset = "quena" | "classic";
@@ -137,6 +168,8 @@ export interface Layout {
   /** Grouped tabs: last view per section, `response:headers` → `caching`,
    * `request:body:json` → `json`. */
   subViews?: Record<string, string>;
+  /** Named filters (Filters tab → Saved filters). */
+  savedFilters?: { name: string; filters: FilterSettings }[];
   /** The navigator left of the session list: shown, its width (px), and what it lists. */
   navOpen?: boolean;
   navWidth?: number;

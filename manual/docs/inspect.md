@@ -44,7 +44,7 @@ remembered, are the same in both.
 
 | Where | Menu |
 |---|---|
-| Header row | Copy value, name, the header or all headers; *Show only* this header in the table |
+| Header row | Copy value, name, the header or all headers; *Show only* this header in the table; **add it as a list column**; **filter sessions with this header value** |
 | Body, Raw, Hex, Image | Copy (selection), Select All, *Copy Body*, *Save Body…*; in the body also *Wrap* and *Format* |
 | JSON tree | Copy value, key or **JSONPath**; Expand / Collapse All; **change or remove this value, or append a broken element to this list, in later messages of the same URL** (adds a [rewrite rule](change-replay.md)) |
 | XML tree (also SOAP) | Copy text, **XPath** or the element as XML; Expand / Collapse All |

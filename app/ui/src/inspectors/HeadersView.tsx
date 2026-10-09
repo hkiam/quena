@@ -9,6 +9,25 @@ import { plural, t } from "../i18n";
 import { copyText } from "../actions";
 import { openMenu, withSelection } from "../components/contextMenus";
 import { copyItem } from "./inspectMenus";
+import { addHeaderColumn } from "../headerColumns";
+import { api } from "../api";
+import { get, say, set } from "../store";
+import { addClause, clause } from "../lib/columnFilter";
+
+/** Narrow the list to sessions with the same header value. */
+async function filterByHeader(response: boolean, name: string, value: string) {
+  const f = get().filters;
+  const c = clause(`${response ? "resheader" : "reqheader"}.${name.toLowerCase()}`, `== ${JSON.stringify(value)}`);
+  if (!f || !c) return;
+  const next = { ...f, enabled: true, expression: addClause(f.enabled ? f.expression : "", c) };
+  try {
+    await api.setFilters(next);
+    set({ filters: next });
+    say(t("Filter: {expr}", { expr: next.expression }));
+  } catch (e) {
+    say(String(e), "error");
+  }
+}
 
 type Topic = "auth" | "cookie" | "cache" | "cors" | "content" | "conn" | "fetch" | "policy";
 
@@ -135,6 +154,8 @@ export function HeadersView({ detail, part }: { detail: Detail; part: Part }) {
                         copyItem(t("Copy All Headers"), text("\r\n")),
                         { separator: true },
                         { label: t("Show Only {name}", { name: h.k }), action: () => setFilter(h.k) },
+                        { label: t("Add {name} as a Column", { name: h.k }), action: () => void addHeaderColumn(part === "response", h.k) },
+                        { label: t("Filter Sessions with this {name}", { name: h.k }), action: () => void filterByHeader(part === "response", h.k, h.v) },
                       ],
                       e.target as Element,
                     ),

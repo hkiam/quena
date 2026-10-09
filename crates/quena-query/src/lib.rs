@@ -39,6 +39,17 @@ pub struct Filter {
     settings: Option<settings::Compiled>,
     expr: Option<Expr>,
     scope: Option<Scope>,
+    /// For expressions that test headers, cookies or bodies.
+    details: Option<DetailsRef>,
+}
+
+#[derive(Clone)]
+struct DetailsRef(Arc<dyn expr::Details>);
+
+impl std::fmt::Debug for DetailsRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Details(..)")
+    }
 }
 
 impl Filter {
@@ -54,11 +65,19 @@ impl Filter {
             "" => None,
             e => Some(expr::parse(e)?),
         };
-        Ok(Filter { settings: Some(settings::Compiled::new(settings)), expr, scope: None })
+        Ok(Filter { settings: Some(settings::Compiled::new(settings)), expr, scope: None, details: None })
     }
 
     pub fn from_expr(e: Expr) -> Filter {
-        Filter { settings: None, expr: Some(e), scope: None }
+        Filter { settings: None, expr: Some(e), scope: None, details: None }
+    }
+
+    /// This filter, reading session details through `d` where its expression needs them.
+    pub fn with_details(mut self, d: Arc<dyn expr::Details>) -> Filter {
+        if self.expr.as_ref().is_some_and(Expr::needs_details) {
+            self.details = Some(DetailsRef(d));
+        }
+        self
     }
 
     /// This filter, narrowed to `scope` as well.
@@ -83,7 +102,7 @@ impl Filter {
             }
         }
         if let Some(e) = &self.expr {
-            if !e.eval(s) {
+            if !e.eval_with(s, self.details.as_ref().map(|d| &*d.0)) {
                 return false;
             }
         }

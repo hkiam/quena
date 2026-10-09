@@ -4,7 +4,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type SessionSummary } from "../api";
 import { fmtDate, fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
-import { get, set, useStore, type ColumnConf, type ColumnKey } from "../store";
+import { columnTitle, get, promptText, say, set, useStore, type ColumnConf, type ColumnKey } from "../store";
+import { addClause, clause, fieldOf, filtersOn } from "../lib/columnFilter";
+import { isHeaderColumn, removeHeaderColumn } from "../headerColumns";
 import { RowCache } from "./rowCache";
 import { methodPill, readPalette, rowStyle, stateMark, statusPill, type Palette, type Pill } from "./style";
 import { actions } from "../actions";
@@ -108,6 +110,18 @@ function cellText(r: SessionSummary, key: ColumnKey): string {
       return r.llmTokens != null ? fmtInt(r.llmTokens) : "";
     case "cost":
       return r.llmCostMicros != null ? fmtUsd(r.llmCostMicros / 1_000_000) : "";
+    case "tls":
+      return r.tls ?? "";
+    case "remoteIp":
+      return r.remoteIp ?? "";
+    case "http":
+      return r.httpVersion ?? "";
+    case "header1":
+      return r.headerValues?.[0] ?? "";
+    case "header2":
+      return r.headerValues?.[1] ?? "";
+    case "header3":
+      return r.headerValues?.[2] ?? "";
     case "group":
       return "";
   }
@@ -525,6 +539,8 @@ function Header({ scrollX }: { scrollX: number }) {
   useStore((s) => s.layout.navOpen);
   const shown = displayColumns(gridWidth);
   const sort = useStore((s) => s.sort);
+  const headerCols = useStore((s) => s.settings?.headerColumns);
+  const filterExpr = useStore((s) => (s.filters?.enabled ? s.filters.expression : ""));
   const drag = useRef<{ key: ColumnKey; startX: number; startW: number } | null>(null);
   const [dragOver, setDragOver] = useState<ColumnKey | null>(null);
 
@@ -564,14 +580,39 @@ function Header({ scrollX }: { scrollX: number }) {
     actions.setSort(next);
   };
 
+  const filterBy = async (key: ColumnKey) => {
+    const field = fieldOf(key, headerCols);
+    if (!field) return;
+    const input = await promptText(t("Filter by {column}", { column: columnTitle(key, headerCols) }), t("Value, optionally after an operator: example, *.example.com, >= 400, != 200, =~ ^/v2"));
+    if (input == null) return;
+    const c = clause(field, input);
+    const f = get().filters;
+    if (!c || !f) return;
+    const next = { ...f, enabled: true, expression: addClause(f.enabled ? f.expression : "", c) };
+    try {
+      await api.setFilters(next);
+      set({ filters: next });
+      say(t("Filter: {expr}", { expr: next.expression }));
+    } catch (err) {
+      say(String(err), "error");
+    }
+  };
+
   const onContext = (e: React.MouseEvent) => {
     e.preventDefault();
+    const key = (e.target as HTMLElement).closest<HTMLElement>("[data-key]")?.dataset.key as ColumnKey | undefined;
+    const field = key ? fieldOf(key, headerCols) : null;
     showContextMenu(e.clientX, e.clientY, [
-      ...columns.map((c) => ({
-        label: c.title,
-        checked: c.visible,
-        action: () => setColumns(columns.map((x) => (x.key === c.key ? { ...x, visible: !x.visible } : x))),
-      })),
+      ...(key && field ? [{ label: t("Filter by {column}…", { column: columnTitle(key, headerCols) }), action: () => void filterBy(key) }] : []),
+      ...(key && isHeaderColumn(key) && field ? [{ label: t("Remove header column {column}", { column: columnTitle(key, headerCols) }), action: () => void removeHeaderColumn(key) }] : []),
+      ...(field ? [{ separator: true }] : []),
+      ...columns
+        .filter((c) => !isHeaderColumn(c.key) || fieldOf(c.key, headerCols))
+        .map((c) => ({
+          label: columnTitle(c.key, headerCols),
+          checked: c.visible,
+          action: () => setColumns(columns.map((x) => (x.key === c.key ? { ...x, visible: !x.visible } : x))),
+        })),
       { separator: true },
       { label: t("Group by"), submenu: groupMenu() },
       { separator: true },
@@ -608,9 +649,15 @@ function Header({ scrollX }: { scrollX: number }) {
                 setColumns(cols);
               }}
               onClick={() => onHeaderClick(c)}
-              title={c.title}
+              title={columnTitle(c.key, headerCols)}
+              data-key={c.key}
             >
-              <span className="gh-title">{c.title}</span>
+              <span className="gh-title">{columnTitle(c.key, headerCols)}</span>
+              {filtersOn(filterExpr ?? "", fieldOf(c.key, headerCols)) && (
+                <span className="gh-funnel" title={t("The filter tests this column")}>
+                  ⏷
+                </span>
+              )}
               {sort.column === c.key && c.key !== "id" && <span className="gh-sort">{sort.descending ? "▼" : "▲"}</span>}
               {sort.column === "id" && c.key === "id" && sort.descending && <span className="gh-sort">▼</span>}
               <div className="gh-resize" onPointerDown={(e) => onResizeDown(e, c)} onClick={(e) => e.stopPropagation()} />

@@ -10,6 +10,7 @@ pub mod capdiff;
 pub mod collections;
 pub mod ws;
 pub mod compose;
+pub mod details;
 pub mod diagnostics;
 pub mod mcp_setup;
 pub mod dto;
@@ -186,6 +187,7 @@ impl AppCore {
     pub fn new(paths: Paths, log: Arc<LogBuffer>) -> Result<Arc<AppCore>> {
         std::fs::create_dir_all(&paths.captures).context("create data dir")?;
         let settings = Settings::load(&paths.settings);
+        quena_model::set_header_columns(settings.header_columns.clone());
         let capture = Self::new_temp_capture(&paths, &settings)?;
         let rules = rules::Rules::new(&paths.data);
         archive::clean_dropped_at_startup(&paths.data);
@@ -294,6 +296,10 @@ impl AppCore {
         };
         s.save(&self.paths.settings).context("save settings")?;
         self.capture().bodies.set_config(s.bodies.to_config());
+        if old.header_columns != s.header_columns {
+            quena_model::set_header_columns(s.header_columns.clone());
+            self.refresh_header_columns();
+        }
         if old.proxy != s.proxy
             || old.reverse_proxy != s.reverse_proxy
             || old.socks != s.socks
@@ -308,6 +314,30 @@ impl AppCore {
             }
         }
         Ok(())
+    }
+
+    /// Fill the header columns of the sessions already in the list (in the background).
+    fn refresh_header_columns(self: &Arc<Self>) {
+        let cap = self.capture();
+        self.jobs.cancel_prefix("header-columns");
+        self.jobs.submit("header-columns", "Filling header columns", quena_jobs::Priority::Background, false, move |ctx| {
+            let cols = quena_model::header_columns();
+            let ids = cap.index.find_all(|_| true);
+            for (i, id) in ids.iter().enumerate() {
+                if ctx.cancelled() {
+                    break;
+                }
+                let Some(mut d) = cap.detail_stored(*id) else { continue };
+                d.refresh_summary();
+                let values = if cols.is_empty() { Vec::new() } else { d.summary.header_values };
+                cap.index.update(*id, |s| s.header_values = values);
+                if i % 1024 == 0 {
+                    ctx.progress(i as u64, ids.len() as u64);
+                }
+            }
+            cap.index.tick();
+            Ok(())
+        });
     }
 
     /// Update only the opaque UI preferences.
@@ -478,6 +508,20 @@ impl AppCore {
         self.capture().index.group_ids(id)
     }
 
+    /// How many sessions each filter would show (saved filters' counters); `Err`: it does not
+    /// compile.
+    pub fn count_filters(&self, list: Vec<FilterSettings>) -> Vec<std::result::Result<usize, String>> {
+        let cap = self.capture();
+        let d = details::CaptureDetails::of(&cap);
+        list.into_iter()
+            .take(50)
+            .map(|fs| {
+                let f = Filter::compile(&FilterSettings { enabled: true, ..fs }).map_err(|e| e.to_string())?.with_details(d.clone());
+                Ok(cap.index.find_all(|s| f.matches(s)).len())
+            })
+            .collect()
+    }
+
     pub fn filters(&self) -> FilterSettings {
         self.filters.read().clone()
     }
@@ -501,8 +545,9 @@ impl AppCore {
                 fs = FilterSettings { enabled: true, expression: fs.expression, ..Default::default() };
             }
         }
-        let f = Filter::compile(&fs).map_err(|e| anyhow!("filter: {e}"))?;
-        self.capture().index.set_filter(self.scoped(f));
+        let cap = self.capture();
+        let f = Filter::compile(&fs).map_err(|e| anyhow!("filter: {e}"))?.with_details(details::CaptureDetails::of(&cap));
+        cap.index.set_filter(self.scoped(f));
         Ok(())
     }
 
@@ -560,7 +605,8 @@ impl AppCore {
         let cap = self.capture();
         match cmd {
             Command::Select(e) => {
-                let ids = cap.index.find(|s| e.eval(s));
+                let d = details::CaptureDetails::of(&cap);
+                let ids = cap.index.find(|s| e.eval_with(s, Some(&*d)));
                 let n = ids.len();
                 QuickExecResult { select: Some(ids), message: Some(format!("{n} session(s) selected")), ..Default::default() }
             }
@@ -577,7 +623,8 @@ impl AppCore {
                 QuickExecResult::msg("All sessions removed")
             }
             Command::KeepOnly(e) => {
-                let ids: HashSet<SessionId> = cap.index.find_all(|s| !e.eval(s)).into_iter().collect();
+                let d = details::CaptureDetails::of(&cap);
+                let ids: HashSet<SessionId> = cap.index.find_all(|s| !e.eval_with(s, Some(&*d))).into_iter().collect();
                 let n = ids.len();
                 cap.remove(&ids);
                 QuickExecResult::msg(format!("{n} session(s) removed"))
@@ -739,7 +786,8 @@ impl AppCore {
     pub fn remove_where(&self, expr: &str) -> Result<usize> {
         let e = quena_query::expr::parse(expr).map_err(|e| anyhow!("{e}"))?;
         let cap = self.capture();
-        let ids: HashSet<SessionId> = cap.index.find_all(|s| e.eval(s) && cap.live(s.id).is_none()).into_iter().collect();
+        let d = details::CaptureDetails::of(&cap);
+        let ids: HashSet<SessionId> = cap.index.find_all(|s| cap.live(s.id).is_none() && e.eval_with(s, Some(&*d))).into_iter().collect();
         let n = ids.len();
         cap.remove(&ids);
         Ok(n)

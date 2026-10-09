@@ -532,6 +532,14 @@ async fn llm_cache_remove(core: State<'_, Core>, key: Option<String>) -> R<quena
     .await
 }
 
+/// Sessions each filter would show (counters of saved filters); an error text where one does
+/// not compile.
+#[tauri::command]
+async fn count_filters(core: State<'_, Core>, list: Vec<quena_query::FilterSettings>) -> R<Vec<Result<usize, String>>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.count_filters(list))).await
+}
+
 /// Add Quena's MCP server to an agent's configuration.
 #[tauri::command]
 async fn mcp_setup_client(core: State<'_, Core>, client: quena_app_core::mcp_setup::McpClient) -> R<String> {
@@ -1259,6 +1267,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         autosave_now,
         llm_prices_info,
         mcp_setup_client,
+        count_filters,
         llm_cache_status,
         llm_cache_advice,
         llm_cache_set,

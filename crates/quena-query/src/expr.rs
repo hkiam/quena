@@ -11,10 +11,13 @@
 //! ```
 //! Fields: host, url, path, method, status, type (content-type), process,
 //! size (response), reqsize, time/duration (ms), comment, protocol, color,
-//! kind, id, client, custom, decoder (reserved for decoder plugins).
+//! kind, id, client, custom, decoder (reserved for decoder plugins), tls, ip, http.
+//! Parts of a session's details (looked up only when an expression has them, see
+//! [`Details`]): `reqheader.NAME`, `resheader.NAME`, `header.NAME` (either), `cookie.NAME`,
+//! `reqbody`, `resbody`.
 
 use crate::{glob_match, host_without_port, parse_duration_ms, parse_size};
-use quena_model::{SessionKind, SessionSummary};
+use quena_model::{SessionId, SessionKind, SessionSummary};
 use regex::Regex;
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]
@@ -56,6 +59,58 @@ pub enum Field {
     Llm,
     /// Tokens of an LLM call (input + output).
     Tokens,
+    /// TLS version (`tls == TLSv1.2`).
+    Tls,
+    /// The server's IP address.
+    RemoteIp,
+    /// HTTP version of the request (`http == HTTP/2`).
+    Http,
+}
+
+/// A part of a session's details an expression can test.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Part {
+    ReqHeader(String),
+    ResHeader(String),
+    /// A request or a response header.
+    Header(String),
+    /// A cookie the request sends (else one the response sets).
+    Cookie(String),
+    ReqBody,
+    ResBody,
+}
+
+impl Part {
+    fn parse(s: &str) -> Option<Part> {
+        let l = s.to_ascii_lowercase();
+        let named = |prefixes: &[&str]| prefixes.iter().find_map(|p| l.strip_prefix(p)).filter(|n| !n.is_empty()).map(str::to_string);
+        if let Some(n) = named(&["reqheader.", "request.header.", "requestheader."]) {
+            return Some(Part::ReqHeader(n));
+        }
+        if let Some(n) = named(&["resheader.", "response.header.", "responseheader."]) {
+            return Some(Part::ResHeader(n));
+        }
+        if let Some(n) = named(&["header."]) {
+            return Some(Part::Header(n));
+        }
+        if let Some(n) = s.get(7..).filter(|_| l.starts_with("cookie.")).filter(|n| !n.is_empty()) {
+            // Cookie names keep their case.
+            return Some(Part::Cookie(n.to_string()));
+        }
+        match l.as_str() {
+            "reqbody" | "requestbody" | "request.body" => Some(Part::ReqBody),
+            "resbody" | "responsebody" | "response.body" => Some(Part::ResBody),
+            _ => None,
+        }
+    }
+}
+
+/// Access to the details of sessions, for expressions with [`Part`]s.
+pub trait Details: Send + Sync {
+    /// Request (`response` false) or response headers.
+    fn headers(&self, id: SessionId, response: bool) -> Option<Vec<(String, String)>>;
+    /// The start of the decoded body as text.
+    fn body(&self, id: SessionId, response: bool) -> Option<String>;
 }
 
 impl Field {
@@ -86,6 +141,9 @@ impl Field {
             "certdays" | "cert" => Field::CertDays,
             "llm" | "model" => Field::Llm,
             "tokens" => Field::Tokens,
+            "tls" | "tlsversion" => Field::Tls,
+            "ip" | "remoteip" | "serverip" => Field::RemoteIp,
+            "http" | "httpversion" | "version" => Field::Http,
             _ => return None,
         })
     }
@@ -121,21 +179,69 @@ pub enum Expr {
     Or(Box<Expr>, Box<Expr>),
     Not(Box<Expr>),
     Cmp(Field, Op, Value),
+    /// A part of the details: without [`Details`] it never matches.
+    Detail(Part, Op, Value),
     UrlContains(String),
     True,
 }
 
 impl Expr {
     pub fn eval(&self, s: &SessionSummary) -> bool {
+        self.eval_with(s, None)
+    }
+
+    /// Evaluate, looking up details where the expression tests them.
+    pub fn eval_with(&self, s: &SessionSummary, d: Option<&dyn Details>) -> bool {
         match self {
             Expr::True => true,
-            Expr::And(a, b) => a.eval(s) && b.eval(s),
-            Expr::Or(a, b) => a.eval(s) || b.eval(s),
-            Expr::Not(a) => !a.eval(s),
+            Expr::And(a, b) => a.eval_with(s, d) && b.eval_with(s, d),
+            Expr::Or(a, b) => a.eval_with(s, d) || b.eval_with(s, d),
+            Expr::Not(a) => !a.eval_with(s, d),
             Expr::UrlContains(t) => s.full_url().to_lowercase().contains(t.as_str()),
             Expr::Cmp(f, op, v) => eval_cmp(*f, *op, v, s),
+            Expr::Detail(p, op, v) => d.and_then(|d| part_text(p, s.id, d)).is_some_and(|t| text_cmp(&t, *op, v)),
         }
     }
+
+    /// Whether the expression tests details (slower: each session's details are read).
+    pub fn needs_details(&self) -> bool {
+        match self {
+            Expr::And(a, b) | Expr::Or(a, b) => a.needs_details() || b.needs_details(),
+            Expr::Not(a) => a.needs_details(),
+            Expr::Detail(..) => true,
+            _ => false,
+        }
+    }
+}
+
+fn header_value(h: &[(String, String)], name: &str) -> Option<String> {
+    let v: Vec<&str> = h.iter().filter(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str()).collect();
+    (!v.is_empty()).then(|| v.join(", "))
+}
+
+/// The text of a part; a missing header or cookie is empty (so `!= ""` tests presence).
+fn part_text(p: &Part, id: SessionId, d: &dyn Details) -> Option<String> {
+    Some(match p {
+        Part::ReqHeader(n) => header_value(&d.headers(id, false)?, n).unwrap_or_default(),
+        Part::ResHeader(n) => header_value(&d.headers(id, true).unwrap_or_default(), n).unwrap_or_default(),
+        Part::Header(n) => header_value(&d.headers(id, false).unwrap_or_default(), n).or_else(|| header_value(&d.headers(id, true).unwrap_or_default(), n)).unwrap_or_default(),
+        Part::Cookie(n) => {
+            let sent = header_value(&d.headers(id, false).unwrap_or_default(), "cookie").unwrap_or_default();
+            let found = sent.split(';').filter_map(|c| c.trim().split_once('=')).find(|(k, _)| k.trim() == n).map(|(_, v)| v.trim().to_string());
+            found
+                .or_else(|| {
+                    d.headers(id, true)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter(|(h, _)| h.eq_ignore_ascii_case("set-cookie"))
+                        .filter_map(|(_, v)| v.split(';').next()?.split_once('=').filter(|(k, _)| k.trim() == n).map(|(_, v)| v.trim().to_string()))
+                        .next()
+                })
+                .unwrap_or_default()
+        }
+        Part::ReqBody => d.body(id, false).unwrap_or_default(),
+        Part::ResBody => d.body(id, true).unwrap_or_default(),
+    })
 }
 
 fn text_of(f: Field, s: &SessionSummary) -> String {
@@ -165,6 +271,9 @@ fn text_of(f: Field, s: &SessionSummary) -> String {
         Field::CertDays => cert_days(s).map(|d| d.to_string()).unwrap_or_default(),
         Field::Llm => s.llm.clone(),
         Field::Tokens => s.llm_tokens.map(|t| t.to_string()).unwrap_or_default(),
+        Field::Tls => s.tls.clone(),
+        Field::RemoteIp => s.remote_ip.clone(),
+        Field::Http => s.http_version.clone(),
     }
 }
 
@@ -201,18 +310,21 @@ fn eval_cmp(f: Field, op: Op, v: &Value, s: &SessionSummary) -> bool {
             Op::Regex => false,
         };
     }
-    let t = text_of(f, s);
+    text_cmp(&text_of(f, s), op, v)
+}
+
+fn text_cmp(t: &str, op: Op, v: &Value) -> bool {
     match (op, v) {
         (_, Value::Re(re)) => re.is_match(&t),
         (Op::Eq, Value::Text(x)) => t.eq_ignore_ascii_case(x),
         (Op::Ne, Value::Text(x)) => !t.eq_ignore_ascii_case(x),
-        (Op::Glob, Value::Text(x)) => glob_match(x, &t),
+        (Op::Glob, Value::Text(x)) => glob_match(x, t),
         (Op::Contains, Value::Text(x)) => t.to_lowercase().contains(x.as_str()),
         (Op::NotContains, Value::Text(x)) => !t.to_lowercase().contains(x.as_str()),
-        (Op::Lt, Value::Text(x)) => t.as_str() < x.as_str(),
-        (Op::Le, Value::Text(x)) => t.as_str() <= x.as_str(),
-        (Op::Gt, Value::Text(x)) => t.as_str() > x.as_str(),
-        (Op::Ge, Value::Text(x)) => t.as_str() >= x.as_str(),
+        (Op::Lt, Value::Text(x)) => t < x.as_str(),
+        (Op::Le, Value::Text(x)) => t <= x.as_str(),
+        (Op::Gt, Value::Text(x)) => t > x.as_str(),
+        (Op::Ge, Value::Text(x)) => t >= x.as_str(),
         (_, Value::Num(n)) => t == n.to_string(),
         (Op::Regex, Value::Text(_)) => false,
     }
@@ -407,6 +519,15 @@ impl Parser {
                         return self.cmp(field, op);
                     }
                 }
+                if let (Some(part), Some(Tok::Op(op))) = (Part::parse(&w), self.peek().cloned()) {
+                    if op != "and" && op != "or" && op != "not" {
+                        self.i += 1;
+                        return match self.cmp(Field::Url, op)? {
+                            Expr::Cmp(_, op, v) => Ok(Expr::Detail(part, op, v)),
+                            _ => self.err("unexpected value"),
+                        };
+                    }
+                }
                 Ok(Expr::UrlContains(w.to_lowercase()))
             }
             Some(Tok::Str(s)) => {
@@ -485,6 +606,42 @@ pub fn parse(src: &str) -> Result<Expr, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Fake;
+    impl Details for Fake {
+        fn headers(&self, _: SessionId, response: bool) -> Option<Vec<(String, String)>> {
+            Some(if response {
+                vec![("Set-Cookie".into(), "sid=abc; Path=/".into()), ("Server".into(), "nginx".into())]
+            } else {
+                vec![("X-Api-Version".into(), "2".into()), ("Cookie".into(), "theme=dark; Lang=de".into()), ("Accept".into(), "a".into()), ("accept".into(), "b".into())]
+            })
+        }
+        fn body(&self, _: SessionId, response: bool) -> Option<String> {
+            Some(if response { r#"{"error":"quota"}"#.into() } else { "user=jo".into() })
+        }
+    }
+
+    #[test]
+    fn details_and_new_fields() {
+        let mut x = s();
+        x.tls = "TLSv1.2".into();
+        x.remote_ip = "10.0.0.5".into();
+        x.http_version = "HTTP/2".into();
+        let yes = |q: &str| {
+            let e = parse(q).unwrap();
+            e.eval_with(&x, Some(&Fake))
+        };
+        assert!(yes("reqheader.x-api-version == 2"));
+        assert!(yes("header.server == nginx"), "either side");
+        assert!(yes("reqheader.accept == \"a, b\""), "repeated headers joined");
+        assert!(yes("reqheader.authorization == \"\""), "missing is empty");
+        assert!(yes("cookie.Lang == de") && yes("cookie.sid == abc") && !yes("cookie.lang == de"));
+        assert!(yes("resbody ~ quota") && yes("reqbody ~= \"user=*\"") && !yes("resbody ~ ok"));
+        assert!(yes("tls == TLSv1.2 and ip ~= \"10.*\" and http == HTTP/2"));
+        let e = parse("resbody ~ quota").unwrap();
+        assert!(e.needs_details() && !e.eval(&x), "without details a part never matches");
+        assert!(!parse("status == 200").unwrap().needs_details());
+    }
 
     fn s() -> SessionSummary {
         SessionSummary {

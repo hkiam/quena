@@ -394,4 +394,12 @@ export const panels: Record<string, string> = {
   "client → server": "Client → Server",
   "server → client": "Server → Client",
   "Text messages of WebSockets the pattern matches (by the upgrade request). JSON is also changed inside Socket.IO packets (42[\"event\",{…}]).": "Textnachrichten der WebSockets, auf die das Muster passt (nach dem Upgrade-Request). JSON wird auch in Socket.IO-Paketen geändert (42[\"event\",{…}]).",
+  "Saved filters": "Gespeicherte Filter",
+  "Saved filters\u2026": "Gespeicherte Filter\u2026",
+  "Apply": "Anwenden",
+  "Save filter": "Filter speichern",
+  "Name of the filter": "Name des Filters",
+  "Filter {name} saved": "Filter {name} gespeichert",
+  "Rename filter": "Filter umbenennen",
+  "Rename\u2026": "Umbenennen\u2026",
 };

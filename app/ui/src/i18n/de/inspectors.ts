@@ -347,4 +347,7 @@ export const inspectors: Record<string, string> = {
   "namespace {ns}": "Namespace {ns}",
   "event": "Event",
   "{n} binary attachments": "{n} binäre Anhänge",
+  "Filter: {expr}": "Filter: {expr}",
+  "Add {name} as a Column": "{name} als Spalte hinzuf\u00fcgen",
+  "Filter Sessions with this {name}": "Sessions mit diesem {name} filtern",
 };

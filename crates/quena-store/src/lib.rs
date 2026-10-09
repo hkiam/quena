@@ -522,6 +522,30 @@ impl Capture {
         Some(d)
     }
 
+    /// [`Capture::detail`] as stored, without the summary from the index (marks and comments
+    /// may be older): safe to call while the index is busy, e.g. from a list filter.
+    pub fn detail_stored(&self, id: SessionId) -> Option<SessionDetail> {
+        if let Some(l) = self.live(id) {
+            return Some(l.detail());
+        }
+        if let Some(d) = self.cache.lock().get(id) {
+            return Some((*d).clone());
+        }
+        let d = Arc::new(self.db.get(id).ok().flatten()?);
+        self.cache.lock().put(d.clone());
+        Some((*d).clone())
+    }
+
+    /// [`Capture::bodies_of`] without the index (see [`Capture::detail_stored`]).
+    pub fn bodies_stored(&self, id: SessionId) -> Option<(SessionDetail, Body, Body)> {
+        if let Some(l) = self.live(id) {
+            return Some((l.detail(), l.request_body(), l.response_body()));
+        }
+        let d = self.detail_stored(id)?;
+        let (a, b) = (self.bodies.open_ref(&d.request_body), self.bodies.open_ref(&d.response_body));
+        Some((d, a, b))
+    }
+
     /// Bodies of a session.
     pub fn bodies_of(&self, id: SessionId) -> Option<(Body, Body)> {
         if let Some(l) = self.live(id) {

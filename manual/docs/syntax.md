@@ -67,6 +67,22 @@ not kind == tunnel
 | `certdays` | `cert` | days until the server's certificate expires (`0`: expired or expires within a day); e.g. `certdays < 30` |
 | `llm` | `model` | [LLM API call](llm.md): `provider/model`, e.g. `llm ~ claude` |
 | `tokens` | | tokens of an LLM call (input + output) |
+| `tls` | `tlsversion` | TLS version towards the server (else the client), e.g. `tls == TLSv1.2` |
+| `ip` | `remoteip`, `serverip` | the server's IP address, e.g. `ip ~= "10.*"` |
+| `http` | `httpversion`, `version` | HTTP version of the request: `HTTP/1.1`, `HTTP/2` … |
+
+Parts of a session's headers and bodies (slower on large captures: each session's details
+are read):
+
+| Field | Meaning |
+|---|---|
+| `reqheader.NAME` | value of request header `NAME` (several are joined with `, `; missing: empty), e.g. `reqheader.x-api-version == 2` |
+| `resheader.NAME` | value of response header `NAME`, e.g. `resheader.server ~ nginx` |
+| `header.NAME` | the request header, else the response header |
+| `cookie.NAME` | cookie `NAME` the request sends, else one the response sets (name with its case) |
+| `reqbody`, `resbody` | the decoded request or response body (its first 256 KB as text), e.g. `resbody ~ "quota exceeded"` |
+
+`reqheader.authorization == ""` finds requests without that header.
 
 ### Operators
 

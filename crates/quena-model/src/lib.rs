@@ -336,6 +336,44 @@ pub struct SessionSummary {
     pub llm_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_cost_micros: Option<u64>,
+    /// TLS version towards the server (else towards the client), e.g. `TLSv1.3`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tls: String,
+    /// The server's IP address.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub remote_ip: String,
+    /// HTTP version of the request (`HTTP/1.1`, `HTTP/2` …).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub http_version: String,
+    /// Values of the header columns ([`set_header_columns`]), in their order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub header_values: Vec<String>,
+}
+
+/// A request or response header shown as a list column.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderColumn {
+    pub response: bool,
+    pub name: String,
+}
+
+/// At most this many header columns.
+pub const MAX_HEADER_COLUMNS: usize = 3;
+
+static HEADER_COLUMNS: std::sync::RwLock<Vec<HeaderColumn>> = std::sync::RwLock::new(Vec::new());
+
+/// The headers shown as list columns (filled in by [`SessionDetail::refresh_summary`]).
+pub fn set_header_columns(mut cols: Vec<HeaderColumn>) {
+    cols.retain(|c| !c.name.trim().is_empty());
+    cols.truncate(MAX_HEADER_COLUMNS);
+    if let Ok(mut g) = HEADER_COLUMNS.write() {
+        *g = cols;
+    }
+}
+
+pub fn header_columns() -> Vec<HeaderColumn> {
+    HEADER_COLUMNS.read().map(|g| g.clone()).unwrap_or_default()
 }
 
 impl SessionSummary {
@@ -431,7 +469,29 @@ impl SessionDetail {
         ) {
             s.duration_ms = Some(((end - start).max(0) / 1000) as u32);
         }
+        s.tls = self.connection.server_tls.as_ref().or(self.connection.client_tls.as_ref()).map(|t| t.version.clone()).unwrap_or_default();
+        s.remote_ip = self.connection.server_addr.as_deref().map(ip_of).unwrap_or_default();
+        s.http_version = if s.kind == SessionKind::Tunnel { String::new() } else { self.request.version.as_str().to_string() };
+        let cols = header_columns();
+        s.header_values = if cols.is_empty() {
+            Vec::new()
+        } else {
+            cols.iter()
+                .map(|c| {
+                    let h = if c.response { self.response.as_ref().map(|r| &r.headers) } else { Some(&self.request.headers) };
+                    h.map(|h| h.0.iter().filter(|(n, _)| n.eq_ignore_ascii_case(c.name.trim())).map(|(_, v)| v.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default()
+                })
+                .collect()
+        };
     }
+}
+
+/// The IP address of `host:port`, `[v6]:port` or a bare address.
+fn ip_of(addr: &str) -> String {
+    if let Ok(a) = addr.parse::<std::net::SocketAddr>() {
+        return a.ip().to_canonical().to_string();
+    }
+    addr.trim_start_matches('[').split(']').next().unwrap_or(addr).rsplit_once(':').filter(|(h, _)| !h.contains(':')).map(|(h, _)| h).unwrap_or(addr).to_string()
 }
 
 fn protocol_label(url: &str, version: HttpVersion, kind: SessionKind) -> String {

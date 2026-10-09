@@ -429,6 +429,9 @@ pub struct Settings {
     /// Remote control by AI agents (MCP server on 127.0.0.1).
     #[serde(default)]
     pub mcp: McpSettings,
+    /// Request or response headers shown as list columns (at most three).
+    #[serde(default)]
+    pub header_columns: Vec<quena_model::HeaderColumn>,
     /// Opaque UI preferences (column layout, splitters …).
     pub ui: serde_json::Value,
 }
@@ -460,6 +463,7 @@ impl Default for Settings {
             throttle_latency_ms: 0,
             sanitize: Default::default(),
             mcp: McpSettings::default(),
+            header_columns: Vec::new(),
             ui: serde_json::Value::Null,
         }
     }

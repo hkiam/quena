@@ -68,6 +68,12 @@ export interface SessionSummary {
   llm?: string;
   llmTokens?: number | null;
   llmCostMicros?: number | null;
+  /** TLS version, the server's IP address, the request's HTTP version. */
+  tls?: string;
+  remoteIp?: string;
+  httpVersion?: string;
+  /** Values of the header columns (Settings.headerColumns), in their order. */
+  headerValues?: string[];
 }
 
 /** "Group by" of the session list (crates/quena-index). */
@@ -410,7 +416,13 @@ export type Column =
   | "cert"
   | "llm"
   | "tokens"
-  | "cost";
+  | "cost"
+  | "tls"
+  | "remoteIp"
+  | "http"
+  | "header1"
+  | "header2"
+  | "header3";
 
 export interface Sort {
   column: Column;
@@ -581,6 +593,8 @@ export interface Settings {
   /** Importing into a non-empty list: ask, or remove or keep its sessions. */
   importExisting?: "ask" | "remove" | "keep";
   ui: unknown;
+  /** Request or response headers shown as list columns (at most three). */
+  headerColumns?: { response: boolean; name: string }[];
 }
 
 /** Rewrite rules (crates/quena-app-core/src/rewrite.rs); `ops` are edited by agents (MCP) for now. */
@@ -1148,6 +1162,8 @@ export const api = {
   positionOf: (id: SessionId) => invoke<number | null>("position_of", { id }),
   setSort: (sort: Sort) => invoke<void>("set_sort", { sort }),
   getFilters: () => invoke<FilterSettings>("get_filters"),
+  /** Sessions each filter would show; `Err` where one does not compile. */
+  countFilters: (list: FilterSettings[]) => invoke<({ Ok: number } | { Err: string })[]>("count_filters", { list }),
   setFilters: (filters: FilterSettings) => invoke<void>("set_filters", { filters }),
   quickexec: (input: string) => invoke<QuickExecResult>("quickexec", { input }),
   remove: (ids: SessionId[]) => invoke<void>("remove", { ids }),

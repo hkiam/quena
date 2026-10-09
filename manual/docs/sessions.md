@@ -22,6 +22,10 @@ the client process and your own notes. The list handles hundreds of thousands of
 | *Caching* | Caching-related response headers. |
 | *Started* | Time the request started. |
 | *Via* | How the request came in besides the proxy port: the [reverse proxy](reverse-proxy.md) entry, `SOCKS5` or `transparent` ([SOCKS and transparent](socks-transparent.md)). |
+| *TLS* | TLS version towards the server (else towards the client). |
+| *Server IP* | The address the request was sent to. Sorts by number. |
+| *HTTP version* | HTTP version of the request (`HTTP/1.1`, `HTTP/2` …). |
+| *↑ Name*, *↓ Name* | A request (↑) or response (↓) header as its own column — right-click a header in the *Headers* view → *Add … as a Column* (up to three; sortable). |
 
 The Quena layout shows `#`, Method, Status, Host, Path, Type, Size and Duration; the Classic
 layout shows more columns.
@@ -31,6 +35,10 @@ layout shows more columns.
   layout's defaults.
 - **Resize** by dragging the edge of a heading, **reorder** by dragging a heading onto
   another.
+- **Filter by a column:** right-click its heading → *Filter by …*. Type a value (contains;
+  with `*` a wildcard; numbers: equal) or an operator first (`>= 400`, `!= 200`, `=~ ^/v2`);
+  the clause is added to the filter expression. Headings the filter tests show ⏷. A header
+  column is removed the same way (*Remove header column*).
 
 ## Navigator
 
@@ -200,12 +208,18 @@ The **Filters** tab hides sessions from the list (they are still recorded). Chec
 | Response Type and Size | hide images, CSS, scripts, fonts; show only / hide content types; hide smaller/larger than (KB); hide faster than (ms) |
 | Advanced expression | a filter expression, e.g. `host ~= "*.company.de" and method == POST and status >= 400` |
 
+**Saved filters** keep filter settings under a name: *Save as…* stores the current ones,
+pick one and *Apply*, *Rename…* or *Delete*. The list shows how many sessions each would
+show (`(!)`: its expression has an error). They are kept with the layout.
+
 Quick ways to filter:
 
 - Right-click a session → **Filter Now → Hide this Host / Show only this Host /
   Hide this URL / Hide this Process / Show only this Process**.
 - **View → Hide in List → Tunnels (CONNECT) / Image Requests / 304 Not Modified**.
 - `filter <expression>` in the command field.
+- In the *Headers* view, right-click a header → **Filter Sessions with this …** (the same
+  header value).
 
 While a filter is active, the *Filters* tab shows a dot and the status bar says *filtered*.
 

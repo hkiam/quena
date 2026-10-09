@@ -8,6 +8,13 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Filters and columns**: filter on request and response headers (`reqheader.NAME`,
+  `resheader.NAME`, `header.NAME`), cookies (`cookie.NAME`), bodies (`reqbody`, `resbody`),
+  TLS version (`tls`), server IP (`ip`) and HTTP version (`http`), also in the command field
+  and for agents. **Saved filters** with names and match counts. **Column filters** from the
+  heading's context menu (value or operator), a ⏷ on filtered columns. New columns *TLS*,
+  *Server IP*, *HTTP version*, and up to three **header columns** added from the *Headers*
+  view (right-click → *Add … as a Column*), which also offers *Filter Sessions with this …*.
 - **Agent cache**: an LLM API call answered before is answered by Quena again, without asking
   the model (same URL and JSON body; key order, `user` and `metadata` not counting). Cache a
   call in the *LLM* view or every call (*Settings → Bodies & Storage → Agent cache*); hits

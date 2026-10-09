@@ -1,7 +1,7 @@
 // Filters tab. Changes apply live (debounced).
 import { useEffect, useRef, useState } from "react";
 import { api, type FilterSettings } from "../api";
-import { say, set, useStore } from "../store";
+import { get, promptText, say, set, useStore } from "../store";
 import { actions } from "../actions";
 import { t } from "../i18n";
 
@@ -19,6 +19,75 @@ function Check({ label, value, onChange }: { label: string; value: boolean; onCh
     <label className="f-check">
       <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} /> {label}
     </label>
+  );
+}
+
+/** Named filters: save the current settings under a name, apply, rename or delete them; each
+ * shows how many sessions it would show. */
+function SavedFilters({ current, apply }: { current: FilterSettings; apply: (f: FilterSettings) => void }) {
+  const saved = useStore((s) => s.layout.savedFilters) ?? [];
+  const version = useStore((s) => s.listVersion);
+  const [counts, setCounts] = useState<(number | string)[]>([]);
+  const [pick, setPick] = useState("");
+  useEffect(() => {
+    if (!saved.length) return setCounts([]);
+    const timer = window.setTimeout(() => {
+      api.countFilters(saved.map((x) => x.filters)).then(
+        (r) => setCounts(r.map((x) => ("Ok" in x ? x.Ok : x.Err))),
+        () => setCounts([]),
+      );
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [saved, version]);
+  const store = (list: { name: string; filters: FilterSettings }[]) => {
+    set((s) => ({ layout: { ...s.layout, savedFilters: list } }));
+    actions.saveLayout();
+  };
+  const i = saved.findIndex((x) => x.name === pick);
+  return (
+    <div className="f-saved">
+      <select value={pick} onChange={(e) => setPick(e.target.value)} title={t("Saved filters")}>
+        <option value="">{t("Saved filters…")}</option>
+        {saved.map((x, j) => (
+          <option key={x.name} value={x.name}>
+            {x.name}
+            {typeof counts[j] === "number" ? ` (${counts[j]})` : typeof counts[j] === "string" ? " (!)" : ""}
+          </option>
+        ))}
+      </select>
+      <button disabled={i < 0} onClick={() => i >= 0 && apply({ ...saved[i].filters, enabled: true })}>
+        {t("Apply")}
+      </button>
+      <button
+        onClick={async () => {
+          const name = (await promptText(t("Save filter"), t("Name of the filter"), pick || ""))?.trim();
+          if (!name) return;
+          const list = get().layout.savedFilters ?? [];
+          const rest = list.filter((x) => x.name !== name);
+          store([...rest, { name, filters: { ...current } }].sort((a, b) => a.name.localeCompare(b.name)));
+          setPick(name);
+          say(t("Filter {name} saved", { name }));
+        }}
+      >
+        {t("Save as…")}
+      </button>
+      <button
+        disabled={i < 0}
+        onClick={async () => {
+          if (i < 0) return;
+          const name = (await promptText(t("Rename filter"), t("Name of the filter"), saved[i].name))?.trim();
+          if (!name || name === saved[i].name) return;
+          store(saved.map((x, j) => (j === i ? { ...x, name } : x)).filter((x, j) => j === i || x.name !== name));
+          setPick(name);
+        }}
+      >
+        {t("Rename…")}
+      </button>
+      <button disabled={i < 0} onClick={() => i >= 0 && store(saved.filter((_, j) => j !== i))}>
+        {t("Delete")}
+      </button>
+      {i >= 0 && typeof counts[i] === "string" && <span className="err small">{counts[i]}</span>}
+    </div>
   );
 }
 
@@ -67,6 +136,7 @@ export function FiltersPanel() {
         </button>
         {err && <span className="err">{err}</span>}
       </div>
+      <SavedFilters current={f} apply={(x) => update(x)} />
       <fieldset disabled={dis} className="f-body">
         <Section title={t("Hosts")}>
           <select value={f.hostMode} onChange={(e) => update({ hostMode: e.target.value as FilterSettings["hostMode"] })}>

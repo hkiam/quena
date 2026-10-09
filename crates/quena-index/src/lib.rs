@@ -40,6 +40,14 @@ pub enum Column {
     Llm,
     Tokens,
     Cost,
+    /// TLS version, the server's IP address, the request's HTTP version.
+    Tls,
+    RemoteIp,
+    Http,
+    /// Header columns (see `quena_model::set_header_columns`).
+    Header1,
+    Header2,
+    Header3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -47,6 +55,19 @@ pub enum Column {
 pub struct Sort {
     pub column: Column,
     pub descending: bool,
+}
+
+fn hv(s: &SessionSummary, i: usize) -> &str {
+    s.header_values.get(i).map(String::as_str).unwrap_or("")
+}
+
+/// IP addresses sort by number (`10.0.0.9` before `10.0.0.10`), others after them.
+fn ip_key(s: &str) -> (u8, u128, &str) {
+    match s.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(a)) => (0, u32::from(a) as u128, s),
+        Ok(std::net::IpAddr::V6(a)) => (1, u128::from(a), s),
+        Err(_) => (2, 0, s),
+    }
 }
 
 /// "Group by" of the list: rows with the same key stay together (groups in the order of
@@ -135,6 +156,12 @@ fn compare(a: &SessionSummary, b: &SessionSummary, c: Column) -> Ordering {
         Column::Llm => a.llm.cmp(&b.llm),
         Column::Tokens => a.llm_tokens.cmp(&b.llm_tokens),
         Column::Cost => a.llm_cost_micros.cmp(&b.llm_cost_micros),
+        Column::Tls => a.tls.cmp(&b.tls),
+        Column::RemoteIp => ip_key(&a.remote_ip).cmp(&ip_key(&b.remote_ip)),
+        Column::Http => a.http_version.cmp(&b.http_version),
+        Column::Header1 => hv(a, 0).cmp(hv(b, 0)),
+        Column::Header2 => hv(a, 1).cmp(hv(b, 1)),
+        Column::Header3 => hv(a, 2).cmp(hv(b, 2)),
     };
     o.then(a.id.cmp(&b.id))
 }
