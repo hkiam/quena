@@ -420,8 +420,10 @@ impl AppCore {
 
     pub fn collection_rename(&self, from: &str, to: &str) -> Result<()> {
         let (a, b) = (self.collection_path(from)?, self.collection_path(to)?);
-        // Only the case changes (one file on macOS and Windows): no clash.
-        if b.exists() && from.trim().to_lowercase() != to.trim().to_lowercase() {
+        // `b` exists as a file of its own (not only as `a` under another case, as on macOS
+        // and Windows): a clash.
+        let own = b.file_name().is_some_and(|n| std::fs::read_dir(self.collections_dir()).is_ok_and(|mut d| d.any(|e| e.is_ok_and(|e| e.file_name() == n))));
+        if b.exists() && (own || from.trim().to_lowercase() != to.trim().to_lowercase()) && a != b {
             bail!("a collection named {to} exists already");
         }
         std::fs::rename(a, b)?;

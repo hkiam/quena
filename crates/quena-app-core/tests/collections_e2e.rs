@@ -173,5 +173,10 @@ fn collection_files_are_handled_with_care() {
     core.collection_rename("hand", "Hand").unwrap();
     assert_eq!(core.collections_list().unwrap()[0].name, "Hand");
     core.collection_save(&Collection { name: "x".into(), variables: vec![], requests: vec![req("a", "http://example.com/", "")], ..Default::default() }).unwrap();
-    assert!(core.collection_rename("x", "hand").is_err(), "another collection's name");
+    assert!(core.collection_rename("x", "Hand").is_err(), "another collection's name");
+    // Where case counts (Linux) `hand` and `Hand` are two files: no overwriting either.
+    if core.collection_rename("x", "hand").is_ok() {
+        assert_eq!(core.collections_list().unwrap().len(), 2);
+        assert!(core.collection_rename("hand", "Hand").is_err(), "{:?}", core.collections_list().unwrap());
+    }
 }
