@@ -481,14 +481,16 @@ impl Capture {
     }
 
     fn finish(&self, id: SessionId) {
-        let Some(live) = self.live.write().remove(&id) else { return };
+        let Some(live) = self.live.read().get(&id).cloned() else { return };
         let mut d = live.detail();
         d.refresh_summary();
         d.summary.request_body_len = live.request_body().wire_len();
         d.summary.response_body_len = live.response_body().wire_len();
         self.index.upsert(d.summary.clone());
         let d = Arc::new(d);
+        // In the cache before it leaves the live table: `detail` always finds the session.
         self.cache.lock().put(d.clone());
+        self.live.write().remove(&id);
         self.db.put(d);
     }
 
