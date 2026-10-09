@@ -8,6 +8,17 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **AutoSave** (*Settings → General*): all sessions are saved as `.saz` every few minutes
+  when something changed, into the data folder or a chosen one; the newest archives are
+  kept (10 by default). *Save now*, *Open folder*.
+- **Password-protected archives**: *File → Export Sessions → SAZ Archive with Password…*
+  encrypts the archive with AES-256 (readable by Fiddler, 7-Zip, WinZip). Loading or
+  dropping a protected archive asks for its password; before, it loaded no sessions without
+  saying why.
+
+### Fixed
+- A session that just finished could briefly not be found (its details vanished for a
+  moment between recording and storage).
 - **Socket.IO**: the WebSocket view shows the event name or packet type and the arguments
   of Socket.IO messages, can hide ping/pong and search for events; a *Socket.IO* view
   decodes long-polling bodies (v4 and v3).

@@ -17,10 +17,30 @@ Quena reads and writes two archive formats and reads packet captures:
 | *File → Save → All Sessions…* (`Ctrl/⌘ S`, or the disk icon in the toolbar) | all sessions as `.saz` |
 | *File → Save → Selected Sessions…* | the selected sessions as `.saz` |
 | *File → Export Sessions → SAZ Archive…* / *HTTP Archive (HAR)…* | the selection if more than one session is selected, else all sessions |
+| *File → Export Sessions → SAZ Archive with Password…* | the same as a [password-protected](#password-protected-archives) `.saz` |
 | `dump` in the command field | all sessions as `.saz` |
 
 The file name defaults to `quena_<date>_<time>.saz`. Saving runs as a background job; the
 status bar shows its progress.
+
+### Password-protected archives
+
+*SAZ Archive with Password…* asks for a password (twice) and encrypts every entry of the
+archive with **AES-256** — the way Fiddler protects archives; 7-Zip, WinZip and Fiddler open
+such files with the password, too. Loading one (menu, drag and drop) asks for its password
+and asks again when it is wrong. Without the password nothing of the content is readable;
+the entry names (`raw/01_c.txt` …) are not hidden. HAR files are plain JSON and cannot be
+protected; to share a capture without secrets in it at all, use the
+[sanitized export](#sanitized-export-for-sharing).
+
+### AutoSave
+
+*Settings → General → AutoSave the sessions every … minutes* saves all sessions — also
+those a filter hides — as `autosave-<date>-<time>Z.saz` (UTC) into the folder `autosave` in
+the data folder or one you choose, but only when something changed since the last save. The
+newest archives are kept (10 by default), older ones removed. *Save now* saves at once,
+*Open folder* shows them; load one with *File → Load Archive…*. AutoSave archives are not
+encrypted.
 
 ### Loading
 

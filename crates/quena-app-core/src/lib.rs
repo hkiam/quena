@@ -4,6 +4,7 @@
 
 pub mod archive;
 pub mod auth;
+pub mod autosave;
 pub mod bodies;
 pub mod collections;
 pub mod ws;
@@ -165,6 +166,7 @@ pub struct AppCore {
     pub(crate) diag_report: Mutex<diagnostics::DiagSlot>,
     /// Protobuf schemas (`.proto` files, reflection), compiled when needed.
     pub(crate) protobuf: protobuf::Schemas,
+    pub(crate) autosave: Mutex<autosave::State>,
     started: Instant,
     shut_down: std::sync::atomic::AtomicBool,
     /// Serializes starting and stopping the capture (the startup thread and the UI can race).
@@ -203,6 +205,7 @@ impl AppCore {
             finds: Mutex::new(Default::default()),
             diag_report: Mutex::new(Default::default()),
             protobuf: protobuf::Schemas::default(),
+            autosave: Mutex::new(Default::default()),
             started: Instant::now(),
             shut_down: std::sync::atomic::AtomicBool::new(false),
         });
@@ -351,6 +354,7 @@ impl AppCore {
                     }
                     if last_trim.elapsed() >= Duration::from_secs(1) {
                         last_trim = Instant::now();
+                        core.autosave_tick();
                         let keep = core.settings.read().keep_sessions;
                         if keep > 0 {
                             let ids = cap.index.ids_beyond(keep);

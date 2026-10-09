@@ -53,13 +53,22 @@ fn format_of(path: &std::path::Path) -> Option<ArchiveFormat> {
 impl AppCore {
     /// Export sessions (empty = all in view order).
     pub fn export_archive(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>) -> Result<JobId> {
+        self.export_archive_protected(ids, path, format, None)
+    }
+
+    /// [`AppCore::export_archive`], a `.saz` encrypted with AES-256 under `password`.
+    pub fn export_archive_protected(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>, password: Option<String>) -> Result<JobId> {
         let format = format.or_else(|| format_of(&path)).ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
+        let password = password.filter(|p| !p.is_empty());
+        if password.is_some() && format != ArchiveFormat::Saz {
+            return Err(anyhow!("only .saz archives can be protected with a password"));
+        }
         let cap = self.capture();
         let ids = if ids.is_empty() { cap.index.find(|_| true) } else { ids };
         let title = format!("Saving {} session(s) to {}", ids.len(), path.display());
         Ok(self.jobs.submit(format!("export:{}", path.display()), title, Priority::Background, true, move |ctx| {
             let n = match format {
-                ArchiveFormat::Saz => quena_formats::saz::export(&cap, &ids, &path, &P(ctx)),
+                ArchiveFormat::Saz => quena_formats::saz::export_encrypted(&cap, &ids, &path, &[], password.as_deref(), &P(ctx)),
                 ArchiveFormat::Har => quena_formats::har::export(&cap, &ids, &path, &HarOptions::default(), &P(ctx)),
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("use Copy → As cURL".into())),
                 ArchiveFormat::Pcap => Err(quena_formats::FormatError::Invalid("sessions cannot be saved as a packet capture".into())),
@@ -118,8 +127,32 @@ impl AppCore {
 
     /// Import an archive into the current session list.
     pub fn import_archive(self: &Arc<Self>, path: PathBuf) -> Result<JobId> {
+        self.import_archive_protected(path, None)
+    }
+
+    /// [`AppCore::import_archive`] of an archive that may be protected with `password`. A
+    /// missing or wrong password is reported at once ("…protected with a password",
+    /// "wrong password"), before a job starts.
+    pub fn import_archive_protected(self: &Arc<Self>, path: PathBuf, password: Option<String>) -> Result<JobId> {
         let name = path.display().to_string();
-        self.import_file(path, name, false, Vec::new(), Vec::new())
+        let password = password.filter(|p| !p.is_empty());
+        if format_of(&path) == Some(ArchiveFormat::Saz) {
+            quena_formats::saz::check_password(&path, password.as_deref())?;
+        }
+        self.import_file(path, name, false, Vec::new(), Vec::new(), password)
+    }
+
+    /// Import a dropped archive that waited for its password (see [`AppCore::drop_chunk`]).
+    pub fn import_dropped(self: &Arc<Self>, id: &str, name: &str, password: &str) -> Result<JobId> {
+        if id.is_empty() || id.len() > 64 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            return Err(anyhow!("invalid drop id"));
+        }
+        let path = self.paths.data.join("dropped").join(format!("{id}.saz"));
+        if !path.is_file() {
+            return Err(anyhow!("{name}: the dropped file is gone, drop it again"));
+        }
+        quena_formats::saz::check_password(&path, Some(password))?;
+        self.import_file(path, name.to_string(), true, Vec::new(), Vec::new(), Some(password.to_string()))
     }
 
     /// Import a packet capture (again), with TLS key logs besides the usual ones (the
@@ -139,7 +172,7 @@ impl AppCore {
             Some(n) if n == self.capture().numbering() => replace,
             _ => Vec::new(),
         };
-        self.import_file(path, name, dropped, keylogs, replace)
+        self.import_file(path, name, dropped, keylogs, replace, None)
     }
 
     /// TLS key logs for a capture: the setting, then files next to the capture.
@@ -161,7 +194,7 @@ impl AppCore {
         v
     }
 
-    fn import_file(self: &Arc<Self>, path: PathBuf, name: String, remove_after: bool, extra_keylogs: Vec<PathBuf>, replace: Vec<SessionId>) -> Result<JobId> {
+    fn import_file(self: &Arc<Self>, path: PathBuf, name: String, remove_after: bool, extra_keylogs: Vec<PathBuf>, replace: Vec<SessionId>, password: Option<String>) -> Result<JobId> {
         let format = format_of(&path).ok_or_else(|| anyhow!("unknown archive type (use .saz, .har, .pcap or .pcapng)"))?;
         let cap = self.capture();
         let title = format!("Loading {name}");
@@ -175,7 +208,7 @@ impl AppCore {
         Ok(self.jobs.submit(format!("import:{}", path.display()), title, Priority::Background, true, move |ctx| {
             let mut remove = remove;
             let ids = match format {
-                ArchiveFormat::Saz => quena_formats::saz::import(&cap, &path, &P(ctx)),
+                ArchiveFormat::Saz => quena_formats::saz::import_encrypted(&cap, &path, password.as_deref(), &P(ctx)),
                 ArchiveFormat::Har => quena_formats::har::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("cannot import cURL scripts".into())),
                 ArchiveFormat::Pcap => quena_formats::pcap::import_with(&cap, &path, &quena_formats::pcap::PcapOptions { keylogs }, &P(ctx)).map(|r| {
@@ -260,7 +293,14 @@ impl AppCore {
         if !last {
             return Ok(None);
         }
-        self.import_file(path, name.to_string(), true, Vec::new(), Vec::new()).map(Some)
+        // A protected archive waits for its password (`import_dropped`); kept for an hour.
+        if ext == "saz"
+            && let Err(e @ quena_formats::FormatError::PasswordRequired) = quena_formats::saz::check_password(&path, None)
+        {
+            keep_for(path, KEEP_DROPPED);
+            return Err(anyhow!("{name}: {e}"));
+        }
+        self.import_file(path, name.to_string(), true, Vec::new(), Vec::new(), None).map(Some)
     }
 }
 

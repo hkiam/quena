@@ -14,8 +14,7 @@ function trace(step: string, detail?: unknown) {
   (w.__quenaDrop ??= []).push({ step, detail: detail === undefined ? undefined : String(detail) });
 }
 
-async function send(file: File) {
-  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+async function send(file: File, id: string) {
   let offset = 0;
   do {
     const end = Math.min(offset + CHUNK, file.size);
@@ -41,7 +40,18 @@ export async function importDropped(files: File[]) {
     try {
       say(t("Loading {path}", { path: f.name }));
       trace("send", `${f.name} ${f.size}`);
-      await send(f);
+      const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      try {
+        await send(f, id);
+      } catch (e) {
+        // A protected archive waits on the backend for its password.
+        if (!/protected with a password/.test(String(e))) throw e;
+        const { importWithPassword } = await import("../fileActions");
+        await importWithPassword(f.name, async (pw) => {
+          if (pw === undefined) throw e;
+          await api.importDropped(id, f.name, pw);
+        });
+      }
       trace("sent");
     } catch (e) {
       trace("error", e);

@@ -1,7 +1,7 @@
 // File menu: archives (SAZ/HAR, packet captures to import), bodies, cURL scripts.
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api, type CaptureImport } from "./api";
-import { get, say, set } from "./store";
+import { get, promptText, say, set } from "./store";
 import { buildCurl } from "./lib/http";
 import { snippetBody } from "./lib/bodytext";
 import { plural, t } from "./i18n";
@@ -21,7 +21,36 @@ function stamp() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 }
 
-async function saveArchive(ids: number[], ext: "saz" | "har") {
+/** Ask for a new archive password twice; `null` when cancelled or not the same. */
+async function newPassword(): Promise<string | null> {
+  const a = await promptText(t("Archive password"), t("Password (7-Zip and WinZip open the archive with it as well)"), "", true);
+  if (!a) return null;
+  const b = await promptText(t("Archive password"), t("Repeat the password"), "", true);
+  if (b !== a) {
+    say(t("The passwords differ"), "error");
+    return null;
+  }
+  return a;
+}
+
+/** Import an archive; a protected one asks for its password (again while it is wrong). */
+export async function importWithPassword(name: string, run: (password?: string) => Promise<unknown>) {
+  let password: string | undefined;
+  for (;;) {
+    try {
+      await run(password);
+      return;
+    } catch (e) {
+      const msg = String(e);
+      if (!/protected with a password|wrong password/.test(msg)) throw e;
+      const pw = await promptText(t("Password"), /wrong password/.test(msg) ? t("Wrong password for {name}. Try again:", { name }) : t("{name} is protected with a password:", { name }), "", true);
+      if (pw == null) return;
+      password = pw;
+    }
+  }
+}
+
+async function saveArchive(ids: number[], ext: "saz" | "har", password?: string) {
   if (!get().listTotal) {
     say(t("There are no sessions to save"), "error");
     return;
@@ -29,7 +58,7 @@ async function saveArchive(ids: number[], ext: "saz" | "har") {
   const path = await save({ defaultPath: `quena_${stamp()}.${ext}`, filters: ext === "saz" ? [ARCHIVES[1], ARCHIVES[2]] : [ARCHIVES[2], ARCHIVES[1]] });
   if (!path) return;
   try {
-    await api.exportArchive(ids, path);
+    await api.exportArchive(ids, path, password);
     say(ids.length ? plural(ids.length, "Saving {n} session to {path}", "Saving {n} sessions to {path}", { path }) : t("Saving all sessions to {path}", { path }));
   } catch (e) {
     say(String(e), "error");
@@ -42,8 +71,10 @@ async function loadArchive(captures = false) {
   if (typeof path !== "string") return;
   if (!(await prepareImport(baseName(path)))) return;
   try {
-    await api.importArchive(path);
-    say(t("Loading {path}", { path }));
+    await importWithPassword(baseName(path), async (pw) => {
+      await api.importArchive(path, pw);
+      say(t("Loading {path}", { path }));
+    });
   } catch (e) {
     say(String(e), "error");
   }
@@ -89,6 +120,15 @@ export async function handleFileMenu(id: string): Promise<boolean> {
     case "file.export-saz":
       await saveArchive(id === "file.export-saz" && selected.length > 1 ? selected : [], "saz");
       return true;
+    case "file.export-saz-protected": {
+      if (!get().listTotal) {
+        say(t("There are no sessions to save"), "error");
+        return true;
+      }
+      const pw = await newPassword();
+      if (pw) await saveArchive(selected.length > 1 ? selected : [], "saz", pw);
+      return true;
+    }
     case "file.save-selected":
       if (!selected.length) say(t("Select sessions first"), "error");
       else await saveArchive(selected, "saz");

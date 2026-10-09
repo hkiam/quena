@@ -44,7 +44,7 @@ function Modal({ title, children, onClose, wide, footer }: { title: string; chil
 
 const close = () => set({ dialog: null });
 
-function PromptDialog({ title, label, initial, resolve }: { title: string; label: string; initial: string; resolve: (v: string | null) => void }) {
+function PromptDialog({ title, label, initial, secret, resolve }: { title: string; label: string; initial: string; secret?: boolean; resolve: (v: string | null) => void }) {
   const [v, setV] = useState(initial);
   const done = (x: string | null) => {
     close();
@@ -65,7 +65,16 @@ function PromptDialog({ title, label, initial, resolve }: { title: string; label
     >
       <div className="f-row">
         <span>{label}</span>
-        <input autoFocus value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === "Enter" && done(v)} />
+        <input
+          autoFocus
+          type={secret ? "password" : "text"}
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          value={v}
+          onChange={(e) => setV(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && done(v)}
+        />
       </div>
     </Modal>
   );
@@ -457,6 +466,55 @@ function AuthOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) =>
 }
 
 /** MCP server: lets AI agents (Claude Code …) read and, if allowed, control Quena. */
+/** Settings → General → AutoSave. */
+function AutoSaveOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => void }) {
+  const a = s.autosave ?? { enabled: false, intervalMin: 10, folder: "", keep: 10 };
+  const set = (p: Partial<typeof a>) => up((x) => (x.autosave = { ...a, ...p }));
+  return (
+    <div className="autosave">
+      <label className="f-check">
+        <input type="checkbox" checked={a.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> {t("AutoSave the sessions every")}{" "}
+        <input type="number" className="num-small" min={1} max={1440} value={a.intervalMin} onChange={(e) => set({ intervalMin: Math.max(1, Number(e.target.value) || 10) })} /> {t("minutes (when something changed), keep the last")}{" "}
+        <input type="number" className="num-small" min={1} max={1000} value={a.keep} onChange={(e) => set({ keep: Math.max(1, Number(e.target.value) || 10) })} /> {t("archives")}
+      </label>
+      <div className="f-inline small">
+        <span className="muted mono pb-path" title={a.folder}>
+          {a.folder || t("autosave folder in the data folder")}
+        </span>
+        <button
+          onClick={async () => {
+            const p = await openDialog({ directory: true, multiple: false });
+            if (typeof p === "string") set({ folder: p });
+          }}
+        >
+          {t("Choose folder…")}
+        </button>
+        {a.folder && (
+          <button className="linklike" onClick={() => set({ folder: "" })}>
+            {t("Default")}
+          </button>
+        )}
+        <button className="linklike" onClick={() => void api.autosaveReveal().catch((e) => say(String(e), "error"))}>
+          {t("Open folder")}
+        </button>
+        <button
+          className="linklike"
+          onClick={async () => {
+            try {
+              const p = await api.autosaveNow();
+              say(p ? t("Saving to {path}", { path: p }) : t("There are no sessions to save"));
+            } catch (e) {
+              say(String(e), "error");
+            }
+          }}
+        >
+          {t("Save now")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Settings → Bodies & Storage → Protobuf schemas. */
 function ProtobufOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => void }) {
   const [status, setStatus] = useState<SchemaStatus | null>(null);
@@ -662,6 +720,7 @@ function OptionsDialog() {
             <label className="f-check">
               <input type="checkbox" checked={s.keepCaptures} onChange={(e) => up((x) => (x.keepCaptures = e.target.checked))} /> {t("Keep capture data after exit")}
             </label>
+            <AutoSaveOptions s={s} up={up} />
             <label className="f-check">
               <input type="checkbox" checked={s.offerRecovery !== false} onChange={(e) => up((x) => (x.offerRecovery = e.target.checked))} /> {t("Offer to recover sessions after a crash")}
             </label>
@@ -1031,7 +1090,7 @@ function DialogBody({ d }: { d: Dialog }) {
     case "import-existing":
       return <ImportExistingDialog key="import-existing" total={d.total} what={d.what} resolve={d.resolve} />;
     case "prompt":
-      return <PromptDialog title={d.title} label={d.label} initial={d.initial} resolve={d.resolve} />;
+      return <PromptDialog title={d.title} label={d.label} initial={d.initial} secret={d.secret} resolve={d.resolve} />;
     case "comment":
       return <CommentDialog ids={d.ids} initial={d.initial} />;
     case "help":

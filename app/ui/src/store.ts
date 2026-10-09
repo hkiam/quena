@@ -243,7 +243,7 @@ export type Dialog =
   | { kind: "sanitize"; selected: SessionId[]; scope: "selected" | "all" }
   | { kind: "sanitize-result"; result: SanitizedExport }
   | { kind: "compare"; a: string; b: string; titleA: string; titleB: string }
-  | { kind: "prompt"; title: string; label: string; initial: string; resolve: (v: string | null) => void }
+  | { kind: "prompt"; title: string; label: string; initial: string; secret?: boolean; resolve: (v: string | null) => void }
   | { kind: "confirm"; title: string; message: string; confirm: string; resolve: (ok: boolean) => void }
   | {
       kind: "import-existing";
@@ -358,6 +358,6 @@ export function saveLayoutSoon(save: (layout: Layout) => void) {
 }
 
 /** In-app replacement for window.prompt (which blocks the web view). */
-export function promptText(title: string, label: string, initial = ""): Promise<string | null> {
-  return new Promise((resolve) => set({ dialog: { kind: "prompt", title, label, initial, resolve } }));
+export function promptText(title: string, label: string, initial = "", secret = false): Promise<string | null> {
+  return new Promise((resolve) => set({ dialog: { kind: "prompt", title, label, initial, secret, resolve } }));
 }

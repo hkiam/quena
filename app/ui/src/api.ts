@@ -538,6 +538,8 @@ export interface Settings {
   headersOnlyTypes: string;
   losslessRecording: boolean;
   keepCaptures: boolean;
+  /** Save the capture to an archive every few minutes (only when it changed). */
+  autosave: { enabled: boolean; intervalMin: number; folder: string; keep: number };
   offerRecovery: boolean;
   auth: AuthSettings;
   scriptingEnabled: boolean;
@@ -1125,8 +1127,11 @@ export const api = {
   caRegenerate: () => invoke<CaInfo>("ca_regenerate"),
   caExport: (path: string, format: "pem" | "der" | "p12", password?: string) => invoke<void>("ca_export", { path, format, password: password ?? null }),
   caImport: (source: CaImport) => invoke<CaInfo>("ca_import", { source }),
-  exportArchive: (ids: SessionId[], path: string) => invoke<number>("export_archive", { ids, path }),
-  importArchive: (path: string) => invoke<number>("import_archive", { path }),
+  exportArchive: (ids: SessionId[], path: string, password?: string) => invoke<number>("export_archive", { ids, path, password: password ?? null }),
+  importArchive: (path: string, password?: string) => invoke<number>("import_archive", { path, password: password ?? null }),
+  importDropped: (id: string, name: string, password: string) => invoke<number>("import_dropped", { id, name, password }),
+  autosaveNow: () => invoke<string | null>("autosave_now"),
+  autosaveReveal: () => invoke<void>("autosave_reveal"),
   /** A packet capture again with a TLS key log, replacing the sessions of its first import
    *  (unless numbering restarted since, e.g. after Remove All). */
   importCapture: (path: string, name: string, keylog: string, replace: SessionId[], numbering: number) =>

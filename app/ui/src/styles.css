@@ -3714,3 +3714,9 @@ pre.llm-text.mono {
 .ws-sio {
   padding: 2px 6px;
 }
+.num-small {
+  width: 4.5em;
+}
+.autosave {
+  margin: 4px 0;
+}

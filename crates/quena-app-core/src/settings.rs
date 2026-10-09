@@ -189,6 +189,25 @@ pub struct ProtobufSettings {
     pub reflection: bool,
 }
 
+/// AutoSave (Settings → General).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AutoSaveSettings {
+    pub enabled: bool,
+    /// Minutes between saves (only when something changed).
+    pub interval_min: u32,
+    /// Folder; empty: `autosave` in the data folder.
+    pub folder: String,
+    /// Archives kept; older ones are removed.
+    pub keep: u32,
+}
+
+impl Default for AutoSaveSettings {
+    fn default() -> Self {
+        AutoSaveSettings { enabled: false, interval_min: 10, folder: String::new(), keep: 10 }
+    }
+}
+
 /// Default SOCKS port.
 pub const SOCKS_PORT: u16 = 8868;
 /// Default port for transparently redirected traffic.
@@ -387,6 +406,9 @@ pub struct Settings {
     pub lossless_recording: bool,
     /// Keep temporary captures after a clean exit.
     pub keep_captures: bool,
+    /// Save the capture to an archive every few minutes.
+    #[serde(default)]
+    pub autosave: AutoSaveSettings,
     /// Offer to restore captures after a crash.
     pub offer_recovery: bool,
     /// Importing into a non-empty list: ask, or remove or keep its sessions.
@@ -429,6 +451,7 @@ impl Default for Settings {
             headers_only_types: String::new(),
             lossless_recording: false,
             keep_captures: false,
+            autosave: AutoSaveSettings::default(),
             offer_recovery: true,
             import_existing: ImportExisting::Ask,
             auth: AuthSettings::default(),

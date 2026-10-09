@@ -20,6 +20,7 @@ This manual uses the English names of menus and settings.
 | *Stream responses (instead of buffering)* | on | Same as the *Stream* toolbar toggle. |
 | *Decode compressed bodies in inspectors* | on | Same as the *Decode* toolbar toggle. |
 | *Keep capture data after exit* | off | Keep the capture database after a clean exit. |
+| *AutoSave the sessions every … minutes, keep the last … archives* | off, 10, 10 | Save all sessions as `.saz` into the AutoSave folder when something changed (see [AutoSave](archives.md#autosave)). |
 | *Offer to recover sessions after a crash* | on | Offer the previous capture at the next start if Quena did not exit cleanly. |
 | *Importing into a non-empty list* | Ask | Loading an archive or packet capture stops capturing; the sessions in the list are then *asked about*, *removed* (only the import is in the list) or *kept* (the import is added). See [Archives](archives.md#loading). |
 

@@ -21,6 +21,11 @@ pub enum FormatError {
     Invalid(String),
     #[error("cancelled")]
     Cancelled,
+    /// The archive is encrypted and no password was given.
+    #[error("the archive is protected with a password")]
+    PasswordRequired,
+    #[error("wrong password")]
+    WrongPassword,
 }
 
 pub type Result<T> = std::result::Result<T, FormatError>;

@@ -154,10 +154,20 @@ pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, p: &dyn Progre
 /// [`export`] with extra files at the root of the archive (`(name, content)`, e.g. a
 /// redaction log); Fiddler ignores them.
 pub fn export_with(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, extra: &[(&str, &[u8])], p: &dyn Progress) -> Result<usize> {
+    export_encrypted(cap, ids, path, extra, None, p)
+}
+
+/// [`export_with`], every entry encrypted with AES-256 under `password` when one is given
+/// (as Fiddler's password-protected archives; 7-Zip and WinZip open them too).
+pub fn export_encrypted(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, extra: &[(&str, &[u8])], password: Option<&str>, p: &dyn Progress) -> Result<usize> {
     let tmp = path.with_extension("saz.part");
     let file = BufWriter::with_capacity(1 << 20, File::create(&tmp)?);
     let mut zip = zip::ZipWriter::new(file);
-    let deflate = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).large_file(true);
+    let crypt = |o: SimpleFileOptions| match password.filter(|p| !p.is_empty()) {
+        Some(pw) => o.with_aes_encryption(zip::AesMode::Aes256, pw),
+        None => o,
+    };
+    let deflate = crypt(SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).large_file(true));
     zip.start_file("[Content_Types].xml", deflate)?;
     zip.write_all(CONTENT_TYPES.as_bytes())?;
     let width = ids.len().to_string().len().max(2);
@@ -174,7 +184,7 @@ pub fn export_with(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, extra: &[
         let Some((req_body, resp_body)) = cap.bodies_of(*id) else { continue };
         let num = format!("{:0width$}", i + 1);
         // Bodies can be huge and are often already compressed – store large ones.
-        let opts = |len: u64| if len > 8 << 20 { SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored).large_file(true) } else { deflate };
+        let opts = |len: u64| if len > 8 << 20 { crypt(SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored).large_file(true)) } else { deflate };
         zip.start_file(format!("raw/{num}_c.txt"), opts(req_body.len()))?;
         raw::write_request_head(&mut zip, &d.request)?;
         write_body(&mut zip, &d.request.headers, &req_body, p)?;
@@ -351,10 +361,19 @@ fn read_message<R: Read>(cap: &Arc<Capture>, r: R, p: &dyn Progress) -> Result<O
 }
 
 /// Read one session from its ZIP entries. `Ok(None)`: no usable request.
-fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchive<R>, e: &Entry, p: &dyn Progress) -> Result<Option<(SessionDetail, Body, Body)>> {
+/// Entry `i`, decrypted with `password` when it is encrypted.
+fn open_entry<'a, R: Read + io::Seek>(zip: &'a mut zip::ZipArchive<R>, i: usize, password: Option<&str>) -> zip::result::ZipResult<zip::read::ZipFile<'a, R>> {
+    let encrypted = zip.by_index_raw(i)?.encrypted();
+    match (encrypted, password) {
+        (true, Some(pw)) => zip.by_index_decrypt(i, pw.as_bytes()),
+        _ => zip.by_index(i),
+    }
+}
+
+fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchive<R>, e: &Entry, password: Option<&str>, p: &dyn Progress) -> Result<Option<(SessionDetail, Body, Body)>> {
     let Some(ci) = e.c else { return Ok(None) };
     let mut d = SessionDetail::default();
-    let (req_first, req_headers, req_body) = match read_message(cap, zip.by_index(ci)?, p)? {
+    let (req_first, req_headers, req_body) = match read_message(cap, open_entry(zip, ci, password)?, p)? {
         Some(v) => v,
         None => return Ok(None),
     };
@@ -373,7 +392,7 @@ fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchiv
     let mut resp_body = cap.bodies.store_bytes(&[]);
     // A broken response or metadata entry doesn't lose the request.
     if let Some(si) = e.s {
-        match zip.by_index(si).map_err(FormatError::from).and_then(|f| read_message(cap, f, p)) {
+        match open_entry(zip, si, password).map_err(FormatError::from).and_then(|f| read_message(cap, f, p)) {
             Ok(Some((first, headers, body))) => {
                 let (v, status, reason) = raw::parse_status_line(&first);
                 d.response = Some(ResponseHead { status, reason, version: v, headers });
@@ -386,7 +405,7 @@ fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchiv
     }
     if let Some(mi) = e.m {
         let mut b = Vec::new();
-        match zip.by_index(mi).map_err(FormatError::from).and_then(|f| Ok(f.take(MAX_META).read_to_end(&mut b)?)) {
+        match open_entry(zip, mi, password).map_err(FormatError::from).and_then(|f| Ok(f.take(MAX_META).read_to_end(&mut b)?)) {
             Ok(_) => read_meta(&String::from_utf8_lossy(&b), &mut d),
             Err(err) => tracing::warn!("SAZ metadata entry unreadable: {err}"),
         }
@@ -394,9 +413,34 @@ fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchiv
     Ok(Some((d, req_body, resp_body)))
 }
 
+/// Whether a SAZ file is protected with a password, and (with `password`) whether it is
+/// the right one: `Err(PasswordRequired)` / `Err(WrongPassword)`, else `Ok(encrypted)`.
+pub fn check_password(path: &Path, password: Option<&str>) -> Result<bool> {
+    let mut zip = zip::ZipArchive::new(BufReader::new(File::open(path)?))?;
+    let Some(i) = (0..zip.len()).find(|i| zip.by_index_raw(*i).is_ok_and(|f| f.encrypted())) else { return Ok(false) };
+    let Some(pw) = password.filter(|p| !p.is_empty()) else { return Err(FormatError::PasswordRequired) };
+    let mut f = match zip.by_index_decrypt(i, pw.as_bytes()) {
+        Ok(f) => f,
+        Err(zip::result::ZipError::InvalidPassword) => return Err(FormatError::WrongPassword),
+        Err(e) => return Err(e.into()),
+    };
+    // AES checks the password with two bytes; reading proves it (and the MAC).
+    let mut sink = Vec::new();
+    match f.by_ref().take(64 << 10).read_to_end(&mut sink) {
+        Ok(_) => Ok(true),
+        Err(_) => Err(FormatError::WrongPassword),
+    }
+}
+
 /// Import a SAZ file into `cap`. Returns the new session ids. Unreadable entries
-/// (corrupt, encrypted, unsupported compression) are skipped and logged.
+/// (corrupt, unsupported compression) are skipped and logged.
 pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<SessionId>> {
+    import_encrypted(cap, path, None, p)
+}
+
+/// [`import`] of an archive that may be protected with `password`.
+pub fn import_encrypted(cap: &Arc<Capture>, path: &Path, password: Option<&str>, p: &dyn Progress) -> Result<Vec<SessionId>> {
+    check_password(path, password)?;
     let file = File::open(path)?;
     let mut zip = zip::ZipArchive::new(BufReader::new(file))?;
     let mut entries: BTreeMap<String, Entry> = BTreeMap::new();
@@ -430,7 +474,7 @@ pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<S
             return Err(FormatError::Cancelled);
         }
         p.progress(n as u64, total);
-        let (mut d, req_body, resp_body) = match read_session(cap, &mut zip, &entries[k], p) {
+        let (mut d, req_body, resp_body) = match read_session(cap, &mut zip, &entries[k], password, p) {
             Ok(Some(v)) => v,
             Ok(None) => continue,
             Err(FormatError::Cancelled) => return Err(FormatError::Cancelled),
@@ -460,6 +504,33 @@ mod tests {
     use super::*;
     use crate::NoProgress;
     use quena_body::BodyConfig;
+
+    #[test]
+    fn password_protected_archives() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("x.saz");
+        {
+            let mut z = zip::ZipWriter::new(File::create(&path).unwrap());
+            z.start_file("raw/01_c.txt", SimpleFileOptions::default()).unwrap();
+            z.write_all(b"GET http://a/one HTTP/1.1\r\nHost: a\r\n\r\n").unwrap();
+            z.finish().unwrap();
+        }
+        let src = Capture::open(dir.path().join("src"), BodyConfig::default(), true).unwrap();
+        let ids = import(&src, &path, &NoProgress).unwrap();
+        assert!(!check_password(&path, None).unwrap(), "a plain archive needs none");
+        let enc = dir.path().join("secret.saz");
+        export_encrypted(&src, &ids, &enc, &[], Some("s3cret"), &NoProgress).unwrap();
+        // Nothing readable without the password (even the entry names stay, the content not).
+        let raw = std::fs::read(&enc).unwrap();
+        assert!(!raw.windows(5).any(|w| w == b"GET h"));
+        assert!(matches!(check_password(&enc, None), Err(FormatError::PasswordRequired)));
+        assert!(matches!(check_password(&enc, Some("wrong")), Err(FormatError::WrongPassword)));
+        assert!(check_password(&enc, Some("s3cret")).unwrap());
+        let dst = Capture::open(dir.path().join("dst"), BodyConfig::default(), true).unwrap();
+        assert!(matches!(import(&dst, &enc, &NoProgress), Err(FormatError::PasswordRequired)));
+        let got = import_encrypted(&dst, &enc, Some("s3cret"), &NoProgress).unwrap();
+        assert_eq!(dst.detail(got[0]).unwrap().request.url, "http://a/one");
+    }
 
     #[test]
     fn bad_entries_skipped() {

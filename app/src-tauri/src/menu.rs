@@ -77,6 +77,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 &[
                     &item(app, "file.export-har", "HTTP Archive (HAR)…", None)?,
                     &item(app, "file.export-saz", "SAZ Archive…", None)?,
+                    &item(app, "file.export-saz-protected", "SAZ Archive with Password…", None)?,
                     &item(app, "file.export-curl", "cURL Script…", None)?,
                     &item(app, "file.export-sanitized", "Sanitized for Sharing (SAZ/HAR)…", None)?,
                     &item(app, "file.export-mocks", "Mocks…", None)?,

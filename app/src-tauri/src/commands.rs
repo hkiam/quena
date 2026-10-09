@@ -459,15 +459,36 @@ async fn parse_curl(cmd: String) -> R<quena_app_core::compose::ParsedRequest> {
 }
 
 #[tauri::command]
-async fn export_archive(core: State<'_, Core>, ids: Vec<SessionId>, path: String) -> R<u64> {
+async fn export_archive(core: State<'_, Core>, ids: Vec<SessionId>, path: String, password: Option<String>) -> R<u64> {
     let core = core.inner().clone();
-    blocking(move || core.export_archive(ids, path.into(), None).map_err(e)).await
+    blocking(move || core.export_archive_protected(ids, path.into(), None, password).map_err(e)).await
 }
 
 #[tauri::command]
-async fn import_archive(core: State<'_, Core>, path: String) -> R<u64> {
+async fn import_archive(core: State<'_, Core>, path: String, password: Option<String>) -> R<u64> {
     let core = core.inner().clone();
-    blocking(move || core.import_archive(path.into()).map_err(e)).await
+    blocking(move || core.import_archive_protected(path.into(), password).map_err(e)).await
+}
+
+/// A dropped archive that waited for its password.
+#[tauri::command]
+async fn import_dropped(core: State<'_, Core>, id: String, name: String, password: String) -> R<u64> {
+    let core = core.inner().clone();
+    blocking(move || core.import_dropped(&id, &name, &password).map_err(e)).await
+}
+
+/// AutoSave now (also when nothing changed); the archive's path.
+#[tauri::command]
+async fn autosave_now(core: State<'_, Core>) -> R<Option<String>> {
+    let core = core.inner().clone();
+    blocking(move || core.autosave_now(true).map(|p| p.map(|p| p.display().to_string())).map_err(e)).await
+}
+
+#[tauri::command]
+async fn autosave_reveal(core: State<'_, Core>) -> R<()> {
+    let dir = core.autosave_dir();
+    std::fs::create_dir_all(&dir).map_err(|x| x.to_string())?;
+    quena_platform::open(&dir.display().to_string()).map_err(e)
 }
 
 /// A packet capture again, with a TLS key log; `replace`: the sessions of its first import,
@@ -1128,6 +1149,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         socketio_polling,
         llm_call,
         collections_list,
+        import_dropped,
+        autosave_now,
+        autosave_reveal,
         collection_read,
         collection_save,
         collection_rename,
