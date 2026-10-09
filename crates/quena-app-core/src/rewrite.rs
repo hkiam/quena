@@ -26,6 +26,20 @@ pub enum Phase {
     Request,
     #[default]
     Response,
+    /// Messages of a WebSocket (text messages; JSON also inside Socket.IO packets).
+    WebSocket,
+}
+
+/// Which WebSocket messages a rule changes.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum WsDirection {
+    #[default]
+    Both,
+    /// Client → server.
+    Up,
+    /// Server → client.
+    Down,
 }
 
 /// One change. JSON paths are RFC 9535 JSONPath (`$.items[*].price`, `$..id`).
@@ -72,6 +86,9 @@ pub struct RewriteRule {
     #[serde(rename = "match")]
     pub match_: String,
     pub phase: Phase,
+    /// With [`Phase::WebSocket`]: which direction.
+    #[serde(default)]
+    pub direction: WsDirection,
     /// Response status filter: `200`, `4xx`, `500-599`, several separated by `,` (empty: any).
     pub status: String,
     /// Content types (substrings, `;` separated); empty: any text type (JSON, XML, text …).
@@ -91,6 +108,7 @@ impl Default for RewriteRule {
             enabled: true,
             match_: "*".into(),
             phase: Phase::Response,
+            direction: WsDirection::Both,
             status: String::new(),
             content_type: String::new(),
             ops: vec![],
@@ -211,6 +229,7 @@ fn compile(r: &RewriteRule) -> Result<Compiled> {
     let mut ops = Vec::new();
     for op in &r.ops {
         ops.push(match op {
+            Op::SetHeader { .. } | Op::RemoveHeader { .. } | Op::SetStatus { .. } if r.phase == Phase::WebSocket => bail!("WebSocket messages have no headers or status; use JSON or regex changes"),
             Op::JsonSet { path: p, value } => COp::JsonSet(path(p)?, plain_members(p), value.clone()),
             Op::JsonRemove { path: p } => COp::JsonRemove(path(p)?),
             Op::JsonAppend { path: p, value } => COp::JsonAppend(path(p)?, value.clone()),
@@ -427,6 +446,35 @@ impl Rewriter {
             .filter(|(_, x)| !x.body_ops || x.head_ops || x.type_ok(ct))
             .map(|(i, _)| i)
             .collect()
+    }
+
+    /// Does a WebSocket rule apply to the connection upgraded by `req`?
+    pub fn wants_ws(&self, req: &RequestHead) -> bool {
+        self.active.load(Ordering::Relaxed) && self.compiled.read().iter().any(|x| x.rule.phase == Phase::WebSocket && x.matcher.matches_head(req))
+    }
+
+    /// A text message of the WebSocket upgraded by `req`, changed by the WebSocket rules for
+    /// direction `dir` (`None`: unchanged). JSON in a Socket.IO packet (`42["event",{…}]`) is
+    /// changed in place, keeping the packet prefix.
+    pub fn ws_message(&self, req: &RequestHead, dir: u8, text: &str) -> Option<String> {
+        if !self.active.load(Ordering::Relaxed) {
+            return None;
+        }
+        let c = self.compiled.read().clone();
+        let want = if dir == quena_model::wslog::DIR_CLIENT { WsDirection::Up } else { WsDirection::Down };
+        let rules: Vec<&Compiled> = c.iter().filter(|x| x.rule.phase == Phase::WebSocket && (x.rule.direction == WsDirection::Both || x.rule.direction == want) && x.matcher.matches_head(req)).collect();
+        if rules.is_empty() {
+            return None;
+        }
+        // Socket.IO / Engine.IO: digits, an optional namespace and ack id before the JSON.
+        let split = ws_json_start(text);
+        let (prefix, json) = text.split_at(split);
+        let (out, _) = transform(json, &rules);
+        let out = out?;
+        for x in &rules {
+            x.hits.fetch_add(1, Ordering::Relaxed);
+        }
+        Some(format!("{prefix}{out}"))
     }
 
     /// Any rule active (shown in the status bar: they change real traffic).
@@ -776,6 +824,19 @@ fn transform(text: &str, rules: &[&Compiled]) -> (Option<String>, Vec<String>) {
     (changed.then_some(cur), notes)
 }
 
+/// Where the JSON of a WebSocket text message starts: 0, or after a Socket.IO packet
+/// prefix (`42`, `42/chat,`, `4317`, `451-`).
+fn ws_json_start(text: &str) -> usize {
+    let b = text.as_bytes();
+    if b.first().is_none_or(|c| !c.is_ascii_digit()) {
+        return 0;
+    }
+    match text.find(['[', '{']) {
+        Some(i) if text[..i].bytes().all(|c| c.is_ascii_digit() || c == b'-' || c == b'/' || c == b',' || c.is_ascii_alphanumeric() || c == b'_') => i,
+        _ => 0,
+    }
+}
+
 fn to_text(v: &Value, pretty: bool) -> String {
     if pretty { serde_json::to_string_pretty(v) } else { serde_json::to_string(v) }.unwrap_or_default()
 }
@@ -984,6 +1045,30 @@ mod tests {
     }
 
     #[test]
+    fn websocket_messages_and_socketio_packets() {
+        assert_eq!(ws_json_start(r#"{"a":1}"#), 0);
+        assert_eq!(ws_json_start(r#"42["chat",{"a":1}]"#), 2);
+        assert_eq!(ws_json_start(r#"42/admin,7["x"]"#), 10);
+        assert_eq!(ws_json_start("2probe"), 0);
+        let rule = RewriteRule {
+            phase: Phase::WebSocket,
+            direction: WsDirection::Down,
+            ops: vec![Op::JsonSet { path: "$[1].a".into(), value: serde_json::json!(2) }],
+            ..Default::default()
+        };
+        let rw = Rewriter::load(&tempfile::tempdir().unwrap().keep());
+        rw.set(RewriteState { enabled: true, rules: vec![rule], ..Default::default() }).unwrap();
+        let req = RequestHead { method: "GET".into(), url: "wss://x.example/socket.io/?EIO=4".into(), ..Default::default() };
+        assert!(rw.wants_ws(&req));
+        assert_eq!(rw.ws_message(&req, quena_model::wslog::DIR_SERVER, r#"42["chat",{"a":1}]"#).as_deref(), Some(r#"42["chat",{"a":2}]"#));
+        assert_eq!(rw.ws_message(&req, quena_model::wslog::DIR_CLIENT, r#"42["chat",{"a":1}]"#), None, "other direction");
+        assert_eq!(rw.ws_message(&req, quena_model::wslog::DIR_SERVER, "plain text"), None);
+        // Header and status changes make no sense for messages.
+        let bad = RewriteRule { phase: Phase::WebSocket, ops: vec![Op::SetStatus { code: 500 }], ..Default::default() };
+        assert!(compile(&bad).is_err());
+    }
+
+    #[test]
     fn content_types() {
         let json = compile(&rule(vec![Op::JsonAppendAll { value: None }])).unwrap();
         assert!(json.type_ok(Some("application/json; charset=utf-8")) && json.type_ok(Some("application/problem+json")));
@@ -1073,6 +1158,9 @@ impl crate::AppCore {
     pub fn rewrite_preview(&self, rule: RewriteRule, id: SessionId) -> Result<RewritePreview> {
         let cap = self.capture();
         let d = cap.detail(id).ok_or_else(|| anyhow!("session #{id} not found"))?;
+        if rule.phase == Phase::WebSocket {
+            return self.rewrite_preview_ws(rule, id, &d);
+        }
         let (req_body, resp_body) = cap.bodies_of(id).ok_or_else(|| anyhow!("session #{id} not found"))?;
         let max_kb = self.rewriter()?.state().max_body_kb;
         let part = rule.phase;
@@ -1080,13 +1168,13 @@ impl crate::AppCore {
         let matcher = compile(&rule)?;
         let matched = matcher.matcher.matches_head(&d.request) && (part == Phase::Request || d.response.as_ref().is_some_and(|r| matcher.status_ok(r.status)));
         let (headers_before, body, status_before) = match part {
-            Phase::Request => (d.request.headers.clone(), req_body, None),
+            Phase::Request | Phase::WebSocket => (d.request.headers.clone(), req_body, None),
             Phase::Response => (d.response.as_ref().map(|r| r.headers.clone()).unwrap_or_default(), resp_body, d.response.as_ref().map(|r| r.status)),
         };
         let before_bytes = quena_body::text::decoded_prefix(&body, &crate::dto::spec_of(&headers_before), PREVIEW_TEXT + 1);
         let before = body_text(&before_bytes, &headers_before);
         let (headers_after, status_after, after) = match part {
-            Phase::Request => (off.request.headers.clone(), None, off.request_body.as_deref().map(|b| body_text(b, &off.request.headers))),
+            Phase::Request | Phase::WebSocket => (off.request.headers.clone(), None, off.request_body.as_deref().map(|b| body_text(b, &off.request.headers))),
             Phase::Response => {
                 let h = off.response.as_ref().map(|r| r.headers.clone()).unwrap_or_default();
                 let a = off.response_body.as_deref().map(|b| body_text(b, &h));
@@ -1104,6 +1192,44 @@ impl crate::AppCore {
             headers_after,
             after: after.unwrap_or_else(|| before.clone()),
             before,
+        })
+    }
+
+    /// A WebSocket rule tried on the first text message of session `id` it applies to.
+    fn rewrite_preview_ws(&self, rule: RewriteRule, id: SessionId, d: &quena_model::SessionDetail) -> Result<RewritePreview> {
+        let c = compile(&rule)?;
+        let matched = c.matcher.matches_head(&d.request);
+        let frames = self.ws_frames(id, 0, 2000).frames;
+        let dir_ok = |dir: u8| match rule.direction {
+            WsDirection::Both => true,
+            WsDirection::Up => dir == quena_model::wslog::DIR_CLIENT,
+            WsDirection::Down => dir == quena_model::wslog::DIR_SERVER,
+        };
+        let first = frames.iter().find(|f| f.opcode == 1 && dir_ok(f.dir)).and_then(|f| f.text.clone());
+        let mut notes = Vec::new();
+        let (before, after) = match &first {
+            Some(text) => {
+                let i = ws_json_start(text);
+                let (out, n) = transform(&text[i..], &[&c]);
+                notes = n;
+                (text.clone(), out.map(|o| format!("{}{o}", &text[..i])).unwrap_or_else(|| text.clone()))
+            }
+            None => {
+                notes.push(if d.summary.kind == quena_model::SessionKind::WebSocket { "no text message in this direction".into() } else { "not a WebSocket session".into() });
+                (String::new(), String::new())
+            }
+        };
+        Ok(RewritePreview {
+            matched,
+            changed: before != after,
+            part: Phase::WebSocket,
+            notes,
+            status_before: None,
+            status_after: None,
+            headers_before: Headers::default(),
+            headers_after: Headers::default(),
+            before,
+            after,
         })
     }
 

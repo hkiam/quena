@@ -133,7 +133,10 @@ where
     live.finish();
 }
 
-pub fn websocket(shared: &Arc<Shared>, live: &Arc<LiveSession>, mut resp: Response<Incoming>, client: hyper::upgrade::OnUpgrade) -> Response<ProxyBody> {
+pub fn websocket(shared: &Arc<Shared>, live: &Arc<LiveSession>, view: &crate::hooks::SessionView, mut resp: Response<Incoming>, client: hyper::upgrade::OnUpgrade) -> Response<ProxyBody> {
+    // Rules that change messages ask once; without them frames pass untouched.
+    let hooks = shared.hooks();
+    let editor = hooks.wants_ws(view).then(|| crate::wsframe::Editor { hooks: hooks.clone(), view: view.clone() });
     let server = hyper::upgrade::on(&mut resp);
     live.update(|d| {
         d.summary.kind = SessionKind::WebSocket;
@@ -176,8 +179,8 @@ pub fn websocket(shared: &Arc<Shared>, live: &Arc<LiveSession>, mut resp: Respon
                 // The pump futures borrow the log; scope them so they are gone before `tx` drops.
                 let (up, down, note) = {
                     let log = crate::wsframe::FrameLog { tx: &tx, queued: &queued, budget: WS_LOG_BUDGET, last: &last };
-                    let up = crate::wsframe::pump(cr, sw, crate::wsframe::DIR_CLIENT, &log);
-                    let down = crate::wsframe::pump(sr, cw, crate::wsframe::DIR_SERVER, &log);
+                    let up = crate::wsframe::pump(cr, sw, crate::wsframe::DIR_CLIENT, &log, editor.as_ref());
+                    let down = crate::wsframe::pump(sr, cw, crate::wsframe::DIR_SERVER, &log, editor.as_ref());
                     tokio::pin!(up, down);
                     // When one direction ends, the other gets a short grace period; no traffic at
                     // all for IDLE_TIMEOUT ends both.

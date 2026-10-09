@@ -33,7 +33,30 @@ function onBoot() {}                    // once, when the script loads
 function onBeforeRequest(session) {}    // before a request is forwarded
 function onBeforeResponse(session) {}   // before a response returns to the client
 function onSessionComplete(summary) {}  // after a session finished (id, method, url, status)
+function onWebSocketMessage(msg) {}     // each WebSocket message on its way
 ```
+
+### WebSocket messages
+
+`onWebSocketMessage(msg)` sees every whole WebSocket message of up to 1 MB in both
+directions and can change or drop it:
+
+```js
+function onWebSocketMessage(msg) {
+  // msg.id, msg.url (of the upgrade request), msg.direction ("up": client → server,
+  // "down": server → client), msg.isBinary, msg.size, msg.text (text messages)
+  if (msg.direction === 'down' && msg.text && msg.text.indexOf('"price"') >= 0) {
+    msg.text = msg.text.replace(/"price":\s*\d+/, '"price": 0');
+  }
+  if (msg.direction === 'up' && msg.text === '2') msg.drop();   // swallow Engine.IO pings
+}
+```
+
+Assigning `msg.text` sends that text instead; `msg.drop()` does not send the message at all.
+Binary messages can be dropped but not changed. Fragmented messages and messages compressed
+with `permessage-deflate` pass unchanged. The WebSocket view marks changed messages with ✎
+and dropped ones with ✕ (showing what arrived). WebSockets are only routed through the
+script while it defines this hook.
 
 ## The session object
 
@@ -98,7 +121,8 @@ Scripts are sandboxed (QuickJS) and cannot slow the proxy down:
 
 - no file-system, network or environment access — only `console` and the session;
 - **headers and metadata only**: bodies never enter the script and keep streaming, so
-  enabling a script never turns a 5 GB download into a 5 GB buffer;
+  enabling a script never turns a 5 GB download into a 5 GB buffer. The exception are
+  WebSocket messages up to 1 MB for `onWebSocketMessage`;
 - a time budget of 250 ms per hook (2 s for loading and `onBoot`) and 64 MB of memory; an
   endless loop is interrupted;
 - a request waits at most **2 s** for its hook. After that it passes through unchanged and

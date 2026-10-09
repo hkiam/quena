@@ -113,7 +113,7 @@ function RewriteRules({ version }: { version: number }) {
                   {r.group && <span className="rw-group">{r.group}</span>}
                 </td>
                 <td className="mono">{r.match}</td>
-                <td>{r.phase === "request" ? t("Request") : t("Response")}</td>
+                <td>{r.phase === "request" ? t("Request") : r.phase === "webSocket" ? "WebSocket" : t("Response")}</td>
                 <td className="mono">{r.ops.map(describeOp).join(", ")}</td>
                 <td>{r.hits || ""}</td>
               </tr>

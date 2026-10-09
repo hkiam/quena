@@ -11,7 +11,7 @@ const MATCH_TEMPLATES = ["*", "exact:https://example.com/path", "prefix:https://
 const plain = { spellCheck: false, autoCorrect: "off", autoCapitalize: "off" } as const;
 
 export function newRule(): RwRule {
-  return { id: 0, enabled: true, match: "*", phase: "response", status: "", contentType: "", ops: [], comment: "", group: "", hits: 0 };
+  return { id: 0, enabled: true, match: "*", phase: "response", direction: "both", status: "", contentType: "", ops: [], comment: "", group: "", hits: 0 };
 }
 
 /** The focused session in the list, for the preview. */
@@ -159,18 +159,29 @@ export function RewriteEditor({ rule: initial }: { rule?: RwRule }) {
         <select value={rule.phase} onChange={(e) => up({ phase: e.target.value as RwRule["phase"] })}>
           <option value="response">{t("the response")}</option>
           <option value="request">{t("the request")}</option>
+          <option value="webSocket">{t("WebSocket messages")}</option>
         </select>
+        {rule.phase === "webSocket" && (
+          <select value={rule.direction ?? "both"} onChange={(e) => up({ direction: e.target.value as RwRule["direction"] })}>
+            <option value="both">{t("both directions")}</option>
+            <option value="up">↑ {t("client → server")}</option>
+            <option value="down">↓ {t("server → client")}</option>
+          </select>
+        )}
       </div>
+      {rule.phase === "webSocket" && <p className="muted small">{t("Text messages of WebSockets the pattern matches (by the upgrade request). JSON is also changed inside Socket.IO packets (42[\"event\",{…}]).")}</p>}
       {rule.phase === "response" && (
         <div className="f-row">
           <span>{t("Only status")}</span>
           <input {...plain} value={rule.status} placeholder={t("any; e.g. 200, 4xx, 500-599")} onChange={(e) => up({ status: e.target.value })} />
         </div>
       )}
-      <div className="f-row">
-        <span>{t("Only content types")}</span>
-        <input {...plain} value={rule.contentType} placeholder={t("any text; e.g. json; xml")} onChange={(e) => up({ contentType: e.target.value })} />
-      </div>
+      {rule.phase !== "webSocket" && (
+        <div className="f-row">
+          <span>{t("Only content types")}</span>
+          <input {...plain} value={rule.contentType} placeholder={t("any text; e.g. json; xml")} onChange={(e) => up({ contentType: e.target.value })} />
+        </div>
+      )}
       <fieldset className="f-section">
         <legend>{t("Changes (in this order)")}</legend>
         {ops.map((d, i) => (

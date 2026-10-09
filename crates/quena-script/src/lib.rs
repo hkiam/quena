@@ -14,7 +14,7 @@
 mod engine;
 pub mod pac;
 
-pub use engine::ScriptEngine;
+pub use engine::{ScriptEngine, WsDecision, WsMessage};
 pub use pac::{PacEngine, ProxyEntry};
 
 use serde::{Deserialize, Serialize};

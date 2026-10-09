@@ -557,7 +557,9 @@ export interface RwRule {
   id: number;
   enabled: boolean;
   match: string;
-  phase: "request" | "response";
+  phase: "request" | "response" | "webSocket";
+  /** With phase webSocket: which messages. */
+  direction?: "both" | "up" | "down";
   status: string;
   contentType: string;
   ops: RwOp[];
@@ -920,6 +922,21 @@ export interface WsFrame {
   text: string | null;
   preview: string | null;
   offset: number;
+  /** Changed on the way by a rule or the rules script. */
+  edited?: boolean;
+  /** Not sent (dropped by the rules script). */
+  dropped?: boolean;
+  /** Socket.IO packet (Socket.IO sessions). */
+  sio?: SioPacket;
+}
+export interface SioPacket {
+  eio: string;
+  sio?: string;
+  namespace?: string;
+  ack?: number;
+  event?: string;
+  data?: string;
+  attachments?: number;
 }
 export interface WsMessages {
   total: number;
@@ -1173,6 +1190,7 @@ export const api = {
     invoke<number>("save_body_range", { id, part, offset, len, path }),
   grpc: (id: SessionId, part: Part, typeName?: string) => invoke<Grpc | null>("grpc", { id, part, typeName: typeName ?? null }),
   llmCall: (id: SessionId) => invoke<LlmCall | null>("llm_call", { id }),
+  socketioPolling: (id: SessionId, part: Part) => invoke<SioPacket[] | null>("socketio_polling", { id, part }),
   msgpack: (id: SessionId, part: Part) => invoke<Msgpack | null>("msgpack", { id, part }),
   protobufStatus: () => invoke<SchemaStatus>("protobuf_status"),
   grpcReflect: (id: SessionId) => invoke<{ service: string; files: string[] }>("grpc_reflect", { id }),

@@ -389,4 +389,9 @@ export const panels: Record<string, string> = {
   "(cost estimated from list prices)": "(Kosten nach Listenpreisen geschätzt)",
   "{n} call": "{n} Aufruf",
   "{n} calls": "{n} Aufrufe",
+  "WebSocket messages": "WebSocket-Nachrichten",
+  "both directions": "beide Richtungen",
+  "client → server": "Client → Server",
+  "server → client": "Server → Client",
+  "Text messages of WebSockets the pattern matches (by the upgrade request). JSON is also changed inside Socket.IO packets (42[\"event\",{…}]).": "Textnachrichten der WebSockets, auf die das Muster passt (nach dem Upgrade-Request). JSON wird auch in Socket.IO-Paketen geändert (42[\"event\",{…}]).",
 };

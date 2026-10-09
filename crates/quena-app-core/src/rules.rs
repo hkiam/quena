@@ -1821,6 +1821,47 @@ impl Interceptor for Rules {
         })
     }
 
+    fn wants_ws(&self, s: &SessionView) -> bool {
+        (self.script_active() && self.script.has_ws_hook()) || self.rewrite.wants_ws(&s.live.detail().request)
+    }
+
+    fn on_ws_message(&self, s: SessionView, dir: u8, opcode: u8, payload: Vec<u8>) -> BoxFuture<quena_proxy::WsAction> {
+        use quena_proxy::WsAction;
+        let this = self.core().and_then(|c| c.rules.clone());
+        Box::pin(async move {
+            let Some(this) = this else { return WsAction::Forward };
+            let req = s.live.detail().request;
+            // 1. Rewrite rules (text messages), 2. the script's onWebSocketMessage.
+            let mut cur: Option<Vec<u8>> = None;
+            if opcode == 0x1
+                && let Ok(t) = std::str::from_utf8(&payload)
+                && let Some(n) = this.rewrite.ws_message(&req, dir, t)
+            {
+                cur = Some(n.into_bytes());
+            }
+            if this.script_active() && this.script.has_ws_hook() {
+                let text = (opcode == 0x1).then(|| String::from_utf8_lossy(cur.as_deref().unwrap_or(&payload)).into_owned());
+                let msg = quena_script::WsMessage {
+                    id: s.id,
+                    url: req.url.clone(),
+                    direction: if dir == quena_model::wslog::DIR_CLIENT { "up" } else { "down" }.into(),
+                    is_binary: opcode == 0x2,
+                    text,
+                    size: payload.len(),
+                };
+                match this.script.on_ws_message(&msg).await {
+                    quena_script::WsDecision::Drop => return WsAction::Drop,
+                    quena_script::WsDecision::Replace(t) => cur = Some(t.into_bytes()),
+                    quena_script::WsDecision::Forward => {}
+                }
+            }
+            match cur {
+                Some(p) if p != payload => WsAction::Replace(p),
+                _ => WsAction::Forward,
+            }
+        })
+    }
+
     fn on_complete(&self, s: &SessionView) {
         self.break_response.lock().remove(&s.id);
         // Calls to LLM APIs get their model, tokens and cost (parsed off the proxy's threads).

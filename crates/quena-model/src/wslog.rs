@@ -11,6 +11,11 @@ pub const DIR_CLIENT: u8 = 0;
 /// Direction of a frame: server → client.
 pub const DIR_SERVER: u8 = 1;
 
+/// Bit in a record's `rsv` byte (beyond RSV1-3): Quena changed the message on the way.
+pub const EDITED: u8 = 0x80;
+/// With [`EDITED`]: the message was not sent at all.
+pub const DROPPED: u8 = 0x40;
+
 /// Length of a record's head (before the payload).
 pub const RECORD_HEAD: usize = 16;
 

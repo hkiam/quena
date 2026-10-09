@@ -33,6 +33,7 @@ enum Cmd {
     Request { input: String, reply: oneshot::Sender<Result<String, String>> },
     Response { input: String, reply: oneshot::Sender<Result<String, String>> },
     Complete { input: String },
+    Ws { input: String, reply: oneshot::Sender<Result<String, String>> },
     Menu { index: usize, input: String, reply: oneshot::Sender<Result<String, String>> },
     Shutdown,
 }
@@ -44,8 +45,31 @@ pub struct LoadInfo {
     pub has_request: bool,
     pub has_response: bool,
     pub has_complete: bool,
+    pub has_ws: bool,
     pub menus: Vec<String>,
     pub column: Option<String>,
+}
+
+/// A WebSocket message for `onWebSocketMessage`.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WsMessage {
+    pub id: u64,
+    pub url: String,
+    /// `up` (client → server) or `down`.
+    pub direction: String,
+    pub is_binary: bool,
+    /// The text of a text message (binary messages have none).
+    pub text: Option<String>,
+    pub size: usize,
+}
+
+/// What the script decided about a WebSocket message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsDecision {
+    Forward,
+    Replace(String),
+    Drop,
 }
 
 /// A running rules script. Cheap to clone (shares the worker).
@@ -60,6 +84,7 @@ pub struct ScriptEngine {
     has_request: Arc<AtomicBool>,
     has_response: Arc<AtomicBool>,
     has_complete: Arc<AtomicBool>,
+    has_ws: Arc<AtomicBool>,
     /// False once the worker thread has exited/panicked. Prevents hooks from
     /// dispatching to a dead worker (whose reply would never arrive).
     alive: Arc<AtomicBool>,
@@ -92,6 +117,7 @@ impl ScriptEngine {
             has_request: Arc::new(AtomicBool::new(false)),
             has_response: Arc::new(AtomicBool::new(false)),
             has_complete: Arc::new(AtomicBool::new(false)),
+            has_ws: Arc::new(AtomicBool::new(false)),
             alive,
             menus: Arc::new(Mutex::new(Vec::new())),
             column: Arc::new(Mutex::new(None)),
@@ -133,6 +159,10 @@ impl ScriptEngine {
     pub fn has_complete_hook(&self) -> bool {
         self.has_complete.load(Ordering::Relaxed)
     }
+    /// Whether the current script defines `onWebSocketMessage`.
+    pub fn has_ws_hook(&self) -> bool {
+        self.has_ws.load(Ordering::Relaxed)
+    }
 
     /// Whether a script is currently loaded and error-free (and the worker is alive).
     pub fn is_loaded(&self) -> bool {
@@ -166,6 +196,7 @@ impl ScriptEngine {
                 self.has_request.store(info.has_request, Ordering::Relaxed);
                 self.has_response.store(info.has_response, Ordering::Relaxed);
                 self.has_complete.store(info.has_complete, Ordering::Relaxed);
+                self.has_ws.store(info.has_ws, Ordering::Relaxed);
                 *self.menus.lock() = info.menus.clone();
                 *self.column.lock() = info.column.clone();
                 *self.last_error.lock() = None;
@@ -175,6 +206,7 @@ impl ScriptEngine {
                 self.has_request.store(false, Ordering::Relaxed);
                 self.has_response.store(false, Ordering::Relaxed);
                 self.has_complete.store(false, Ordering::Relaxed);
+                self.has_ws.store(false, Ordering::Relaxed);
                 self.menus.lock().clear();
                 *self.column.lock() = None;
                 *self.last_error.lock() = Some(e.clone());
@@ -221,6 +253,34 @@ impl ScriptEngine {
                 ResponseDecision::default()
             }
             _ => ResponseDecision::default(),
+        }
+    }
+
+    /// Run `onWebSocketMessage` for one message (`None` for `text`: binary). Unchanged when
+    /// the script has no such hook, is busy or does not answer in time.
+    pub async fn on_ws_message(&self, msg: &WsMessage) -> WsDecision {
+        if !self.is_loaded() || !self.has_ws_hook() {
+            return WsDecision::Forward;
+        }
+        let input = serde_json::to_string(msg).unwrap_or_default();
+        let (reply, rx) = oneshot::channel();
+        if self.tx.try_send(Cmd::Ws { input, reply }).is_err() {
+            return WsDecision::Forward;
+        }
+        match tokio::time::timeout(HOOK_WAIT, rx).await {
+            Ok(Ok(Ok(json))) => {
+                let v: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+                match v.get("action").and_then(|a| a.as_str()) {
+                    Some("drop") => WsDecision::Drop,
+                    Some("replace") => v.get("text").and_then(|t| t.as_str()).map(|t| WsDecision::Replace(t.to_string())).unwrap_or(WsDecision::Forward),
+                    _ => WsDecision::Forward,
+                }
+            }
+            Err(_) => {
+                tracing::warn!(target: "quena::script", "onWebSocketMessage did not answer within {} s; message passed through unchanged", HOOK_WAIT.as_secs());
+                WsDecision::Forward
+            }
+            _ => WsDecision::Forward,
         }
     }
 
@@ -299,7 +359,11 @@ fn worker(rx: Receiver<Cmd>, logs: Arc<Mutex<VecDeque<LogLine>>>, alive: Arc<Ato
                 }
             }
             // The caller gave up waiting (HOOK_WAIT): don't run a stale hook.
-            Cmd::Request { reply, .. } | Cmd::Response { reply, .. } if reply.is_closed() => {}
+            Cmd::Request { reply, .. } | Cmd::Response { reply, .. } | Cmd::Ws { reply, .. } if reply.is_closed() => {}
+            Cmd::Ws { input, reply } => {
+                let out = dispatch(&ctx, &deadline, base, "__dispatchWs", &input);
+                let _ = reply.send(out);
+            }
             Cmd::Request { input, reply } => {
                 let out = dispatch(&ctx, &deadline, base, "__dispatchRequest", &input);
                 let _ = reply.send(out);
@@ -341,6 +405,7 @@ fn probe_load(ctx: &rquickjs::Context) -> LoadInfo {
             has_request: is_fn("onBeforeRequest"),
             has_response: is_fn("onBeforeResponse"),
             has_complete: is_fn("onSessionComplete"),
+            has_ws: is_fn("onWebSocketMessage"),
             menus,
             column,
         }
@@ -543,6 +608,36 @@ mod tests {
 
     fn rt() -> tokio::runtime::Runtime {
         tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap()
+    }
+
+    #[test]
+    fn websocket_messages() {
+        rt().block_on(async {
+            let e = ScriptEngine::new();
+            let msg = |dir: &str, text: Option<&str>| WsMessage { id: 1, url: "wss://x/ws".into(), direction: dir.into(), is_binary: text.is_none(), text: text.map(str::to_string), size: 3 };
+            // No hook: nothing happens.
+            e.load("function onBeforeRequest(s) {}".into()).await.unwrap();
+            assert!(!e.has_ws_hook());
+            assert_eq!(e.on_ws_message(&msg("up", Some("abc"))).await, WsDecision::Forward);
+            e.load(
+                r#"function onWebSocketMessage(m) {
+                    if (m.isBinary) { if (m.size > 2) m.drop(); return; }
+                    if (m.direction === 'down') m.text = m.text.toUpperCase();
+                    if (m.text === 'bye') m.drop();
+                }"#
+                .into(),
+            )
+            .await
+            .unwrap();
+            assert!(e.has_ws_hook());
+            assert_eq!(e.on_ws_message(&msg("down", Some("abc"))).await, WsDecision::Replace("ABC".into()));
+            assert_eq!(e.on_ws_message(&msg("up", Some("abc"))).await, WsDecision::Forward);
+            assert_eq!(e.on_ws_message(&msg("up", Some("bye"))).await, WsDecision::Drop);
+            assert_eq!(e.on_ws_message(&msg("up", None)).await, WsDecision::Drop);
+            // A failing hook passes the message unchanged.
+            e.load("function onWebSocketMessage(m) { throw new Error('x'); }".into()).await.unwrap();
+            assert_eq!(e.on_ws_message(&msg("up", Some("abc"))).await, WsDecision::Forward);
+        });
     }
 
     #[test]

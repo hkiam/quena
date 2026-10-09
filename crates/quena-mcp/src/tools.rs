@@ -591,7 +591,8 @@ static TOOLS: &[Tool] = &[
 fn rewrite_rule_schema() -> Value {
     obj(json!({
         "match": { "type": "string", "description": "Mock Rules pattern on URL, method, headers: `*`, `exact:URL`, `prefix:URL`, `regex:…`, `METHOD:POST /x`, `HEADER:Name=value`, or a URL substring" },
-        "phase": { "type": "string", "enum": ["request", "response"], "description": "default response" },
+        "phase": { "type": "string", "enum": ["request", "response", "webSocket"], "description": "default response; webSocket changes text messages of matching WebSockets (JSON also inside Socket.IO packets)" },
+        "direction": { "type": "string", "enum": ["both", "up", "down"], "description": "webSocket phase: client→server (up), server→client (down) or both (default)" },
         "status": { "type": "string", "description": "Response status filter: `200`, `2xx`, `500-599`, comma separated (empty: any)" },
         "content_type": { "type": "string", "description": "Content type substrings, `;` separated (empty: any text type)" },
         "comment": { "type": "string" },
@@ -1096,6 +1097,7 @@ struct RuleArgs {
     #[serde(rename = "match")]
     match_: Option<String>,
     phase: Option<Phase>,
+    direction: Option<quena_app_core::rewrite::WsDirection>,
     status: Option<String>,
     #[serde(alias = "contentType")]
     content_type: Option<String>,
@@ -1111,6 +1113,9 @@ impl RuleArgs {
         }
         if let Some(v) = self.phase {
             r.phase = v;
+        }
+        if let Some(v) = self.direction {
+            r.direction = v;
         }
         if let Some(v) = self.status {
             r.status = v;

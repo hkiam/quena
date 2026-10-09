@@ -576,7 +576,7 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
     if resp.status() == StatusCode::SWITCHING_PROTOCOLS {
         if let Some(cu) = client_upgrade {
             guard.disarm(); // the WebSocket pump finishes the session
-            return Ok(crate::tunnel::websocket(&shared, &live, resp, cu));
+            return Ok(crate::tunnel::websocket(&shared, &live, &view, resp, cu));
         }
     }
     Ok(deliver_response(&shared, &live, &view, &head, resp, &mut guard, reverse.as_ref()).await)

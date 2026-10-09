@@ -126,6 +126,18 @@
     return JSON.stringify(out);
   };
 
+  // One WebSocket message: msg.text can be changed (text messages), msg.drop() keeps it
+  // from being sent.
+  g.__dispatchWs = function (json) {
+    var raw = JSON.parse(json);
+    var m = { id: raw.id, url: raw.url, direction: raw.direction, isBinary: raw.isBinary, size: raw.size, text: raw.text == null ? null : raw.text, _drop: false };
+    m.drop = function () { m._drop = true; };
+    if (typeof g.onWebSocketMessage === 'function') g.onWebSocketMessage(m);
+    if (m._drop) return '{"action":"drop"}';
+    if (!raw.isBinary && m.text !== raw.text) return JSON.stringify({ action: 'replace', text: m.text == null ? '' : String(m.text) });
+    return '{"action":"forward"}';
+  };
+
   g.__dispatchComplete = function (json) {
     if (typeof g.onSessionComplete === 'function') g.onSessionComplete(JSON.parse(json));
   };

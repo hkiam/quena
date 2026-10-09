@@ -1,6 +1,6 @@
 // WebSocket inspector (M15): frame log with direction, opcode, size, payload.
 import { useEffect, useRef, useState } from "react";
-import { api, type Detail, type WsFrame } from "../api";
+import { api, type Detail, type SioPacket, type WsFrame } from "../api";
 import { fmtBytes, fmtInt, fmtTime } from "../lib/format";
 import { CodeView } from "./CodeView";
 import { useStore } from "../store";
@@ -9,6 +9,18 @@ import { openMenu, withSelection } from "../components/contextMenus";
 import { copyItem } from "./inspectMenus";
 
 const PAGE = 500;
+
+/** What a Socket.IO packet is, in a few words: the event, else the packet type. */
+export function sioLabel(p: SioPacket): string {
+  if (p.event) return p.event;
+  if (p.sio) return p.ack != null ? `${p.sio} #${p.ack}` : p.sio;
+  return p.eio;
+}
+
+/** Engine.IO or WebSocket keep-alive. */
+export function isHeartbeat(f: WsFrame): boolean {
+  return f.opcode === 9 || f.opcode === 10 || f.sio?.eio === "ping" || f.sio?.eio === "pong";
+}
 
 function looksJson(t: string) {
   const s = t.trim();
@@ -23,6 +35,8 @@ export function WebSocketView({ detail }: { detail: Detail }) {
   const [error, setError] = useState<string | null>(null);
   const [sel, setSel] = useState<number | null>(null);
   const [filter, setFilter] = useState<"all" | "text" | "in" | "out">("all");
+  const [hideBeats, setHideBeats] = useState(false);
+  const [search, setSearch] = useState("");
   const version = useStore((s) => s.listVersion);
   const stick = useRef(true);
   const scroller = useRef<HTMLDivElement>(null);
@@ -62,7 +76,11 @@ export function WebSocketView({ detail }: { detail: Detail }) {
     if (stick.current && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [frames]);
 
+  const sio = frames.some((f) => f.sio);
+  const needle = search.trim().toLowerCase();
   const shown = frames.filter((f) => {
+    if (hideBeats && isHeartbeat(f)) return false;
+    if (needle && !(f.sio ? sioLabel(f.sio) : (f.text ?? "")).toLowerCase().includes(needle)) return false;
     if (filter === "text") return f.opcode === 1;
     if (filter === "in") return f.dir === 1;
     if (filter === "out") return f.dir === 0;
@@ -80,6 +98,18 @@ export function WebSocketView({ detail }: { detail: Detail }) {
           {truncated && ` · ${t("truncated (recording limit reached)")}`}
           {error && <span className="err"> · {error}</span>}
         </span>
+        <label className="f-check small">
+          <input type="checkbox" checked={hideBeats} onChange={(e) => setHideBeats(e.target.checked)} /> {t("Hide ping/pong")}
+        </label>
+        <input
+          className="ws-search"
+          spellCheck={false}
+          autoCorrect="off"
+          autoCapitalize="off"
+          placeholder={sio ? t("Event…") : t("Text…")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
         <select value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
           <option value="all">{t("All frames")}</option>
           <option value="text">{t("Text messages")}</option>
@@ -107,10 +137,21 @@ export function WebSocketView({ detail }: { detail: Detail }) {
               }}
             >
               <span className={`ws-dir ${f.dir === 0 ? "out" : "in"}`}>{f.dir === 0 ? "▲" : "▼"}</span>
-              <span className="ws-op">{f.opcodeName}</span>
+              <span className="ws-op" title={f.sio ? `${f.sio.eio}${f.sio.sio ? ` / ${f.sio.sio}` : ""}` : undefined}>
+                {f.sio ? sioLabel(f.sio) : f.opcodeName}
+              </span>
+              {f.dropped ? (
+                <span className="ws-mark err" title={t("Not sent: dropped by the rules script")}>
+                  ✕
+                </span>
+              ) : f.edited ? (
+                <span className="ws-mark" title={t("Changed on the way by a rule or the rules script")}>
+                  ✎
+                </span>
+              ) : null}
               <span className="ws-time">{fmtTime(f.time)}</span>
               <span className="ws-len">{fmtBytes(f.len)}</span>
-              <span className="ws-text">{(f.text ?? f.preview ?? "").slice(0, 500)}</span>
+              <span className="ws-text">{(f.sio?.event ? (f.sio.data ?? "").replace(/\s+/g, " ") : (f.text ?? f.preview ?? "")).slice(0, 500)}</span>
             </div>
           ))}
           {shown.length === 0 && !error && <div className="placeholder">{total > 0 ? t("No frames match the filter.") : t("No frames yet.")}</div>}
@@ -120,8 +161,26 @@ export function WebSocketView({ detail }: { detail: Detail }) {
             <div className="ws-detail-head">
               {selFrame.dir === 0 ? "Client → Server" : "Server → Client"} · {selFrame.opcodeName} · {fmtBytes(selFrame.len)} · {fmtTime(selFrame.time)}
               {!selFrame.fin && ` · ${t("fragment")}`}
+              {selFrame.dropped ? ` · ${t("not sent")}` : selFrame.edited ? ` · ${t("changed by Quena")}` : ""}
             </div>
-            {selFrame.text != null ? (
+            {selFrame.sio && (
+              <div className="ws-sio small">
+                Socket.IO: <b>{selFrame.sio.eio}</b>
+                {selFrame.sio.sio && <> · {selFrame.sio.sio}</>}
+                {selFrame.sio.namespace && <> · {t("namespace {ns}", { ns: selFrame.sio.namespace })}</>}
+                {selFrame.sio.ack != null && <> · ack {selFrame.sio.ack}</>}
+                {selFrame.sio.event && (
+                  <>
+                    {" "}
+                    · {t("event")} <b className="mono">{selFrame.sio.event}</b>
+                  </>
+                )}
+                {selFrame.sio.attachments != null && <> · {t("{n} binary attachments", { n: selFrame.sio.attachments })}</>}
+              </div>
+            )}
+            {selFrame.sio?.data != null ? (
+              <CodeView text={selFrame.sio.data} lang={looksJson(selFrame.sio.data) ? "json" : "text"} wrap />
+            ) : selFrame.text != null ? (
               <CodeView text={selFrame.text} lang={looksJson(selFrame.text) ? "json" : "text"} wrap />
             ) : (
               <pre className="ws-hex">{selFrame.preview ?? t("(no payload)")}</pre>

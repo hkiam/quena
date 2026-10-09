@@ -30,7 +30,7 @@ pub mod util;
 pub use body::{BoxError, ProxyBody, empty, full};
 pub use connector::cert_warning;
 pub use forward::{ExecuteOptions, Upstream, execute, execute_with};
-pub use hooks::{Interceptor, NoInterceptor, RequestAction, ResponseAction, ResponseHeadAction, SessionView};
+pub use hooks::{Interceptor, NoInterceptor, RequestAction, ResponseAction, ResponseHeadAction, SessionView, WsAction};
 pub use auth::{CredentialResolver, NoCredentials};
 
 /// Resolves the upstream proxy for a host (implemented by the app via PAC).

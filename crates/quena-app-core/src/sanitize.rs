@@ -2111,7 +2111,7 @@ impl Sanitizer {
         let text = head.opcode == 1;
         let rsv1 = head.rsv & 0x4 != 0;
         // Old logs have no RSV bits: a text message that is no UTF-8 in a deflate session.
-        let compressed = deflate && !payload.is_empty() && (rsv1 || (head.rsv == 0 && text && std::str::from_utf8(payload).is_err()));
+        let compressed = deflate && !payload.is_empty() && (rsv1 || (head.rsv & 0x7 == 0 && text && std::str::from_utf8(payload).is_err()));
         let data: Cow<[u8]> = if compressed {
             match inflate.as_mut().and_then(|d| ws_inflate(d, payload)) {
                 Some(d) => Cow::Owned(d),

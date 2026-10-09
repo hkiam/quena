@@ -109,3 +109,20 @@ declare function onBoot(): void;
 declare function onBeforeRequest(session: QuenaSession): void;
 declare function onBeforeResponse(session: QuenaSession): void;
 declare function onSessionComplete(summary: QuenaSummary): void;
+
+/** A WebSocket message on its way (whole, uncompressed messages up to 1 MB). */
+interface QuenaWsMessage {
+  /** Session id of the WebSocket. */
+  readonly id: number;
+  /** URL of the upgrade request. */
+  readonly url: string;
+  /** `up`: client → server, `down`: server → client. */
+  readonly direction: "up" | "down";
+  readonly isBinary: boolean;
+  readonly size: number;
+  /** Text of a text message; assign to send other text. `null` for binary messages. */
+  text: string | null;
+  /** Do not send this message. */
+  drop(): void;
+}
+declare function onWebSocketMessage(msg: QuenaWsMessage): void;

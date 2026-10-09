@@ -4278,6 +4278,7 @@ dependencies = [
  "quena-query",
  "quena-store",
  "quena-tls",
+ "rand 0.9.5",
  "rcgen",
  "rustls",
  "serde",

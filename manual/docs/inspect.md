@@ -84,7 +84,8 @@ These views appear only when the content fits:
 
 | View | Appears for | Shows |
 |---|---|---|
-| *WebSocket* | WebSocket sessions | the frame log with direction, type, size and payload; *All frames* or *Text messages* only |
+| *WebSocket* | WebSocket sessions | the frame log with direction, type, size and payload; *All frames*, *Text messages* or one direction, *Hide ping/pong*, a search; for **Socket.IO** the event name or packet type per message and its arguments as JSON; ✎ changed and ✕ dropped by rules |
+| *Socket.IO* | Socket.IO long-polling (`/socket.io/?…transport=polling`) | the Engine.IO / Socket.IO packets of the request or response body (protocol v4 and v3), with events, namespaces, acks and arguments |
 | *SSE* | `text/event-stream` responses | the stream split into events, live |
 | *gRPC* | gRPC, gRPC-Web and Protobuf messages | message frames and their fields; with a [schema](#grpc-and-protobuf-with-a-schema) field names, types and enum values |
 | *LLM* | calls to LLM APIs (OpenAI, Anthropic, Gemini, Ollama, compatible) | the conversation, tool calls, the answer (also from a stream), tokens and estimated cost — see [LLM traffic](llm.md) |

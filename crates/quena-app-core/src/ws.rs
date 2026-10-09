@@ -23,6 +23,13 @@ pub struct WsFrame {
     pub preview: Option<String>,
     /// Byte offset of the payload in the log (for "load full").
     pub offset: u64,
+    /// Changed by Quena on the way (rules script, rewrite rule).
+    pub edited: bool,
+    /// Not sent at all (dropped by the rules script); the text is what arrived.
+    pub dropped: bool,
+    /// The Socket.IO packet, for Socket.IO sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sio: Option<crate::socketio::SioPacket>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -56,6 +63,7 @@ impl AppCore {
         let Some((_, body)) = cap.bodies_of(id) else { return WsMessages::default() };
         let total_len = body.len();
         let mut out = WsMessages { complete: body.is_complete(), ..Default::default() };
+        let sio = cap.detail(id).is_some_and(|d| crate::socketio::is_socketio(&d.request.url));
         let mut pos = 0u64;
         let mut seq = 0u64;
         let mut header = [0u8; RECORD_HEAD];
@@ -63,7 +71,7 @@ impl AppCore {
             if body.read_at(pos, &mut header).unwrap_or(0) < RECORD_HEAD {
                 break;
             }
-            let Some(wslog::Head { dir, opcode, fin, ts_us: time, len, .. }) = wslog::Head::parse(&header) else { break };
+            let Some(wslog::Head { dir, opcode, fin, rsv, ts_us: time, len }) = wslog::Head::parse(&header) else { break };
             let payload_off = pos + RECORD_HEAD as u64;
             if seq >= start && out.frames.len() < count {
                 let take = (len as usize).min(PREVIEW);
@@ -75,7 +83,15 @@ impl AppCore {
                 } else {
                     (None, None)
                 };
+                let packet = match (sio, opcode) {
+                    (true, 0x1) => text.as_deref().and_then(crate::socketio::decode_packet),
+                    (true, 0x2) => Some(crate::socketio::SioPacket { eio: "attachment".into(), ..Default::default() }),
+                    _ => None,
+                };
                 out.frames.push(WsFrame {
+                    edited: rsv & wslog::EDITED != 0,
+                    dropped: rsv & wslog::DROPPED != 0,
+                    sio: packet,
                     seq,
                     dir,
                     opcode,

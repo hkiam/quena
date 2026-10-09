@@ -28,6 +28,7 @@ pub mod rewrite;
 pub mod rules;
 pub mod sanitize;
 pub mod settings;
+pub mod socketio;
 pub mod stats;
 pub mod structure;
 

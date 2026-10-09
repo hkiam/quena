@@ -314,14 +314,24 @@ kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP
 ### The editor
 
 - **Name**, and an optional **group**.
-- **If request matches…**, **Change** (the request or the response), **Only status** and
-  **Only content types**: the filters below.
+- **If request matches…**, **Change** (the request, the response or **WebSocket messages**),
+  **Only status** and **Only content types**: the filters below.
 - **Changes**, in their order. Each has its own fields: a JSONPath, a value as JSON (`"text"`,
   `42`, `null`, `{"a":1}`), a regular expression and replacement, a header, a status code. The
   form says what is wrong before saving.
 - **Preview on #N** tries the rule on the session selected in the list, without sending
   anything: whether its filters take the session, the status and header changes, and the
   body before and after.
+
+### WebSocket messages
+
+With *Change: WebSocket messages* a rule edits the text messages of WebSockets whose upgrade
+request matches the pattern — in *both directions*, or only *client → server* or
+*server → client*. JSON changes also work inside **Socket.IO** packets: in
+`42["chat",{"text":"hi"}]` the JSONPath `$[1].text` is the message's text, and the packet
+prefix stays. Changed messages are marked ✎ in the WebSocket view. Messages over 1 MB,
+fragmented and `permessage-deflate`-compressed messages pass unchanged; for more control
+use [`onWebSocketMessage`](scripting.md#websocket-messages) in a rules script.
 
 ### Groups
 

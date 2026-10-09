@@ -8,6 +8,13 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Socket.IO**: the WebSocket view shows the event name or packet type and the arguments
+  of Socket.IO messages, can hide ping/pong and search for events; a *Socket.IO* view
+  decodes long-polling bodies (v4 and v3).
+- **Change WebSocket messages on the way**: rewrite rules with *Change: WebSocket messages*
+  (direction, JSON also inside Socket.IO packets) and `onWebSocketMessage(msg)` in rules
+  scripts (change text, drop). Changed and dropped messages are marked in the frame log.
+  MCP: rewrite rules take `phase: webSocket` and `direction`.
 - **LLM traffic**: calls to OpenAI (Chat Completions, Responses), Anthropic Messages,
   Google Gemini, Ollama and OpenAI-compatible APIs are recognised.
   - The **LLM** view shows provider and model, system prompt, the messages with tool calls

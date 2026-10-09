@@ -233,6 +233,9 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 ### Inspect
 - Headers, Text, Pretty, Form Data, Hex, Auth, Cookies,
   Raw, JSON, XML, Caching, Image, Preview, Encoding
+- **Socket.IO** decoded in the WebSocket view and for long-polling: events, namespaces,
+  acks, arguments; WebSocket messages changed or dropped on the way by rewrite rules or the
+  rules script (`onWebSocketMessage`)
 - **LLM traffic**: calls to OpenAI, Anthropic, Gemini, Ollama and compatible APIs as a
   conversation — system prompt, messages, tool calls, the answer assembled from streams,
   tokens and estimated cost; columns, filters and statistics per model

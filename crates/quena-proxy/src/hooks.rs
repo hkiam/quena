@@ -59,6 +59,16 @@ pub enum ResponseHeadAction {
     Abort,
 }
 
+/// What happens to a WebSocket message ([`Interceptor::on_ws_message`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsAction {
+    Forward,
+    /// Send this payload instead (same frame type).
+    Replace(Vec<u8>),
+    /// Do not send the message.
+    Drop,
+}
+
 pub trait Interceptor: Send + Sync {
     /// Does the request hook need the complete request body?
     fn request_mode(&self, _s: &SessionView, _head: &RequestHead) -> Mode {
@@ -102,6 +112,16 @@ pub trait Interceptor: Send + Sync {
     }
     /// Informational: session finished.
     fn on_complete(&self, _s: &SessionView) {}
+    /// Do this WebSocket's messages go through [`Interceptor::on_ws_message`]? Asked once
+    /// when the connection is upgraded; `false` keeps frames flowing untouched.
+    fn wants_ws(&self, _s: &SessionView) -> bool {
+        false
+    }
+    /// A whole, uncompressed text (1) or binary (2) message in direction `dir`
+    /// (`wslog::DIR_CLIENT` / `DIR_SERVER`): forward, replace or drop it.
+    fn on_ws_message(&self, _s: SessionView, _dir: u8, _opcode: u8, _payload: Vec<u8>) -> BoxFuture<WsAction> {
+        Box::pin(async { WsAction::Forward })
+    }
 }
 
 pub struct NoInterceptor;

@@ -3704,3 +3704,13 @@ pre.llm-text.mono {
 .llm-details {
   margin-top: 10px;
 }
+.ws-mark {
+  font-size: 11px;
+  margin-right: 4px;
+}
+.ws-search {
+  width: 9em;
+}
+.ws-sio {
+  padding: 2px 6px;
+}

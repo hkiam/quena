@@ -922,6 +922,13 @@ async fn llm_call(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_co
     blocking(move || Ok(core.llm(id))).await
 }
 
+/// Socket.IO packets of a long-polling body (`None`: not Socket.IO polling).
+#[tauri::command]
+async fn socketio_polling(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<Vec<quena_app_core::socketio::SioPacket>>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.socketio_polling(id, part))).await
+}
+
 /// A MessagePack body as a tree (`None`: not MessagePack).
 #[tauri::command]
 async fn msgpack(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<quena_app_core::msgpack::Msgpack>> {
@@ -1118,6 +1125,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         reveal_path,
         browsers_list,
         msgpack,
+        socketio_polling,
         llm_call,
         collections_list,
         collection_read,

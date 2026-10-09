@@ -31,7 +31,7 @@ async fn pump_forwards_and_logs() {
     let queued = std::sync::atomic::AtomicUsize::new(0);
     let last = std::sync::atomic::AtomicI64::new(0);
     let log = FrameLog { tx: &tx, queued: &queued, budget: 1 << 20, last: &last };
-    let (total, err) = pump(src_r, dst_w, DIR_CLIENT, &log).await;
+    let (total, err) = pump(src_r, dst_w, DIR_CLIENT, &log, None).await;
     drop(tx);
     assert_eq!(total, input.len() as u64);
     assert_eq!(err, None);
