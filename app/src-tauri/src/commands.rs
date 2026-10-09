@@ -491,6 +491,36 @@ async fn autosave_reveal(core: State<'_, Core>) -> R<()> {
     quena_platform::open(&dir.display().to_string()).map_err(e)
 }
 
+#[tauri::command]
+async fn llm_prices_info(core: State<'_, Core>) -> R<quena_app_core::llm::LlmPricesInfo> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.llm_prices_info())).await
+}
+
+/// Fetch LiteLLM's price list (on request only: it leaves the machine).
+#[tauri::command]
+async fn llm_prices_update(core: State<'_, Core>) -> R<quena_app_core::llm::LlmPricesInfo> {
+    let core = core.inner().clone();
+    blocking(move || core.llm_prices_update().map_err(e)).await
+}
+
+#[tauri::command]
+async fn llm_prices_forget(core: State<'_, Core>) -> R<quena_app_core::llm::LlmPricesInfo> {
+    let core = core.inner().clone();
+    blocking(move || core.llm_prices_forget().map_err(e)).await
+}
+
+/// Open `llm-prices.json` (created with an example first when there is none).
+#[tauri::command]
+async fn llm_prices_open(core: State<'_, Core>) -> R<()> {
+    let path = std::path::PathBuf::from(core.llm_prices_info().path);
+    if !path.exists() {
+        let example = "{\n  \"my-model\": { \"input\": 1.0, \"output\": 2.0, \"cacheRead\": 0.1, \"cacheWrite\": 1.25 }\n}\n";
+        std::fs::write(&path, example).map_err(|x| x.to_string())?;
+    }
+    quena_platform::open(&path.display().to_string()).map_err(e)
+}
+
 /// A packet capture again, with a TLS key log; `replace`: the sessions of its first import,
 /// with the session numbering they belong to (event `pcap-import`).
 #[tauri::command]
@@ -1172,6 +1202,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         collections_list,
         import_dropped,
         autosave_now,
+        llm_prices_info,
+        llm_prices_update,
+        llm_prices_forget,
+        llm_prices_open,
         autosave_reveal,
         collection_read,
         collection_save,

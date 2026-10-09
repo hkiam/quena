@@ -168,6 +168,9 @@ pub struct AppCore {
     /// Protobuf schemas (`.proto` files, reflection), compiled when needed.
     pub(crate) protobuf: protobuf::Schemas,
     pub(crate) autosave: Mutex<autosave::State>,
+    /// LLM prices with the stamps (time, size) of their files.
+    #[allow(clippy::type_complexity)]
+    pub(crate) llm_prices: Mutex<Option<((Option<(Option<std::time::SystemTime>, u64)>, Option<(Option<std::time::SystemTime>, u64)>), Arc<llm::PriceList>)>>,
     /// Archives loaded into the list: (file name, capture numbering, session ids).
     pub(crate) imports: Mutex<Vec<(String, u64, Vec<SessionId>)>>,
     started: Instant,
@@ -209,6 +212,7 @@ impl AppCore {
             diag_report: Mutex::new(Default::default()),
             protobuf: protobuf::Schemas::default(),
             autosave: Mutex::new(Default::default()),
+            llm_prices: Mutex::new(None),
             imports: Mutex::new(Vec::new()),
             started: Instant::now(),
             shut_down: std::sync::atomic::AtomicBool::new(false),

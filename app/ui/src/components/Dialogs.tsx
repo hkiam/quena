@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, type McpStatus, type Recoverable, type SchemaStatus, type Settings } from "../api";
+import { api, type LlmPricesInfo, type McpStatus, type Recoverable, type SchemaStatus, type Settings } from "../api";
 import { actions } from "../actions";
 import { fmtBytes, fmtDateTime, isMac, modKey, osNames } from "../lib/format";
 import { get, say, set, useStore, type Dialog } from "../store";
@@ -516,6 +516,63 @@ function AutoSaveOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void
   );
 }
 
+/** Settings → Bodies & Storage → LLM prices: own ones, a list fetched on request, built-in. */
+function LlmPriceOptions() {
+  const [info, setInfo] = useState<LlmPricesInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api.llmPricesInfo().then(setInfo, () => setInfo(null));
+  useEffect(() => {
+    void load();
+  }, []);
+  const run = async (f: () => Promise<LlmPricesInfo>, done?: (i: LlmPricesInfo) => string) => {
+    setBusy(true);
+    try {
+      const i = await f();
+      setInfo(i);
+      if (done) say(done(i));
+    } catch (e) {
+      say(String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!info) return null;
+  const date = info.fetchedAt ? new Date(info.fetchedAt * 1000).toLocaleDateString() : null;
+  return (
+    <fieldset className="f-section">
+      <legend>{t("LLM prices")}</legend>
+      <p className="muted small">{t("Costs of LLM calls are estimated with your own prices first, then the fetched price list, then the built-in list prices.")}</p>
+      <div className="f-inline small">
+        <span>
+          {t("Own prices")}: {info.exists ? t("{n} model(s)", { n: info.custom }) : t("none")}
+        </span>
+        <button className="linklike" onClick={() => void api.llmPricesOpen().then(load, (e) => say(String(e), "error"))}>
+          {info.exists ? t("Edit llm-prices.json") : t("Create llm-prices.json")}
+        </button>
+        <button className="linklike" onClick={() => void load()}>
+          {t("Check again")}
+        </button>
+      </div>
+      {info.customError && <p className="err small">{t("llm-prices.json cannot be read, its prices are not used: {error}", { error: info.customError })}</p>}
+      <div className="f-inline small">
+        <span>{date ? t("Price list: {n} models, fetched {date}", { n: info.fetched, date }) : t("Price list: not fetched (built-in: {n} models)", { n: info.builtIn })}</span>
+        <button
+          disabled={busy}
+          title={t("Downloads {url} (LiteLLM, MIT licence) through Quena's upstream settings. Nothing else is sent, and only when clicked.", { url: info.source })}
+          onClick={() => void run(api.llmPricesUpdate, (i) => t("Fetched prices of {n} models", { n: i.fetched }))}
+        >
+          {busy ? t("Fetching…") : date ? t("Update prices") : t("Fetch prices")}
+        </button>
+        {date && (
+          <button className="linklike" disabled={busy} onClick={() => void run(api.llmPricesForget)}>
+            {t("Remove list")}
+          </button>
+        )}
+      </div>
+    </fieldset>
+  );
+}
+
 /** Settings → Bodies & Storage → Protobuf schemas. */
 function ProtobufOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => void }) {
   const [status, setStatus] = useState<SchemaStatus | null>(null);
@@ -916,6 +973,7 @@ function OptionsDialog() {
               <input type="checkbox" checked={s.losslessRecording} onChange={(e) => up((x) => (x.losslessRecording = e.target.checked))} /> {t("Lossless recording (forwarding waits for the disk)")}
             </label>
             <ProtobufOptions s={s} up={up} />
+            <LlmPriceOptions />
           </>
         )}
       </div>

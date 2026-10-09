@@ -14,6 +14,7 @@ mod conn;
 mod connector;
 mod forward;
 pub mod auth;
+pub mod fetch;
 pub mod grpc_client;
 pub mod hooks;
 mod landing;

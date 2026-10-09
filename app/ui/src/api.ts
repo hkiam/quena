@@ -1043,6 +1043,18 @@ export interface Msgpack {
   error: string | null;
   truncated: boolean;
 }
+/** LLM prices: own file, fetched list, built-in list. */
+export interface LlmPricesInfo {
+  path: string;
+  exists: boolean;
+  custom: number;
+  customError: string | null;
+  fetched: number;
+  /** Unix seconds. */
+  fetchedAt: number | null;
+  source: string;
+  builtIn: number;
+}
 export interface SchemaStatus {
   files: number;
   messages: number;
@@ -1160,6 +1172,10 @@ export const api = {
   importArchive: (path: string, password?: string) => invoke<number>("import_archive", { path, password: password ?? null }),
   importDropped: (id: string, name: string, password: string) => invoke<number>("import_dropped", { id, name, password }),
   autosaveNow: () => invoke<string | null>("autosave_now"),
+  llmPricesInfo: () => invoke<LlmPricesInfo>("llm_prices_info"),
+  llmPricesUpdate: () => invoke<LlmPricesInfo>("llm_prices_update"),
+  llmPricesForget: () => invoke<LlmPricesInfo>("llm_prices_forget"),
+  llmPricesOpen: () => invoke<void>("llm_prices_open"),
   autosaveReveal: () => invoke<void>("autosave_reveal"),
   /** A packet capture again with a TLS key log, replacing the sessions of its first import
    *  (unless numbering restarted since, e.g. after Remove All). */

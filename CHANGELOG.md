@@ -39,6 +39,11 @@ contain breaking changes (settings, file formats, plugin API).
   - Finished calls get flags; new columns *LLM*, *Tokens*, *Cost*, grouping by model,
     filter fields `llm` and `tokens`, per-model totals in *Statistics*. MCP:
     `get_llm_call`.
+- **LLM prices kept up to date without a new release** (*Settings → Bodies & Storage → LLM
+  prices*): *Fetch prices* downloads LiteLLM's price list (several hundred models), on
+  request only and through the upstream settings; own prices in `llm-prices.json` still come
+  first and can be created and opened from there. A `llm-prices.json` that is no valid JSON
+  is reported (settings, log, *LLM* view) instead of being ignored without a word.
 - **Collections in the Composer**: requests are saved as `.http` files in the data folder
   (one per collection; JetBrains/VS Code format).
   - Load, send, run all with a result list, sort, duplicate and remove requests; edit the

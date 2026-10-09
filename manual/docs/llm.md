@@ -54,21 +54,37 @@ archives.
 ## Costs
 
 The cost is an estimate: tokens times the model's list price, with cached input at the
-cached price. Quena knows the list prices of common OpenAI, Anthropic, Google, Mistral and
-DeepSeek models as published in 2025; prices change, discounts and batch prices are not
-known, and models without a price show *cost unknown*.
+cached price. Discounts and batch prices are not known, and models without a price show
+*cost unknown*. Prices come from three places, the first that knows the model wins
+(*Settings → Bodies & Storage → LLM prices* shows all three):
 
-Own or newer prices go into `llm-prices.json` in the [data directory](settings.md#data-directory),
-in US dollars per million tokens, by model name prefix (the longest prefix wins, and these
-come before the built-in ones):
+1. **Your own prices** in `llm-prices.json` in the [data directory](settings.md#data-directory)
+   — *Create llm-prices.json* / *Edit llm-prices.json* opens it. US dollars per million
+   tokens, by model name prefix (the longest prefix wins):
 
-```json
-{
-  "gpt-5.1": { "input": 1.25, "output": 10, "cacheRead": 0.125 },
-  "claude-opus-4-5": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 },
-  "llama": { "input": 0, "output": 0 }
-}
-```
+    ```json
+    {
+      "gpt-5.1": { "input": 1.25, "output": 10, "cacheRead": 0.125 },
+      "claude-opus-4-5": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 },
+      "llama": { "input": 0, "output": 0 }
+    }
+    ```
+
+    Changes count from the next call on, without a restart. A file that is no valid JSON is
+    reported in the settings, the log and the *LLM* view; its prices are not used until it
+    is fixed.
+
+2. **The fetched price list**: *Fetch prices* / *Update prices* downloads
+   [LiteLLM's price list](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json)
+   (MIT licence, several hundred models of OpenAI, Anthropic, Google, Mistral, DeepSeek,
+   Groq, Bedrock, Azure …) through Quena's [upstream settings](settings.md) and keeps it in
+   `llm-prices-litellm.json` in the data directory. This is the only time Quena asks for
+   prices, and only when clicked; *Remove list* goes back to the other two. A model matches
+   by its name with a date or release tag at most (`gpt-4o-2024-08-06` → `gpt-4o`).
+
+3. **Built-in list prices** of common OpenAI, Anthropic, Google, Mistral and DeepSeek models
+   as published in 2025, matched like the fetched list (a newer `claude-opus-4-7` does not
+   get the price of `claude-opus-4`).
 
 ## Replay answers without calling the model
 

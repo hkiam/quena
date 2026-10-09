@@ -774,17 +774,93 @@ fn ollama_response(objs: &[Value], call: &mut LlmCall) {
 // ------------------------------------------------------------------ prices
 
 /// USD per million tokens.
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Price {
     pub input: f64,
     pub output: f64,
     /// Cached input read (default: like input).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_read: Option<f64>,
     /// Input written to the cache (default: like input).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_write: Option<f64>,
+}
+
+/// Own prices, in the data folder.
+pub const PRICES_FILE: &str = "llm-prices.json";
+/// The fetched list, in the data folder.
+pub const FETCHED_PRICES_FILE: &str = "llm-prices-litellm.json";
+/// LiteLLM's list of model prices (MIT licence), fetched on request only.
+pub const LITELLM_PRICES_URL: &str = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+
+/// The prices a cost is estimated with: own ones first, then a fetched list, then the
+/// built-in one.
+#[derive(Debug, Clone, Default)]
+pub struct PriceList {
+    /// `llm-prices.json`, by model name prefix.
+    pub custom: BTreeMap<String, Price>,
+    /// Why `llm-prices.json` could not be read (its prices are then not used).
+    pub custom_error: Option<String>,
+    /// The fetched list, by model name.
+    pub fetched: BTreeMap<String, Price>,
+    /// When the list was fetched (Unix seconds).
+    pub fetched_at: Option<i64>,
+}
+
+/// The fetched list as kept in the data folder.
+#[derive(Serialize, Deserialize)]
+struct FetchedPrices {
+    source: String,
+    fetched: i64,
+    prices: BTreeMap<String, Price>,
+}
+
+/// What the settings show about the prices.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmPricesInfo {
+    /// `llm-prices.json` (whether or not it exists).
+    pub path: String,
+    pub exists: bool,
+    pub custom: usize,
+    pub custom_error: Option<String>,
+    pub fetched: usize,
+    pub fetched_at: Option<i64>,
+    pub source: String,
+    pub built_in: usize,
+}
+
+/// LiteLLM's `model_prices_and_context_window.json` (USD per token) as prices per million
+/// tokens, by model name without the provider (`azure/gpt-4o` → `gpt-4o`; a provider's own
+/// entry wins over a reseller's).
+pub fn parse_litellm(json: &[u8]) -> Result<BTreeMap<String, Price>, String> {
+    let v: Value = serde_json::from_slice(json).map_err(|e| format!("not a price list: {e}"))?;
+    let m = v.as_object().ok_or("not a price list: no JSON object")?;
+    let mut out = BTreeMap::new();
+    let per_m = |e: &Value, k: &str| e.get(k).and_then(|x| x.as_f64()).filter(|x| x.is_finite() && *x >= 0.0).map(|x| x * 1_000_000.0);
+    // Direct entries first, then those under a provider prefix.
+    let mut keys: Vec<&String> = m.keys().filter(|k| *k != "sample_spec").collect();
+    keys.sort_by_key(|k| k.contains('/'));
+    for k in keys {
+        let e = &m[k];
+        let Some(input) = per_m(e, "input_cost_per_token") else { continue };
+        let name = k.rsplit('/').next().unwrap_or(k).trim().to_ascii_lowercase();
+        if name.is_empty() || out.contains_key(&name) {
+            continue;
+        }
+        let p = Price {
+            input,
+            output: per_m(e, "output_cost_per_token").unwrap_or(0.0),
+            cache_read: per_m(e, "cache_read_input_token_cost"),
+            cache_write: per_m(e, "cache_creation_input_token_cost"),
+        };
+        out.insert(name, p);
+    }
+    if out.is_empty() {
+        return Err("the list holds no prices".into());
+    }
+    Ok(out)
 }
 
 /// List prices (USD per 1M tokens) as published by the providers in 2025, by model name
@@ -844,11 +920,16 @@ fn same_model(rest: &str) -> bool {
     (first.len() >= 4 && first.chars().all(|c| c.is_ascii_digit())) || matches!(first, "latest" | "preview" | "exp" | "experimental")
 }
 
-/// The price for `model`: from `llm-prices.json` (its own longest prefix), else built in.
-pub fn price_of(model: &str, custom: &BTreeMap<String, Price>) -> Option<(String, Price)> {
+/// The price for `model`: from `llm-prices.json` (its own longest prefix), else from the
+/// fetched list, else built in (both: that model, with a date or release tag at most).
+pub fn price_of(model: &str, prices: &PriceList) -> Option<(String, Price)> {
     let m = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
-    if let Some((k, p)) = custom.iter().filter(|(k, _)| m.starts_with(&k.to_ascii_lowercase())).max_by_key(|(k, _)| k.len()) {
-        return Some((format!("{k} (llm-prices.json)"), *p));
+    if let Some((k, p)) = prices.custom.iter().filter(|(k, _)| m.starts_with(&k.to_ascii_lowercase())).max_by_key(|(k, _)| k.len()) {
+        return Some((format!("{k} ({PRICES_FILE})"), *p));
+    }
+    if let Some((k, p)) = prices.fetched.iter().filter(|(k, _)| m.strip_prefix(k.as_str()).is_some_and(same_model)).max_by_key(|(k, _)| k.len()) {
+        let when = prices.fetched_at.map(|t| format!(", fetched {}", quena_tls::date(t))).unwrap_or_default();
+        return Some((format!("{k} (LiteLLM price list{when})"), *p));
     }
     PRICES.iter().filter(|(k, ..)| m.strip_prefix(k).is_some_and(same_model)).max_by_key(|(k, ..)| k.len()).map(|(k, i, o, c)| {
         let write = if k.starts_with("claude") { Some(i * 1.25) } else { None };
@@ -865,7 +946,7 @@ pub fn cost_of(u: &Usage, p: &Price) -> f64 {
 // ------------------------------------------------------------------ parsing
 
 /// Read a call from its URL, request body and response (`None`: not an LLM API call).
-pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &str)>, prices: &BTreeMap<String, Price>) -> Option<LlmCall> {
+pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &str)>, prices: &PriceList) -> Option<LlmCall> {
     let api = api_of(method, url)?;
     let req: Value = serde_json::from_slice(request).ok()?;
     // What a call to that API carries (`/api/chat` or `/responses` of another app does not).
@@ -957,6 +1038,9 @@ pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &
     {
         call.cost = Some(Cost { usd: cost_of(u, &p), price: name });
     }
+    if let Some(e) = &prices.custom_error {
+        call.notes.push(format!("{PRICES_FILE} cannot be read, its prices are not used: {e}"));
+    }
     Some(call)
 }
 
@@ -984,10 +1068,89 @@ pub fn flags_of(c: &LlmCall) -> Vec<(String, String)> {
 }
 
 impl AppCore {
-    /// User prices from `llm-prices.json` in the data folder (`{"model-prefix": {"input": …,
-    /// "output": …, "cacheRead": …, "cacheWrite": …}}`, USD per million tokens).
-    pub fn llm_prices(&self) -> BTreeMap<String, Price> {
-        std::fs::read(self.paths.data.join("llm-prices.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    /// The prices: own ones from `llm-prices.json` in the data folder (`{"model-prefix":
+    /// {"input": …, "output": …, "cacheRead": …, "cacheWrite": …}}`, USD per million tokens),
+    /// the fetched list, the built-in one. Read again when a file changes.
+    pub fn llm_prices(&self) -> Arc<PriceList> {
+        let (own, fetched) = (self.paths.data.join(PRICES_FILE), self.paths.data.join(FETCHED_PRICES_FILE));
+        let stamp = |p: &std::path::Path| std::fs::metadata(p).ok().map(|m| (m.modified().ok(), m.len()));
+        let now = (stamp(&own), stamp(&fetched));
+        let mut cache = self.llm_prices.lock();
+        if let Some((s, list)) = cache.as_ref()
+            && *s == now
+        {
+            return list.clone();
+        }
+        let mut list = PriceList::default();
+        match std::fs::read(&own) {
+            Ok(b) => match serde_json::from_slice::<BTreeMap<String, Price>>(&b) {
+                Ok(m) => list.custom = m,
+                Err(e) => {
+                    tracing::warn!(target: "quena", "{} cannot be read, its prices are not used: {e}", own.display());
+                    list.custom_error = Some(e.to_string());
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => list.custom_error = Some(e.to_string()),
+        }
+        if let Ok(f) = std::fs::read(&fetched).map_err(|_| ()).and_then(|b| serde_json::from_slice::<FetchedPrices>(&b).map_err(|_| ())) {
+            list.fetched = f.prices;
+            list.fetched_at = Some(f.fetched);
+        }
+        let list = Arc::new(list);
+        *cache = Some((now, list.clone()));
+        list
+    }
+
+    /// The state of the price lists (for the settings).
+    pub fn llm_prices_info(&self) -> LlmPricesInfo {
+        let p = self.llm_prices();
+        let path = self.paths.data.join(PRICES_FILE);
+        LlmPricesInfo {
+            exists: path.exists(),
+            path: path.display().to_string(),
+            custom: p.custom.len(),
+            custom_error: p.custom_error.clone(),
+            fetched: p.fetched.len(),
+            fetched_at: p.fetched_at,
+            source: LITELLM_PRICES_URL.to_string(),
+            built_in: PRICES.len(),
+        }
+    }
+
+    /// Fetch LiteLLM's price list (only when asked: it leaves the machine) through the proxy
+    /// engine's connector, and keep it in the data folder.
+    pub fn llm_prices_update(&self) -> anyhow::Result<LlmPricesInfo> {
+        self.llm_prices_update_from(LITELLM_PRICES_URL)
+    }
+
+    /// [`AppCore::llm_prices_update`] from another address (a mirror, or a test server).
+    pub fn llm_prices_update_from(&self, url: &str) -> anyhow::Result<LlmPricesInfo> {
+        let engine = self.proxy_engine()?;
+        let shared = engine.proxy.shared.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let u = url.to_string();
+        engine.proxy.runtime().handle().spawn(async move {
+            let _ = tx.send(quena_proxy::fetch::get(&shared, &u, 32 << 20, std::time::Duration::from_secs(60)).await);
+        });
+        let body = rx.recv_timeout(std::time::Duration::from_secs(65)).map_err(|_| anyhow::anyhow!("no answer"))?.map_err(|e| anyhow::anyhow!("{url}: {e}"))?;
+        let prices = parse_litellm(&body).map_err(|e| anyhow::anyhow!("{url}: {e}"))?;
+        let f = FetchedPrices { source: url.into(), fetched: time::OffsetDateTime::now_utc().unix_timestamp(), prices };
+        let path = self.paths.data.join(FETCHED_PRICES_FILE);
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec(&f)?)?;
+        std::fs::rename(&tmp, &path)?;
+        tracing::info!(target: "quena", "fetched {} LLM prices from {url}", f.prices.len());
+        Ok(self.llm_prices_info())
+    }
+
+    /// Remove the fetched list (back to own and built-in prices).
+    pub fn llm_prices_forget(&self) -> anyhow::Result<LlmPricesInfo> {
+        match std::fs::remove_file(self.paths.data.join(FETCHED_PRICES_FILE)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+            _ => {}
+        }
+        Ok(self.llm_prices_info())
     }
 
     /// A session as an LLM call (`None`: it is not one).
@@ -1049,15 +1212,37 @@ mod tests {
     use super::*;
 
     fn call(url: &str, req: &str, resp: &str, ct: &str) -> LlmCall {
-        parse("POST", url, req.as_bytes(), Some((resp.as_bytes(), ct)), &BTreeMap::new()).expect("an LLM call")
+        parse("POST", url, req.as_bytes(), Some((resp.as_bytes(), ct)), &PriceList::default()).expect("an LLM call")
     }
     fn texts(p: &[Part], kind: &str) -> Vec<String> {
         p.iter().filter(|x| x.kind == kind).map(|x| x.text.clone()).collect()
     }
 
     #[test]
+    fn litellm_list_and_its_order() {
+        let json = br#"{
+            "sample_spec": {"input_cost_per_token": 1},
+            "azure/gpt-9": {"input_cost_per_token": 9e-6, "output_cost_per_token": 9e-5},
+            "gpt-9": {"input_cost_per_token": 2e-6, "output_cost_per_token": 8e-6, "cache_read_input_token_cost": 5e-7},
+            "claude-opus-4-7": {"input_cost_per_token": 5e-6, "output_cost_per_token": 2.5e-5, "cache_creation_input_token_cost": 6.25e-6},
+            "dall-e-3": {"output_cost_per_image": 0.04}
+        }"#;
+        let fetched = parse_litellm(json).unwrap();
+        assert_eq!(fetched.keys().collect::<Vec<_>>(), ["claude-opus-4-7", "gpt-9"], "no sample, no image model");
+        assert!((fetched["gpt-9"].input - 2.0).abs() < 1e-9, "the provider's own entry wins over azure/");
+        assert!((fetched["gpt-9"].cache_read.unwrap() - 0.5).abs() < 1e-9);
+        assert!(parse_litellm(b"[]").is_err() && parse_litellm(b"{}").is_err());
+        let mut l = PriceList { fetched, fetched_at: Some(1_760_000_000), ..Default::default() };
+        let name = |m: &str, l: &PriceList| price_of(m, l).map(|(k, _)| k);
+        assert!(name("claude-opus-4-7-20261001", &l).unwrap().starts_with("claude-opus-4-7 (LiteLLM price list, fetched 2025-10-09"));
+        assert!(name("gpt-4o", &l).unwrap().contains("built-in"), "built-in for what the list lacks");
+        l.custom.insert("gpt-9".into(), Price { input: 1.0, output: 1.0, cache_read: None, cache_write: None });
+        assert!(name("gpt-9", &l).unwrap().contains("llm-prices.json"), "own prices first");
+    }
+
+    #[test]
     fn prices_only_for_the_model_named() {
-        let p = |m: &str| price_of(m, &BTreeMap::new()).map(|(k, _)| k.split(' ').next().unwrap_or("").to_string());
+        let p = |m: &str| price_of(m, &PriceList::default()).map(|(k, _)| k.split(' ').next().unwrap_or("").to_string());
         assert_eq!(p("claude-opus-4-20250514").as_deref(), Some("claude-opus-4"));
         assert_eq!(p("claude-opus-4-5-20251101").as_deref(), Some("claude-opus-4-5"));
         assert_eq!(p("gpt-4o-2024-08-06").as_deref(), Some("gpt-4o"));
@@ -1080,10 +1265,10 @@ mod tests {
         assert_eq!(api_of("POST", "https://api.openai.com/v1/embeddings"), Some(Api::Embeddings));
         assert_eq!(api_of("GET", "https://api.openai.com/v1/chat/completions"), None);
         // Another app's endpoint with such a path: not an LLM call.
-        assert!(parse("POST", "https://shop.example.com/api/chat", br#"{"text":"hi","room":1}"#, None, &BTreeMap::new()).is_none());
-        assert!(parse("POST", "https://app.example.com/v2/responses", br#"{"answers":[1]}"#, None, &BTreeMap::new()).is_none());
+        assert!(parse("POST", "https://shop.example.com/api/chat", br#"{"text":"hi","room":1}"#, None, &PriceList::default()).is_none());
+        assert!(parse("POST", "https://app.example.com/v2/responses", br#"{"answers":[1]}"#, None, &PriceList::default()).is_none());
         assert_eq!(api_of("POST", "https://example.com/v1/users"), None);
-        assert!(parse("POST", "https://api.openai.com/v1/chat/completions", b"not json", None, &BTreeMap::new()).is_none());
+        assert!(parse("POST", "https://api.openai.com/v1/chat/completions", b"not json", None, &PriceList::default()).is_none());
     }
 
     #[test]
@@ -1217,8 +1402,8 @@ mod tests {
         assert_eq!(texts(&c.output, "text"), vec!["Hello"]);
         assert_eq!(c.usage.map(|u| u.total()), Some(38));
         assert!(c.cost.is_none(), "no price for local models");
-        let mut prices = BTreeMap::new();
-        prices.insert("llama3".to_string(), Price { input: 1.0, output: 2.0, cache_read: None, cache_write: None });
+        let mut prices = PriceList::default();
+        prices.custom.insert("llama3".to_string(), Price { input: 1.0, output: 2.0, cache_read: None, cache_write: None });
         let p = parse("POST", "http://127.0.0.1:11434/api/chat", req.as_bytes(), Some((resp.as_bytes(), "application/x-ndjson")), &prices).unwrap();
         assert!((p.cost.unwrap().usd - (26.0 + 24.0) / 1e6).abs() < 1e-12);
         let g = call("http://127.0.0.1:11434/api/generate", r#"{"model":"llama3.2","prompt":"Why?","system":"Short.","stream":false}"#, r#"{"model":"llama3.2","response":"Because.","done":true,"prompt_eval_count":3,"eval_count":2}"#, "application/json");
