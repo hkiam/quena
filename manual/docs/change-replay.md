@@ -335,10 +335,33 @@ kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP
   **Only status** and **Only content types**: the filters below.
 - **Changes**, in their order. Each has its own fields: a JSONPath, a value as JSON (`"text"`,
   `42`, `null`, `{"a":1}`), a regular expression and replacement, a header, a status code. The
-  form says what is wrong before saving.
+  form says what is wrong before saving. Besides JSON, text, headers and status:
+    - **Query: set / remove parameter** (requests): changes the URL's query; a parameter that
+      is there keeps its place.
+    - **Cookie: set / remove**: in a request the `Cookie` header, in a response a
+      `Set-Cookie` (added with `Path=/`, or removed; `*` removes all).
+    - **Session: mark** with a colour, **Session: comment** — for the session in the list; the
+      message stays as it is (the session is not marked as changed).
 - **Preview on #N** tries the rule on the session selected in the list, without sending
   anything: whether its filters take the session, the status and header changes, and the
   body before and after.
+
+### Templates
+
+**From template ▾** adds ready-made rules as a group of their own (switched off together):
+
+| Template | Adds |
+|---|---|
+| *Bypass CORS* | `Access-Control-Allow-*` headers on every response, and a mock rule answering preflight `OPTIONS` requests |
+| *Block cookies* | removes `Cookie` from requests and every `Set-Cookie` from responses |
+| *Disable caching* | removes conditional headers from requests, adds `Cache-Control: no-cache`; `no-store` on responses without `ETag`, `Last-Modified`, `Expires` |
+| *Change User-Agent…* | sends the `User-Agent` you enter |
+| *Mark errors red* | marks responses with status 400–599 red |
+| *Block a host…* | a mock rule answering requests to that host (and its subdomains) with 404 |
+| *Allow only one host…* | a mock rule dropping every request whose URL does not contain the host |
+
+Templates with a mock rule need Mock Rules on; Quena asks before turning them on when other
+mock rules would become active too.
 
 ### WebSocket messages
 

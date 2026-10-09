@@ -8,6 +8,11 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Rule actions and templates**: rewrite rules can set or remove query parameters and
+  cookies (request `Cookie`, response `Set-Cookie`), and mark or comment the session; **From
+  template ▾** adds *Bypass CORS*, *Block cookies*, *Disable caching*, *Change User-Agent*,
+  *Mark errors red*, *Block a host* and *Allow only one host* as a group. MCP
+  `add_rewrite_rule` takes the new operations.
 - **Composer**: request **tabs** (kept over restarts), query parameters and headers as
   **tables** with a checkbox to leave one out (`#` in the text form), **Follow redirects**
   (each hop its own session; also MCP `send_request` `follow_redirects`), method `QUERY`.

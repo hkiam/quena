@@ -478,7 +478,7 @@ static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "add_rewrite_rule",
-        description: "Add a rule that changes matching real requests or responses on their way (switches rewriting on). Operations run in order: `jsonSet` {path, value} (creates missing members of a plain path), `jsonRemove` {path}, `jsonAppend` {path, value?}, `jsonAppendAll` {value?} (append to every array in the document; without value a broken copy of the first element: same keys, all null), `regexReplace` {pattern, replacement}, `setHeader` {name, value}, `removeHeader` {name}, `setStatus` {code}. Paths are RFC 9535 JSONPath (`$.items[*].price`, `$..id`). Bodies are decoded (gzip, br …) and sent back uncompressed; bodies over the size limit, event streams and non-text types pass unchanged. Example, a broken element in every list of /api/ responses: {\"match\": \"/api/\", \"ops\": [{\"op\": \"jsonAppendAll\"}]}.",
+        description: "Add a rule that changes matching real requests or responses on their way (switches rewriting on). Operations run in order: `jsonSet` {path, value} (creates missing members of a plain path), `jsonRemove` {path}, `jsonAppend` {path, value?}, `jsonAppendAll` {value?} (append to every array in the document; without value a broken copy of the first element: same keys, all null), `regexReplace` {pattern, replacement}, `setHeader` {name, value}, `removeHeader` {name}, `setStatus` {code}, `setQuery` {name, value} / `removeQuery` {name} (requests), `setCookie` {name, value} / `removeCookie` {name, `*` for all} (request Cookie or response Set-Cookie), `mark` {color: red|blue|gold|green|orange|purple}, `comment` {text} (the session). Paths are RFC 9535 JSONPath (`$.items[*].price`, `$..id`). Bodies are decoded (gzip, br …) and sent back uncompressed; bodies over the size limit, event streams and non-text types pass unchanged. Example, a broken element in every list of /api/ responses: {\"match\": \"/api/\", \"ops\": [{\"op\": \"jsonAppendAll\"}]}.",
         write: true,
         destructive: false,
         schema: || {
@@ -651,13 +651,15 @@ fn rewrite_rule_schema() -> Value {
             "items": {
                 "type": "object",
                 "properties": {
-                    "op": { "type": "string", "enum": ["jsonSet", "jsonRemove", "jsonAppend", "jsonAppendAll", "regexReplace", "setHeader", "removeHeader", "setStatus"] },
+                    "op": { "type": "string", "enum": ["jsonSet", "jsonRemove", "jsonAppend", "jsonAppendAll", "regexReplace", "setHeader", "removeHeader", "setStatus", "setQuery", "removeQuery", "setCookie", "removeCookie", "mark", "comment"] },
                     "path": { "type": "string" },
                     "value": {},
                     "pattern": { "type": "string" },
                     "replacement": { "type": "string" },
                     "name": { "type": "string" },
-                    "code": { "type": "integer" }
+                    "code": { "type": "integer" },
+                    "color": { "type": "string", "enum": ["red", "blue", "gold", "green", "orange", "purple"] },
+                    "text": { "type": "string" }
                 },
                 "required": ["op"]
             }

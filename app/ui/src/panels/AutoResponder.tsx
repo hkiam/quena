@@ -7,6 +7,17 @@ import { describeOp } from "./rewriteDraft";
 import { showContextMenu } from "../components/ContextMenu";
 import { mapLocalRule, mapRemoteRule, mockPackageImported, mocksFromSelection, type MappingKind } from "./autoresponderActions";
 import { plural, t } from "../i18n";
+import { addTemplate, TEMPLATES } from "./ruleTemplates";
+
+/** "From template" menu below the button. */
+function templateMenu(e: React.MouseEvent) {
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  showContextMenu(
+    r.left,
+    r.bottom,
+    TEMPLATES.map((tpl) => ({ label: tpl.label, action: () => void addTemplate(tpl) })),
+  );
+}
 
 const MATCH_TEMPLATES = ["*", "EXACT:https://example.com/path", "prefix:https://example.com/api/", "regex:(?i)^https://.*\\.example\\.com/api/(.*)$", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json", "URLWithBody:/soap regex:GetOrder"];
 const ACTIONS = ["dir:/path/to/folder", "https://staging.example.com/api/", "https://staging.example.com/api/ *nocreds", "*200", "*204", "*404", "*500", "*502", "*drop", "*delay:2000", "*redir:https://example.com/", "*header:X-Quena=1", "*CORSPreflightAllow", "*bpu", "*bpafter"];
@@ -32,6 +43,9 @@ function RewriteRules({ version }: { version: number }) {
         {t("Rewrite rules change real requests and responses (JSON values, text, headers, status).")}{" "}
         <button className="linklike" onClick={() => edit()}>
           {t("New rewrite rule…")}
+        </button>{" "}
+        <button className="linklike" onClick={templateMenu}>
+          {t("From template ▾")}
         </button>
       </div>
     );
@@ -88,6 +102,7 @@ function RewriteRules({ version }: { version: number }) {
           <input type="number" className="rw-max" min={1} max={16384} defaultValue={rw.maxBodyKb} onBlur={(e) => commit({ ...rw, maxBodyKb: Math.max(1, Math.min(16384, Number(e.target.value) || 4096)) })} />
         </label>
         <button onClick={() => edit()}>{t("New rewrite rule…")}</button>
+        <button onClick={templateMenu}>{t("From template ▾")}</button>
       </div>
       <table className="kv ar-table">
         <thead>

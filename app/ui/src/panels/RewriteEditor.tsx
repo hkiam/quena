@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api, type RwOp, type RwPreview, type RwRule, type RwState, type SessionId } from "../api";
 import { get, say, set } from "../store";
 import { rowCache } from "../grid/SessionGrid";
-import { emptyDraft, fromDraft, OP_KINDS, toDraft, type OpDraft, type OpKind } from "./rewriteDraft";
+import { emptyDraft, fromDraft, MARK_COLORS, OP_KINDS, toDraft, type OpDraft, type OpKind } from "./rewriteDraft";
 import { t } from "../i18n";
 
 const MATCH_TEMPLATES = ["*", "exact:https://example.com/path", "prefix:https://example.com/api/", "regex:(?i)^https://.*\\.example\\.com/api/", "NOT:tracking", "METHOD:POST /login", "HEADER:Accept=json"];
@@ -51,6 +51,20 @@ function OpRow({ d, onChange, onRemove, onMove }: { d: OpDraft; onChange: (d: Op
       {(d.op === "setHeader" || d.op === "removeHeader") && <input {...plain} className="mono rw-path" value={d.name} placeholder="X-Header" onChange={(e) => up({ name: e.target.value })} />}
       {d.op === "setHeader" && <input {...plain} className="mono rw-value" value={d.headerValue} placeholder={t("value")} onChange={(e) => up({ headerValue: e.target.value })} />}
       {d.op === "setStatus" && <input type="number" min={100} max={999} className="rw-code" value={d.code} onChange={(e) => up({ code: e.target.value })} />}
+      {(d.op === "setQuery" || d.op === "removeQuery" || d.op === "setCookie" || d.op === "removeCookie") && (
+        <input {...plain} className="mono rw-path" value={d.name} placeholder={d.op.endsWith("Cookie") ? "session_id" : "lang"} onChange={(e) => up({ name: e.target.value })} />
+      )}
+      {(d.op === "setQuery" || d.op === "setCookie") && <input {...plain} className="mono rw-value" value={d.headerValue} placeholder={t("value")} onChange={(e) => up({ headerValue: e.target.value })} />}
+      {d.op === "mark" && (
+        <select value={d.color} onChange={(e) => up({ color: e.target.value as OpDraft["color"] })}>
+          {MARK_COLORS.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      )}
+      {d.op === "comment" && <input {...plain} className="rw-value" value={d.text} placeholder={t("comment")} onChange={(e) => up({ text: e.target.value })} />}
       <span className="rw-op-buttons">
         <button title={t("Move up")} onClick={() => onMove(-1)}>
           ↑

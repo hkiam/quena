@@ -730,7 +730,7 @@ fn split_full_url(url: &str) -> Option<(String, String, Option<String>)> {
     Some((format!("{scheme}://{authority}"), path, query))
 }
 
-fn pct_decode(s: &str) -> String {
+pub(crate) fn pct_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;

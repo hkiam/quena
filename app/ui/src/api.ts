@@ -631,7 +631,13 @@ export type RwOp =
   | { op: "regexReplace"; pattern: string; replacement: string }
   | { op: "setHeader"; name: string; value: string }
   | { op: "removeHeader"; name: string }
-  | { op: "setStatus"; code: number };
+  | { op: "setStatus"; code: number }
+  | { op: "setQuery"; name: string; value: string }
+  | { op: "removeQuery"; name: string }
+  | { op: "setCookie"; name: string; value: string }
+  | { op: "removeCookie"; name: string }
+  | { op: "mark"; color: MarkColor }
+  | { op: "comment"; text: string };
 
 /** A rewrite rule tried on a captured session. */
 export interface RwPreview {

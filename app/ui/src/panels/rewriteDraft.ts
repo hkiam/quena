@@ -1,6 +1,6 @@
 // Editing rewrite operations: a form-friendly draft per operation (all fields as text) and
 // the conversion back, with the checks the form shows before the backend validates.
-import type { RwOp } from "../api";
+import type { MarkColor, RwOp } from "../api";
 import { t } from "../i18n";
 
 export type OpKind = RwOp["op"];
@@ -15,7 +15,15 @@ export const OP_KINDS: [OpKind, string][] = [
   ["setHeader", t("Header: set")],
   ["removeHeader", t("Header: remove")],
   ["setStatus", t("Status: set")],
+  ["setQuery", t("Query: set parameter")],
+  ["removeQuery", t("Query: remove parameter")],
+  ["setCookie", t("Cookie: set")],
+  ["removeCookie", t("Cookie: remove (* all)")],
+  ["mark", t("Session: mark")],
+  ["comment", t("Session: comment")],
 ];
+
+export const MARK_COLORS: MarkColor[] = ["red", "blue", "gold", "green", "orange", "purple"];
 
 export interface OpDraft {
   op: OpKind;
@@ -27,10 +35,12 @@ export interface OpDraft {
   name: string;
   headerValue: string;
   code: string;
+  color: MarkColor;
+  text: string;
 }
 
 export function emptyDraft(op: OpKind = "jsonSet"): OpDraft {
-  return { op, path: "$.", valueText: "", pattern: "", replacement: "", name: "", headerValue: "", code: "503" };
+  return { op, path: "$.", valueText: "", pattern: "", replacement: "", name: "", headerValue: "", code: "503", color: "red", text: "" };
 }
 
 export function toDraft(o: RwOp): OpDraft {
@@ -52,6 +62,16 @@ export function toDraft(o: RwOp): OpDraft {
       return { ...d, name: o.name };
     case "setStatus":
       return { ...d, code: String(o.code) };
+    case "setQuery":
+    case "setCookie":
+      return { ...d, name: o.name, headerValue: o.value };
+    case "removeQuery":
+    case "removeCookie":
+      return { ...d, name: o.name };
+    case "mark":
+      return { ...d, color: o.color };
+    case "comment":
+      return { ...d, text: o.text };
   }
 }
 
@@ -109,6 +129,19 @@ export function fromDraft(d: OpDraft): { op: RwOp } | { error: string } {
       if (!Number.isInteger(code) || code < 100 || code > 999 || code === 101) return { error: t("A status code from 100 to 999 (not 101)") };
       return { op: { op: "setStatus", code } };
     }
+    case "setQuery":
+    case "removeQuery":
+      if (!d.name.trim()) return { error: t("Enter a parameter name") };
+      return d.op === "setQuery" ? { op: { op: "setQuery", name: d.name.trim(), value: d.headerValue } } : { op: { op: "removeQuery", name: d.name.trim() } };
+    case "setCookie":
+    case "removeCookie":
+      if (!d.name.trim() || (d.op === "setCookie" && d.name.trim() === "*")) return { error: t("Enter a cookie name") };
+      return d.op === "setCookie" ? { op: { op: "setCookie", name: d.name.trim(), value: d.headerValue } } : { op: { op: "removeCookie", name: d.name.trim() } };
+    case "mark":
+      return { op: { op: "mark", color: d.color } };
+    case "comment":
+      if (!d.text.trim()) return { error: t("Enter a comment") };
+      return { op: { op: "comment", text: d.text.trim() } };
   }
 }
 
@@ -131,5 +164,17 @@ export function describeOp(o: RwOp): string {
       return `− ${o.name}:`;
     case "setStatus":
       return `→ ${o.code}`;
+    case "setQuery":
+      return `?${o.name}=${o.value}`;
+    case "removeQuery":
+      return `− ?${o.name}`;
+    case "setCookie":
+      return `🍪 ${o.name}=${o.value}`;
+    case "removeCookie":
+      return `− 🍪 ${o.name}`;
+    case "mark":
+      return `● ${o.color}`;
+    case "comment":
+      return `“${o.text}”`;
   }
 }

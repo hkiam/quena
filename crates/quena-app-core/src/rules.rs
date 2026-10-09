@@ -1447,19 +1447,35 @@ fn httpdate_now() -> String {
 fn note_rewrite(s: &SessionView, applied: &[crate::rewrite::Applied], changed: bool) {
     let names: Vec<String> = applied.iter().flat_map(|a| a.names.iter().cloned()).collect();
     let notes: Vec<String> = applied.iter().flat_map(|a| a.notes.iter().cloned()).collect();
+    // Marks and comments the rules give the session (also when the message stays as it is).
+    let mark = applied.iter().rev().find_map(|a| a.meta.mark);
+    let comments: Vec<String> = applied.iter().flat_map(|a| a.meta.comments.iter().cloned()).collect();
+    let add = |d: &mut quena_model::SessionDetail, text: &str| {
+        if d.summary.comment.is_empty() {
+            d.summary.comment = text.to_string();
+        } else if !d.summary.comment.contains(text) {
+            d.summary.comment = format!("{}; {text}", d.summary.comment);
+        }
+    };
+    if mark.is_some() || !comments.is_empty() {
+        s.live.update(|d| {
+            if let Some(c) = mark {
+                d.summary.color = Some(c);
+            }
+            for c in &comments {
+                add(d, c);
+            }
+        });
+    }
     if names.is_empty() || (!changed && notes.is_empty()) {
         return;
     }
-    let text = crate::rewrite::Applied { names, notes }.comment();
+    let text = crate::rewrite::Applied { names, notes, ..Default::default() }.comment();
     s.live.update(move |d| {
         if changed {
             d.summary.flags |= flags::TAMPERED;
         }
-        if d.summary.comment.is_empty() {
-            d.summary.comment = text;
-        } else if !d.summary.comment.contains(&text) {
-            d.summary.comment = format!("{}; {text}", d.summary.comment);
-        }
+        add(d, &text);
     });
 }
 
@@ -1642,8 +1658,10 @@ impl Interceptor for Rules {
             if this.rewrite.wants_request() {
                 let mut names = Vec::new();
                 if let Some((h, a)) = this.rewrite.request_head(&head) {
-                    head = h;
-                    script_edited = true;
+                    if a.changed {
+                        head = h;
+                        script_edited = true;
+                    }
                     names.push(a);
                 }
                 if let Some(b) = body.clone() {
@@ -1773,8 +1791,11 @@ impl Interceptor for Rules {
                 // Rewrite rules never touch the framing headers, so the body streams as is.
                 let req = s.live.detail().request;
                 if let Some((h, a)) = this.rewrite.response_head(&req, changed.as_ref().unwrap_or(&resp)) {
-                    changed = Some(h);
-                    note_rewrite(&s, &[a], true);
+                    let edited = a.changed;
+                    if edited {
+                        changed = Some(h);
+                    }
+                    note_rewrite(&s, &[a], edited);
                 }
             }
             match changed {

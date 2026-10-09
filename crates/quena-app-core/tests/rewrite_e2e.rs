@@ -143,10 +143,18 @@ fn rewrite_rules() {
                 rw("/hdr", Phase::Response, vec![Op::SetHeader { name: "X-Rewritten".into(), value: "yes".into() }, Op::SetStatus { code: 503 }]),
                 rw("METHOD:POST /echo", Phase::Request, vec![Op::JsonSet { path: "$.injected".into(), value: json!(true) }]),
                 rw("/c/", Phase::Response, vec![Op::JsonAppendAll { value: Some(json!("X")) }]),
+                rw("/mark", Phase::Request, vec![Op::SetQuery { name: "lang".into(), value: "de".into() }, Op::Mark { color: quena_model::MarkColor::Red }]),
+                rw("/mark", Phase::Response, vec![Op::Comment { text: "seen by a rule".into() }]),
             ],
             ..Default::default()
         })
         .unwrap();
+
+    // Query changed, session marked and commented (the response itself unchanged).
+    let _ = curl(&["-x", &proxy, &url("/mark?x=1")]).join().unwrap();
+    let d = last_session(&core, "/mark?x=1&lang=de");
+    assert_eq!(d.summary.color, Some(quena_model::MarkColor::Red));
+    assert!(d.summary.comment.contains("seen by a rule"), "{}", d.summary.comment);
 
     // gzip JSON: decoded, every list gets a broken element, sent back uncompressed.
     let (out, err) = curl(&["-x", &proxy, "-D", "-", &url("/list")]).join().unwrap();
@@ -230,6 +238,6 @@ fn rewrite_rules() {
     assert_eq!(out, r#"{"items":[{"id":1,"name":"a"}],"count":1}"#);
     // Saved and loaded again.
     let again = quena_app_core::rewrite::Rewriter::load(dir.path());
-    assert_eq!(again.state().rules.len(), 6);
+    assert_eq!(again.state().rules.len(), 8);
     core.shutdown();
 }
