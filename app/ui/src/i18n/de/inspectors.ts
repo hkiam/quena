@@ -307,4 +307,6 @@ export const inspectors: Record<string, string> = {
   "Not MessagePack.": "Kein MessagePack.",
   "{n} value": "{n} Wert",
   "{n} values": "{n} Werte",
+  "{n} field": "{n} Feld",
+  "{n} fields": "{n} Felder",
 };

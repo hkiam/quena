@@ -34,7 +34,7 @@ function Field({ f, depth }: { f: PbField; depth: number }) {
       <span className="pb-num">#{f.number}</span>
       <span className="pb-kind">{f.typeName ?? f.kind}</span>
       {!hasKids && <span className="pb-val">{f.value}</span>}
-      {hasKids && <span className="pb-meta muted">{f.value}</span>}
+      {hasKids && <span className="pb-meta muted">{f.kind === "message" ? `{${plural(f.children.length, "{n} field", "{n} fields")}}` : f.value}</span>}
       {open && hasKids && (
         <div className="j-children">
           {f.children.slice(0, limit).map((c, i) => (
