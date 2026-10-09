@@ -310,6 +310,18 @@ pub struct Proxy {
     extra_status: RwLock<Vec<listener::ListenerStatus>>,
 }
 
+impl Drop for Proxy {
+    /// A proxy dropped without [`Proxy::stop`] (tests, a replaced engine) gives up its
+    /// addresses as well, so a port number the OS hands out again later is not taken for
+    /// Quena's own by the loop guard.
+    fn drop(&mut self) {
+        connector::remove_self_addrs(&self.shared.listen.read());
+        for r in self.extra.lock().iter() {
+            connector::remove_self_addrs(&r.addrs);
+        }
+    }
+}
+
 impl Proxy {
     pub fn new(capture: Arc<Capture>, cfg: ProxyConfig, ca: Option<Arc<CertAuthority>>) -> Result<Arc<Proxy>, ProxyError> {
         quena_tls::init();

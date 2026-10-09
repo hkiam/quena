@@ -127,11 +127,23 @@ pub(crate) fn remove_self_addrs(addrs: &[std::net::SocketAddr]) {
 /// Whether connecting to `a` would reach Quena's own listener (a request loop).
 pub(crate) fn is_self_addr(a: &std::net::SocketAddr) -> bool {
     let own = SELF_ADDRS.read();
-    if !own.iter().any(|o| o.port() == a.port()) {
+    let ip = a.ip().to_canonical();
+    // Listeners on this port that the address reaches: the same address, or a wildcard of
+    // its family (`::` also takes IPv4 on dual-stack systems). `[::1]:P` and `127.0.0.1:P`
+    // are different sockets, possibly of different programs.
+    let reaches = |o: &std::net::SocketAddr| {
+        let oi = o.ip().to_canonical();
+        o.port() == a.port() && (oi == ip || (oi.is_unspecified() && (oi.is_ipv6() || ip.is_ipv4())))
+    };
+    if own.iter().any(reaches) {
+        return true;
+    }
+    // Connecting to a wildcard, or to an address of this machine, reaches a wildcard listener.
+    let wildcard = own.iter().any(|o| o.port() == a.port() && o.ip().is_unspecified() && (o.ip().is_ipv6() || ip.is_ipv4()));
+    if !wildcard {
         return false;
     }
-    let ip = a.ip().to_canonical();
-    if ip.is_loopback() || ip.is_unspecified() || own.iter().any(|o| o.ip().to_canonical() == ip) {
+    if ip.is_unspecified() || ip.is_loopback() {
         return true;
     }
     let s = ip.to_string();
@@ -338,5 +350,26 @@ impl tower_service::Service<Uri> for Connector {
             ti.warning = cert_warning(ti.not_after, cfg.cert_warn_days, quena_model::now_us() / 1_000_000);
             Ok(MaybeTls { stream: Stream::Tls(Box::new(TokioIo::new(s))), proxied: false, h2: negotiated_h2, info: info(tls_ms, Some(ti)) })
         })
+    }
+}
+
+#[cfg(test)]
+mod self_addr_tests {
+    use super::*;
+
+    #[test]
+    fn own_listeners_by_address_and_family() {
+        let a = |s: &str| s.parse::<std::net::SocketAddr>().unwrap();
+        // Ports nothing else in the tests uses.
+        let own = [a("127.0.0.1:61001"), a("0.0.0.0:61002"), a("[::]:61003")];
+        add_self_addrs(&own);
+        assert!(is_self_addr(&a("127.0.0.1:61001")));
+        assert!(!is_self_addr(&a("[::1]:61001")), "another socket, maybe another program");
+        assert!(!is_self_addr(&a("127.0.0.1:61009")));
+        assert!(is_self_addr(&a("127.0.0.1:61002")), "IPv4 wildcard");
+        assert!(!is_self_addr(&a("[::1]:61002")));
+        assert!(is_self_addr(&a("127.0.0.1:61003")) && is_self_addr(&a("[::1]:61003")), "dual-stack wildcard");
+        remove_self_addrs(&own);
+        assert!(!is_self_addr(&a("127.0.0.1:61001")));
     }
 }

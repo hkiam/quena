@@ -25,6 +25,9 @@ contain breaking changes (settings, file formats, plugin API).
   saying why.
 
 ### Fixed
+- The loop guard took a server for Quena itself when it listened on the same port number at
+  another address (`127.0.0.1:P` while Quena listened on `[::1]:P`), and kept the ports of
+  a stopped proxy engine.
 - Hiding the navigator right after choosing a group could leave the list narrowed to it.
 - A session that just finished could briefly not be found (its details vanished for a
   moment between recording and storage).
