@@ -23,14 +23,6 @@ contain breaking changes (settings, file formats, plugin API).
   encrypts the archive with AES-256 (readable by Fiddler, 7-Zip, WinZip). Loading or
   dropping a protected archive asks for its password; before, it loaded no sessions without
   saying why.
-
-### Fixed
-- The loop guard took a server for Quena itself when it listened on the same port number at
-  another address (`127.0.0.1:P` while Quena listened on `[::1]:P`), and kept the ports of
-  a stopped proxy engine.
-- Hiding the navigator right after choosing a group could leave the list narrowed to it.
-- A session that just finished could briefly not be found (its details vanished for a
-  moment between recording and storage).
 - **Socket.IO**: the WebSocket view shows the event name or packet type and the arguments
   of Socket.IO messages, can hide ping/pong and search for events; a *Socket.IO* view
   decodes long-polling bodies (v4 and v3).
@@ -157,6 +149,52 @@ contain breaking changes (settings, file formats, plugin API).
   `quena-cli-<version>-<platform>.cdx.json`), and `sbom.cdx.json` comes with the app
   (macOS app bundle, Windows installer and portable ZIP, Linux packages), the `quena-cli`
   archive and the Docker image, which also carries an SBOM and provenance attestation.
+
+### Fixed
+- The loop guard (since the previous fix) refused every server on the port number of a
+  wildcard listener: a reverse proxy entry on `0.0.0.0:8080` forwarding to `backend:8080`
+  answered every request with "is Quena itself". Requests to `0.0.0.0:P` reach a listener
+  on `127.0.0.1:P` again.
+- AutoSave removed the oldest archives before writing the new one; when writing failed (a
+  full disk) every interval cost one more archive. Now older archives go only after the new
+  one is written, and a failed save is tried again at the next interval.
+- *Save to collection* replaced a collection it could not read (e.g. a file in another
+  encoding) by one with just this request, and put the request back at its old position
+  even when the collection had been sorted or shortened meanwhile, overwriting another one.
+  It now stops with the error, and appends when the position no longer holds the request.
+- Collections: the first rewrite of a `.http` file written elsewhere keeps the original as
+  `.http.bak` (comments, response handlers and requests the Composer cannot read are not
+  kept). `.rest` files are no longer listed (they could not be opened), names Windows keeps
+  for devices (`NUL`, `COM1` …) are refused, and a collection can be renamed in case only.
+- `quena-cli diff` compared the first capture with itself when the second had no sessions,
+  and passed `--fail-on`; such a file is now an error (exit code 2).
+- Compare captures: a request that now gets no answer (status 0) counts as one that now
+  fails; content hashes in file names (`index-B2x9kQ1a.js`) no longer make every built asset
+  new and gone; captures with many requests to one path compare quickly. New: *Ignore host*
+  (`--ignore-host`, MCP `ignore_host`) pairs staging with production. MCP no longer shows
+  redirect targets with their codes or tokens unless secrets are allowed.
+- Importing a CA moved the current CA's files aside before the new ones were written; a
+  failed write left no usable CA, and the next start made a new one. The new files are now
+  written first, the current ones kept as copies (also two imports in one second).
+- LLM traffic: sessions were parsed on one new thread each, and other apps' endpoints named
+  `/api/chat`, `/responses` or `/embeddings` were marked as LLM calls. One worker now parses
+  them, and only bodies shaped like such a call count. A mark could bring back a session
+  removed meanwhile. Newer models no longer get the list price of an older one with the same
+  prefix (`claude-opus-4-5` was priced as `claude-opus-4`); prices added for Claude Opus 4.1
+  and 4.5, Sonnet 4.5, GPT-5.1, GPT-5 pro, o3-pro and o1-pro.
+- Rewrite rules on large WebSocket messages ran on the proxy's async workers and could
+  stall other connections; their preview used only the first 4 KB of a message.
+- The sanitized export lost the marks of changed and dropped WebSocket messages; v3
+  Socket.IO polling bodies with emoji were split in the wrong places; a damaged protected
+  archive asked for the password again and again; a Composer request with `HTTP/1.0` was
+  recorded as 1.0 but sent as 1.1 (now recorded as sent); a script setting a WebSocket
+  message to text that is no valid Unicode was ignored without a word (now logged).
+- The loop guard took a server for Quena itself when it listened on the same port number at
+  another address (`127.0.0.1:P` while Quena listened on `[::1]:P`), and kept the ports of
+  a stopped proxy engine.
+- Hiding the navigator right after choosing a group could leave the list narrowed to it.
+- A session that just finished could briefly not be found (its details vanished for a
+  moment between recording and storage).
 
 ## [0.1.7] — 2026-10-07
 

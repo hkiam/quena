@@ -223,14 +223,20 @@ pub fn date(unix: i64) -> String {
     time::OffsetDateTime::from_unix_timestamp(unix).map(|t| format!("{:04}-{:02}-{:02}", t.year(), t.month() as u8, t.day())).unwrap_or_default()
 }
 
-fn backup(path: &std::path::Path, ts: u64) {
-    if path.exists() {
-        let mut name = path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
-        name.push(format!(".bak-{ts}"));
-        if let Err(e) = std::fs::rename(path, path.with_file_name(name)) {
-            tracing::warn!(target: "quena::tls", "could not back up {}: {e}", path.display());
-        }
+/// Copy `path` (if there) to `<name>.bak-<ts>` (`-2`, `-3` … when taken); the copy keeps
+/// the file's permissions.
+fn backup(path: &std::path::Path, ts: u64) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
     }
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut to = path.with_file_name(format!("{name}.bak-{ts}"));
+    let mut n = 2;
+    while to.exists() {
+        to = path.with_file_name(format!("{name}.bak-{ts}-{n}"));
+        n += 1;
+    }
+    std::fs::copy(path, to).map(|_| ())
 }
 
 impl CertAuthority {
@@ -241,16 +247,36 @@ impl CertAuthority {
         let dir = dir.into();
         std::fs::create_dir_all(&dir)?;
         let key = key_pair(&m.key_pkcs8)?;
-        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        for f in [CA_CERT_FILE, CA_KEY_FILE, CA_CHAIN_FILE] {
-            backup(&dir.join(f), ts);
-        }
+        // The new files first (a full disk leaves the current CA as it is), then copies of the
+        // current ones, then the new files take their place.
+        let staged = |f: &str| dir.join(format!("{f}.new"));
         let cert_pem = crate::der_to_pem(&m.cert_der);
-        write_private(&dir.join(CA_KEY_FILE), key.serialize_pem().as_bytes())?;
-        write_atomic(&dir.join(CA_CERT_FILE), cert_pem.as_bytes())?;
-        if !m.chain_der.is_empty() {
-            let chain: String = m.chain_der.iter().map(|c| crate::der_to_pem(c)).collect();
-            write_atomic(&dir.join(CA_CHAIN_FILE), chain.as_bytes())?;
+        let chain: String = m.chain_der.iter().map(|c| crate::der_to_pem(c)).collect();
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let prepared = (|| {
+            write_private(&staged(CA_KEY_FILE), key.serialize_pem().as_bytes())?;
+            write_atomic(&staged(CA_CERT_FILE), cert_pem.as_bytes())?;
+            if !chain.is_empty() {
+                write_atomic(&staged(CA_CHAIN_FILE), chain.as_bytes())?;
+            }
+            for f in [CA_CERT_FILE, CA_KEY_FILE, CA_CHAIN_FILE] {
+                backup(&dir.join(f), ts)?;
+            }
+            Ok::<_, std::io::Error>(())
+        })();
+        if let Err(e) = prepared {
+            for f in [CA_CERT_FILE, CA_KEY_FILE, CA_CHAIN_FILE] {
+                let _ = std::fs::remove_file(staged(f));
+            }
+            return Err(other(format!("the CA could not be saved (the current one stays): {e}")));
+        }
+        std::fs::rename(staged(CA_KEY_FILE), dir.join(CA_KEY_FILE))?;
+        std::fs::rename(staged(CA_CERT_FILE), dir.join(CA_CERT_FILE))?;
+        if chain.is_empty() {
+            // The previous CA's chain (kept in its copy) does not belong to this one.
+            let _ = std::fs::remove_file(dir.join(CA_CHAIN_FILE));
+        } else {
+            std::fs::rename(staged(CA_CHAIN_FILE), dir.join(CA_CHAIN_FILE))?;
         }
         tracing::info!(target: "quena::tls", "imported root CA into {}", dir.display());
         Self::from_parts(dir, cert_pem, key)
@@ -332,6 +358,32 @@ mod tests {
             let again = CertAuthority::load_or_create(dir.path()).unwrap();
             assert_eq!(again.sha256_fingerprint(), ca.sha256_fingerprint());
             verifies(&again, "127.0.0.1", &m.cert_der);
+        }
+    }
+
+    /// Two imports in the same second keep both previous CAs; an import that cannot be
+    /// written leaves the current CA in place.
+    #[test]
+    fn imports_keep_every_previous_ca() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = CertAuthority::load_or_create(dir.path()).unwrap().sha256_fingerprint();
+        let rsa = ca_from_pem(&fixture("rsa-ca.pem"), &fixture("rsa-ca.key")).unwrap();
+        let ec = ca_from_pem(&fixture("ec-ca.pem"), &fixture("ec-ca.key")).unwrap();
+        CertAuthority::import(dir.path(), &rsa).unwrap();
+        CertAuthority::import(dir.path(), &ec).unwrap();
+        let keys = std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().starts_with(&format!("{CA_KEY_FILE}.bak-"))).count();
+        assert_eq!(keys, 2, "both previous keys are kept");
+        assert!(!std::fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().ends_with(".new")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let now = CertAuthority::load_or_create(dir.path()).unwrap().sha256_fingerprint();
+            assert_ne!(now, first);
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+            let e = CertAuthority::import(dir.path(), &rsa).map(|_| ()).unwrap_err().to_string();
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(e.contains("the current one stays"), "{e}");
+            assert_eq!(CertAuthority::load_or_create(dir.path()).unwrap().sha256_fingerprint(), now);
         }
     }
 

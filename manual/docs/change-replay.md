@@ -95,7 +95,8 @@ or put under version control (*Open folder*).
 
 - **Save to collection…** in the Composer's toolbar asks for a collection (an existing one
   or a new name) and a name for the request. A request loaded from a collection is saved
-  back with **Save**; *Save as…* puts a copy elsewhere.
+  back with **Save** (appended instead when the collection has changed so that its place
+  holds another request); *Save as…* puts a copy elsewhere.
 - Click a request to load it into the Composer. **▶** sends it, **▶ Run all** sends the
   collection's requests one after the other and lists status and time; click a result to
   select its session.
@@ -108,7 +109,9 @@ or put under version control (*Open folder*).
 
 A request with `{{variables}}` — from a collection or typed into the Composer — is sent with
 the collection's variables and the chosen environment. Quena writes the files itself:
-comments and response handler scripts of an imported file are not kept when it is saved.
+comments and response handler scripts of an imported file are not kept when it is saved. The
+first time it rewrites a file written elsewhere, the original stays beside it as
+`NAME.http.bak`.
 
 AI agents use them over [MCP](mcp.md) (`list_http_requests`, `run_http_file`,
 `sessions_to_http_file`; `collection:NAME` names a Composer collection, `list_collections`

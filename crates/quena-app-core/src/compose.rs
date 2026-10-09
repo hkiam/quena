@@ -224,7 +224,8 @@ impl AppCore {
             None => (HttpVersion::Http11, None),
             Some(HttpVersion::Http2) => (HttpVersion::Http2, Some(true)),
             Some(HttpVersion::Http3) => return Err(anyhow!("HTTP/3 is not supported; choose HTTP/1.1 or HTTP/2")),
-            Some(v) => (v, Some(false)),
+            // HTTP/1.0 (or older) goes out as HTTP/1.1, and the session says so.
+            Some(_) => (HttpVersion::Http11, Some(false)),
         };
         let head = RequestHead { method: r.method.trim().to_ascii_uppercase(), url, version, headers };
         let shared = engine.proxy.shared.clone();

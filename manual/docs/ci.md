@@ -306,12 +306,14 @@ quena-cli diff release-1.4.har build.har -o diff.md --fail-on errors
 
 | Option | Effect |
 |---|---|
-| `--fail-on errors` | exit code 1 when a request that succeeded before now answers with an error |
+| `--fail-on errors` | exit code 1 when a request that succeeded before now answers with an error or not at all |
 | `--fail-on changes` | exit code 1 on any change, new or gone request |
 | `--all` | also list the requests that stayed the same |
+| `--ignore-host` | pair requests by method and path only (staging against production) |
 | `-o FILE` | write the result to a file (for a PR comment) |
 
-`.saz`, `.har`, `.pcap` and `.pcapng` work, as for `diagnose`.
+`.saz`, `.har`, `.pcap` and `.pcapng` work, as for `diagnose`. A file without sessions is
+an error (exit code 2), not an empty side.
 
 ## Exit codes
 

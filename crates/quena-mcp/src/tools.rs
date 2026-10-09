@@ -84,7 +84,7 @@ static TOOLS: &[Tool] = &[
         description: "Compare two captures in the list: `a` (before) and `b` (after) are `live` (recorded sessions) or the file name of an archive loaded into the list (without `a`/`b`: the sides are listed). Returns requests that changed (status, type, time, headers, body), are new or gone, paired by method, host and normalized path.",
         write: false,
         destructive: false,
-        schema: || obj(json!({ "a": { "type": "string" }, "b": { "type": "string" }, "all": { "type": "boolean", "description": "Also unchanged requests" } })),
+        schema: || obj(json!({ "a": { "type": "string" }, "b": { "type": "string" }, "all": { "type": "boolean", "description": "Also unchanged requests" }, "ignore_host": { "type": "boolean", "description": "Pair by method and path only (staging against production)" } })),
         run: compare_captures,
     },
     Tool {
@@ -725,6 +725,15 @@ impl View {
         }
     }
 
+    /// A difference of a comparison: a redirect target (`header location: A → B`) can carry
+    /// a code or token.
+    fn change(&mut self, c: &str) -> String {
+        match c.strip_prefix("header location: ").and_then(|r| r.split_once(" → ")) {
+            Some((a, b)) if self.red.is_some() => format!("header location: {} → {}", self.url(a), self.url(b)),
+            _ => c.to_string(),
+        }
+    }
+
     fn row(&mut self, s: &SessionSummary) -> Value {
         let mut v = json!({
             "id": s.id,
@@ -1012,17 +1021,19 @@ struct DiffArgs {
     b: Option<String>,
     #[serde(default)]
     all: bool,
+    #[serde(default)]
+    ignore_host: bool,
 }
 
 fn compare_captures(core: &Arc<AppCore>, a: Value) -> Result<Value> {
-    use quena_app_core::capdiff::{DiffKind, Source};
+    use quena_app_core::capdiff::{CompareOptions, DiffKind, Source};
     let a: DiffArgs = args(a)?;
     let sources = core.compare_sources();
     let (Some(x), Some(y)) = (&a.a, &a.b) else {
         return Ok(json!({ "sides": sources.iter().map(|s| json!({ "name": s.label, "sessions": s.sessions })).collect::<Vec<_>>() }));
     };
     let side = |n: &str| if n.eq_ignore_ascii_case("live") { Source::Live } else { Source::Archive(n.to_string()) };
-    let d = core.compare_captures(&side(x), &side(y))?;
+    let d = core.compare_captures_with(&side(x), &side(y), &CompareOptions { ignore_host: a.ignore_host })?;
     let mut view = View::new(core, 0);
     let entries: Vec<Value> = d
         .entries
@@ -1034,7 +1045,7 @@ fn compare_captures(core: &Arc<AppCore>, a: Value) -> Result<Value> {
                 "kind": e.kind, "method": e.method,
                 "urlA": e.url_a.as_deref().map(|u| view.url(u)), "urlB": e.url_b.as_deref().map(|u| view.url(u)),
                 "idA": e.id_a, "idB": e.id_b, "statusA": e.status_a, "statusB": e.status_b,
-                "msA": e.ms_a, "msB": e.ms_b, "changes": e.changes,
+                "msA": e.ms_a, "msB": e.ms_b, "changes": e.changes.iter().map(|c| view.change(c)).collect::<Vec<_>>(),
             })
         })
         .collect();

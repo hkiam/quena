@@ -64,7 +64,7 @@ not kind == tunnel
 | `trace` | `correlation` | trace or correlation id of the request |
 | `session` | `sessioncookie` | session cookie as `NAME #hash` |
 | `via` | `reverse` | how the request came in: a [reverse proxy](reverse-proxy.md) entry, `SOCKS5` or `transparent` |
-| `certdays` | `cert` | days until the server's certificate expires (`0`: expired); e.g. `certdays < 30` |
+| `certdays` | `cert` | days until the server's certificate expires (`0`: expired or expires within a day); e.g. `certdays < 30` |
 | `llm` | `model` | [LLM API call](llm.md): `provider/model`, e.g. `llm ~ claude` |
 | `tokens` | | tokens of an LLM call (input + output) |
 

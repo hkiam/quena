@@ -76,7 +76,7 @@ switches the warning off.
 - The column **Cert. until** (right-click the column headers) shows the end of validity and
   sorts by it.
 - The filter `certdays < 30` lists sessions to servers whose certificate expires within 30
-  days (`certdays == 0`: expired).
+  days (`certdays == 0`: expired or expires within a day).
 - *Properties* shows the server certificate's subject, issuer and validity.
 
 Without *Ignore server certificate errors*, an expired server certificate makes the TLS

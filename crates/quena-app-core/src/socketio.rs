@@ -117,7 +117,7 @@ pub fn decode_polling(body: &str) -> Vec<SioPacket> {
     if b.is_empty() {
         return vec![];
     }
-    // v3: length-prefixed, length in characters.
+    // v3: length-prefixed, length in UTF-16 code units (JavaScript's `length`).
     if let Some((len, _)) = b.split_once(':')
         && !len.is_empty()
         && len.bytes().all(|c| c.is_ascii_digit())
@@ -127,7 +127,16 @@ pub fn decode_polling(body: &str) -> Vec<SioPacket> {
         let mut rest = b;
         while let Some((len, tail)) = rest.split_once(':') {
             let Ok(n) = len.parse::<usize>() else { break };
-            let end = tail.char_indices().nth(n).map(|(i, _)| i).unwrap_or(tail.len());
+            let mut units = 0;
+            let end = tail
+                .char_indices()
+                .find(|(_, c)| {
+                    let past = units >= n;
+                    units += c.len_utf16();
+                    past
+                })
+                .map(|(i, _)| i)
+                .unwrap_or(tail.len());
             if let Some(p) = decode_packet(&tail[..end]) {
                 out.push(p);
             }
@@ -196,6 +205,11 @@ mod tests {
         let v3 = decode_polling("9:42[\"ä\",1]2:40");
         assert_eq!(v3.len(), 2);
         assert_eq!(v3[0].event.as_deref(), Some("ä"));
+        assert_eq!(v3[1].sio.as_deref(), Some("connect"));
+        // An emoji counts two (UTF-16, as JavaScript counts).
+        let v3 = decode_polling("10:42[\"😀\",1]2:40");
+        assert_eq!(v3.len(), 2, "{v3:?}");
+        assert_eq!(v3[0].event.as_deref(), Some("😀"));
         assert_eq!(v3[1].sio.as_deref(), Some("connect"));
         assert!(is_socketio("https://x.example/socket.io/?EIO=4&transport=websocket"));
         assert!(!is_socketio("https://x.example/ws"));

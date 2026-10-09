@@ -70,12 +70,12 @@ impl AppCore {
             if !s.llm.is_empty() {
                 let m = models.entry(s.llm.clone()).or_default();
                 m.0 += 1;
-                m.1 += s.llm_tokens.unwrap_or(0);
-                m.2 += s.llm_cost_micros.unwrap_or(0);
+                m.1 = m.1.saturating_add(s.llm_tokens.unwrap_or(0));
+                m.2 = m.2.saturating_add(s.llm_cost_micros.unwrap_or(0));
             }
         });
-        st.llm_tokens = models.values().map(|m| m.1).sum();
-        st.llm_cost = models.values().map(|m| m.2).sum::<u64>() as f64 / 1_000_000.0;
+        st.llm_tokens = models.values().fold(0u64, |a, m| a.saturating_add(m.1));
+        st.llm_cost = models.values().fold(0u64, |a, m| a.saturating_add(m.2)) as f64 / 1_000_000.0;
         let mut m: Vec<_> = models.into_iter().map(|(k, (c, t, cost))| (k, c, t, cost as f64 / 1_000_000.0)).collect();
         m.sort_by(|a, b| b.2.cmp(&a.2).then(b.1.cmp(&a.1)));
         m.truncate(50);

@@ -58,6 +58,19 @@ impl AppCore {
 
     /// [`AppCore::export_archive`], a `.saz` encrypted with AES-256 under `password`.
     pub fn export_archive_protected(self: &Arc<Self>, ids: Vec<SessionId>, path: PathBuf, format: Option<ArchiveFormat>, password: Option<String>) -> Result<JobId> {
+        self.export_archive_then(ids, path, format, password, |_| {})
+    }
+
+    /// [`AppCore::export_archive_protected`], `done` called in the job with whether the
+    /// archive was written.
+    pub(crate) fn export_archive_then(
+        self: &Arc<Self>,
+        ids: Vec<SessionId>,
+        path: PathBuf,
+        format: Option<ArchiveFormat>,
+        password: Option<String>,
+        done: impl FnOnce(bool) + Send + 'static,
+    ) -> Result<JobId> {
         let format = format.or_else(|| format_of(&path)).ok_or_else(|| anyhow!("unknown archive type (use .saz or .har)"))?;
         let password = password.filter(|p| !p.is_empty());
         if password.is_some() && format != ArchiveFormat::Saz {
@@ -73,8 +86,9 @@ impl AppCore {
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("use Copy → As cURL".into())),
                 ArchiveFormat::Pcap => Err(quena_formats::FormatError::Invalid("sessions cannot be saved as a packet capture".into())),
             }
-            .map_err(|e| e.to_string())?;
-            tracing::info!(target: "quena", "saved {n} session(s) to {}", path.display());
+            .map_err(|e| e.to_string());
+            done(n.is_ok());
+            tracing::info!(target: "quena", "saved {} session(s) to {}", n?, path.display());
             Ok(())
         }))
     }

@@ -160,14 +160,17 @@ export default function ComposerPanel() {
         title = r.trim();
         index = -1;
       }
-      let c: Collection;
-      try {
-        c = await api.collectionRead(name);
-      } catch {
-        c = { name, variables: [], requests: [] };
-      }
+      // A collection that exists but cannot be read is not replaced by an empty one.
+      // (Names compared as the file system may: `api` and `API` are one file on macOS.)
+      const found = (await api.collectionsList()).find((x) => x.name.toLowerCase() === name.toLowerCase());
+      if (found) name = found.name;
+      const c: Collection = found ? await api.collectionRead(name) : { name, variables: [], requests: [] };
       const req = toCollectionRequest(d, title);
-      const requests = index >= 0 && index < c.requests.length ? c.requests.map((x, i) => (i === index ? req : x)) : [...c.requests, req];
+      // Back in its place only while that place still holds it (the collection may have been
+      // sorted or shortened meanwhile); else appended.
+      const same = index >= 0 && index < c.requests.length && c.requests[index].name === title;
+      if (index >= 0 && !same) index = -1;
+      const requests = same ? c.requests.map((x, i) => (i === index ? req : x)) : [...c.requests, req];
       await api.collectionSave({ ...c, requests });
       setD({ ...d, coll: { name, index: index >= 0 ? index : requests.length - 1, title } });
       setCollNonce((n) => n + 1);

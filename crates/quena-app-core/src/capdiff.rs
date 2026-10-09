@@ -52,6 +52,14 @@ pub enum Source {
     Ids(Vec<SessionId>),
 }
 
+/// How two captures are compared.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CompareOptions {
+    /// Pair requests to different hosts (staging and production): by method and path only.
+    pub ignore_host: bool,
+}
+
 /// A side as offered for choosing.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,7 +106,7 @@ pub struct DiffCounts {
     pub added: usize,
     pub removed: usize,
     pub same: usize,
-    /// Pairs whose status changed from success to error.
+    /// Pairs that worked before and fail now (an error status, or no answer).
     pub new_errors: usize,
 }
 
@@ -112,8 +120,8 @@ pub struct CaptureDiff {
     pub entries: Vec<DiffEntry>,
 }
 
-/// The path of a URL with what varies replaced: `/users/123/orders/9f8c…` → `/users/{n}/orders/{id}`;
-/// query values dropped, keys sorted.
+/// The path of a URL with what varies replaced: `/users/123/orders/9f8c…` → `/users/{n}/orders/{id}`,
+/// `/assets/index-B2x9kQ1a.js` → `/assets/index-{hash}.js`; query values dropped, keys sorted.
 pub fn normalize(url: &str) -> (String, String) {
     let (host, rest) = match url.split_once("://") {
         Some((_, r)) => match r.find('/') {
@@ -130,6 +138,8 @@ pub fn normalize(url: &str) -> (String, String) {
             "{n}".into()
         } else if hexish || (s.len() >= 20 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && s.chars().any(|c| c.is_ascii_digit())) {
             "{id}".into()
+        } else if s.contains('.') {
+            hashes(s)
         } else {
             s.to_string()
         }
@@ -146,6 +156,36 @@ pub fn normalize(url: &str) -> (String, String) {
         p.push_str(&keys.join("&"));
     }
     (host, p)
+}
+
+/// A file name with the content hashes of a build replaced: `main.3f9a2c1b.js` →
+/// `main.{hash}.js`, `index-B2x9kQ1a.js` → `index-{hash}.js`.
+fn hashes(name: &str) -> String {
+    // At least 8 letters and digits: hex, or upper and lower case mixed (base64-like).
+    let hashy = |t: &str| {
+        t.len() >= 8
+            && t.chars().all(|c| c.is_ascii_alphanumeric())
+            && t.chars().any(|c| c.is_ascii_digit())
+            && (t.chars().all(|c| c.is_ascii_hexdigit()) || (t.chars().any(|c| c.is_ascii_uppercase()) && t.chars().any(|c| c.is_ascii_lowercase())))
+    };
+    let mut out = String::with_capacity(name.len());
+    let mut token = String::new();
+    for c in name.chars().map(Some).chain([None]) {
+        match c {
+            Some(c) if !matches!(c, '.' | '-' | '_') => token.push(c),
+            _ => {
+                out.push_str(if hashy(&token) { "{hash}" } else { &token });
+                token.clear();
+                out.extend(c);
+            }
+        }
+    }
+    out
+}
+
+/// A status that is an answer, not an error (0: no answer).
+fn ok(status: u16) -> bool {
+    (1..400).contains(&status)
 }
 
 fn header_map(d: &SessionDetail) -> BTreeMap<String, String> {
@@ -242,6 +282,11 @@ impl AppCore {
 
     /// Compare side `a` (before) with side `b` (after).
     pub fn compare_captures(&self, a: &Source, b: &Source) -> Result<CaptureDiff> {
+        self.compare_captures_with(a, b, &CompareOptions::default())
+    }
+
+    /// [`AppCore::compare_captures`] with options.
+    pub fn compare_captures_with(&self, a: &Source, b: &Source, o: &CompareOptions) -> Result<CaptureDiff> {
         let cap = self.capture();
         let ids_a = self.source_ids(a)?;
         let ids_b = self.source_ids(b)?;
@@ -252,7 +297,7 @@ impl AppCore {
         let (ra, rb) = (rows(&ids_a), rows(&ids_b));
         let key = |s: &SessionSummary| {
             let (host, path) = normalize(&s.full_url());
-            (s.method.to_ascii_uppercase(), format!("{host}{path}"))
+            (s.method.to_ascii_uppercase(), if o.ignore_host { path } else { format!("{host}{path}") })
         };
         // Occurrences of each key on side A, in order.
         let mut by_key: HashMap<(String, String), std::collections::VecDeque<&SessionSummary>> = HashMap::new();
@@ -283,13 +328,15 @@ impl AppCore {
             if let Some(sa) = sa {
                 e.changes = self.pair_changes(sa, sb);
                 e.kind = if e.changes.is_empty() { DiffKind::Same } else { DiffKind::Changed };
-                if sa.status < 400 && sb.status >= 400 {
+                if ok(sa.status) && !ok(sb.status) {
                     counts.new_errors += 1;
                 }
             }
             entries.push(e);
         }
-        for s in ra.iter().filter(|s| by_key.get(&key(s)).is_some_and(|q| q.iter().any(|x| x.id == s.id))) {
+        // What no session of B took, in the order of A.
+        let left: std::collections::HashSet<SessionId> = by_key.values().flatten().map(|s| s.id).collect();
+        for s in ra.iter().filter(|s| left.contains(&s.id)) {
             let k = key(s);
             entries.push(DiffEntry {
                 kind: DiffKind::Removed,
@@ -411,6 +458,11 @@ mod tests {
         assert_eq!(normalize("https://x"), ("x".into(), "/".into()));
         assert_eq!(normalize("https://x/a/550e8400-e29b-41d4-a716-446655440000#f").1, "/a/{id}");
         assert_eq!(normalize("https://x/v2/items").1, "/v2/items", "short words with digits stay");
+        assert_eq!(normalize("https://x/assets/index-B2x9kQ1a.js").1, "/assets/index-{hash}.js");
+        assert_eq!(normalize("https://x/static/main.3f9a2c1b.chunk.js").1, "/static/main.{hash}.chunk.js");
+        assert_eq!(normalize("https://x/lib/jquery-3.7.1.min.js").1, "/lib/jquery-3.7.1.min.js", "versions stay");
+        assert_eq!(normalize("https://x/docs/Background.html").1, "/docs/Background.html", "words stay");
+        assert!(!ok(0) && ok(200) && ok(304) && !ok(404));
     }
 
     #[test]

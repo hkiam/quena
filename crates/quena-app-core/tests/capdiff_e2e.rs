@@ -1,6 +1,6 @@
 //! Comparing two archives loaded into the list.
 
-use quena_app_core::capdiff::{DiffKind, Source, to_markdown};
+use quena_app_core::capdiff::{CompareOptions, DiffKind, Source, to_markdown};
 use quena_app_core::{AppCore, Paths};
 use std::time::Duration;
 
@@ -67,4 +67,27 @@ fn two_archives_compared() {
     let md = to_markdown(&d, "release-1", "release-2", false);
     assert!(md.contains("**1 now fail**") && md.contains("| + | `GET api.example.com/new`") && !md.contains("users/{n}`"), "{md}");
     assert!(core.compare_captures(&Source::Live, &Source::Archive("release-2.har".into())).is_err(), "no live sessions");
+}
+
+/// Staging against production (hosts ignored), and a request without an answer counted as
+/// one that now fails.
+#[test]
+fn hosts_ignored_and_no_answer_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"port":0,"actAsSystemProxy":false,"captureOnStartup":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let (a, b) = (dir.path().join("staging.har"), dir.path().join("prod.har"));
+    har(&a, vec![entry("https://staging.example.com/api/a", 200, "{}", 10, None), entry("https://staging.example.com/api/b", 200, "{}", 10, None)]);
+    har(&b, vec![entry("https://www.example.com/api/a", 200, "{}", 10, None), entry("https://www.example.com/api/b", 0, "", 10, None)]);
+    for p in [&a, &b] {
+        let job = core.import_archive(p.clone()).unwrap();
+        core.jobs.wait(job, Duration::from_secs(20)).unwrap();
+    }
+    core.capture().index.tick();
+    let (sa, sb) = (Source::Archive("staging.har".into()), Source::Archive("prod.har".into()));
+    let d = core.compare_captures(&sa, &sb).unwrap();
+    assert_eq!((d.counts.added, d.counts.removed), (2, 2), "other hosts do not pair");
+    let d = core.compare_captures_with(&sa, &sb, &CompareOptions { ignore_host: true }).unwrap();
+    assert_eq!((d.counts.same, d.counts.changed, d.counts.new_errors), (1, 1, 1), "{:#?}", d.entries);
+    assert!(d.entries.iter().all(|e| e.key.starts_with("/api/")), "{:#?}", d.entries);
 }

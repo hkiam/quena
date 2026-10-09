@@ -2228,7 +2228,8 @@ type WsPending = (wslog::Head, Vec<u8>, usize);
 /// One frame record (see `quena-proxy::wsframe`), written complete and uncompressed.
 /// Write one message as a single, final, uncompressed frame.
 fn ws_record(out: &mut Vec<u8>, head: wslog::Head, payload: &[u8]) {
-    wslog::Head { fin: true, rsv: 0, ..head }.write(payload, out);
+    // Uncompressed now; whether Quena changed or dropped it stays.
+    wslog::Head { fin: true, rsv: head.rsv & (wslog::EDITED | wslog::DROPPED), ..head }.write(payload, out);
 }
 
 /// Inflate one `permessage-deflate` message (RFC 7692: raw deflate, the trailing

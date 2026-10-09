@@ -21,6 +21,7 @@ export function CaptureDiffPanel() {
   const [diff, setDiff] = useState<CaptureDiff | null>(null);
   const [show, setShow] = useState<Record<string, boolean>>({ changed: true, added: true, removed: true, same: false });
   const [busy, setBusy] = useState(false);
+  const [ignoreHost, setIgnoreHost] = useState(false);
   const reload = async () => {
     const s = await api.compareSources();
     setSources(s);
@@ -58,7 +59,7 @@ export function CaptureDiffPanel() {
     if (!a || !b) return;
     setBusy(true);
     try {
-      setDiff(await api.compareCaptures(JSON.parse(a), JSON.parse(b)));
+      setDiff(await api.compareCaptures(JSON.parse(a), JSON.parse(b), { ignoreHost }));
     } catch (e) {
       say(String(e), "error");
     } finally {
@@ -91,6 +92,9 @@ export function CaptureDiffPanel() {
       <p className="muted small">{t("Compares two captures in the list: what was recorded live, and archives loaded into it. Requests are paired by method, host and path (numbers and ids in the path do not count).")}</p>
       {side(a, setA, "a")}
       {side(b, setB, "b")}
+      <label className="f-check" title={t("For two hosts, such as staging and production: requests are paired by method and path only.")}>
+        <input type="checkbox" checked={ignoreHost} onChange={(e) => setIgnoreHost(e.target.checked)} /> {t("Ignore host")}
+      </label>
       <div className="btn-row">
         <button className="primary" disabled={!a || !b || a === b || busy} onClick={() => void run()}>
           {busy ? t("Comparing…") : t("Compare")}

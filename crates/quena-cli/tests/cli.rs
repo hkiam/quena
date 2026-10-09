@@ -692,4 +692,10 @@ fn diff_of_two_captures_and_its_gate() {
     let o = run(&["diff", before.to_str().unwrap(), before.to_str().unwrap(), "--fail-on", "changes"]);
     assert_eq!(code(&o), 0, "{}", text(&o));
     assert_eq!(code(&run(&["diff", "/no/such.har", before.to_str().unwrap()])), 2);
+    // An empty capture after: an error, not the capture before compared with itself.
+    let empty = d.path().join("empty.har");
+    std::fs::write(&empty, json!({"log": {"version": "1.2", "creator": {"name": "test", "version": "1"}, "entries": []}}).to_string()).unwrap();
+    let o = run(&["diff", before.to_str().unwrap(), empty.to_str().unwrap(), "--fail-on", "changes"]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(text(&o).contains("no sessions"), "{}", text(&o));
 }

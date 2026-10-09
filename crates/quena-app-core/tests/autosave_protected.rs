@@ -78,3 +78,29 @@ fn protected_archives() {
     core.capture().index.tick();
     assert_eq!(core.capture().index.len(), 1);
 }
+
+/// A save that fails (here: a folder that cannot be written) keeps the older archives and
+/// is tried again without a further change.
+#[cfg(unix)]
+#[test]
+fn autosave_failure_keeps_older_archives() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, core) = core();
+    let folder = dir.path().join("ro");
+    std::fs::create_dir(&folder).unwrap();
+    let old = folder.join("autosave-20000101-000000Z.saz");
+    std::fs::write(&old, b"old").unwrap();
+    let mut s = core.settings();
+    s.autosave.enabled = true;
+    s.autosave.keep = 1;
+    s.autosave.folder = folder.display().to_string();
+    core.update_settings(s).unwrap();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+    add(&core, "http://example.com/a");
+    let p = core.autosave_now(false).unwrap().expect("a change is saved");
+    let job = core.jobs.by_key(&format!("export:{}", p.display())).expect("the save job").id;
+    let _ = core.jobs.wait(job, Duration::from_secs(20));
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(old.exists(), "the older archive stays when the new one could not be written");
+    assert!(core.autosave_now(false).unwrap().is_some(), "tried again although nothing changed");
+}

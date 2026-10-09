@@ -459,6 +459,9 @@ struct DiffArgs {
     /// Write the result to this file instead of stdout.
     #[arg(long, short = 'o')]
     out: Option<PathBuf>,
+    /// Pair requests by method and path only (e.g. staging against production).
+    #[arg(long)]
+    ignore_host: bool,
     /// Seconds for loading.
     #[arg(long, default_value_t = 600)]
     timeout: u64,
@@ -478,7 +481,7 @@ enum DiffFail {
 }
 
 fn diff(a: DiffArgs) -> Result<bool> {
-    use quena_app_core::capdiff::{Source, to_markdown};
+    use quena_app_core::capdiff::{CompareOptions, Source, to_markdown};
     let deadline = Deadline::after(a.timeout);
     let engine = Engine::bare()?;
     let mut names = Vec::new();
@@ -486,11 +489,18 @@ fn diff(a: DiffArgs) -> Result<bool> {
         if !f.is_file() {
             return Err(usage(format!("{}: no such file", f.display())));
         }
+        // The import's own entry: a file without sessions adds none (and must not be compared
+        // as the one before).
+        let before = engine.core.compare_sources().len();
         engine.import(f, &[], &deadline)?;
-        let label = engine.core.compare_sources().last().map(|s| s.label.clone()).ok_or_else(|| usage(format!("{}: no sessions", f.display())))?;
-        names.push(label);
+        let sources = engine.core.compare_sources();
+        if sources.len() <= before {
+            return Err(usage(format!("{}: no sessions", f.display())));
+        }
+        names.push(sources[sources.len() - 1].label.clone());
     }
-    let d = engine.core.compare_captures(&Source::Archive(names[0].clone()), &Source::Archive(names[1].clone())).map_err(|e| usage(format!("{e:#}")))?;
+    let o = CompareOptions { ignore_host: a.ignore_host };
+    let d = engine.core.compare_captures_with(&Source::Archive(names[0].clone()), &Source::Archive(names[1].clone()), &o).map_err(|e| usage(format!("{e:#}")))?;
     let text = match a.format {
         DiffFormat::Md => to_markdown(&d, &a.before.display().to_string(), &a.after.display().to_string(), a.all),
         DiffFormat::Json => serde_json::to_string_pretty(&d)?,

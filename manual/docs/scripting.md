@@ -58,6 +58,10 @@ with `permessage-deflate` pass unchanged. The WebSocket view marks changed messa
 and dropped ones with ✕ (showing what arrived). WebSockets are only routed through the
 script while it defines this hook.
 
+A Socket.IO event with binary attachments (`451-[…]`) arrives as a text message followed by
+one binary message per attachment: dropping it means dropping those too, or the other side
+receives attachments it does not expect.
+
 ## The session object
 
 | Member | Phase | Meaning |

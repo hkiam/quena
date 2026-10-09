@@ -269,7 +269,14 @@ impl ScriptEngine {
         }
         match tokio::time::timeout(HOOK_WAIT, rx).await {
             Ok(Ok(Ok(json))) => {
-                let v: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+                let v: serde_json::Value = match serde_json::from_str(&json) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // E.g. a text with a lone surrogate (`"\ud800"`), which is no UTF-8.
+                        tracing::warn!(target: "quena::script", "onWebSocketMessage: the changed message cannot be used ({e}); message passed through unchanged");
+                        return WsDecision::Forward;
+                    }
+                };
                 match v.get("action").and_then(|a| a.as_str()) {
                     Some("drop") => WsDecision::Drop,
                     Some("replace") => v.get("text").and_then(|t| t.as_str()).map(|t| WsDecision::Replace(t.to_string())).unwrap_or(WsDecision::Forward),

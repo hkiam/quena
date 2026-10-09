@@ -182,7 +182,7 @@ fn num_of(f: Field, s: &SessionSummary) -> Option<u64> {
     })
 }
 
-/// Whole days until the server certificate expires; 0 once it has.
+/// Whole days until the server certificate expires; 0 once it has (or within a day).
 fn cert_days(s: &SessionSummary) -> Option<u64> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     Some((s.cert_expires? - now).max(0) as u64 / 86_400)

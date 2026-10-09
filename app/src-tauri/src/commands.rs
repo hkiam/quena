@@ -959,9 +959,14 @@ async fn compare_sources(core: State<'_, Core>) -> R<Vec<quena_app_core::capdiff
 
 /// Compare two captures in the list.
 #[tauri::command]
-async fn compare_captures(core: State<'_, Core>, a: quena_app_core::capdiff::Source, b: quena_app_core::capdiff::Source) -> R<quena_app_core::capdiff::CaptureDiff> {
+async fn compare_captures(
+    core: State<'_, Core>,
+    a: quena_app_core::capdiff::Source,
+    b: quena_app_core::capdiff::Source,
+    options: Option<quena_app_core::capdiff::CompareOptions>,
+) -> R<quena_app_core::capdiff::CaptureDiff> {
     let core = core.inner().clone();
-    blocking(move || core.compare_captures(&a, &b).map_err(e)).await
+    blocking(move || core.compare_captures_with(&a, &b, &options.unwrap_or_default()).map_err(e)).await
 }
 
 /// A MessagePack body as a tree (`None`: not MessagePack).

@@ -1205,7 +1205,11 @@ impl crate::AppCore {
             WsDirection::Up => dir == quena_model::wslog::DIR_CLIENT,
             WsDirection::Down => dir == quena_model::wslog::DIR_SERVER,
         };
-        let first = frames.iter().find(|f| f.opcode == 1 && dir_ok(f.dir)).and_then(|f| f.text.clone());
+        // The whole message (the list shows a shortened text), up to the size rules change.
+        let first = frames.iter().find(|f| f.opcode == 1 && dir_ok(f.dir)).and_then(|f| {
+            let whole = self.capture().bodies_of(id).and_then(|(_, b)| b.read_range(f.offset, (f.len as usize).min(1 << 20)).ok());
+            whole.map(|b| String::from_utf8_lossy(&b).into_owned()).or_else(|| f.text.clone())
+        });
         let mut notes = Vec::new();
         let (before, after) = match &first {
             Some(text) => {

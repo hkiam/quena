@@ -58,10 +58,12 @@ one did not.
 
 1. Load the captures into the list — *Keep and load* when Quena asks — or use **Load
    archive…** in the dialog. The live capture (what was recorded, not imported) is a side too.
-2. Choose **Before** and **After**, then **Compare**.
+2. Choose **Before** and **After**, then **Compare**. For two hosts — staging against
+   production — tick **Ignore host**: requests are then paired by method and path only.
 
 Requests are paired by method, host and path; numbers and ids in the path
-(`/users/123`, UUIDs, long hex ids) and the values of query parameters do not count, and the
+(`/users/123`, UUIDs, long hex ids), content hashes in file names (`main.3f9a2c1b.js`,
+`index-B2x9kQ1a.js`) and the values of query parameters do not count, and the
 n-th call of an endpoint meets the n-th on the other side. The result lists
 
 | Mark | Meaning |
@@ -73,7 +75,8 @@ n-th call of an endpoint meets the n-th on the other side. The result lists
 
 Headers that change on every response (`Date`, `ETag`, request ids, `Set-Cookie` …) are
 ignored; JSON bodies are compared by content, so key order and spacing do not count.
-Requests that answered successfully before and fail now are counted apart. Click a row to
+Requests that answered successfully before and fail now (an error status, or no answer at
+all) are counted apart. Click a row to
 select its session; double-click a changed one for the [text comparison](#compare) of both.
 **Copy as Markdown** puts the result into a ticket or a pull request.
 

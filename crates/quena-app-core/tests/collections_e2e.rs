@@ -140,3 +140,38 @@ fn collections_are_saved_run_and_keep_the_http_version() {
     assert!(core.collection_read("Broken").is_err());
     core.shutdown();
 }
+
+/// Names, the listing, renaming only the case, and the copy kept when a file written
+/// elsewhere is rewritten.
+#[test]
+fn collection_files_are_handled_with_care() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"port":0,"actAsSystemProxy":false,"captureOnStartup":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    for bad in ["NUL", "com1", "Aux.x", "a.", "../x", ".hidden"] {
+        assert!(core.collection_path(bad).is_err(), "{bad}");
+    }
+    assert!(core.collection_path("COM10").is_ok() && core.collection_path("Console").is_ok());
+
+    let folder = core.collections_dir();
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("other.rest"), "GET http://example.com/\n").unwrap();
+    let hand = "# kept only in the copy\nGET http://example.com/a\n\n> {% client.log(1) %}\n";
+    std::fs::write(folder.join("hand.http"), hand).unwrap();
+    let names: Vec<String> = core.collections_list().unwrap().into_iter().map(|c| c.name).collect();
+    assert_eq!(names, ["hand"], ".rest files are not collections");
+
+    let mut c = core.collection_read("hand").unwrap();
+    c.requests.push(req("b", "http://example.com/b", ""));
+    core.collection_save(&c).unwrap();
+    assert_eq!(std::fs::read_to_string(folder.join("hand.http.bak")).unwrap(), hand, "the original is kept");
+    // A file Quena wrote itself: no new copy, the first stays.
+    core.collection_save(&c).unwrap();
+    assert_eq!(std::fs::read_to_string(folder.join("hand.http.bak")).unwrap(), hand);
+    assert_eq!(core.collection_read("hand").unwrap().requests.len(), 2);
+
+    core.collection_rename("hand", "Hand").unwrap();
+    assert_eq!(core.collections_list().unwrap()[0].name, "Hand");
+    core.collection_save(&Collection { name: "x".into(), variables: vec![], requests: vec![req("a", "http://example.com/", "")], ..Default::default() }).unwrap();
+    assert!(core.collection_rename("x", "hand").is_err(), "another collection's name");
+}

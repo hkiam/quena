@@ -12,6 +12,7 @@ use quena_model::{SessionDetail, SessionId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Bytes of a request or response body read.
 const MAX_BODY: usize = 16 << 20;
@@ -84,7 +85,7 @@ pub struct Usage {
 
 impl Usage {
     pub fn total(&self) -> u64 {
-        self.input + self.output
+        self.input.saturating_add(self.output)
     }
 }
 
@@ -632,7 +633,7 @@ fn anthropic_usage(u: &Value, before: Option<Usage>) -> Usage {
     let read = n(u, "cache_read_input_tokens").max(b.cache_read);
     let write = n(u, "cache_creation_input_tokens").max(b.cache_write);
     let fresh = n(u, "input_tokens");
-    let input = if fresh > 0 || read > 0 || write > 0 { fresh + read + write } else { b.input };
+    let input = if fresh > 0 || read > 0 || write > 0 { fresh.saturating_add(read).saturating_add(write) } else { b.input };
     Usage { input: input.max(b.input), output: n(u, "output_tokens").max(b.output), cache_read: read, cache_write: write, reasoning: 0 }
 }
 
@@ -799,6 +800,10 @@ const PRICES: &[(&str, f64, f64, f64)] = &[
     ("gpt-5-nano", 0.05, 0.40, 0.005),
     ("gpt-5-mini", 0.25, 2.0, 0.025),
     ("gpt-5", 1.25, 10.0, 0.125),
+    ("gpt-5.1", 1.25, 10.0, 0.125),
+    ("gpt-5-pro", 15.0, 120.0, 15.0),
+    ("o3-pro", 20.0, 80.0, 20.0),
+    ("o1-pro", 150.0, 600.0, 150.0),
     ("o4-mini", 1.10, 4.40, 0.275),
     ("o3-mini", 1.10, 4.40, 0.55),
     ("o3", 2.0, 8.0, 0.50),
@@ -808,6 +813,9 @@ const PRICES: &[(&str, f64, f64, f64)] = &[
     ("text-embedding-3-large", 0.13, 0.0, 0.13),
     // Anthropic (cache read 10 % of input; cache write 125 %)
     ("claude-opus-4", 15.0, 75.0, 1.50),
+    ("claude-opus-4-1", 15.0, 75.0, 1.50),
+    ("claude-opus-4-5", 5.0, 25.0, 0.50),
+    ("claude-sonnet-4-5", 3.0, 15.0, 0.30),
     ("claude-sonnet-4", 3.0, 15.0, 0.30),
     ("claude-3-7-sonnet", 3.0, 15.0, 0.30),
     ("claude-3-5-sonnet", 3.0, 15.0, 0.30),
@@ -827,13 +835,22 @@ const PRICES: &[(&str, f64, f64, f64)] = &[
     ("deepseek-reasoner", 0.55, 2.19, 0.14),
 ];
 
+/// Whether what follows a name in the price list still names that model: nothing, a date or
+/// a release tag (`-20250514`, `-2024-08-06`, `-latest`, `-preview-05-20`, `@20240620`), not
+/// another model (`-5` of `claude-opus-4-5`, `-pro` of `o3-pro`, `.1` of `gpt-5.1`).
+fn same_model(rest: &str) -> bool {
+    let Some(tail) = rest.strip_prefix(['-', '@', ':']) else { return rest.is_empty() };
+    let first = tail.split(['-', '@', ':']).next().unwrap_or("");
+    (first.len() >= 4 && first.chars().all(|c| c.is_ascii_digit())) || matches!(first, "latest" | "preview" | "exp" | "experimental")
+}
+
 /// The price for `model`: from `llm-prices.json` (its own longest prefix), else built in.
 pub fn price_of(model: &str, custom: &BTreeMap<String, Price>) -> Option<(String, Price)> {
     let m = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
     if let Some((k, p)) = custom.iter().filter(|(k, _)| m.starts_with(&k.to_ascii_lowercase())).max_by_key(|(k, _)| k.len()) {
         return Some((format!("{k} (llm-prices.json)"), *p));
     }
-    PRICES.iter().filter(|(k, ..)| m.starts_with(k)).max_by_key(|(k, ..)| k.len()).map(|(k, i, o, c)| {
+    PRICES.iter().filter(|(k, ..)| m.strip_prefix(k).is_some_and(same_model)).max_by_key(|(k, ..)| k.len()).map(|(k, i, o, c)| {
         let write = if k.starts_with("claude") { Some(i * 1.25) } else { None };
         (format!("{k} (built-in list prices, 2025)"), Price { input: *i, output: *o, cache_read: Some(*c), cache_write: write })
     })
@@ -841,7 +858,7 @@ pub fn price_of(model: &str, custom: &BTreeMap<String, Price>) -> Option<(String
 
 /// Estimated cost of `u` at `p`.
 pub fn cost_of(u: &Usage, p: &Price) -> f64 {
-    let fresh = u.input.saturating_sub(u.cache_read + u.cache_write) as f64;
+    let fresh = u.input.saturating_sub(u.cache_read.saturating_add(u.cache_write)) as f64;
     (fresh * p.input + u.cache_read as f64 * p.cache_read.unwrap_or(p.input) + u.cache_write as f64 * p.cache_write.unwrap_or(p.input) + u.output as f64 * p.output) / 1_000_000.0
 }
 
@@ -851,7 +868,16 @@ pub fn cost_of(u: &Usage, p: &Price) -> f64 {
 pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &str)>, prices: &BTreeMap<String, Price>) -> Option<LlmCall> {
     let api = api_of(method, url)?;
     let req: Value = serde_json::from_slice(request).ok()?;
-    if !req.is_object() {
+    // What a call to that API carries (`/api/chat` or `/responses` of another app does not).
+    let carries = |keys: &[&str]| keys.iter().any(|k| req.get(k).is_some());
+    let fits = match api {
+        Api::Chat | Api::Messages | Api::OllamaChat => carries(&["messages"]),
+        Api::Responses => carries(&["input", "prompt", "previous_response_id"]),
+        Api::Gemini => carries(&["contents"]),
+        Api::OllamaGenerate => carries(&["prompt"]) && carries(&["model"]),
+        Api::Embeddings => carries(&["input", "content", "requests"]),
+    };
+    if !req.is_object() || !fits {
         return None;
     }
     let host = host_of(url);
@@ -975,24 +1001,46 @@ impl AppCore {
         parse(&d.request.method, &d.request.url, &request, response.as_ref().map(|(b, ct)| (b.as_slice(), ct.as_str())), &self.llm_prices())
     }
 
-    /// Mark a finished session that is an LLM call with its model, tokens and cost.
-    pub fn llm_mark(&self, id: SessionId) {
+    /// Mark a finished session that is an LLM call with its model, tokens and cost, later on
+    /// a worker thread (a full queue drops it: marks are a help, not a record).
+    pub(crate) fn llm_mark_later(self: &Arc<Self>, id: SessionId) {
+        static QUEUE: std::sync::OnceLock<Option<std::sync::mpsc::SyncSender<(std::sync::Weak<AppCore>, u64, SessionId)>>> = std::sync::OnceLock::new();
+        let queue = QUEUE.get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<(std::sync::Weak<AppCore>, u64, SessionId)>(1024);
+            let worker = std::thread::Builder::new().name("quena-llm".into()).spawn(move || {
+                for (core, numbering, id) in rx {
+                    if let Some(core) = core.upgrade() {
+                        core.llm_mark(numbering, id);
+                    }
+                }
+            });
+            worker.ok().map(|_| tx)
+        });
+        if let Some(q) = queue {
+            let _ = q.try_send((Arc::downgrade(self), self.capture().numbering(), id));
+        }
+    }
+
+    /// Mark session `id` (of numbering `numbering`) if it is an LLM call.
+    pub fn llm_mark(&self, numbering: u64, id: SessionId) {
+        let cap = self.capture();
+        // Numbering restarted meanwhile: `id` is another session now.
+        if cap.numbering() != numbering {
+            return;
+        }
         let Some(call) = self.llm(id) else { return };
         let flags = flags_of(&call);
         let set = |d: &mut SessionDetail| {
             d.extra_flags.retain(|(k, _)| !k.starts_with(LLM_FLAG));
             d.extra_flags.extend(flags.iter().cloned());
         };
-        let cap = self.capture();
         // Still being written (bodies pending): change the live session, it persists itself.
         if let Some(live) = cap.live(id) {
             live.update(set);
             return;
         }
-        let Some(mut d) = cap.detail(id) else { return };
-        set(&mut d);
-        d.refresh_summary();
-        cap.replace_detail(d);
+        // Only while it is there (not removed meanwhile).
+        cap.update_detail(id, set);
     }
 }
 
@@ -1008,6 +1056,20 @@ mod tests {
     }
 
     #[test]
+    fn prices_only_for_the_model_named() {
+        let p = |m: &str| price_of(m, &BTreeMap::new()).map(|(k, _)| k.split(' ').next().unwrap_or("").to_string());
+        assert_eq!(p("claude-opus-4-20250514").as_deref(), Some("claude-opus-4"));
+        assert_eq!(p("claude-opus-4-5-20251101").as_deref(), Some("claude-opus-4-5"));
+        assert_eq!(p("gpt-4o-2024-08-06").as_deref(), Some("gpt-4o"));
+        assert_eq!(p("openai/gpt-4o-mini").as_deref(), Some("gpt-4o-mini"));
+        assert_eq!(p("gemini-2.5-flash-preview-05-20").as_deref(), Some("gemini-2.5-flash"));
+        assert_eq!(p("mistral-large-latest").as_deref(), Some("mistral-large"));
+        assert_eq!(p("claude-opus-4-7"), None, "a newer model has no price yet");
+        assert_eq!(p("gpt-5.2"), None);
+        assert_eq!(p("o3-deep-research"), None);
+    }
+
+    #[test]
     fn recognises_apis_by_url() {
         assert_eq!(api_of("POST", "https://api.openai.com/v1/chat/completions"), Some(Api::Chat));
         assert_eq!(api_of("POST", "https://x.openai.azure.com/openai/deployments/gpt4o/chat/completions?api-version=2024-10-21"), Some(Api::Chat));
@@ -1017,6 +1079,9 @@ mod tests {
         assert_eq!(api_of("POST", "http://localhost:11434/api/chat"), Some(Api::OllamaChat));
         assert_eq!(api_of("POST", "https://api.openai.com/v1/embeddings"), Some(Api::Embeddings));
         assert_eq!(api_of("GET", "https://api.openai.com/v1/chat/completions"), None);
+        // Another app's endpoint with such a path: not an LLM call.
+        assert!(parse("POST", "https://shop.example.com/api/chat", br#"{"text":"hi","room":1}"#, None, &BTreeMap::new()).is_none());
+        assert!(parse("POST", "https://app.example.com/v2/responses", br#"{"answers":[1]}"#, None, &BTreeMap::new()).is_none());
         assert_eq!(api_of("POST", "https://example.com/v1/users"), None);
         assert!(parse("POST", "https://api.openai.com/v1/chat/completions", b"not json", None, &BTreeMap::new()).is_none());
     }

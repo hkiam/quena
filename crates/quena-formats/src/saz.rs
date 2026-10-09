@@ -424,11 +424,12 @@ pub fn check_password(path: &Path, password: Option<&str>) -> Result<bool> {
         Err(zip::result::ZipError::InvalidPassword) => return Err(FormatError::WrongPassword),
         Err(e) => return Err(e.into()),
     };
-    // AES checks the password with two bytes; reading proves it (and the MAC).
+    // AES checks the password with two bytes (one wrong password in 65536 passes them; the
+    // data then does not inflate): a read that fails now is most likely a damaged file.
     let mut sink = Vec::new();
     match f.by_ref().take(64 << 10).read_to_end(&mut sink) {
         Ok(_) => Ok(true),
-        Err(_) => Err(FormatError::WrongPassword),
+        Err(e) => Err(FormatError::Invalid(format!("the archive is damaged (or the password is wrong): {e}"))),
     }
 }
 

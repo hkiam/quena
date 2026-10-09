@@ -1834,10 +1834,17 @@ impl Interceptor for Rules {
             // 1. Rewrite rules (text messages), 2. the script's onWebSocketMessage.
             let mut cur: Option<Vec<u8>> = None;
             if opcode == 0x1
-                && let Ok(t) = std::str::from_utf8(&payload)
-                && let Some(n) = this.rewrite.ws_message(&req, dir, t)
+                && let Ok(text) = std::str::from_utf8(&payload)
             {
-                cur = Some(n.into_bytes());
+                // Large messages (regexes, JSON paths over up to 1 MB) off the async workers.
+                let out = if payload.len() >= 64 << 10 {
+                    let (t, r, p) = (this.clone(), req.clone(), text.to_string());
+                    let _permit = this.rewrite.transform_permit(payload.len() as u64).await;
+                    tokio::task::spawn_blocking(move || t.rewrite.ws_message(&r, dir, &p)).await.ok().flatten()
+                } else {
+                    this.rewrite.ws_message(&req, dir, text)
+                };
+                cur = out.map(String::into_bytes);
             }
             if this.script_active() && this.script.has_ws_hook() {
                 let text = (opcode == 0x1).then(|| String::from_utf8_lossy(cur.as_deref().unwrap_or(&payload)).into_owned());
@@ -1869,8 +1876,7 @@ impl Interceptor for Rules {
         if crate::llm::api_of(&summary.method, &summary.full_url()).is_some()
             && let Some(core) = self.core()
         {
-            let id = s.id;
-            let _ = std::thread::Builder::new().name("quena-llm".into()).spawn(move || core.llm_mark(id));
+            core.llm_mark_later(s.id);
         }
         if self.script_active() && self.script.has_complete_hook() {
             let d = s.live.detail();

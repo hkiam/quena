@@ -296,6 +296,13 @@ fn check_name(name: &str) -> Result<&str> {
     if n.is_empty() || n.len() > 100 || n.starts_with('.') || n.contains(['/', '\\', ':', '*', '?', '"', '<', '>', '|']) || n.chars().any(char::is_control) {
         bail!("invalid collection name: {name:?}");
     }
+    // Names Windows keeps for devices (`NUL.http` is no file there).
+    let stem = n.split('.').next().unwrap_or(n).trim_end().to_ascii_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit());
+    if device || n.ends_with('.') {
+        bail!("invalid collection name: {name:?}");
+    }
     Ok(n)
 }
 
@@ -358,7 +365,7 @@ impl AppCore {
         let Ok(rd) = std::fs::read_dir(&dir) else { return Ok(out) };
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("http") || x.eq_ignore_ascii_case("rest"))
+            if p.extension().is_some_and(|x| x == "http")
                 && let Some(name) = p.file_stem().map(|s| s.to_string_lossy().into_owned())
             {
                 let requests = read(&p).map(|f| f.requests.len()).unwrap_or(0);
@@ -398,6 +405,13 @@ impl AppCore {
             f.requests.push(raw);
         }
         std::fs::create_dir_all(self.collections_dir())?;
+        // A file written elsewhere may hold what the Composer does not keep (comments, response
+        // handlers, requests it could not read): the first rewrite leaves a copy beside it.
+        if let Ok(old) = std::fs::read(&path)
+            && String::from_utf8(old.clone()).ok().is_none_or(|t| http_file::write_file(&http_file::parse(&t)) != t)
+        {
+            std::fs::write(path.with_extension("http.bak"), old)?;
+        }
         let tmp = path.with_extension("http.tmp");
         std::fs::write(&tmp, http_file::write_file(&f))?;
         std::fs::rename(&tmp, &path)?;
@@ -406,7 +420,8 @@ impl AppCore {
 
     pub fn collection_rename(&self, from: &str, to: &str) -> Result<()> {
         let (a, b) = (self.collection_path(from)?, self.collection_path(to)?);
-        if b.exists() && !a.eq(&b) {
+        // Only the case changes (one file on macOS and Windows): no clash.
+        if b.exists() && from.trim().to_lowercase() != to.trim().to_lowercase() {
             bail!("a collection named {to} exists already");
         }
         std::fs::rename(a, b)?;

@@ -572,6 +572,8 @@ export const components: Record<string, string> = {
   "Live capture": "Live-Mitschnitt",
   "Load archive…": "Archiv laden…",
   "Compares two captures in the list: what was recorded live, and archives loaded into it. Requests are paired by method, host and path (numbers and ids in the path do not count).": "Vergleicht zwei Mitschnitte in der Liste: den live aufgezeichneten und dort geladene Archive. Requests werden nach Methode, Host und Pfad zugeordnet (Zahlen und IDs im Pfad zählen nicht).",
+  "Ignore host": "Host ignorieren",
+  "For two hosts, such as staging and production: requests are paired by method and path only.": "Für zwei Hosts, etwa Staging und Produktion: Requests werden nur nach Methode und Pfad zugeordnet.",
   "Comparing…": "Wird verglichen…",
   "Copied as Markdown": "Als Markdown kopiert",
   "Copy as Markdown": "Als Markdown kopieren",

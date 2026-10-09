@@ -128,18 +128,19 @@ pub(crate) fn remove_self_addrs(addrs: &[std::net::SocketAddr]) {
 pub(crate) fn is_self_addr(a: &std::net::SocketAddr) -> bool {
     let own = SELF_ADDRS.read();
     let ip = a.ip().to_canonical();
-    // Listeners on this port that the address reaches: the same address, or a wildcard of
-    // its family (`::` also takes IPv4 on dual-stack systems). `[::1]:P` and `127.0.0.1:P`
-    // are different sockets, possibly of different programs.
-    let reaches = |o: &std::net::SocketAddr| {
-        let oi = o.ip().to_canonical();
-        o.port() == a.port() && (oi == ip || (oi.is_unspecified() && (oi.is_ipv6() || ip.is_ipv4())))
-    };
-    if own.iter().any(reaches) {
+    let port = |o: &&std::net::SocketAddr| o.port() == a.port();
+    // The same address. `[::1]:P` and `127.0.0.1:P` are different sockets, possibly of
+    // different programs.
+    if own.iter().filter(port).any(|o| o.ip().to_canonical() == ip) {
         return true;
     }
-    // Connecting to a wildcard, or to an address of this machine, reaches a wildcard listener.
-    let wildcard = own.iter().any(|o| o.port() == a.port() && o.ip().is_unspecified() && (o.ip().is_ipv6() || ip.is_ipv4()));
+    // `0.0.0.0` and `::` connect to the loopback address of their family.
+    if ip.is_unspecified() && own.iter().filter(port).any(|o| o.ip().to_canonical().is_loopback() && o.ip().to_canonical().is_ipv4() == ip.is_ipv4()) {
+        return true;
+    }
+    // A wildcard listener of its family (`::` also takes IPv4 on dual-stack systems) is
+    // reached through a wildcard or an address of this machine, not another machine's.
+    let wildcard = own.iter().filter(port).any(|o| o.ip().is_unspecified() && (o.ip().is_ipv6() || ip.is_ipv4()));
     if !wildcard {
         return false;
     }
@@ -369,6 +370,9 @@ mod self_addr_tests {
         assert!(is_self_addr(&a("127.0.0.1:61002")), "IPv4 wildcard");
         assert!(!is_self_addr(&a("[::1]:61002")));
         assert!(is_self_addr(&a("127.0.0.1:61003")) && is_self_addr(&a("[::1]:61003")), "dual-stack wildcard");
+        assert!(!is_self_addr(&a("8.8.8.8:61002")) && !is_self_addr(&a("[2001:db8::1]:61003")), "another machine on a wildcard's port");
+        assert!(is_self_addr(&a("0.0.0.0:61001")), "0.0.0.0 connects to 127.0.0.1");
+        assert!(!is_self_addr(&a("[::]:61001")), ":: connects to ::1");
         remove_self_addrs(&own);
         assert!(!is_self_addr(&a("127.0.0.1:61001")));
     }

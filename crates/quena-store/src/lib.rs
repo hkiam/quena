@@ -311,6 +311,9 @@ pub struct Capture {
     temporary: bool,
     /// Sessions waiting for their body recordings (see [`LiveSession::finish`]).
     deferred: Mutex<Option<std::sync::mpsc::Sender<(Arc<LiveSession>, std::time::Instant)>>>,
+    /// Held while finished sessions are changed or removed, so a change never brings back a
+    /// session removed meanwhile.
+    edits: Mutex<()>,
 }
 
 /// A previous capture that was not closed cleanly.
@@ -342,6 +345,7 @@ impl Capture {
             numbering: AtomicU64::new(new_numbering()),
             temporary,
             deferred: Mutex::new(None),
+            edits: Mutex::new(()),
         });
         cap.load_existing()?;
         Ok(cap)
@@ -481,6 +485,8 @@ impl Capture {
     }
 
     fn finish(&self, id: SessionId) {
+        // Not at the same time as `remove`: a session removed meanwhile stays removed.
+        let _edits = self.edits.lock();
         let Some(live) = self.live.read().get(&id).cloned() else { return };
         let mut d = live.detail();
         d.refresh_summary();
@@ -549,8 +555,22 @@ impl Capture {
         self.db.put(d);
     }
 
+    /// Change a finished session that is still there (else `false`).
+    pub fn update_detail(&self, id: SessionId, f: impl FnOnce(&mut SessionDetail)) -> bool {
+        let _edits = self.edits.lock();
+        if self.index.get(id).is_none() {
+            return false;
+        }
+        let Some(mut d) = self.detail(id) else { return false };
+        f(&mut d);
+        d.refresh_summary();
+        self.replace_detail(d);
+        true
+    }
+
     /// Remove sessions and their bodies.
     pub fn remove(&self, ids: &HashSet<SessionId>) {
+        let _edits = self.edits.lock();
         let removed = self.index.remove(ids);
         let mut bodies = Vec::new();
         for id in &removed {
@@ -569,6 +589,7 @@ impl Capture {
 
     /// Remove everything (keeps in-flight sessions running but hidden).
     pub fn clear(&self) {
+        let _edits = self.edits.lock();
         self.index.clear();
         self.cache.lock().clear();
         let live_ids: Vec<SessionId> = self.live.read().keys().copied().collect();
