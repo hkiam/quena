@@ -7,11 +7,6 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
-### Fixed
-- Agents → *Compare with*: a conversation whose model has no price showed a cost of $0 and
-  "−100 %"; an unknown cost is shown as "–" and not compared.
-- `gpt-5-codex` (Codex) is priced like GPT-5.
-
 ## [0.2.0] — 2026-10-10
 
 ### Highlights
@@ -48,7 +43,7 @@ contain breaking changes (settings, file formats, plugin API).
     event streams, stop reason, errors (also AWS stream exceptions), token usage (cache,
     reasoning) and an estimated cost. Claude Code's attribution block is shown apart from the
     system prompt.
-  - **Prices**: built-in list prices (e.g. Claude Opus 4.5, Sonnet 4.5, GPT-5.1, o3-pro), own
+  - **Prices**: built-in list prices (e.g. Claude Opus 4.5, Sonnet 4.5, GPT-5.1, GPT-5 Codex, o3-pro), own
     ones and context windows in `llm-prices.json` (reported when it is not valid JSON), and
     *Fetch prices* (*Settings → Bodies & Storage → LLM prices*) downloads LiteLLM's list of
     several hundred models on request. Bedrock model ids like
