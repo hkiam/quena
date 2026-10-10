@@ -7,21 +7,6 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
-### Changed
-- The LLM breakpoint (`bpllm`) looks at a request as it goes out, after the rules script and
-  rewrite rules, like the agent cache. Agents can set it over MCP (`set_breakpoints` with
-  `llm`).
-- The *Agent* column names clients Quena does not know by the first word of their User-Agent,
-  as the Agents panel does, instead of leaving it empty.
-- The Markdown export writes hints and cache notes in words instead of their codes.
-
-### Fixed
-- *Freeze for replays…* counts the turns that were in the agent cache already instead of
-  leaving them out of its message.
-- The "same reminder" hint counted bytes instead of characters for its minimum length.
-- Exchanges recorded by `quena-cli mcp-tap` had no start time: they sorted as 1970 and the
-  tool call trail never found the LLM call that asked for the tool.
-
 ## [0.2.0] — 2026-10-10
 
 ### Highlights
@@ -89,8 +74,10 @@ contain breaking changes (settings, file formats, plugin API).
     filter `conv`. LLM calls in archives from other tools are found by their URL and flagged.
   - **Agent** column, *Group by → Agent* and filter `agent`: the agent or SDK that sent an LLM
     or MCP request, from its User-Agent (Claude Code, Codex, Gemini CLI, Cursor, GitHub
-    Copilot, Cline, aider, the OpenAI/Anthropic SDKs …; flag `x-quena-agent`).
-  - **Export** a conversation as Markdown (each turn with what it added and the answer), JSON
+    Copilot, Cline, aider, the OpenAI/Anthropic SDKs …, else the User-Agent's first word; flag
+    `x-quena-agent`).
+  - **Export** a conversation as Markdown (each turn with what it added and the answer, hints
+    and cache notes in words), JSON
     lines (one call per line with the messages it added, for evaluations) or OpenTelemetry
     GenAI spans (OTLP JSON, counts and models, no content).
 - **MCP servers** (Model Context Protocol): exchanges over Streamable HTTP and the older SSE
@@ -126,7 +113,8 @@ contain breaking changes (settings, file formats, plugin API).
     well; signed Bedrock requests are left unchanged. Also over MCP (`llmRemoveTool`,
     `llmSetModel`, `llmAppendSystem`).
   - **Break before LLM requests**: *Capture → Breakpoints → Before LLM Requests*, or `bpllm`
-    with conditions (`model=claude tool=mcp__jira__* tokens=50k`).
+    with conditions (`model=claude tool=mcp__jira__* tokens=50k`), decided on the request as it
+    goes out after rewrite rules; also over MCP (`set_breakpoints` with `llm`).
   - **Agent cache**: an LLM API call answered before is answered by Quena again without asking
     the model. The key leaves out what changes with every request (key order, `user`,
     `metadata`, Claude Code's attribution block, `prompt_cache_key`, cache marks, AWS
@@ -135,7 +123,8 @@ contain breaking changes (settings, file formats, plugin API).
     the tokens, cost and time saved and spend nothing in the totals. Mock rules come first.
     MCP: `llm_cache_status`, `cache_llm_calls`.
   - *Freeze for replays…* puts a conversation's answered turns and those of its subagents into
-    the agent cache and shows where a new run left the recording.
+    the agent cache (counting those already there) and shows where a new run left the
+    recording.
   - *Compare with* sets two conversations side by side (turns, tokens, cached share, cost,
     duration, last request, cache misses, errors, hints, context by category, tool calls by
     tool) with the differences coloured by which way is better.
