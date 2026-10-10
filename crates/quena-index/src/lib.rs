@@ -42,6 +42,9 @@ pub enum Column {
     Cost,
     /// The conversation (agent run) of an LLM call.
     Conversation,
+    /// MCP exchange (method and tool) and its server.
+    Mcp,
+    McpServer,
     /// TLS version, the server's IP address, the request's HTTP version.
     Tls,
     RemoteIp,
@@ -95,6 +98,8 @@ pub enum GroupBy {
     Llm,
     /// The conversation (agent run) of LLM calls.
     Conversation,
+    /// The MCP server.
+    McpServer,
     /// Where the session comes from: recorded live, or the archive it was loaded from.
     Source,
 }
@@ -143,6 +148,7 @@ fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
         GroupBy::Via => text(&r.via, false),
         GroupBy::Llm => text(&r.llm, false),
         GroupBy::Conversation => text(&r.llm_conv, false),
+        GroupBy::McpServer => text(&r.mcp_server, false),
         GroupBy::Source => Some(hash_str(source_of(r), false)),
     }
 }
@@ -176,6 +182,8 @@ fn compare(a: &SessionSummary, b: &SessionSummary, c: Column) -> Ordering {
         Column::Tokens => a.llm_tokens.cmp(&b.llm_tokens),
         Column::Cost => a.llm_cost_micros.cmp(&b.llm_cost_micros),
         Column::Conversation => a.llm_conv.cmp(&b.llm_conv),
+        Column::Mcp => a.mcp.cmp(&b.mcp),
+        Column::McpServer => a.mcp_server.cmp(&b.mcp_server),
         Column::Tls => a.tls.cmp(&b.tls),
         Column::RemoteIp => ip_key(&a.remote_ip).cmp(&ip_key(&b.remote_ip)),
         Column::Http => a.http_version.cmp(&b.http_version),

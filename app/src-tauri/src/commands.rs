@@ -1134,6 +1134,34 @@ async fn llm_context(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app
     blocking(move || Ok(core.llm_context(id))).await
 }
 
+/// A session as an MCP exchange (`None`: it is not one).
+#[tauri::command]
+async fn mcp_exchange(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_core::mcp_traffic::McpExchange>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.mcp_exchange(id))).await
+}
+
+/// The way of an MCP tool call: the LLM call that asked for it, the one that carries its result.
+#[tauri::command]
+async fn mcp_trail(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_core::tool_report::ToolTrail>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.mcp_trail(id))).await
+}
+
+/// The MCP exchanges that ran the tool calls of an LLM call's answer.
+#[tauri::command]
+async fn llm_tool_trails(core: State<'_, Core>, id: SessionId) -> R<Vec<quena_app_core::tool_report::ToolTrail>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.llm_tool_trails(id))).await
+}
+
+/// Tools and skills across the agent runs of the capture.
+#[tauri::command]
+async fn tool_report(core: State<'_, Core>) -> R<quena_app_core::tool_report::ToolReport> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.tool_report())).await
+}
+
 /// Socket.IO packets of a long-polling body (`None`: not Socket.IO polling).
 #[tauri::command]
 async fn socketio_polling(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<Vec<quena_app_core::socketio::SioPacket>>> {
@@ -1364,6 +1392,10 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         llm_conversations,
         llm_conversation,
         llm_context,
+        mcp_exchange,
+        mcp_trail,
+        llm_tool_trails,
+        tool_report,
         collections_list,
         import_dropped,
         autosave_now,

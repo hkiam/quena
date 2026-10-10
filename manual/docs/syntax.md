@@ -68,6 +68,8 @@ not kind == tunnel
 | `llm` | `model` | [LLM API call](llm.md): `provider/model`, e.g. `llm ~ claude` |
 | `tokens` | | tokens of an LLM call (input + output) |
 | `conv` | `conversation` | the conversation (agent run) of an LLM call, e.g. `conv == 3fa2c01d` |
+| `mcp` | | an exchange with an [MCP server](llm.md#mcp-servers): method and tool, e.g. `mcp ~ "tools/call"` |
+| `mcpserver` | | the MCP server's name, e.g. `mcpserver == jira` |
 | `tls` | `tlsversion` | TLS version towards the server (else the client), e.g. `tls == TLSv1.2` |
 | `ip` | `remoteip`, `serverip` | the server's IP address, e.g. `ip ~= "10.*"` |
 | `http` | `httpversion`, `version` | HTTP version of the request: `HTTP/1.1`, `HTTP/2` … |

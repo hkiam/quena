@@ -243,6 +243,10 @@ in the [manual](https://hkiam.github.io/quena/ci/).
   subagents, what fills the context (system prompt, each tool, CLAUDE.md/AGENTS.md, tool
   results …), the change from turn to turn, why the prompt cache missed, and hints where
   tokens go to waste
+- **MCP servers**: tool calls with arguments and results, `tools/list` with what each
+  definition costs in tokens, the way from the model's request to the server and back;
+  stdio servers recorded with `quena-cli mcp-tap`; a report of tools and skills offered,
+  called, failed and never used
 - Auto-detected inspectors: **WebSocket**, **SSE**, **gRPC / gRPC-Web / Protobuf**
   (field names from `.proto` files or server reflection, schemaless otherwise),
   **MessagePack**, **Multipart / MTOM**, **SOAP**, **Atom / OData**

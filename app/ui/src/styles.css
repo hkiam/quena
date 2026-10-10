@@ -4083,3 +4083,23 @@ tr.capdiff-changed td:first-child {
 .agt-table td .pill + .pill {
   margin-left: 2px;
 }
+.agents-tools-wrap {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.agents .lt-bar .tabs-inline,
+.agents-tools-wrap .lt-bar .tabs-inline {
+  margin-right: 8px;
+}
+.conv-facts .warn {
+  color: var(--pill-warn-fg);
+}
+.mcp-trail {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+}
+.llm-trails {
+  margin-top: 4px;
+}

@@ -19,6 +19,7 @@ export function groupMenu(): MenuItem[] {
     ["via", t("Via (reverse proxy, SOCKS, transparent)")],
     ["llm", t("LLM model")],
     ["conversation", t("Conversation (agent run)")],
+    ["mcpServer", t("MCP server")],
     ["source", t("Source (live, archives)")],
   ];
   const items: MenuItem[] = choices.map(([g, label]) => ({ label, checked: cur === g, action: () => void actions.setGroup(g) }));

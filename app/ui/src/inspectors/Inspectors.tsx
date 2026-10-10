@@ -19,6 +19,7 @@ import { MultipartView, multipartCandidate } from "./MultipartView";
 import { GrpcView, grpcCandidate } from "./GrpcView";
 import { MsgpackView, msgpackCandidate } from "./MsgpackView";
 import { LlmView, llmCandidate } from "./LlmView";
+import { McpView, mcpCandidate } from "./McpView";
 import { SocketIoView, socketioCandidate } from "./SocketIoView";
 import { ViewTabs } from "./ViewTabs";
 import { bodyItems } from "./inspectMenus";
@@ -56,6 +57,7 @@ const TITLES: Record<string, string> = {
   grpc: "gRPC",
   msgpack: "MessagePack",
   llm: "LLM",
+  mcp: "MCP",
   socketio: "Socket.IO",
 };
 
@@ -236,8 +238,9 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
   const grpc = detail ? grpcCandidate(detail, part) : false;
   const msgpack = detail ? msgpackCandidate(detail, part) : false;
   const llm = detail ? llmCandidate(detail) : false;
+  const mcp = !llm && detail ? mcpCandidate(detail) : false;
   const sio = detail ? socketioCandidate(detail, part) : false;
-  const special = [llm ? "llm" : "", sio ? "socketio" : "", isWs ? "websocket" : "", isSse ? "sse" : "", grpc ? "grpc" : "", msgpack ? "msgpack" : "", mp ? "multipart" : "", soap ? "soap" : "", atom ? "atom" : ""].filter(Boolean);
+  const special = [llm ? "llm" : "", mcp ? "mcp" : "", sio ? "socketio" : "", isWs ? "websocket" : "", isSse ? "sse" : "", grpc ? "grpc" : "", msgpack ? "msgpack" : "", mp ? "multipart" : "", soap ? "soap" : "", atom ? "atom" : ""].filter(Boolean);
   const tabs: string[] = [...(part === "request" ? REQUEST_TABS : RESPONSE_TABS), ...special, ...pluginTabs.map((t) => t.key)];
   const family = detail ? viewFamily(detail, part, special, pluginTabs.map((t) => t.key)) : null;
   const memoKey = family ? `${part}:${family}` : null;
@@ -338,6 +341,9 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
       case "llm":
         content = <LlmView detail={detail} />;
         break;
+      case "mcp":
+        content = <McpView detail={detail} />;
+        break;
       case "socketio":
         content = <SocketIoView detail={detail} part={part} />;
         break;
@@ -431,7 +437,7 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         onContextMenu={(e) => {
           // Views without a menu of their own (Hex, Image, Raw …): the body's, if it has one.
           // (Not for views of a part of the body: parts, frames, events, messages.)
-          if (e.nativeEvent.defaultPrevented || !detail || tamper || !["body", "raw"].includes(sectionOf(tab)) || ["multipart", "websocket", "sse", "grpc", "msgpack", "llm", "socketio"].includes(tab)) return;
+          if (e.nativeEvent.defaultPrevented || !detail || tamper || !["body", "raw"].includes(sectionOf(tab)) || ["multipart", "websocket", "sse", "grpc", "msgpack", "llm", "mcp", "socketio"].includes(tab)) return;
           openMenu(e, withSelection(bodyItems(detail, part), e.target as Element));
         }}
       >

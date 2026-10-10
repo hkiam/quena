@@ -15,6 +15,8 @@ pub mod bypass;
 pub mod details;
 pub mod diagnostics;
 pub mod mcp_setup;
+pub mod mcp_tap;
+pub mod mcp_traffic;
 pub mod dto;
 pub mod engine;
 pub mod find;
@@ -39,6 +41,7 @@ pub mod settings;
 pub mod socketio;
 pub mod stats;
 pub mod structure;
+pub mod tool_report;
 
 use anyhow::{Context, Result, anyhow};
 use dto::*;
@@ -176,6 +179,12 @@ pub struct AppCore {
     pub(crate) autosave: Mutex<autosave::State>,
     /// Digests of LLM calls and the conversations built from them.
     pub(crate) llm_digests: Mutex<agent::Digests>,
+    /// Names of MCP servers by session id.
+    pub(crate) mcp_names: Mutex<mcp_traffic::McpNames>,
+    /// What was read of the stdio MCP recordings.
+    pub(crate) mcp_taps: Mutex<mcp_tap::TapState>,
+    /// Result tokens and failure of MCP tool calls, by (capture numbering, session).
+    pub(crate) mcp_results: Mutex<std::collections::HashMap<(u64, SessionId), (u64, bool)>>,
     /// LLM prices with the stamps (time, size) of their files.
     #[allow(clippy::type_complexity)]
     pub(crate) llm_prices: Mutex<Option<((Option<(Option<std::time::SystemTime>, u64)>, Option<(Option<std::time::SystemTime>, u64)>), Arc<llm::PriceList>)>>,
@@ -224,6 +233,9 @@ impl AppCore {
             protobuf: protobuf::Schemas::default(),
             autosave: Mutex::new(Default::default()),
             llm_digests: Mutex::new(agent::Digests::default()),
+            mcp_names: Mutex::new(mcp_traffic::McpNames::default()),
+            mcp_taps: Mutex::new(mcp_tap::TapState::default()),
+            mcp_results: Mutex::new(std::collections::HashMap::new()),
             llm_prices: Mutex::new(None),
             imports: Mutex::new(Vec::new()),
             replay_generation: std::sync::atomic::AtomicU64::new(0),
@@ -404,6 +416,7 @@ impl AppCore {
                     if last_trim.elapsed() >= Duration::from_secs(1) {
                         last_trim = Instant::now();
                         core.autosave_tick();
+                        core.mcp_tap_tick();
                         let keep = core.settings.read().keep_sessions;
                         if keep > 0 {
                             let ids = cap.index.ids_beyond(keep);

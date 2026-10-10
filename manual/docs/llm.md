@@ -193,6 +193,65 @@ recorded sessions: select them and use *Mock Rules → Mocks from Sessions…* (
 recorded answer (JSON compared regardless of key order); without it, *In recorded order*
 answers the calls one after the other. Streamed answers are replayed as recorded.
 
+## MCP servers
+
+Agents call their tools on MCP servers (Model Context Protocol). Quena recognises these
+exchanges — JSON-RPC over Streamable HTTP (a POST answered with JSON or a stream of
+server-sent events), the older SSE transport (a GET stream and POSTs to `/messages`) — and
+shows them in the **MCP** view:
+
+- the method (`initialize`, `tools/list`, `tools/call`, `resources/read` …), the server's
+  name and version, the protocol version and the MCP session;
+- for `tools/call`: the tool, its **arguments**, the **result** (text, images, resources,
+  structured content), whether it failed, and how many tokens the result adds to the
+  agent's next request;
+- the **way of the call**: the LLM call whose answer asked for the tool, the MCP exchange that
+  ran it, the next LLM call that carries the result back to the model — and how many
+  requests offer the tool, with what its definition costs in each;
+- for `tools/list`: the tools offered with the tokens each definition costs;
+- all JSON-RPC messages sent and received.
+
+The LLM view lists, under the answer, the MCP exchanges that ran its tool calls. Exchanges
+get the flags `x-quena-mcp` (`tools/call get_issue`) and `x-quena-mcp-server` (the name from
+`initialize`, else the host): columns **MCP** and **MCP server**, *Group by → MCP server*,
+filters `mcp ~ "tools/call"` and `mcpserver == jira`.
+
+### Servers that talk over stdio
+
+Most MCP servers run as a local process and talk over stdin and stdout; no proxy sees that.
+Put `quena-cli mcp-tap` in front of the server's command in the MCP client's configuration:
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "quena-cli",
+      "args": ["mcp-tap", "--name", "jira", "--", "npx", "-y", "jira-mcp-server"]
+    }
+  }
+}
+```
+
+`mcp-tap` runs the server and passes everything through unchanged; it pairs the requests with
+their responses and writes each exchange to `mcp-tap/` in Quena's data folder (`--data-dir`
+names another one; `QUENA_DATA_DIR` and the portable folder count as for the app). While
+Quena captures, the exchanges appear as sessions `stdio://jira/tools/call`, with the server's
+process; requests of the server to the client (sampling, roots) as
+`stdio://jira/server/…`. Recordings that were read completely are removed after a week.
+
+## Tools and skills
+
+*Agents → Tools & skills* sums up the tools and skills of all conversations:
+
+- every **tool**: the LLM requests that offer it and what its definition costs in each and
+  in all, how often the model called it, the exchanges with its MCP server, failures, and the
+  average and largest result in tokens. Tools that are offered but never called are shown
+  muted — *Only tools never called* lists them alone, with the tokens they cost in all. MCP
+  tools named the way Claude Code names them (`mcp__jira__get_issue`) are matched with the
+  server's `get_issue`;
+- every **skill**: in how many conversations it is listed, how often the model loaded it
+  (Claude Code's Skill tool, or reading its `SKILL.md`), and in how many conversations.
+
 ## AI agents
 
 Over [MCP](mcp.md), `get_llm_call` returns a call taken apart the same way; the session

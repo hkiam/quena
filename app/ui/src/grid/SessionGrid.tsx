@@ -50,6 +50,8 @@ function groupLabel(r: SessionSummary, first: number): string {
       return r.via ?? "";
     case "conversation":
       return t("Conversation {key}", { key: r.llmConv ?? "" });
+    case "mcpServer":
+      return t("MCP server {name}", { name: r.mcpServer ?? "" });
     default:
       return "";
   }
@@ -114,6 +116,10 @@ function cellText(r: SessionSummary, key: ColumnKey): string {
       return r.llmCostMicros != null ? fmtUsd(r.llmCostMicros / 1_000_000) : "";
     case "conversation":
       return r.llmConv ?? "";
+    case "mcp":
+      return r.mcp ?? "";
+    case "mcpServer":
+      return r.mcpServer ?? "";
     case "tls":
       return r.tls ?? "";
     case "remoteIp":

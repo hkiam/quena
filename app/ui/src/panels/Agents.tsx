@@ -8,6 +8,7 @@ import { actions } from "../actions";
 import { fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
 import { breaksCache, cacheText, convTree, diffText, hintText, hintTokens } from "../lib/agentText";
 import { CallContextView } from "./CallContext";
+import { AgentTools } from "./AgentTools";
 import { set, useStore } from "../store";
 import { plural, t } from "../i18n";
 import { ContextMap } from "./ContextMap";
@@ -38,6 +39,7 @@ export default function AgentsPanel() {
   const [list, setList] = useState<ConvSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [view, setView] = useState<"convs" | "tools">("convs");
   useEffect(() => {
     let alive = true;
     const timer = setTimeout(
@@ -64,10 +66,34 @@ export default function AgentsPanel() {
     );
   // A conversation opened from the LLM view may not be in the list yet: it loads on its own.
   const shown = sel;
+  const switcher = (
+    <span className="tabs-inline">
+      <span className={`insp-tab ${view === "convs" ? "active" : ""}`} onClick={() => setView("convs")}>
+        {t("Conversations")}
+      </span>
+      <span className={`insp-tab ${view === "tools" ? "active" : ""}`} onClick={() => setView("tools")}>
+        {t("Tools & skills")}
+      </span>
+    </span>
+  );
+  if (view === "tools")
+    return (
+      <div className="agents-tools-wrap">
+        <div className="lt-bar">
+          {switcher}
+          <span className="tp-spacer" />
+          <button className="icon-btn" title={t("Refresh")} onClick={() => setTick(tick + 1)}>
+            <RefreshCw size={13} />
+          </button>
+        </div>
+        <AgentTools refresh={`${version}:${tick}`} />
+      </div>
+    );
   return (
     <div className="agents">
       <div className="agents-list scroll">
         <div className="lt-bar">
+          {switcher}
           <span className="muted small">{plural(list.length, "{n} conversation", "{n} conversations")}</span>
           {error && <span className="mocks-error small">{error}</span>}
           <span className="tp-spacer" />

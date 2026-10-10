@@ -306,6 +306,39 @@ fn call_heads(args: &str, out: &mut Vec<String>) {
     }
 }
 
+/// Skills a request lists for the model (`- name: description` lines of a skills list).
+fn skills_offered(call: &LlmCall) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in call.messages.iter().flat_map(|m| &m.parts).filter(|p| p.kind == "text") {
+        for (seg, _, t) in segments(&p.text) {
+            if seg != Seg::Skills {
+                continue;
+            }
+            for line in t.lines() {
+                let Some(rest) = line.trim_start().strip_prefix("- ") else { continue };
+                let name = rest.split(':').next().unwrap_or("").trim();
+                if !name.is_empty() && name.len() <= 80 && !name.contains(' ') && !out.iter().any(|x| x == name) {
+                    out.push(name.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The skill a tool call loads: Claude Code's Skill tool, or reading a `SKILL.md`.
+pub fn skill_used(p: &Part) -> Option<String> {
+    let args: Option<Value> = serde_json::from_str(&p.text).ok();
+    if p.name.as_deref() == Some("Skill") {
+        let a = args.as_ref()?;
+        return ["skill", "command", "name"].iter().find_map(|k| a.get(*k).and_then(|v| v.as_str())).map(|s| s.trim_start_matches('/').to_string());
+    }
+    let i = p.text.find("SKILL.md")?;
+    let before = p.text[..i].trim_end_matches(['/', '\\']);
+    let name = before.rsplit(['/', '\\', '"', ' ', '\'']).next().unwrap_or("");
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 /// The agent that sent a request, by its User-Agent (`claude-cli/2.0.14 (external, cli)` →
 /// `claude-cli/2.0.14`).
 pub fn agent_of(user_agent: &str) -> String {
@@ -360,6 +393,9 @@ pub struct Digest {
     pub calls: Vec<String>,
     /// Starts of the string values of those calls' arguments.
     pub call_heads: Vec<String>,
+    /// Skills the request offers (listed by the agent) and skills the answer loads.
+    pub skills_offered: Vec<String>,
+    pub skills_used: Vec<String>,
     pub stop: Option<String>,
     pub error: bool,
     pub cache_marks: usize,
@@ -436,6 +472,8 @@ impl Digest {
             prompt_full: prompt.chars().take(HEAD * 2).collect(),
             calls: call.output.iter().filter(|p| p.kind == "toolCall").map(|p| p.name.clone().unwrap_or_default()).collect(),
             call_heads: heads,
+            skills_offered: skills_offered(call),
+            skills_used: call.output.iter().filter(|p| p.kind == "toolCall").filter_map(skill_used).collect(),
             stop: call.stop_reason.clone(),
             error: call.error.is_some(),
             cache_marks: call.cache_marks.iter().filter(|m| !m.starts_with("ttl")).count(),
@@ -1292,7 +1330,7 @@ impl AppCore {
 
     /// Digests of all LLM calls in the capture (sessions whose URL is an LLM API), and the
     /// conversations; calls whose conversation flag is missing or out of date get it.
-    fn all_built(&self) -> Arc<Built> {
+    pub(crate) fn all_built(&self) -> Arc<Built> {
         let cap = self.capture();
         let mut cand: Vec<(SessionId, String)> = Vec::new();
         cap.index.for_each(|s| {

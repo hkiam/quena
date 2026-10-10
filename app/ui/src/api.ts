@@ -70,6 +70,9 @@ export interface SessionSummary {
   llmCostMicros?: number | null;
   /** The conversation (agent run) of an LLM call. */
   llmConv?: string;
+  /** An exchange with an MCP server (`tools/call get_issue`) and the server. */
+  mcp?: string;
+  mcpServer?: string;
   /** TLS version, the server's IP address, the request's HTTP version. */
   tls?: string;
   remoteIp?: string;
@@ -79,7 +82,7 @@ export interface SessionSummary {
 }
 
 /** "Group by" of the session list (crates/quena-index). */
-export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via" | "llm" | "conversation" | "source";
+export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via" | "llm" | "conversation" | "mcpServer" | "source";
 
 /** An archive or folder of the snapshot library (crates/quena-app-core/src/library.rs). */
 export interface LibraryEntry {
@@ -432,6 +435,8 @@ export type Column =
   | "tokens"
   | "cost"
   | "conversation"
+  | "mcp"
+  | "mcpServer"
   | "tls"
   | "remoteIp"
   | "http"
@@ -636,6 +641,56 @@ export interface ConvDetail {
   hints: ConvHint[];
   breakdown: ContextBreakdown | null;
   children: string[];
+}
+export interface RpcMessage {
+  kind: "request" | "notification" | "result" | "error";
+  id?: string;
+  method?: string;
+  body: string;
+}
+export interface McpExchange {
+  transport: "http" | "sse" | "stdio";
+  label: string;
+  session?: string;
+  protocol?: string;
+  server?: [string, string];
+  sent: RpcMessage[];
+  received: RpcMessage[];
+  tools?: { name: string; description: string; size: number; tokens: number }[];
+  call?: { name: string; arguments: string; content: { kind: string; text: string }[]; isError: boolean; tokens: number };
+  error?: string;
+}
+export interface ToolTrail {
+  tool: string;
+  requestedBy?: SessionId;
+  mcp?: SessionId;
+  resultIn?: SessionId;
+  offered: number;
+  defTokens: number;
+}
+export interface ToolStat {
+  name: string;
+  server?: string;
+  offered: number;
+  defTokens: number;
+  modelCalls: number;
+  mcpCalls: number;
+  errors: number;
+  resultTokens: number;
+  maxResultTokens: number;
+  convsOffered: number;
+  convsCalled: number;
+}
+export interface SkillStat {
+  name: string;
+  offered: number;
+  used: number;
+  convsUsed: number;
+}
+export interface ToolReport {
+  tools: ToolStat[];
+  skills: SkillStat[];
+  requests: number;
 }
 export interface CallContext {
   key: string | null;
@@ -1449,6 +1504,10 @@ export const api = {
   llmConversations: () => invoke<ConvSummary[]>("llm_conversations"),
   llmConversation: (key: string) => invoke<ConvDetail | null>("llm_conversation", { key }),
   llmContext: (id: SessionId) => invoke<CallContext | null>("llm_context", { id }),
+  mcpExchange: (id: SessionId) => invoke<McpExchange | null>("mcp_exchange", { id }),
+  mcpTrail: (id: SessionId) => invoke<ToolTrail | null>("mcp_trail", { id }),
+  llmToolTrails: (id: SessionId) => invoke<ToolTrail[]>("llm_tool_trails", { id }),
+  toolReport: () => invoke<ToolReport>("tool_report"),
   socketioPolling: (id: SessionId, part: Part) => invoke<SioPacket[] | null>("socketio_polling", { id, part }),
   msgpack: (id: SessionId, part: Part) => invoke<Msgpack | null>("msgpack", { id, part }),
   protobufStatus: () => invoke<SchemaStatus>("protobuf_status"),

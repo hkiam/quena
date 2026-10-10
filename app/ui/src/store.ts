@@ -26,6 +26,8 @@ export type ColumnKey =
   | "tokens"
   | "cost"
   | "conversation"
+  | "mcp"
+  | "mcpServer"
   | "tls"
   | "remoteIp"
   | "http"
@@ -65,6 +67,8 @@ export const COLUMN_TITLES: Record<ColumnKey, string> = {
   tokens: t("Tokens"),
   cost: t("Cost"),
   conversation: t("Conversation"),
+  mcp: "MCP",
+  mcpServer: t("MCP server"),
   tls: "TLS",
   remoteIp: t("Server IP"),
   http: t("HTTP version"),
@@ -111,6 +115,8 @@ export const DEFAULT_COLUMNS: ColumnConf[] = [
   col("tokens", 64, false, "right"),
   col("cost", 64, false, "right"),
   col("conversation", 90, false),
+  col("mcp", 140, false),
+  col("mcpServer", 90, false),
   col("tls", 64, false),
   col("remoteIp", 110, false),
   col("http", 70, false),
@@ -141,6 +147,8 @@ export const CLASSIC_COLUMNS: ColumnConf[] = [
   col("tokens", 64, false, "right"),
   col("cost", 64, false, "right"),
   col("conversation", 90, false),
+  col("mcp", 140, false),
+  col("mcpServer", 90, false),
   col("tls", 64, false),
   col("remoteIp", 110, false),
   col("http", 70, false),

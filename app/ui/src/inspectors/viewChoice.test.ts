@@ -131,5 +131,7 @@ describe("LLM calls", () => {
     const d = call("https://api.openai.com/v1/chat/completions");
     expect(viewFamily(d, "response", ["llm", "sse"], [])).toBe("llm");
     expect(defaultView("llm", "request", [...REQUEST, "llm"])).toBe("llm");
+    expect(viewFamily(d, "request", ["mcp"], [])).toBe("mcp");
+    expect(defaultView("mcp", "response", [...REQUEST, "mcp"])).toBe("mcp");
   });
 });

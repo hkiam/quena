@@ -1944,6 +1944,14 @@ impl Interceptor for Rules {
         {
             core.llm_mark_later(s.id);
         }
+        // Exchanges with MCP servers get their method, tool and server.
+        let mcp_header = |h: &quena_model::Headers| h.get("mcp-session-id").is_some() || h.get("mcp-protocol-version").is_some();
+        let has_header = { let d = s.live.detail(); mcp_header(&d.request.headers) || d.response.as_ref().is_some_and(|r| mcp_header(&r.headers)) };
+        if crate::mcp_traffic::candidate(&summary.method, &summary.full_url(), has_header)
+            && let Some(core) = self.core()
+        {
+            core.mcp_mark_later(s.id);
+        }
         if self.script_active() && self.script.has_complete_hook() {
             let d = s.live.detail();
             self.script.on_complete(serde_json::json!({

@@ -61,6 +61,9 @@ pub enum Field {
     Tokens,
     /// The conversation (agent run) of an LLM call (`conv == 3fa2c01d`).
     Conv,
+    /// MCP exchange (`mcp ~ "tools/call"`) and its server (`mcpserver == jira`).
+    Mcp,
+    McpServer,
     /// TLS version (`tls == TLSv1.2`).
     Tls,
     /// The server's IP address.
@@ -155,6 +158,8 @@ impl Field {
             "llm" | "model" => Field::Llm,
             "tokens" => Field::Tokens,
             "conv" | "conversation" => Field::Conv,
+            "mcp" => Field::Mcp,
+            "mcpserver" => Field::McpServer,
             "tls" | "tlsversion" => Field::Tls,
             "ip" | "remoteip" | "serverip" => Field::RemoteIp,
             "http" | "httpversion" | "version" => Field::Http,
@@ -308,6 +313,8 @@ fn text_of(f: Field, s: &SessionSummary) -> String {
         Field::Llm => s.llm.clone(),
         Field::Tokens => s.llm_tokens.map(|t| t.to_string()).unwrap_or_default(),
         Field::Conv => s.llm_conv.clone(),
+        Field::Mcp => s.mcp.clone(),
+        Field::McpServer => s.mcp_server.clone(),
         Field::Tls => s.tls.clone(),
         Field::RemoteIp => s.remote_ip.clone(),
         Field::Http => s.http_version.clone(),

@@ -8,6 +8,22 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **MCP servers** (Model Context Protocol): exchanges over Streamable HTTP and the older SSE
+  transport are recognised and shown in a new **MCP** view — method, server name and
+  version, protocol and session; for `tools/call` the arguments, the result (text, images,
+  resources, structured content), failures and the tokens the result adds to the agent's
+  next request; `tools/list` with the tokens of each tool definition; all JSON-RPC messages.
+  The **way of a tool call** is linked: the LLM call that asked for it, the MCP exchange that
+  ran it, the LLM call that carries the result back (also from the LLM view's answer).
+  Flags `x-quena-mcp` and `x-quena-mcp-server`; columns *MCP* and *MCP server*, *Group by →
+  MCP server*, filters `mcp` and `mcpserver`.
+- `quena-cli mcp-tap --name NAME -- COMMAND …` records MCP servers that talk over stdio:
+  it passes everything through and writes the exchanges to Quena's data folder, where the app
+  picks them up while capturing (`stdio://NAME/tools/call`).
+- *Agents → Tools & skills*: every tool across the conversations with the requests that
+  offer it, what its definition costs in each and in all, model calls, MCP exchanges,
+  failures and result sizes, tools never called; every skill with where it is listed and
+  how often it was loaded (Skill tool or `SKILL.md`).
 - **Agent conversations** (right pane → *Agents*): the LLM calls of one agent run — Claude
   Code, Codex, an app — put together as a conversation (same system prompt and first prompt
   of the user; what agents add around it does not count), subagents under the conversation

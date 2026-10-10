@@ -23,6 +23,8 @@ const FIELDS: Partial<Record<ColumnKey, string>> = {
   llm: "llm",
   tokens: "tokens",
   conversation: "conv",
+  mcp: "mcp",
+  mcpServer: "mcpserver",
   tls: "tls",
   remoteIp: "ip",
   http: "http",

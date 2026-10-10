@@ -317,6 +317,12 @@ quena-cli diff release-1.4.har build.har -o diff.md --fail-on errors
 `.saz`, `.har`, `.pcap` and `.pcapng` work, as for `diagnose`. A file without sessions is
 an error (exit code 2), not an empty side.
 
+## Recording stdio MCP servers
+
+`quena-cli mcp-tap --name NAME -- COMMAND ARGS…` runs an MCP server that talks over stdio,
+passes its input and output through unchanged and records the exchanges for the Quena app;
+see [MCP servers](llm.md#servers-that-talk-over-stdio). It exits with the server's exit code.
+
 ## Exit codes
 
 | Code | Meaning |

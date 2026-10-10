@@ -1,7 +1,8 @@
 // LLM inspector: a call to an LLM API as a conversation — system prompt, messages, tool
 // calls and results, the answer (assembled from a stream), token usage and estimated cost.
 import { useEffect, useState } from "react";
-import { api, type CallContext, type Detail, type LlmCall, type LlmPart } from "../api";
+import { api, type CallContext, type Detail, type LlmCall, type LlmPart, type ToolTrail } from "../api";
+import { actions } from "../actions";
 import { fmtInt, fmtUsd } from "../lib/format";
 import { t } from "../i18n";
 import { say, set } from "../store";
@@ -155,6 +156,33 @@ function ContextBar({ id, state }: { id: number; state: string }) {
   );
 }
 
+/** The MCP exchanges that ran the tool calls of the answer. */
+function ToolTrails({ id, state }: { id: number; state: string }) {
+  const [trails, setTrails] = useState<ToolTrail[]>([]);
+  useEffect(() => {
+    let alive = true;
+    setTrails([]);
+    if (state === "done") api.llmToolTrails(id).then((r) => alive && setTrails(r), () => {});
+    return () => {
+      alive = false;
+    };
+  }, [id, state]);
+  const ran = trails.filter((x) => x.mcp != null);
+  if (!ran.length) return null;
+  return (
+    <div className="small llm-trails">
+      {ran.map((x, i) => (
+        <div key={i}>
+          → <span className="mono">{x.tool}</span> {t("run by the MCP server in")}{" "}
+          <button type="button" className="linklike" onClick={() => void actions.selectIds([x.mcp as number])}>
+            #{x.mcp}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function LlmView({ detail }: { detail: Detail }) {
   const [c, setC] = useState<LlmCall | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
@@ -213,6 +241,7 @@ export function LlmView({ detail }: { detail: Detail }) {
       <div className="llm-msg llm-answer">
         <div className="llm-role">{t("Answer")}</div>
         {c.output.length === 0 ? <div className="muted small">{state === "done" || state === "aborted" ? t("no answer") : t("waiting for the answer…")}</div> : c.output.map((p, j) => <PartView key={j} p={p} />)}
+        <ToolTrails id={id} state={state} />
       </div>
       {(c.tools.length > 0 || c.params.length > 0) && (
         <details className="llm-details">

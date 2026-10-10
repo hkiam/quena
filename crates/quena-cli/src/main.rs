@@ -83,6 +83,32 @@ enum Command {
         #[command(flatten)]
         plugins: PluginArgs,
     },
+    /// Run an MCP server that talks over stdio and record its exchanges for the Quena app
+    /// (Agents panel, MCP view): put it in the MCP client's configuration in front of the
+    /// server's command, e.g. `quena-cli mcp-tap --name jira -- npx -y jira-mcp`.
+    McpTap(McpTapArgs),
+}
+
+#[derive(Args)]
+struct McpTapArgs {
+    /// Name of the server as shown in Quena.
+    #[arg(long)]
+    name: String,
+    /// Quena's data folder (default: QUENA_DATA_DIR, the portable folder, or the user's one).
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+    /// The server's command and its arguments.
+    #[arg(last = true, required = true)]
+    command: Vec<String>,
+}
+
+/// The MCP server `mcp-tap` runs (ended with it on Ctrl-C / SIGTERM).
+static TAP_CHILD: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
+
+fn mcp_tap(a: McpTapArgs) -> Result<i32> {
+    let data = a.data_dir.unwrap_or_else(|| Paths::default_paths().data);
+    let (cmd, args) = a.command.split_first().ok_or_else(|| usage("the server's command is missing after --"))?;
+    quena_app_core::mcp_tap::run(&data, &a.name, cmd, args, &TAP_CHILD)
 }
 
 #[derive(Args)]
@@ -545,6 +571,29 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     // Interrupted (a cancelled CI job): remove the temporary store, which can hold a copy of
     // the captured traffic. Best effort; without a handler the OS would just kill us.
+    if let Command::McpTap(_) = &cli.command {
+        // Stdout belongs to the MCP protocol; a signal ends the server with us.
+        let _ = ctrlc::set_handler(|| {
+            if let Some(c) = TAP_CHILD.lock().ok().and_then(|mut g| g.take()) {
+                let mut c = c;
+                let _ = c.kill();
+            }
+            std::process::exit(EXIT_INTERRUPTED);
+        });
+    }
+    let r = match cli.command {
+        Command::McpTap(a) => {
+            return match mcp_tap(a) {
+                Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+                Err(e) => {
+                    eprintln!("quena-cli mcp-tap: {e:#}");
+                    ExitCode::from(EXIT_USAGE)
+                }
+            };
+        }
+        c => c,
+    };
+    let cli = Cli { command: r };
     let _ = ctrlc::set_handler(|| {
         // `reverse` stops on the first signal and still saves; a second one ends it now.
         if REVERSE_RUNNING.load(std::sync::atomic::Ordering::SeqCst) && !STOP.swap(true, std::sync::atomic::Ordering::SeqCst) {
@@ -565,6 +614,7 @@ fn main() -> ExitCode {
         Command::Http { command: HttpCommand::FromHar(a) } => http_from(a).map(|_| true),
         Command::Reverse(a) => reverse(a).map(|_| true),
         Command::Profiles { lang, plugins } => profiles(&lang, &plugins).map(|_| true),
+        Command::McpTap(_) => unreachable!("handled above"),
     };
     match r {
         Ok(true) => ExitCode::SUCCESS,
