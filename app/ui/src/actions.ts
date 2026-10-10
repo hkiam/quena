@@ -6,6 +6,7 @@ import { confirmAsk, get, say, set, PRESETS, type LayoutPreset, type RightTab } 
 import { grid, idAtIndex, rowCache } from "./grid/SessionGrid";
 import { buildCurl, buildFetch, buildPowerShell, buildPython, rawRequestText, rawResponseHead } from "./lib/http";
 import { plural, t } from "./i18n";
+import { quickexecText } from "./lib/quickexecText";
 
 const MARKS: MarkColor[] = ["red", "blue", "gold", "green", "orange", "purple"];
 
@@ -347,13 +348,13 @@ export const actions = {
   async quickexec(input: string): Promise<boolean> {
     const r = await api.quickexec(input);
     if (r.error) {
-      say(r.error, "error");
+      say(quickexecText(r.error), "error");
       return false;
     }
     if (r.select) await actions.selectIds(r.select);
     if (r.action === "help") set({ dialog: { kind: "help", topic: "quickexec" } });
     if (r.action === "dump") await actions.menu("file.save-all");
-    if (r.message && r.action !== "help") say(r.message);
+    if (r.message && r.action !== "help") say(quickexecText(r.message));
     if (r.engineCommand && !r.message) say(t("'{name}' is not available yet", { name: input }), "error");
     return true;
   },

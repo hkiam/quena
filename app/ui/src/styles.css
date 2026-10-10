@@ -1920,10 +1920,18 @@ pre {
 
 /* composer */
 .composer {
-  display: grid;
-  grid-template-rows: auto 1fr;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   height: 100%;
+}
+/* bar and request tabs keep their height; the open pane (always last) takes the rest */
+.composer > * {
+  flex: none;
+}
+.composer > :last-child {
+  flex: 1 1 0;
+  min-height: 0;
 }
 .composer.drop {
   outline: 2px dashed var(--accent);
@@ -1933,14 +1941,27 @@ pre {
   display: flex;
 }
 .cmp-parsed {
-  display: grid;
-  grid-template-rows: auto auto minmax(80px, 30%) auto 1fr auto;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
   padding: 6px;
   min-height: 0;
 }
-.cmp-parsed.with-coll {
-  grid-template-rows: auto auto auto minmax(80px, 30%) auto 1fr auto;
+/* parts that come and go (collection line, parameters) keep the rest in place; the body takes what is left */
+.cmp-parsed > * {
+  flex: none;
+}
+.cmp-parsed > .cmp-body {
+  flex: 1 1 0;
+  min-height: 80px;
+}
+.cmp-parsed > .cmp-headers {
+  height: 30%;
+  min-height: 80px;
+}
+.cmp-params-table {
+  max-height: 160px;
+  overflow: auto;
 }
 .cmp-line {
   display: grid;

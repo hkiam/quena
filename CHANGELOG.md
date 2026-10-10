@@ -205,6 +205,11 @@ contain breaking changes (settings, file formats, plugin API).
   archive and the Docker image, which also carries an SBOM and provenance attestation.
 
 ### Fixed
+- Composer: the request tabs took half of the panel and pushed the form down, and with the
+  query parameter table the request body got a single line. The form keeps its parts in
+  place now; the body takes the remaining height.
+- The command field's answers (`filter`, `=404`, errors such as an unknown command) are shown
+  in the UI language; an unknown command points to `filter EXPRESSION`.
 - The loop guard (since the previous fix) refused every server on the port number of a
   wildcard listener: a reverse proxy entry on `0.0.0.0:8080` forwarding to `backend:8080`
   answered every request with "is Quena itself". Requests to `0.0.0.0:P` reach a listener

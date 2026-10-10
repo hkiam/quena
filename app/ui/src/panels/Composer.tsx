@@ -385,7 +385,7 @@ export default function ComposerPanel() {
         </div>
       )}
       {tab === "parsed" && (
-        <div className={`cmp-parsed ${d.coll ? "with-coll" : ""}`}>
+        <div className="cmp-parsed">
           <div className="cmp-line">
             <select value={d.method} onChange={(e) => setD({ ...d, method: e.target.value })}>
               {(METHODS.includes(d.method) ? METHODS : [d.method, ...METHODS]).map((m) => (
@@ -419,14 +419,16 @@ export default function ComposerPanel() {
                   </span>
                 </div>
                 {showParams && (
-                  <RowTable
-                    rows={params}
-                    placeholder={[t("Name"), t("Value")]}
-                    onChange={(rows) => {
-                      const q = withQuery(d.url, rows);
-                      setD({ ...d, url: q.url, offParams: q.offParams });
-                    }}
-                  />
+                  <div className="cmp-params-table">
+                    <RowTable
+                      rows={params}
+                      placeholder={[t("Name"), t("Value")]}
+                      onChange={(rows) => {
+                        const q = withQuery(d.url, rows);
+                        setD({ ...d, url: q.url, offParams: q.offParams });
+                      }}
+                    />
+                  </div>
                 )}
               </>
             );
