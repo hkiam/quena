@@ -135,12 +135,20 @@ pub struct HostRemapEntry {
     pub target: String,
     /// Keep Host and TLS server name of the original host (only the connection moves).
     pub keep_host: bool,
+    /// `http` or `https` to the target whatever the client used; empty: the same.
+    pub protocol: String,
     pub comment: String,
 }
 
 impl Default for HostRemapEntry {
     fn default() -> Self {
-        HostRemapEntry { id: String::new(), enabled: true, host: String::new(), target: String::new(), keep_host: true, comment: String::new() }
+        HostRemapEntry { id: String::new(), enabled: true, host: String::new(), target: String::new(), keep_host: true, protocol: String::new(), comment: String::new() }
+    }
+}
+
+impl HostRemapEntry {
+    fn rule(&self) -> Result<quena_proxy::remap::HostRemap, String> {
+        quena_proxy::remap::HostRemap::parse(&self.host, &self.target, self.keep_host)?.with_scheme(&self.protocol)
     }
 }
 
@@ -153,13 +161,13 @@ impl HostRemapSettings {
         self.entries
             .iter()
             .filter(|e| e.enabled)
-            .filter_map(|e| quena_proxy::remap::HostRemap::parse(&e.host, &e.target, e.keep_host).map_err(|err| tracing::warn!(target: "quena", "host remap {err}")).ok())
+            .filter_map(|e| e.rule().map_err(|err| tracing::warn!(target: "quena", "host remap {err}")).ok())
             .collect()
     }
 
     pub fn validate(&self) -> Result<(), String> {
         for e in &self.entries {
-            quena_proxy::remap::HostRemap::parse(&e.host, &e.target, e.keep_host).map_err(|err| format!("host remapping: {err}"))?;
+            e.rule().map_err(|err| format!("host remapping: {err}"))?;
         }
         Ok(())
     }

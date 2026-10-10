@@ -320,6 +320,8 @@ export interface HostRemapEntry {
   target: string;
   /** Keep Host and TLS name of the original (only the connection moves). */
   keepHost: boolean;
+  /** `http` or `https` to the target whatever the client used; empty: the same. */
+  protocol?: "" | "http" | "https";
   comment: string;
 }
 

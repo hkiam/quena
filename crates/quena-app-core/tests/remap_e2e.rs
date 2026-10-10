@@ -73,6 +73,19 @@ fn remap_rules_apply_when_saved() {
     core.update_settings(s.clone()).unwrap();
     assert_eq!(get("http://app.remap.invalid/"), format!("127.0.0.1:{port}"));
 
+    // HTTPS from the client, plain HTTP to a local server (a dev server behind a real name).
+    s.host_remap.entries[0].keep_host = true;
+    s.host_remap.entries[0].protocol = "http".into();
+    s.https.decrypt = true;
+    core.update_settings(s.clone()).unwrap();
+    let o = Command::new("curl").args(["-sSk", "--max-time", "20", "-x", &format!("http://{addr}"), "https://app.remap.invalid/"]).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "app.remap.invalid", "{}", String::from_utf8_lossy(&o.stderr));
+    // A port in the pattern and a forced protocol do not go together.
+    let mut bad = s.clone();
+    bad.host_remap.entries[0].host = "app.remap.invalid:443".into();
+    assert!(core.update_settings(bad).is_err());
+    s.host_remap.entries[0].protocol.clear();
+
     // Switched off: the name does not resolve any more.
     s.host_remap.enabled = false;
     core.update_settings(s).unwrap();

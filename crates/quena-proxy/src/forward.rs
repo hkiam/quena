@@ -370,6 +370,7 @@ pub async fn handle(ctx: Arc<ConnCtx>, mut req: Request<Incoming>) -> Result<Res
     });
     let url = match &remapped {
         Some(r) if !r.keep_host => crate::remap::rewrite_url(&url, r).unwrap_or(url),
+        Some(r) if r.scheme.is_some() => crate::remap::rescheme_url(&url, r).unwrap_or(url),
         _ => url,
     };
     let capture = shared.capture();

@@ -58,9 +58,10 @@ export function HostRemapPanel() {
         <thead>
           <tr>
             <th />
-            <th>{t("Host or *.domain")}</th>
+            <th>{t("Host, *.domain or host:port")}</th>
             <th />
             <th>{t("Target (host, IP, host:port)")}</th>
+            <th>{t("Protocol")}</th>
             <th>{t("keep host")}</th>
             <th />
           </tr>
@@ -78,6 +79,13 @@ export function HostRemapPanel() {
               <td>
                 <input {...plain} value={e.target} placeholder="10.0.0.5:8443" onChange={(x) => up(i, { target: x.target.value })} />
               </td>
+              <td>
+                <select value={e.protocol ?? ""} title={t("Talk to the target over HTTP or HTTPS, whatever the client used (e.g. HTTPS to a local HTTP dev server)")} onChange={(x) => up(i, { protocol: x.target.value as "" | "http" | "https" })}>
+                  <option value="">{t("as sent")}</option>
+                  <option value="http">HTTP</option>
+                  <option value="https">HTTPS</option>
+                </select>
+              </td>
               <td className="hr-center">
                 <input type="checkbox" checked={e.keepHost} title={t("Keep Host header and TLS name of the original host")} onChange={(x) => up(i, { keepHost: x.target.checked })} />
               </td>
@@ -91,7 +99,7 @@ export function HostRemapPanel() {
         </tbody>
       </table>
       <div className="rp-buttons">
-        <button onClick={() => change((d) => d.entries.push({ id: newId(), enabled: true, host: "", target: "", keepHost: true, comment: "" }))}>{t("Add entry")}</button>
+        <button onClick={() => change((d) => d.entries.push({ id: newId(), enabled: true, host: "", target: "", keepHost: true, protocol: "", comment: "" }))}>{t("Add entry")}</button>
         <button onClick={() => void importHosts()}>{t("Import hosts file…")}</button>
         <span className="hr-spacer" />
         <button className="primary" disabled={!dirty} onClick={() => void save()}>

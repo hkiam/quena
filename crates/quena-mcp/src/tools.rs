@@ -379,6 +379,7 @@ static TOOLS: &[Tool] = &[
                 "host": { "type": "string" },
                 "target": { "type": "string" },
                 "keep_host": { "type": "boolean", "description": "Keep Host and TLS name of the original (default true)" },
+                "protocol": { "type": "string", "enum": ["", "http", "https"], "description": "Talk http or https to the target whatever the client used (empty: the same)" },
                 "enabled": { "type": "boolean" },
                 "comment": { "type": "string" },
                 "enabled_all": { "type": "boolean" }
@@ -1716,6 +1717,7 @@ struct RemapArgs {
     host: Option<String>,
     target: Option<String>,
     keep_host: Option<bool>,
+    protocol: Option<String>,
     enabled: Option<bool>,
     comment: Option<String>,
     enabled_all: Option<bool>,
@@ -1746,6 +1748,9 @@ fn set_host_remap(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         }
         if let Some(v) = a.target {
             e.target = v;
+        }
+        if let Some(v) = a.protocol {
+            e.protocol = v;
         }
         if let Some(v) = a.keep_host {
             e.keep_host = v;

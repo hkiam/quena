@@ -503,7 +503,6 @@ export const components: Record<string, string> = {
   "Enable host remapping": "Host-Umleitung aktivieren",
   "Connections to a host go to another host, IP address or port — like an entry in the hosts file, but only for traffic through Quena. With \"keep host\", the request keeps its Host header and TLS name (a staging server with the real certificate); without it, it is sent to the target as if addressed there.":
     "Verbindungen zu einem Host gehen an einen anderen Host, eine IP-Adresse oder einen Port – wie ein Eintrag in der hosts-Datei, aber nur für Traffic über Quena. Mit „Host behalten“ behält der Request Host-Header und TLS-Namen (ein Staging-Server mit dem echten Zertifikat); ohne geht er an das Ziel, als wäre er dorthin adressiert.",
-  "Host or *.domain": "Host oder *.domain",
   "Target (host, IP, host:port)": "Ziel (Host, IP, Host:Port)",
   "keep host": "Host behalten",
   "Keep Host header and TLS name of the original host": "Host-Header und TLS-Namen des ursprünglichen Hosts behalten",
@@ -637,4 +636,8 @@ export const components: Record<string, string> = {
   "Also bypass Apple services that pin their certificates": "Auch Apple-Dienste mit Certificate Pinning vorbeileiten",
   "The DNS domains of a VPN connected when capturing starts (e.g. the company's), so company traffic keeps its direct way": "Die DNS-Domains eines VPN, das beim Start des Mitschnitts verbunden ist (etwa das der Firma), damit Firmen-Traffic seinen direkten Weg beh\u00e4lt",
   "Also bypass the domains of an active VPN": "Auch die Domains eines aktiven VPN vorbeileiten",
+  "Host, *.domain or host:port": "Host, *.domain oder host:port",
+  "Protocol": "Protokoll",
+  "Talk to the target over HTTP or HTTPS, whatever the client used (e.g. HTTPS to a local HTTP dev server)": "Mit dem Ziel \u00fcber HTTP oder HTTPS sprechen, egal was der Client nutzte (z. B. HTTPS auf einen lokalen HTTP-Dev-Server)",
+  "as sent": "wie gesendet",
 };

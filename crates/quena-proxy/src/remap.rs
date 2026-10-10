@@ -19,6 +19,10 @@ pub struct HostRemap {
     pub port: Option<u16>,
     /// Keep `Host` and SNI of the original host (only the connection moves).
     pub keep_host: bool,
+    /// Only for this port of the original (`api.example.com:8443`).
+    pub from_port: Option<u16>,
+    /// Talk to the target over `http` or `https` whatever the client used (`None`: the same).
+    pub scheme: Option<String>,
 }
 
 /// Where a connection goes instead.
@@ -27,6 +31,8 @@ pub struct Remapped {
     pub host: String,
     pub port: u16,
     pub keep_host: bool,
+    /// The scheme to use instead of the original one.
+    pub scheme: Option<String>,
     /// `from → to`, for the session.
     pub note: String,
 }
@@ -35,8 +41,13 @@ impl HostRemap {
     /// `pattern` and a target `host`, `ip`, `host:port`, `[v6]:port`.
     pub fn parse(pattern: &str, target: &str, keep_host: bool) -> Result<HostRemap, String> {
         let pattern = pattern.trim().to_ascii_lowercase();
+        // `host:port`: only that port.
+        let (pattern, from_port) = match pattern.rsplit_once(':') {
+            Some((h, p)) if !h.contains(':') && !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()) => (h.to_string(), Some(p.parse::<u16>().ok().filter(|p| *p != 0).ok_or_else(|| format!("{pattern}: invalid port"))?)),
+            _ => (pattern, None),
+        };
         if pattern.is_empty() || pattern.contains(['/', ' ', ':']) && !pattern.starts_with('[') {
-            return Err(format!("{pattern}: a host name or pattern (no scheme, path or port)"));
+            return Err(format!("{pattern}: a host name or pattern, optionally with :port (no scheme or path)"));
         }
         let target = target.trim();
         if target.is_empty() || target.contains(['/', ' ']) {
@@ -46,16 +57,29 @@ impl HostRemap {
         if host.is_empty() {
             return Err(format!("{target}: the target needs a host or address"));
         }
-        Ok(HostRemap { pattern, host, port, keep_host })
+        Ok(HostRemap { pattern, host, port, keep_host, from_port, scheme: None })
+    }
+
+    /// The same rule talking `http` or `https` to the target (empty: as the client did).
+    pub fn with_scheme(mut self, scheme: &str) -> Result<HostRemap, String> {
+        self.scheme = match scheme.trim().to_ascii_lowercase().as_str() {
+            "" => None,
+            s @ ("http" | "https") => Some(s.to_string()),
+            other => return Err(format!("{other}: the protocol is http or https")),
+        };
+        if self.scheme.is_some() && self.from_port.is_some() {
+            return Err(format!("{}:{}: a forced protocol cannot be combined with a port in the pattern", self.pattern, self.from_port.unwrap_or(0)));
+        }
+        Ok(self)
     }
 
     fn matches(&self, host: &str) -> bool {
         crate::host_matches(std::slice::from_ref(&self.pattern), host)
     }
 
-    /// Exact names first, then the longest pattern.
-    fn specificity(&self) -> (bool, usize) {
-        (!self.pattern.contains('*'), self.pattern.len())
+    /// A port in the pattern first, then exact names, then the longest pattern.
+    fn specificity(&self) -> (bool, bool, usize) {
+        (self.from_port.is_some(), !self.pattern.contains('*'), self.pattern.len())
     }
 }
 
@@ -80,10 +104,16 @@ fn split_target(t: &str) -> Option<(String, Option<u16>)> {
 /// The rule for `host:port`, the most specific one when several match.
 pub fn lookup(rules: &[HostRemap], host: &str, port: u16) -> Option<Remapped> {
     let host = host.trim_matches(['[', ']']);
-    let r = rules.iter().filter(|r| r.matches(host)).max_by_key(|r| r.specificity())?;
-    let to_port = r.port.unwrap_or(port);
+    let r = rules.iter().filter(|r| r.matches(host) && r.from_port.is_none_or(|p| p == port)).max_by_key(|r| r.specificity())?;
+    // A forced protocol on the default port of the other one takes its own default port.
+    let to_port = r.port.unwrap_or(match r.scheme.as_deref() {
+        Some("http") if port == 443 => 80,
+        Some("https") if port == 80 => 443,
+        _ => port,
+    });
     let to = crate::util::join_host_port(&r.host, to_port);
-    Some(Remapped { host: r.host.clone(), port: to_port, keep_host: r.keep_host, note: format!("{} → {to}", crate::util::join_host_port(host, port)) })
+    let via = r.scheme.as_deref().map(|s| format!(" ({s})")).unwrap_or_default();
+    Some(Remapped { host: r.host.clone(), port: to_port, keep_host: r.keep_host, scheme: r.scheme.clone(), note: format!("{} → {to}{via}", crate::util::join_host_port(host, port)) })
 }
 
 impl Remapped {
@@ -95,12 +125,36 @@ impl Remapped {
     }
 }
 
-/// `url` with its authority replaced by the remap target (for [`HostRemap::keep_host`] off).
+fn new_scheme<'a>(scheme: &'a str, r: &Remapped) -> &'a str {
+    let ws = scheme.eq_ignore_ascii_case("ws") || scheme.eq_ignore_ascii_case("wss");
+    match r.scheme.as_deref() {
+        Some("http") => if ws { "ws" } else { "http" },
+        Some("https") => if ws { "wss" } else { "https" },
+        _ => scheme,
+    }
+}
+
+/// `url` with its authority replaced by the remap target (for [`HostRemap::keep_host`] off),
+/// on the forced scheme if any.
 pub fn rewrite_url(url: &str, r: &Remapped) -> Option<String> {
     let (scheme, rest) = url.split_once("://")?;
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let scheme = new_scheme(scheme, r);
     let https = scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("wss");
     Some(format!("{scheme}://{}{}", r.authority(https), &rest[end..]))
+}
+
+/// `url` on the forced scheme, its host kept and its port left to the scheme (with
+/// [`HostRemap::keep_host`]: the connection still goes to the target).
+pub fn rescheme_url(url: &str, r: &Remapped) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    let host = match authority.rsplit_once(':') {
+        Some((h, p)) if p.bytes().all(|c| c.is_ascii_digit()) && (!h.contains(':') || h.ends_with(']')) => h,
+        _ => authority,
+    };
+    Some(format!("{}://{host}{}", new_scheme(scheme, r), &rest[end..]))
 }
 
 #[cfg(test)]
@@ -133,6 +187,27 @@ mod tests {
         assert_eq!((r.host.as_str(), r.port), ("10.0.0.1", 80));
         assert_eq!(lookup(&rules, "example.com", 443).unwrap().host, "10.0.0.1", "*.x also takes x");
         assert!(lookup(&rules, "example.org", 443).is_none());
+    }
+
+    #[test]
+    fn ports_and_protocols() {
+        let rules = vec![rule("api.example.com:8443", "10.0.0.9"), rule("api.example.com", "10.0.0.1")];
+        assert_eq!(lookup(&rules, "api.example.com", 8443).unwrap().host, "10.0.0.9", "the port's own rule first");
+        assert_eq!(lookup(&rules, "api.example.com", 443).unwrap().host, "10.0.0.1");
+        assert!(HostRemap::parse("a.com:0", "b", true).is_err());
+        // HTTPS to a local HTTP dev server.
+        let dev = HostRemap::parse("api.example.com", "localhost:3000", true).unwrap().with_scheme("http").unwrap();
+        let r = lookup(std::slice::from_ref(&dev), "api.example.com", 443).unwrap();
+        assert_eq!((r.port, r.scheme.as_deref()), (3000, Some("http")));
+        assert_eq!(rescheme_url("https://api.example.com/v1?a=1", &r).unwrap(), "http://api.example.com/v1?a=1");
+        assert_eq!(rescheme_url("wss://api.example.com:443/ws", &r).unwrap(), "ws://api.example.com/ws");
+        assert_eq!(rescheme_url("https://[::1]:8443/x", &r).unwrap(), "http://[::1]/x");
+        assert_eq!(rewrite_url("https://api.example.com/v1", &r).unwrap(), "http://localhost:3000/v1");
+        // Without a target port: the other scheme's default port.
+        let plain = HostRemap::parse("api.example.com", "staging.example.com", true).unwrap().with_scheme("http").unwrap();
+        assert_eq!(lookup(&[plain], "api.example.com", 443).unwrap().port, 80);
+        assert!(HostRemap::parse("a.com", "b", true).unwrap().with_scheme("ftp").is_err());
+        assert!(HostRemap::parse("a.com:8443", "b", true).unwrap().with_scheme("http").is_err());
     }
 
     #[test]
