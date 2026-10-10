@@ -46,6 +46,22 @@ encrypted. With *Only the sessions the filters show* an archive holds just those
 saved while the filters show none). A newer archive is written only after it is complete;
 older ones are removed after that, so a failed save (a full disk) costs none of them.
 
+### Snapshot library
+
+*File → Snapshot Library…* keeps archives in the folder `library` of the data folder, in
+folders of your own (up to four levels):
+
+- **Save as snapshot…** saves the selected sessions (or all in the list) under a name in the
+  chosen folder; **Save with password…** protects it (AES-256). An existing name is not
+  overwritten.
+- **Add selected sessions** appends sessions to a chosen `.saz` snapshot (not to protected
+  ones).
+- **Open** (or a double-click) loads a snapshot into the list. Each loaded archive is a
+  **source** of its own: the list is grouped by *Source* and the navigator shows *live* and
+  each snapshot — click one to see only its sessions, while the live capture goes on. *Group
+  by → Source* does the same for any archive you load.
+- **New folder…**, **Rename…**, **Delete** (an archive, or an empty folder), **Open folder**.
+
 ### Loading
 
 - *File → Load Archive…* (`Ctrl/⌘ O`), or *File → Import Sessions → SAZ Archive… / HTTP

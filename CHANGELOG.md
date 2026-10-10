@@ -8,6 +8,10 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Snapshot library** (*File → Snapshot Library…*): archives in folders of the data folder,
+  saved from the selection or the list (also with a password), sessions added to a snapshot
+  later, opened as a **source** of its own — *Group by → Source* and the navigator list *live*
+  and each loaded archive, so one snapshot can be looked at while capturing goes on.
 - **More of Fiddler's odds and ends**: host remapping with a port in the pattern and a forced
   protocol (HTTP or HTTPS to the target); rewrite rules exported and imported as JSON (also one
   group); AutoSave of only the sessions the filters show; on Windows, *Trust for all users…*

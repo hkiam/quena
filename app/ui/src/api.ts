@@ -77,7 +77,17 @@ export interface SessionSummary {
 }
 
 /** "Group by" of the session list (crates/quena-index). */
-export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via" | "llm";
+export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via" | "llm" | "source";
+
+/** An archive or folder of the snapshot library (crates/quena-app-core/src/library.rs). */
+export interface LibraryEntry {
+  path: string;
+  name: string;
+  folder: boolean;
+  size: number;
+  modified: number;
+  depth: number;
+}
 
 export interface RowGroup {
   start: boolean;
@@ -1252,6 +1262,14 @@ export const api = {
   llmCacheAuto: (on: boolean) => invoke<CacheStatus>("llm_cache_auto", { on }),
   /** Remove one entry, or (no key) all. */
   llmCacheRemove: (key?: string) => invoke<CacheStatus>("llm_cache_remove", { key }),
+  libraryList: () => invoke<LibraryEntry[]>("library_list"),
+  librarySave: (ids: SessionId[], folder: string, name: string, password?: string) => invoke<string>("library_save", { ids, folder, name, password: password ?? null }),
+  libraryAdd: (ids: SessionId[], path: string) => invoke<void>("library_add", { ids, path }),
+  libraryMkdir: (path: string) => invoke<void>("library_mkdir", { path }),
+  libraryRename: (path: string, name: string) => invoke<string>("library_rename", { path, name }),
+  libraryDelete: (path: string) => invoke<void>("library_delete", { path }),
+  libraryFile: (path: string) => invoke<string>("library_file", { path }),
+  libraryReveal: () => invoke<void>("library_reveal"),
   llmPricesInfo: () => invoke<LlmPricesInfo>("llm_prices_info"),
   llmPricesUpdate: () => invoke<LlmPricesInfo>("llm_prices_update"),
   llmPricesForget: () => invoke<LlmPricesInfo>("llm_prices_forget"),

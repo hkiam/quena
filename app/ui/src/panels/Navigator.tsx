@@ -19,6 +19,7 @@ const GROUPS: [Exclude<GroupBy, "none">, string][] = [
   ["trace", t("Trace ID")],
   ["session", t("Session cookie")],
   ["custom", t("Custom")],
+  ["source", t("Source")],
 ];
 // While traffic flows the groups are reloaded at most this often.
 const REFRESH_MS = 1500;

@@ -91,6 +91,8 @@ pub enum GroupBy {
     Via,
     /// The LLM provider/model.
     Llm,
+    /// Where the session comes from: recorded live, or the archive it was loaded from.
+    Source,
 }
 
 /// Group of a row in a [`RowWindow`].
@@ -113,6 +115,17 @@ fn hash_str(s: &str, fold_case: bool) -> u64 {
     s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ if fold_case { b.to_ascii_lowercase() } else { b } as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
+/// The source of a session for grouping: the archive's name, else `live`.
+pub fn source_of(r: &SessionSummary) -> &str {
+    if !r.archive.is_empty() {
+        &r.archive
+    } else if r.has_flag(quena_model::flags::IMPORTED) {
+        "imported"
+    } else {
+        "live"
+    }
+}
+
 fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
     let text = |s: &str, fold: bool| (!s.is_empty()).then(|| hash_str(s, fold));
     match by {
@@ -125,6 +138,7 @@ fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
         GroupBy::Custom => text(&r.custom, false),
         GroupBy::Via => text(&r.via, false),
         GroupBy::Llm => text(&r.llm, false),
+        GroupBy::Source => Some(hash_str(source_of(r), false)),
     }
 }
 

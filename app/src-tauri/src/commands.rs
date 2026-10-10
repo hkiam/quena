@@ -828,6 +828,56 @@ async fn ar_import_farx(core: State<'_, Core>, path: String) -> R<AutoResponderS
     .await
 }
 
+#[tauri::command]
+async fn library_list(core: State<'_, Core>) -> R<Vec<quena_app_core::library::LibraryEntry>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.library_list())).await
+}
+
+/// Save sessions (empty: all) into the library; returns the new archive's path in it.
+#[tauri::command]
+async fn library_save(core: State<'_, Core>, ids: Vec<SessionId>, folder: String, name: String, password: Option<String>) -> R<String> {
+    let core = core.inner().clone();
+    blocking(move || core.library_save(ids, &folder, &name, password.filter(|p| !p.is_empty())).map(|(_, rel)| rel).map_err(e)).await
+}
+
+#[tauri::command]
+async fn library_add(core: State<'_, Core>, ids: Vec<SessionId>, path: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.library_add(ids, &path).map(|_| ()).map_err(e)).await
+}
+
+#[tauri::command]
+async fn library_mkdir(core: State<'_, Core>, path: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.library_mkdir(&path).map_err(e)).await
+}
+
+#[tauri::command]
+async fn library_rename(core: State<'_, Core>, path: String, name: String) -> R<String> {
+    let core = core.inner().clone();
+    blocking(move || core.library_rename(&path, &name).map_err(e)).await
+}
+
+#[tauri::command]
+async fn library_delete(core: State<'_, Core>, path: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.library_delete(&path).map_err(e)).await
+}
+
+/// The absolute path of an archive in the library (to load it).
+#[tauri::command]
+fn library_file(core: State<'_, Core>, path: String) -> R<String> {
+    core.library_path(&path).map(|p| p.display().to_string()).map_err(e)
+}
+
+#[tauri::command]
+async fn library_reveal(core: State<'_, Core>) -> R<()> {
+    let dir = core.library_dir();
+    std::fs::create_dir_all(&dir).map_err(|x| x.to_string())?;
+    quena_platform::open(&dir.display().to_string()).map_err(e)
+}
+
 /// Rewrite rules (of `group`, if given) to a JSON file; returns how many.
 #[tauri::command]
 async fn rw_export(core: State<'_, Core>, path: String, group: Option<String>) -> R<usize> {
@@ -1346,6 +1396,14 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         ar_add_sessions,
         ar_import_farx,
         rw_export,
+        library_list,
+        library_save,
+        library_add,
+        library_mkdir,
+        library_rename,
+        library_delete,
+        library_file,
+        library_reveal,
         rw_import,
         ar_export_farx,
         mock_preview,

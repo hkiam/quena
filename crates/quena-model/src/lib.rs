@@ -348,6 +348,9 @@ pub struct SessionSummary {
     /// Values of the header columns ([`set_header_columns`]), in their order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub header_values: Vec<String>,
+    /// The archive the session was loaded from (its name in the list; empty: recorded live).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub archive: String,
 }
 
 /// A request or response header shown as a list column.

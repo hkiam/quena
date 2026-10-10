@@ -52,6 +52,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Packet Capture (pcap, pcapng)…" => "Paketmitschnitt (pcap, pcapng)…",
         "cURL Script…" => "cURL-Skript…",
         "WCAT Script…" => "WCAT-Skript…",
+        "Snapshot Library…" => "Snapshot-Bibliothek…",
         "Internet Explorer NetXML…" => "Internet-Explorer-NetXML…",
         "Sanitized for Sharing (SAZ/HAR)…" => "Bereinigt zum Weitergeben (SAZ/HAR)…",
         "Mocks…" => "Mocks…",

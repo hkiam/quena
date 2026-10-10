@@ -19,6 +19,7 @@ pub mod engine;
 pub mod find;
 pub mod grpc;
 pub mod launch;
+pub mod library;
 pub mod llm;
 pub mod llm_cache;
 pub mod logbuf;

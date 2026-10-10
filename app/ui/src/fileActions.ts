@@ -22,7 +22,7 @@ function stamp() {
 }
 
 /** Ask for a new archive password twice; `null` when cancelled or not the same. */
-async function newPassword(): Promise<string | null> {
+export async function newPassword(): Promise<string | null> {
   const a = await promptText(t("Archive password"), t("Password (7-Zip and WinZip open the archive with it as well)"), "", true);
   if (!a) return null;
   const b = await promptText(t("Archive password"), t("Repeat the password"), "", true);
@@ -115,6 +115,9 @@ export async function handleFileMenu(id: string): Promise<boolean> {
       return true;
     case "file.import-pcap":
       await loadArchive(true);
+      return true;
+    case "file.library":
+      set({ dialog: { kind: "library" } });
       return true;
     case "file.import-netxml": {
       const path = await open({ multiple: false, filters: [{ name: t("Internet Explorer network capture (NetXML)"), extensions: ["xml"] }] });

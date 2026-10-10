@@ -1,3 +1,4 @@
+import { LibraryPanel } from "./LibraryPanel";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, type CacheAdvice, type CacheStatus, type LlmPricesInfo, type McpStatus, type Recoverable, type SchemaStatus, type Settings } from "../api";
@@ -1393,6 +1394,12 @@ function DialogBody({ d }: { d: Dialog }) {
       return (
         <Modal title={t("Compare Captures")} onClose={close} wide>
           <CaptureDiffPanel groupA={d.a} groupB={d.b} />
+        </Modal>
+      );
+    case "library":
+      return (
+        <Modal title={t("Snapshot Library")} onClose={close} wide>
+          <LibraryPanel />
         </Modal>
       );
     case "host-remap":

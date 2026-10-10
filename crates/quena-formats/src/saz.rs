@@ -227,6 +227,74 @@ pub fn export_encrypted(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, extr
     Ok(n)
 }
 
+/// Add `ids` to an existing (unprotected) SAZ archive, numbered after its sessions. Written
+/// to a copy that replaces the archive when complete. Returns how many were added.
+pub fn append(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, p: &dyn Progress) -> Result<usize> {
+    let (last, width) = {
+        let mut zip = zip::ZipArchive::new(BufReader::new(File::open(path)?))?;
+        let mut last = 0usize;
+        let mut width = 2usize;
+        for i in 0..zip.len() {
+            let f = zip.by_index_raw(i)?;
+            if f.encrypted() {
+                return Err(FormatError::Invalid("sessions cannot be added to a password-protected archive".into()));
+            }
+            if let Some(num) = f.name().strip_prefix("raw/").and_then(|n| n.split('_').next())
+                && let Ok(v) = num.parse::<usize>()
+            {
+                last = last.max(v);
+                width = width.max(num.len());
+            }
+        }
+        (last, width)
+    };
+    let tmp = path.with_extension("saz.part");
+    std::fs::copy(path, &tmp)?;
+    let result = (|| -> Result<usize> {
+        let file = std::fs::OpenOptions::new().read(true).write(true).open(&tmp)?;
+        let mut zip = zip::ZipWriter::new_append(file)?;
+        let deflate = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).large_file(true);
+        let width = width.max((last + ids.len()).to_string().len());
+        let mut n = 0;
+        for (i, id) in ids.iter().enumerate() {
+            if p.cancelled() {
+                return Err(FormatError::Cancelled);
+            }
+            p.progress(i as u64, ids.len() as u64);
+            let Some(d) = cap.detail(*id) else { continue };
+            let Some((req_body, resp_body)) = cap.bodies_of(*id) else { continue };
+            n += 1;
+            let k = last + n;
+            let num = format!("{k:0width$}");
+            let opts = |len: u64| if len > 8 << 20 { SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored).large_file(true) } else { deflate };
+            zip.start_file(format!("raw/{num}_c.txt"), opts(req_body.len()))?;
+            raw::write_request_head(&mut zip, &d.request)?;
+            write_body(&mut zip, &d.request.headers, &req_body, p)?;
+            zip.start_file(format!("raw/{num}_s.txt"), opts(resp_body.len()))?;
+            if let Some(r) = &d.response {
+                raw::write_response_head(&mut zip, r)?;
+                write_body(&mut zip, &r.headers, &resp_body, p)?;
+            } else {
+                zip.write_all(b"HTTP/1.1 504 Receive Failure\r\nContent-Length: 0\r\n\r\n")?;
+            }
+            zip.start_file(format!("raw/{num}_m.xml"), deflate)?;
+            zip.write_all(metadata(k, &d).as_bytes())?;
+        }
+        zip.finish()?.flush()?;
+        Ok(n)
+    })();
+    match result {
+        Ok(n) => {
+            std::fs::rename(&tmp, path)?;
+            Ok(n)
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
 #[derive(Default)]
 struct Entry {
     c: Option<usize>,

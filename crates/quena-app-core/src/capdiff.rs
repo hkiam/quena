@@ -243,7 +243,14 @@ impl AppCore {
             label = format!("{file} ({n})");
             n += 1;
         }
-        imports.push((label, numbering, ids.to_vec()));
+        imports.push((label.clone(), numbering, ids.to_vec()));
+        drop(imports);
+        // The list knows each session's source (navigator: group by source).
+        let cap = self.capture();
+        for id in ids {
+            cap.index.update(*id, |s| s.archive = label.clone());
+        }
+        cap.index.tick();
     }
 
     /// The sides one can compare: live sessions and each archive in the list.

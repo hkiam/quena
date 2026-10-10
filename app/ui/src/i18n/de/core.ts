@@ -44,4 +44,6 @@ export const core: Record<string, string> = {
   "Compare Groups": "Gruppen vergleichen",
   "Use as Before ({n})": "Als Vorher verwenden ({n})",
   "Compare with Before ({a} \u2192 {b})": "Mit Vorher vergleichen ({a} \u2192 {b})",
+  "Snapshot library": "Snapshot-Bibliothek",
+  "Source (live, archives)": "Quelle (live, Archive)",
 };

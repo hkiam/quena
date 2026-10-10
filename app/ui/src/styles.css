@@ -3853,3 +3853,32 @@ tr.capdiff-changed td:first-child {
   color: var(--fg);
   font-weight: 600;
 }
+
+/* Snapshot library */
+.library-list {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin: 6px 0;
+}
+.library-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 6px;
+  cursor: default;
+  font-size: 12px;
+}
+.library-row.active {
+  background: var(--selection-bg, rgba(58, 123, 213, 0.18));
+}
+.library-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-buttons {
+  flex-wrap: wrap;
+}

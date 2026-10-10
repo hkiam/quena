@@ -44,6 +44,11 @@ pub fn is_capture(path: &std::path::Path) -> bool {
     format_of(path) == Some(ArchiveFormat::Pcap)
 }
 
+/// The archive format of a file by its extension.
+pub fn format_of_path(path: &std::path::Path) -> Option<ArchiveFormat> {
+    format_of(path)
+}
+
 fn format_of(path: &std::path::Path) -> Option<ArchiveFormat> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         "saz" | "zip" => Some(ArchiveFormat::Saz),

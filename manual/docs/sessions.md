@@ -75,6 +75,8 @@ belong together in one block:
 | *Session cookie* | the session cookie (`JSESSIONID`, `PHPSESSID`, `ASP.NET_SessionId`, `connect.sid`, `sessionid` …) — one login |
 | *Custom column* | the value a [rules script](scripting.md) puts into *Custom*: your own grouping |
 | *Via (reverse proxy, SOCKS, transparent)* | the [reverse proxy](reverse-proxy.md) entry, or the [SOCKS or transparent](socks-transparent.md) port the requests came through |
+| *LLM model* | the provider and model of [LLM API calls](llm.md) |
+| *Source (live, archives)* | where the session comes from: recorded *live*, or the archive it was loaded from (each [snapshot](archives.md#snapshot-library) apart) |
 
 - Groups appear in the order of their first session; **inside each group the list is
   sorted** by the column you click. With `#` descending, the newest groups come first.

@@ -60,6 +60,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                     &item(app, "file.save-request-body", "Request Body…", None)?,
                 ],
             )?,
+            &item(app, "file.library", "Snapshot Library…", None)?,
             &Submenu::with_items(
                 app,
                 tr("Import Sessions"),
