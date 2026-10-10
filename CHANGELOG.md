@@ -282,6 +282,21 @@ contain breaking changes (settings, file formats, plugin API).
   archive and the Docker image, which also carries an SBOM and provenance attestation.
 
 ### Fixed
+- AI agents, after the overall review: Bedrock requests signed with AWS Signature V4 are
+  left unchanged by LLM rewrite operations and refused by the prompt playground with a
+  reason (AWS would refuse a changed copy); errors inside AWS event streams and Bedrock's
+  `{"message"}` errors are shown; prices no longer cut `-v3` off model names such as
+  `deepseek-v3`; agents are recognised by User-Agent tokens only (`notcursor/1` is not
+  Cursor); the agent cache matches requests by what goes out after rewrite rules and
+  ignores what changes with every Claude Code and Codex request (attribution block,
+  `prompt_cache_key`, cache marks, AWS signatures); conversations drop removed sessions and
+  read calls only once they are done; the JSON lines export carries the messages each turn
+  added (`jsonl-full` over the API for whole calls) and is written as it goes; MCP tools
+  `list_conversations`/`get_conversation` take `limit`/`offset` and redact prompts like
+  bodies; *Start agent* runs the agent in an interactive login shell (what `.zshrc` adds
+  to PATH is found) and keeps the shell afterwards; mcp-tap limits its recording to 1 GB
+  and skips over-long lines without holding them in memory; the Agents panel refreshes
+  when calls arrive and is usable from the keyboard.
 - Composer: the request tabs took half of the panel and pushed the form down, and with the
   query parameter table the request body got a single line. The form keeps its parts in
   place now; the body takes the remaining height.

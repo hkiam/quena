@@ -325,6 +325,16 @@ fn stream_objects(text: &str) -> Vec<Value> {
 }
 
 fn error_of(v: &Value) -> Option<String> {
+    // Bedrock answers errors with only `{"message": …}` (and `__type` at times).
+    if let Some(o) = v.as_object()
+        && let Some(Value::String(m)) = o.get("message").or_else(|| o.get("Message"))
+        && o.keys().all(|k| matches!(k.as_str(), "message" | "Message" | "__type"))
+    {
+        return Some(match o.get("__type").and_then(|t| t.as_str()) {
+            Some(t) => format!("{}: {m}", t.rsplit('#').next().unwrap_or(t)),
+            None => m.clone(),
+        });
+    }
     let e = v.get("error")?;
     if e.is_null() {
         return None;
@@ -953,7 +963,7 @@ fn aws_event_stream(b: &[u8]) -> Vec<(String, Value)> {
         }
         let headers = &b[at + 12..at + 12 + hlen];
         let payload = &b[at + 12 + hlen..at + total - 4];
-        let mut event = String::new();
+        let (mut event, mut message_type, mut exception, mut code, mut text) = (String::new(), String::new(), String::new(), String::new(), String::new());
         let mut h = 0usize;
         while h < headers.len() {
             let nlen = headers[h] as usize;
@@ -975,12 +985,26 @@ fn aws_event_stream(b: &[u8]) -> Vec<(String, Value)> {
                 },
                 _ => break,
             };
-            if ty == 7 && name == b":event-type" {
-                event = String::from_utf8_lossy(headers.get(h + 2..h + size).unwrap_or(&[])).into_owned();
+            if ty == 7 {
+                let value = String::from_utf8_lossy(headers.get(h + 2..h + size).unwrap_or(&[])).into_owned();
+                match name {
+                    b":event-type" => event = value,
+                    b":message-type" => message_type = value,
+                    b":exception-type" => exception = value,
+                    b":error-code" => code = value,
+                    b":error-message" => text = value,
+                    _ => {}
+                }
             }
             h += size;
         }
-        if let Ok(v) = serde_json::from_slice::<Value>(payload) {
+        // Errors come as frames of their own: named `!…` with the message in `message`.
+        if message_type == "exception" {
+            let v = serde_json::from_slice::<Value>(payload).unwrap_or_else(|_| serde_json::json!({"message": String::from_utf8_lossy(payload)}));
+            out.push((format!("!{exception}"), v));
+        } else if message_type == "error" {
+            out.push((format!("!{code}"), serde_json::json!({"message": text})));
+        } else if let Ok(v) = serde_json::from_slice::<Value>(payload) {
             out.push((event, v));
         }
         at += total;
@@ -1034,7 +1058,7 @@ fn converse_request(v: &Value, call: &mut LlmCall) {
 fn converse_usage(u: &Value) -> Usage {
     let read = n(u, "cacheReadInputTokens");
     let write = n(u, "cacheWriteInputTokens");
-    Usage { input: n(u, "inputTokens") + read + write, output: n(u, "outputTokens"), cache_read: read, cache_write: write, reasoning: 0 }
+    Usage { input: n(u, "inputTokens").saturating_add(read).saturating_add(write), output: n(u, "outputTokens"), cache_read: read, cache_write: write, reasoning: 0 }
 }
 
 fn converse_response(v: &Value, call: &mut LlmCall) {
@@ -1082,7 +1106,7 @@ fn converse_stream(events: &[(String, Value)], call: &mut LlmCall) {
                     call.usage = Some(converse_usage(u));
                 }
             }
-            e if e.ends_with("Exception") => call.error = Some(format!("{e}: {}", s(v, "message").unwrap_or_default())),
+            // Error frames (`!` + their type) are reported by `parse`.
             _ => {}
         }
     }
@@ -1295,15 +1319,24 @@ fn builtin_context(model: &str) -> Option<u64> {
 /// the date rule).
 pub fn model_key(model: &str) -> String {
     let mut m = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
-    if let Some(i) = m.find("anthropic.") {
+    let bedrock = m.find("anthropic.");
+    if let Some(i) = bedrock {
         m = m[i + "anthropic.".len()..].to_string();
     }
+    // Bedrock's version suffix (`-v1:0`); `deepseek-v3` or `llama-v2` name the model itself.
     if let Some(i) = m.rfind("-v")
+        && (bedrock.is_some() || m[i..].contains(':'))
         && m[i + 2..].split(':').next().is_some_and(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()))
     {
         m.truncate(i);
     }
     m
+}
+
+/// The request is signed with AWS Signature V4 (Bedrock): the signature covers the body, so a
+/// changed body is refused by AWS.
+pub fn aws_signed(url: &str, headers: &quena_model::Headers) -> bool {
+    headers.get("authorization").is_some_and(|v| v.trim_start().starts_with("AWS4-HMAC-SHA256")) || url.contains("X-Amz-Signature=")
 }
 
 /// The context window of `model`: from the price that applies, else by its family.
@@ -1392,6 +1425,10 @@ pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &
         let json: Option<Value> = if streamed { None } else { serde_json::from_str(&text).ok() };
         if let Some(e) = json.as_ref().and_then(error_of) {
             call.error = Some(e);
+        }
+        if let Some((name, v)) = aws_events.iter().flatten().find(|(n, _)| n.starts_with('!')) {
+            let msg = s(v, "message").or_else(|| s(v, "Message")).unwrap_or_default();
+            call.error = Some(format!("{}: {msg}", &name[1..]));
         }
         match (api, &json) {
             (Api::Messages, None) if aws_events.is_some() => {
@@ -1880,8 +1917,12 @@ mod tests {
 
     /// An AWS event stream frame (CRCs are not checked).
     fn aws_frame(event: &str, payload: &str) -> Vec<u8> {
+        aws_frame_with(&[(":event-type", event), (":content-type", "application/json"), (":message-type", "event")], payload)
+    }
+
+    fn aws_frame_with(hs: &[(&str, &str)], payload: &str) -> Vec<u8> {
         let mut headers = Vec::new();
-        for (k, v) in [(":event-type", event), (":content-type", "application/json"), (":message-type", "event")] {
+        for &(k, v) in hs {
             headers.push(k.len() as u8);
             headers.extend_from_slice(k.as_bytes());
             headers.push(7);
@@ -1926,6 +1967,9 @@ mod tests {
         assert_eq!((c.provider.as_str(), c.output[0].text.as_str(), c.usage.unwrap().output), ("Amazon Bedrock", "Hello", 4));
         assert!(c.notes.is_empty(), "{:?}", c.notes);
         assert_eq!(model_key("us.anthropic.claude-sonnet-4-5-20250929-v1:0"), "claude-sonnet-4-5-20250929");
+        assert_eq!(model_key("deepseek-v3"), "deepseek-v3");
+        assert_eq!(model_key("amazon.nova-pro-v1:0"), "amazon.nova-pro");
+        assert_eq!(model_key("meta/llama-v2"), "llama-v2");
         // Converse, answered as JSON and as a stream.
         let converse = "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-pro-v1%3A0/converse";
         assert_eq!(api_of("POST", converse), Some(Api::Converse));
@@ -1943,5 +1987,12 @@ mod tests {
         assert_eq!((c.output[0].text.as_str(), c.stop_reason.as_deref(), c.usage.unwrap().output), ("Sunny", Some("end_turn"), 2));
         // Other Bedrock models through invoke are not taken apart (their formats differ).
         assert_eq!(api_of("POST", "https://bedrock-runtime.us-east-1.amazonaws.com/model/meta.llama3-70b-instruct-v1%3A0/invoke"), None);
+        // Errors: an exception frame in the stream, `{"message"}` from invoke.
+        let mut cs = aws_frame("messageStart", r#"{"role":"assistant"}"#);
+        cs.extend(aws_frame_with(&[(":message-type", "exception"), (":exception-type", "throttlingException")], r#"{"message":"Too many requests"}"#));
+        let c = parse("POST", "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-pro-v1%3A0/converse-stream", req, Some((&cs, "application/vnd.amazon.eventstream")), &prices).unwrap();
+        assert_eq!(c.error.as_deref(), Some("throttlingException: Too many requests"));
+        let c = parse("POST", "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-pro-v1%3A0/converse", req, Some((br#"{"message":"The provided model identifier is invalid."}"#, "application/json")), &prices).unwrap();
+        assert_eq!(c.error.as_deref(), Some("The provided model identifier is invalid."));
     }
 }

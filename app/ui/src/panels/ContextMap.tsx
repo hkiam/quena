@@ -51,6 +51,13 @@ export function ContextMap({ b, height = 160, list = 8 }: { b: ContextBreakdown;
               <td className="num muted">{pct(s.tokens)}</td>
             </tr>
           ))}
+          {b.slices.length > list && (
+            <tr>
+              <td className="muted">{t("+ {n} more", { n: b.slices.length - list })}</td>
+              <td className="num muted">{fmtInt(b.slices.slice(list).reduce((a, s) => a + s.tokens, 0))}</td>
+              <td />
+            </tr>
+          )}
         </tbody>
       </table>
       <div className="muted small">

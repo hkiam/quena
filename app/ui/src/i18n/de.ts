@@ -6,6 +6,9 @@
 // command field → Befehlsfeld, command palette → Befehlspalette, Text Tools → Text-Werkzeuge,
 // Timeline → Zeitachse, Structure → Struktur, Statistics → Statistik, Log → Protokoll,
 // plugin → Plugin, proxy → Proxy, certificate → Zertifikat, host → Host, path → Pfad.
+// Agents: conversation → Konversation, turn → Turn, side call → Nebenaufruf, tool call →
+// Tool-Aufruf, agent cache → Agent-Cache, prompt cache → Prompt-Cache, input/output →
+// Input/Output, cache miss → Cache verfehlt, cache mark (cache_control) → Cache-Marke.
 // Style: neutral and short, no "Sie"/"du" where it can be avoided ("Sessions auswählen",
 // "Datei wählen"); keep technical terms, shortcuts, commands and placeholders unchanged.
 import { agents } from "./de/agents";

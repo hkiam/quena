@@ -24,6 +24,8 @@ const MAX_LINE: usize = 32 << 20;
 const READ_BUDGET: u64 = 4 << 20;
 /// Requests waiting for an answer that are kept (the oldest are written without one).
 const MAX_PENDING: usize = 10_000;
+/// Largest recording file: past it, exchanges are no longer written (the server runs on).
+const MAX_FILE: u64 = 1 << 30;
 
 /// The first line of a recording.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -76,6 +78,8 @@ struct Pairing {
     /// and its first line.
     path: Option<PathBuf>,
     header: Option<TapHeader>,
+    /// Size of the recording (at its start, then as written).
+    size: u64,
 }
 
 impl Pairing {
@@ -85,6 +89,7 @@ impl Pairing {
             && let Ok(f) = open_recording(p)
         {
             self.out = Box::new(f);
+            self.size = 0;
             if let Some(h) = self.header.clone() {
                 self.write_line(&Line::Tap(h));
             }
@@ -95,6 +100,14 @@ impl Pairing {
     fn write_line(&mut self, l: &Line) {
         if let Ok(mut s) = serde_json::to_string(l) {
             s.push('\n');
+            if self.size.saturating_add(s.len() as u64) > MAX_FILE {
+                if self.size <= MAX_FILE {
+                    eprintln!("quena mcp-tap: the recording reached {} MB, further exchanges are not recorded", MAX_FILE >> 20);
+                    self.size = MAX_FILE + 1;
+                }
+                return;
+            }
+            self.size += s.len() as u64;
             let _ = self.out.write_all(s.as_bytes());
             let _ = self.out.flush();
         }
@@ -155,22 +168,44 @@ impl Pairing {
 }
 
 /// Copy lines from `from` to `to`, handing each to `seen`. Ends at end of input.
+/// Everything is passed on as it comes; a line longer than [`MAX_LINE`] is not kept (nor seen).
 fn pump(from: impl Read, mut to: impl Write, mut seen: impl FnMut(&[u8])) {
     let mut r = BufReader::new(from);
     let mut line = Vec::new();
+    let mut too_long = false;
     loop {
-        line.clear();
-        match r.read_until(b'\n', &mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {
-                if to.write_all(&line).and_then(|_| to.flush()).is_err() {
-                    break;
-                }
-                if line.len() <= MAX_LINE {
-                    seen(line.trim_ascii());
-                }
+        let chunk = match r.fill_buf() {
+            Ok([]) | Err(_) => break,
+            Ok(c) => c,
+        };
+        let (part, done) = match chunk.iter().position(|&b| b == b'\n') {
+            Some(i) => (&chunk[..=i], true),
+            None => (chunk, false),
+        };
+        if to.write_all(part).and_then(|_| if done { to.flush() } else { Ok(()) }).is_err() {
+            break;
+        }
+        if !too_long {
+            if line.len() + part.len() > MAX_LINE + 1 {
+                too_long = true;
+                line = Vec::new();
+            } else {
+                line.extend_from_slice(part);
             }
         }
+        let n = part.len();
+        r.consume(n);
+        if done {
+            if !too_long {
+                seen(line.trim_ascii());
+            }
+            line.clear();
+            too_long = false;
+        }
+    }
+    let _ = to.flush();
+    if !too_long && !line.is_empty() {
+        seen(line.trim_ascii());
     }
 }
 
@@ -239,7 +274,7 @@ pub fn run(data: &Path, name: &str, command: &str, args: &[String], pid: &std::s
     let (child_in, child_out) = (child.stdin.take().expect("piped"), child.stdout.take().expect("piped"));
     let recording = file.is_some();
     let header = TapHeader { name: name.into(), command: std::iter::once(command.to_string()).chain(args.iter().cloned()).collect::<Vec<_>>().join(" "), program: command.to_string(), pid: child.id(), started: now_us() };
-    let pairing = Arc::new(Mutex::new(Pairing { pending: HashMap::new(), out: file.map(|f| Box::new(f) as Box<dyn Write + Send>).unwrap_or_else(|| Box::new(std::io::sink())), path: recording.then(|| path.clone()), header: Some(header.clone()) }));
+    let pairing = Arc::new(Mutex::new(Pairing { pending: HashMap::new(), out: file.map(|f| Box::new(f) as Box<dyn Write + Send>).unwrap_or_else(|| Box::new(std::io::sink())), path: recording.then(|| path.clone()), header: Some(header.clone()), size: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) }));
     if recording {
         pairing.lock().unwrap().write(&Line::Tap(header));
     }
@@ -347,11 +382,20 @@ impl AppCore {
         let mut r = BufReader::new(f);
         let mut line = Vec::new();
         let mut read = 0u64;
+        let mut skipping = false;
         while read < budget {
             line.clear();
-            let Ok(n) = r.read_until(b'\n', &mut line) else { break };
+            let Ok(n) = (&mut r).take(MAX_LINE as u64 + 1).read_until(b'\n', &mut line) else { break };
+            let complete = line.last() == Some(&b'\n');
+            // A line too long to keep: passed over up to its end.
+            if n > MAX_LINE || (skipping && n > 0) {
+                reading.offset += n as u64;
+                read += n as u64;
+                skipping = !complete;
+                continue;
+            }
             // Only complete lines (the writer may be in the middle of one).
-            if n == 0 || line.last() != Some(&b'\n') {
+            if n == 0 || !complete {
                 break;
             }
             reading.offset += n as u64;
@@ -381,8 +425,10 @@ impl AppCore {
         d.request = RequestHead { method: "POST".into(), url: format!("stdio://{host}/{side}{method}"), version: HttpVersion::Http11, headers: json.clone() };
         d.response = Some(ResponseHead { status: if x.response.is_some() { 200 } else { 202 }, reason: String::new(), version: HttpVersion::Http11, headers: json });
         d.summary.state = SessionState::Done;
-        d.timers.client_begin_request = Some(x.t0);
-        d.timers.client_done_response = Some(x.t1.max(x.t0));
+        // Times from another process's file: never before the epoch, never ending before the start.
+        let t0 = x.t0.max(0);
+        d.timers.client_begin_request = Some(t0);
+        d.timers.client_done_response = Some(x.t1.max(t0));
         if let Some(h) = header {
             let prog = if h.program.is_empty() { h.command.split_whitespace().next().unwrap_or("") } else { h.program.as_str() };
             let exe = prog.rsplit(['/', '\\']).next().unwrap_or("").to_string();
@@ -433,7 +479,7 @@ mod tests {
     #[test]
     fn requests_pair_with_their_responses() {
         let buf = Buf::default();
-        let mut p = Pairing { pending: HashMap::new(), out: Box::new(buf.clone()), path: None, header: None };
+        let mut p = Pairing { pending: HashMap::new(), out: Box::new(buf.clone()), path: None, header: None, size: 0 };
         p.message("client", br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
         p.message("client", br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
         // The server asks the client (sampling) before it answers.

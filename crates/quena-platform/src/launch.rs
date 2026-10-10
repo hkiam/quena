@@ -144,7 +144,9 @@ pub fn open_terminal_with(env: &[(String, String)], dir: &Path, command: Option<
         s.push_str(BANNER_SH);
         match command {
             // In a login shell, so the user's PATH finds the agent.
-            Some(c) => s.push_str(&format!("cd \"$HOME\"\nexec \"${{SHELL:-/bin/zsh}}\" -l -c {}\n", sh_quote(&format!("{c}; exec \"${{SHELL:-/bin/zsh}}\" -l")))),
+            // Interactive too, so what `.zshrc` adds to PATH (nvm, say) is there; the shell
+            // starts afresh once the agent ends.
+            Some(c) => s.push_str(&format!("cd \"$HOME\"\n\"${{SHELL:-/bin/zsh}}\" -l -i -c {}\nexec \"${{SHELL:-/bin/zsh}}\" -l\n", sh_quote(c))),
             None => s.push_str("cd \"$HOME\"\nexec \"${SHELL:-/bin/zsh}\" -l\n"),
         }
         std::fs::write(&script, s)?;
@@ -184,10 +186,12 @@ pub fn open_terminal_with(env: &[(String, String)], dir: &Path, command: Option<
                 let args: Vec<String> = match command {
                     None => vec![],
                     Some(c) => {
-                        let script = format!("{c}; exec \"${{SHELL:-/bin/sh}}\" -l");
+                        let script = format!("\"${{SHELL:-/bin/sh}}\" -l -i -c {}\nexec \"${{SHELL:-/bin/sh}}\" -l", sh_quote(c));
                         match term {
                             "gnome-terminal" => vec!["--".into(), "sh".into(), "-c".into(), script],
                             "kitty" => vec!["sh".into(), "-c".into(), script],
+                            // Its `-e` takes one string; `-x` the rest of the line.
+                            "xfce4-terminal" => vec!["-x".into(), "sh".into(), "-c".into(), script],
                             _ => vec!["-e".into(), "sh".into(), "-c".into(), script],
                         }
                     }
@@ -214,7 +218,7 @@ fn set_executable(p: &Path) -> std::io::Result<()> {
 }
 
 /// Single-quoted for `sh`.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(windows, allow(dead_code))]
 fn sh_quote(v: &str) -> String {
     format!("'{}'", v.replace('\'', r"'\''"))
 }

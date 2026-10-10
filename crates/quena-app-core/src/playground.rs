@@ -73,6 +73,9 @@ impl AppCore {
         let cap = self.capture();
         let (d, req, _) = cap.bodies_stored(id).ok_or_else(|| anyhow!("session {id} is gone"))?;
         let api = crate::llm::api_of(&d.request.method, &d.request.url).ok_or_else(|| anyhow!("session {id} is not a call to an LLM API"))?;
+        if crate::llm::aws_signed(&d.request.url, &d.request.headers) {
+            bail!("this request is signed with AWS Signature V4 (Bedrock); a changed copy would be refused by AWS, so it cannot be sent as a variant");
+        }
         let text = quena_body::text::decoded_prefix(&req, &crate::dto::spec_of(&d.request.headers), 32 << 20);
         let (url, body) = variant_body(&d.request.url, api, &String::from_utf8_lossy(&text), &var)?;
         let r: crate::compose::ComposeRequest = serde_json::from_value(serde_json::json!({

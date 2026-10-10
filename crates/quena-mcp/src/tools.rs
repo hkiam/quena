@@ -123,7 +123,7 @@ static TOOLS: &[Tool] = &[
         description: "The conversations of AI agents in the capture: each run of Claude Code, Codex or an app put together from its LLM calls (subagents name their parent). Per conversation: title (the first prompt), agent, models, turns, side calls, tokens (in, out, cached), estimated cost, turns where the prompt cache missed, refused calls, retries, median latency and tokens per second, the last request's size and the model's context window.",
         write: false,
         destructive: false,
-        schema: || obj(json!({})),
+        schema: || obj(json!({ "limit": { "type": "integer", "description": "at most this many (default 100)" }, "offset": { "type": "integer", "description": "skip this many (newest first)" } })),
         run: list_conversations,
     },
     Tool {
@@ -131,7 +131,7 @@ static TOOLS: &[Tool] = &[
         description: "One conversation (key from list_conversations) with its turns — each with model, usage, cost, the change from the call it continues (messages added, an earlier message changed, system prompt, tools, settings, model), why the prompt cache missed, refused calls and rate limits — hints where tokens go to waste (repeated tool results and calls, large results, recurring reminders, tools never called, a context near the window, cache misses), what filled the last request by category, and its subagents. Use it to find what makes an agent run expensive and how to change it.",
         write: false,
         destructive: false,
-        schema: || req(json!({ "key": { "type": "string" } }), &["key"]),
+        schema: || req(json!({ "key": { "type": "string" }, "limit": { "type": "integer", "description": "at most this many turns (default 500)" }, "offset": { "type": "integer", "description": "skip this many turns" } }), &["key"]),
         run: get_conversation,
     },
     Tool {
@@ -511,7 +511,7 @@ static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "add_rewrite_rule",
-        description: "Add a rule that changes matching real requests or responses on their way (switches rewriting on). Operations run in order: `jsonSet` {path, value} (creates missing members of a plain path), `jsonRemove` {path}, `jsonAppend` {path, value?}, `jsonAppendAll` {value?} (append to every array in the document; without value a broken copy of the first element: same keys, all null), `regexReplace` {pattern, replacement}, `setHeader` {name, value}, `defaultHeader` {name, value} (only where missing), `removeHeader` {name}, `setStatus` {code}, `setQuery` {name, value} / `removeQuery` {name} (requests), `setCookie` {name, value} / `removeCookie` {name, `*` for all} (request Cookie or response Set-Cookie), `mark` {color: red|blue|gold|green|orange|purple}, `comment` {text} (the session); for LLM API requests (phase request): `llmRemoveTool` {name, `*` at the end for a prefix like `mcp__jira__*`}, `llmSetModel` {model}, `llmAppendSystem` {text} (Anthropic, OpenAI Chat/Responses, Gemini). Paths are RFC 9535 JSONPath (`$.items[*].price`, `$..id`). Bodies are decoded (gzip, br …) and sent back uncompressed; bodies over the size limit, event streams and non-text types pass unchanged. Example, a broken element in every list of /api/ responses: {\"match\": \"/api/\", \"ops\": [{\"op\": \"jsonAppendAll\"}]}.",
+        description: "Add a rule that changes matching real requests or responses on their way (switches rewriting on). Operations run in order: `jsonSet` {path, value} (creates missing members of a plain path), `jsonRemove` {path}, `jsonAppend` {path, value?}, `jsonAppendAll` {value?} (append to every array in the document; without value a broken copy of the first element: same keys, all null), `regexReplace` {pattern, replacement}, `setHeader` {name, value}, `defaultHeader` {name, value} (only where missing), `removeHeader` {name}, `setStatus` {code}, `setQuery` {name, value} / `removeQuery` {name} (requests), `setCookie` {name, value} / `removeCookie` {name, `*` for all} (request Cookie or response Set-Cookie), `mark` {color: red|blue|gold|green|orange|purple}, `comment` {text} (the session); for LLM API requests (phase request): `llmRemoveTool` {name, `*` at the end for a prefix like `mcp__jira__*`}, `llmSetModel` {model}, `llmAppendSystem` {text} (Anthropic incl. Claude on Vertex AI and Bedrock, OpenAI Chat/Responses, Gemini, Bedrock Converse, Ollama; the model is changed in the URL where the API names it there (Gemini, Vertex AI, Bedrock); a changed system prompt or tool list invalidates the provider's prompt cache from that point; requests signed with AWS Signature V4 are left unchanged). Paths are RFC 9535 JSONPath (`$.items[*].price`, `$..id`). Bodies are decoded (gzip, br …) and sent back uncompressed; bodies over the size limit, event streams and non-text types pass unchanged. Example, a broken element in every list of /api/ responses: {\"match\": \"/api/\", \"ops\": [{\"op\": \"jsonAppendAll\"}]}.",
         write: true,
         destructive: false,
         schema: || {
@@ -789,6 +789,15 @@ impl View {
         o.bodies = BodyMode::Truncate;
         o.truncate_kib = u32::try_from((window >> 10) + 2).unwrap_or(u32::MAX);
         View { red: Some(Sanitizer::new(o)) }
+    }
+
+    /// Free text from the traffic itself (a user's prompt, a changed system prompt line):
+    /// every detector of the preset, not only URLs.
+    fn prose(&mut self, s: &str) -> String {
+        match &mut self.red {
+            Some(r) => r.scrub_text(s),
+            None => s.to_string(),
+        }
     }
 
     fn redacts(&self) -> bool {
@@ -1307,32 +1316,52 @@ fn cache_llm_calls(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     })
 }
 
-fn list_conversations(core: &Arc<AppCore>, _: Value) -> Result<Value> {
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct PageArgs {
+    limit: Option<usize>,
+    offset: usize,
+}
+
+fn list_conversations(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: PageArgs = if a.is_null() { PageArgs::default() } else { args(a)? };
     let mut view = View::new(core, 0);
-    let mut list = core.llm_conversations();
+    let all = core.llm_conversations();
+    let total = all.len();
+    let mut list: Vec<_> = all.into_iter().skip(a.offset).take(a.limit.unwrap_or(100).clamp(1, 1000)).collect();
     // First prompts are free text: redacted like other text unless secrets may be seen.
     for c in &mut list {
-        c.title = view.text(&c.title);
+        c.title = view.prose(&c.title);
     }
-    Ok(json!({ "conversations": list }))
+    Ok(json!({ "conversations": list, "total": total, "offset": a.offset }))
 }
 
 #[derive(Deserialize)]
-struct KeyArgs {
+struct ConvArgs {
     key: String,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    offset: usize,
 }
 
 fn get_conversation(core: &Arc<AppCore>, a: Value) -> Result<Value> {
-    let a: KeyArgs = args(a)?;
+    let a: ConvArgs = args(a)?;
     let mut d = core.llm_conversation(&a.key).ok_or_else(|| anyhow!("no conversation {} (see list_conversations)", a.key))?;
     let mut view = View::new(core, 0);
-    d.summary.title = view.text(&d.summary.title);
+    d.summary.title = view.prose(&d.summary.title);
     for h in &mut d.hints {
         for v in h.args.values_mut() {
-            *v = view.text(v);
+            *v = view.prose(v);
         }
     }
-    Ok(serde_json::to_value(d)?)
+    // Long runs: a page of turns (all by default up to 500).
+    let total = d.turns.len();
+    d.turns = d.turns.into_iter().skip(a.offset).take(a.limit.unwrap_or(500).clamp(1, 5000)).collect();
+    let mut v = serde_json::to_value(d)?;
+    v["turnsTotal"] = json!(total);
+    v["turnsOffset"] = json!(a.offset);
+    Ok(v)
 }
 
 fn get_context(core: &Arc<AppCore>, a: Value) -> Result<Value> {
@@ -1340,7 +1369,7 @@ fn get_context(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let mut c = core.llm_context(a.id).ok_or_else(|| anyhow!("session #{} is not a call to an LLM API", a.id))?;
     let mut view = View::new(core, 0);
     if let Some((before, after)) = c.changed.take() {
-        c.changed = Some((view.text(&before), view.text(&after)));
+        c.changed = Some((view.prose(&before), view.prose(&after)));
     }
     Ok(serde_json::to_value(c)?)
 }

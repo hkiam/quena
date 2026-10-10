@@ -1155,6 +1155,12 @@ async fn llm_freeze(core: State<'_, Core>, key: String) -> R<quena_app_core::age
     blocking(move || core.llm_freeze(&key).map_err(e)).await
 }
 
+/// Changes when LLM calls or MCP exchanges were added (cheap; for the Agents panel).
+#[tauri::command]
+async fn agent_stamp(core: State<'_, Core>) -> R<u64> {
+    Ok(core.agent_stamp())
+}
+
 /// Write a conversation as Markdown, JSON lines or OpenTelemetry spans.
 #[tauri::command]
 async fn llm_export(core: State<'_, Core>, key: String, format: String, path: String) -> R<usize> {
@@ -1429,6 +1435,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         llm_context,
         mcp_exchange,
         start_agent,
+        agent_stamp,
         llm_export,
         llm_variant,
         llm_compare,

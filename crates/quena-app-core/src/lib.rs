@@ -182,6 +182,8 @@ pub struct AppCore {
     pub(crate) autosave: Mutex<autosave::State>,
     /// Digests of LLM calls and the conversations built from them.
     pub(crate) llm_digests: Mutex<agent::Digests>,
+    /// Held while all LLM calls are read into conversations.
+    pub(crate) llm_building: Mutex<()>,
     /// Names of MCP servers by session id.
     pub(crate) mcp_names: Mutex<mcp_traffic::McpNames>,
     /// What was read of the stdio MCP recordings.
@@ -238,6 +240,7 @@ impl AppCore {
             protobuf: protobuf::Schemas::default(),
             autosave: Mutex::new(Default::default()),
             llm_digests: Mutex::new(agent::Digests::default()),
+            llm_building: Mutex::new(()),
             mcp_names: Mutex::new(mcp_traffic::McpNames::default()),
             mcp_taps: Mutex::new(mcp_tap::TapState::default()),
             mcp_results: Mutex::new(std::collections::HashMap::new()),

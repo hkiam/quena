@@ -121,6 +121,26 @@ fn now() -> i64 {
 }
 
 /// The cache key of a request (`None`: not a cacheable LLM call, e.g. no JSON body).
+/// An AWS SigV4 `Authorization` carries a new signature with every request: who asks is its
+/// access key (`Credential=AKIA…/date/region/service`).
+fn aws_credential(v: &str) -> Option<&str> {
+    let rest = v.trim().strip_prefix("AWS4-HMAC-SHA256")?;
+    let c = rest.split(',').find_map(|p| p.trim().strip_prefix("Credential="))?;
+    c.split('/').next()
+}
+
+/// `cache_control` marks out of a request body (they move along the conversation).
+fn strip_cache_control(v: &mut Value) {
+    match v {
+        Value::Object(o) => {
+            o.remove("cache_control");
+            o.values_mut().for_each(strip_cache_control);
+        }
+        Value::Array(a) => a.iter_mut().for_each(strip_cache_control),
+        _ => {}
+    }
+}
+
 pub fn key_of(method: &str, url: &str, headers: &Headers, body: &[u8]) -> Option<String> {
     llm::api_of(method, url)?;
     let mut v: Value = serde_json::from_slice(body).ok()?;
@@ -128,6 +148,14 @@ pub fn key_of(method: &str, url: &str, headers: &Headers, body: &[u8]) -> Option
     for f in IGNORED_FIELDS {
         o.remove(*f);
     }
+    // What changes with every request or run without changing the question: Claude Code's
+    // attribution block in the system prompt (its previous request id), Codex's per-session
+    // `prompt_cache_key`, and `cache_control` marks that move along the conversation.
+    o.remove("prompt_cache_key");
+    if let Some(Value::Array(blocks)) = o.get_mut("system") {
+        blocks.retain(|b| !b.get("text").and_then(|t| t.as_str()).is_some_and(|t| t.trim_start().starts_with("x-anthropic-billing-header:")));
+    }
+    strip_cache_control(&mut v);
     let (base, query) = url.split_once('?').unwrap_or((url, ""));
     let mut q: Vec<&str> = query.split('&').filter(|p| !p.is_empty() && !p.to_ascii_lowercase().starts_with("key=")).collect();
     q.sort_unstable();
@@ -137,7 +165,7 @@ pub fn key_of(method: &str, url: &str, headers: &Headers, body: &[u8]) -> Option
         if let Some(v) = headers.get(h) {
             cred.update(h.as_bytes());
             cred.update(b"=");
-            cred.update(v.trim().as_bytes());
+            cred.update(aws_credential(v).unwrap_or(v.trim()).as_bytes());
             cred.update(b"\n");
         }
     }
@@ -466,6 +494,28 @@ mod tests {
 
     fn h(v: &[(&str, &str)]) -> Headers {
         Headers(v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect())
+    }
+
+    #[test]
+    fn keys_ignore_what_changes_with_every_request() {
+        let url = "https://api.anthropic.com/v1/messages";
+        let body = |prev: &str, mark: bool| {
+            let cc = if mark { r#","cache_control":{"type":"ephemeral"}"# } else { "" };
+            format!(r#"{{"model":"claude","max_tokens":5,"system":[{{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1; cc_prev_req={prev};"}},{{"type":"text","text":"You are Claude Code."{cc}}}],"messages":[{{"role":"user","content":"hi"}}]}}"#)
+        };
+        let h = Headers::default();
+        assert_eq!(key_of("POST", url, &h, body("req_1", true).as_bytes()), key_of("POST", url, &h, body("req_2", false).as_bytes()), "attribution block and cache marks do not count");
+        let codex = |k: &str| format!(r#"{{"model":"gpt-5","input":[{{"role":"user","content":"hi"}}],"prompt_cache_key":"{k}"}}"#);
+        let r = "https://api.openai.com/v1/responses";
+        assert_eq!(key_of("POST", r, &h, codex("a").as_bytes()), key_of("POST", r, &h, codex("b").as_bytes()));
+        let sig = |s: &str| {
+            let mut h = Headers::default();
+            h.push("authorization", format!("AWS4-HMAC-SHA256 Credential=AKIAEXAMPLE/20261010/us-east-1/bedrock/aws4_request, SignedHeaders=host;x-amz-date, Signature={s}"));
+            h
+        };
+        let b = "https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-5-20250929-v1%3A0/invoke";
+        let body = r#"{"anthropic_version":"bedrock-2023-05-31","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}"#;
+        assert_eq!(key_of("POST", b, &sig("aaa"), body.as_bytes()), key_of("POST", b, &sig("bbb"), body.as_bytes()), "a new signature, the same access key");
     }
 
     #[test]

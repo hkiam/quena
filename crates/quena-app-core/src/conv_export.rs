@@ -5,7 +5,7 @@
 
 use crate::AppCore;
 use crate::agent::Turn;
-use crate::llm::{LlmCall, Part};
+use crate::llm::Part;
 use anyhow::{Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::fmt::Write as _;
@@ -75,12 +75,29 @@ fn attr(key: &str, v: Value) -> Value {
 }
 
 impl AppCore {
-    /// Write conversation `key` to `path` as `markdown`, `jsonl` or `otel`; returns the turns
-    /// written.
+    /// Write conversation `key` to `path` as `markdown`, `jsonl` (each call with the messages it
+    /// added), `jsonl-full` (each call whole) or `otel`; returns the turns written. Written as it
+    /// goes, one call read at a time, into a temporary file renamed at the end.
     pub fn llm_export(&self, key: &str, format: &str, path: &std::path::Path) -> Result<usize> {
+        use std::io::Write as _;
+        if !matches!(format, "markdown" | "jsonl" | "jsonl-full" | "otel") {
+            bail!("unknown format {format} (markdown, jsonl, jsonl-full, otel)");
+        }
         let d = self.llm_conversation(key).ok_or_else(|| anyhow!("no conversation {key}"))?;
-        let calls: Vec<Option<LlmCall>> = d.turns.iter().map(|t| self.llm(t.id)).collect();
-        let text = match format {
+        let tmp = path.with_extension("quena-tmp");
+        let mut w = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
+        let written = self.write_export(&d, format, &mut w).and_then(|()| Ok(w.flush()?));
+        drop(w);
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+        std::fs::rename(&tmp, path)?;
+        Ok(d.turns.len())
+    }
+
+    fn write_export(&self, d: &crate::agent::ConvDetail, format: &str, w: &mut impl std::io::Write) -> Result<()> {
+        match format {
             "markdown" => {
                 let s = &d.summary;
                 let mut out = format!("# {}\n\n", s.title);
@@ -92,49 +109,77 @@ impl AppCore {
                 for h in &d.hints {
                     let _ = writeln!(out, "> Hint: {} ({} tokens)", h.code, h.tokens);
                 }
-                for (i, (t, c)) in d.turns.iter().zip(&calls).enumerate() {
+                w.write_all(out.as_bytes())?;
+                for (i, t) in d.turns.iter().enumerate() {
+                    let mut out = String::new();
                     let _ = writeln!(out, "\n## Turn {} — #{}\n\n{}\n", i + 1, t.id, usage_line(t));
                     for n in &t.cache {
                         let _ = writeln!(out, "> Cache: {} {}", n.code, n.args.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "));
                     }
-                    let Some(c) = c else {
-                        out.push_str("_(request not readable)_\n");
-                        continue;
-                    };
-                    if i == 0 && !c.system.is_empty() {
-                        let _ = writeln!(out, "### System\n\n{}\n", short(&c.system.join("\n\n"), MD_TEXT));
-                    }
-                    // What this turn added to the call it continues.
-                    let from = t.messages.saturating_sub(t.diff.added);
-                    for m in c.messages.iter().skip(from) {
-                        let _ = writeln!(out, "### {}\n", m.role);
-                        for p in &m.parts {
-                            part_md(&mut out, p);
+                    match self.llm(t.id) {
+                        None => out.push_str("_(request not readable)_\n"),
+                        Some(c) => {
+                            if i == 0 && !c.system.is_empty() {
+                                let _ = writeln!(out, "### System\n\n{}\n", short(&c.system.join("\n\n"), MD_TEXT));
+                            }
+                            // What this turn added to the call it continues.
+                            let from = t.messages.saturating_sub(t.diff.added);
+                            for m in c.messages.iter().skip(from) {
+                                let _ = writeln!(out, "### {}\n", m.role);
+                                for p in &m.parts {
+                                    part_md(&mut out, p);
+                                }
+                            }
+                            if !c.output.is_empty() {
+                                out.push_str("### Answer\n\n");
+                                for p in &c.output {
+                                    part_md(&mut out, p);
+                                }
+                            }
                         }
                     }
-                    if !c.output.is_empty() {
-                        out.push_str("### Answer\n\n");
-                        for p in &c.output {
-                            part_md(&mut out, p);
+                    w.write_all(out.as_bytes())?;
+                }
+            }
+            "jsonl" | "jsonl-full" => {
+                let full = format == "jsonl-full";
+                let (mut system, mut tools) = (None::<Vec<String>>, None::<Vec<crate::llm::ToolDef>>);
+                for (i, t) in d.turns.iter().enumerate() {
+                    let mut call = self.llm(t.id);
+                    let mut before = 0;
+                    if !full && let Some(c) = call.as_mut() {
+                        // Only what changed: the messages this turn added, system and tools when
+                        // they differ from the call before.
+                        before = t.messages.saturating_sub(t.diff.added).min(c.messages.len());
+                        c.messages.drain(..before);
+                        if system.as_ref() == Some(&c.system) {
+                            c.system.clear();
+                        } else {
+                            system = Some(c.system.clone());
+                        }
+                        if tools.as_ref().is_some_and(|x| *x == c.tools) {
+                            c.tools.clear();
+                        } else {
+                            tools = Some(c.tools.clone());
                         }
                     }
+                    let line = json!({"conversation": d.summary.key, "turn": i + 1, "session": t.id, "started": t.started, "side": t.side, "diff": t.diff, "cache": t.cache, "messagesBefore": before, "call": call});
+                    serde_json::to_writer(&mut *w, &line)?;
+                    w.write_all(b"\n")?;
                 }
-                out
             }
-            "jsonl" => {
-                let mut out = String::new();
-                for (i, (t, c)) in d.turns.iter().zip(&calls).enumerate() {
-                    let line = json!({"conversation": d.summary.key, "turn": i + 1, "session": t.id, "started": t.started, "side": t.side, "diff": t.diff, "cache": t.cache, "call": c});
-                    out.push_str(&serde_json::to_string(&line)?);
-                    out.push('\n');
-                }
-                out
-            }
-            "otel" => {
+            _ => {
                 let s = &d.summary;
                 // One trace per conversation: a root span for the run, a child per call.
-                let trace = format!("{:0>32}", s.key);
-                let root = format!("{:0>16}", &s.key[..s.key.len().min(16)]);
+                // Ids from the key and the start, so the same run exported twice keeps them and a
+                // later run with the same key (after a restart) does not collide.
+                let digest = {
+                    use sha2::Digest;
+                    sha2::Sha256::digest(format!("{}\u{0}{}", s.key, s.started).as_bytes())
+                };
+                let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+                let trace = hex[..32].to_string();
+                let root = hex[32..48].to_string();
                 let mut spans = vec![json!({
                     "traceId": trace, "spanId": root, "name": format!("invoke_agent {}", if s.agent.is_empty() { "agent" } else { &s.agent }),
                     "kind": 1, "startTimeUnixNano": nanos(s.started), "endTimeUnixNano": nanos(s.ended),
@@ -161,13 +206,9 @@ impl AppCore {
                     }));
                 }
                 let doc = json!({"resourceSpans": [{"resource": {"attributes": [attr("service.name", json!("quena-capture"))]}, "scopeSpans": [{"scope": {"name": "quena", "version": env!("CARGO_PKG_VERSION")}, "spans": spans}]}]});
-                serde_json::to_string_pretty(&doc)?
+                serde_json::to_writer_pretty(&mut *w, &doc)?;
             }
-            other => bail!("unknown format {other} (markdown, jsonl, otel)"),
-        };
-        let tmp = path.with_extension("quena-tmp");
-        std::fs::write(&tmp, text)?;
-        std::fs::rename(&tmp, path)?;
-        Ok(d.turns.len())
+        }
+        Ok(())
     }
 }

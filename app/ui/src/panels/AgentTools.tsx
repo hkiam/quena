@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { api, type ToolReport, type ToolStat } from "../api";
 import { fmtInt } from "../lib/format";
-import { t } from "../i18n";
+import { plural, t } from "../i18n";
 
 export function AgentTools({ refresh }: { refresh: string }) {
   const [r, setR] = useState<ToolReport | null>(null);
@@ -30,7 +30,7 @@ export function AgentTools({ refresh }: { refresh: string }) {
       {error && <div className="mocks-error small">{error}</div>}
       <div className="conv-facts small">
         <span>{t("{n} LLM requests", { n: fmtInt(r.requests) })}</span>
-        <span>{t("{n} tools", { n: r.tools.length })}</span>
+        <span>{plural(r.tools.length, "{n} tool", "{n} tools")}</span>
         {unusedTokens > 0 && <span className="warn">{t("tools never called cost {n} tokens in all", { n: fmtInt(unusedTokens) })}</span>}
         <span className="tp-spacer" />
         <label className="f-check">
@@ -57,7 +57,9 @@ export function AgentTools({ refresh }: { refresh: string }) {
             <th className="num" title={t("Exchanges with the MCP server")}>
               MCP
             </th>
-            <th className="num">{t("Errors")}</th>
+            <th className="num" title={t("MCP exchanges that failed (error or isError)")}>
+              {t("Errors")}
+            </th>
             <th className="num" title={t("Average and largest result of the calls that did not fail, in tokens")}>
               {t("Result")}
             </th>
@@ -65,9 +67,11 @@ export function AgentTools({ refresh }: { refresh: string }) {
         </thead>
         <tbody>
           {tools.map((x) => (
-            <tr key={x.name} className={unused(x) ? "side" : ""}>
-              <td className="mono" title={x.name}>
-                {x.name}
+            <tr key={`${x.server ?? ""}\u0000${x.name}`} className={unused(x) ? "side" : ""}>
+              <td className="mono">
+                <div className="agt-ellipsis agt-tool" title={x.name}>
+                  {x.name}
+                </div>
               </td>
               <td className="small">{x.server ?? ""}</td>
               <td className="num">{x.offered || ""}</td>
@@ -94,7 +98,9 @@ export function AgentTools({ refresh }: { refresh: string }) {
                 <th className="num" title={t("Times the model loaded it (Skill tool or reading SKILL.md)")}>
                   {t("Loaded")}
                 </th>
-                <th className="num">{t("Conversations")}</th>
+                <th className="num" title={t("Conversations in which the model loaded it")}>
+                  {t("Loaded in")}
+                </th>
               </tr>
             </thead>
             <tbody>

@@ -260,7 +260,7 @@ fn request_op(op: &COp, r: &mut RequestHead, meta: &mut Meta) -> bool {
     let before = (r.url.clone(), r.headers.clone());
     match op {
         // Gemini, Vertex AI and Bedrock name the model in the URL.
-        COp::LlmSetModel(m) if crate::llm::api_of(&r.method, &r.url).is_some() && crate::llm::model_in_url(&r.url) => {
+        COp::LlmSetModel(m) if crate::llm::api_of(&r.method, &r.url).is_some() && crate::llm::model_in_url(&r.url) && !crate::llm::aws_signed(&r.url, &r.headers) => {
             if let Some(u) = crate::llm_edit::model_url(&r.url, m) {
                 r.url = u;
             }
@@ -1063,7 +1063,8 @@ thread_local! {
 
 /// Run `f` with the LLM API of request `head` known to the body operations.
 fn with_llm_api<R>(head: Option<&RequestHead>, f: impl FnOnce() -> R) -> R {
-    let api = head.and_then(|h| crate::llm::api_of(&h.method, &h.url));
+    // A signed request (Bedrock with SigV4) fails at AWS once its body changes: left alone.
+    let api = head.filter(|h| !crate::llm::aws_signed(&h.url, &h.headers)).and_then(|h| crate::llm::api_of(&h.method, &h.url));
     let in_url = head.is_some_and(|h| crate::llm::model_in_url(&h.url));
     let before = LLM_API.with(|a| a.replace(api));
     let before_url = LLM_MODEL_IN_URL.with(|a| a.replace(in_url));

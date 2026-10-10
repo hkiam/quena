@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, type CallContext, type Detail, type LlmCall, type LlmPart, type ToolTrail } from "../api";
 import { actions } from "../actions";
-import { useListVersion } from "../lib/useSettled";
+import { useAgentStamp, useListVersion } from "../lib/useSettled";
 import { fmtInt, fmtUsd } from "../lib/format";
 import { t } from "../i18n";
 import { confirmAsk, say, set } from "../store";
@@ -132,7 +132,7 @@ function ContextBar({ id, state }: { id: number; state: string }) {
     <details className="llm-details llm-context">
       <summary>
         {t("Context")}: {t("{n} tokens", { n: fmtInt(tokens) })}
-        {c.window ? ` · ${Math.round((tokens * 100) / c.window)} %` : ""}
+        {c.window ? <span title={t("Of the model's context window ({n} tokens)", { n: fmtInt(c.window) })}> · {Math.round((tokens * 100) / c.window)} %</span> : ""}
         {c.key && (
           <>
             {" · "}
@@ -143,7 +143,7 @@ function ContextBar({ id, state }: { id: number; state: string }) {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                set({ agentConv: c.key, activeTab: "agents" });
+                set({ agentConv: c.key, agentView: "convs", activeTab: "agents" });
               }}
             >
               {t("Show conversation")}
@@ -172,12 +172,19 @@ function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClos
   const [busy, setBusy] = useState(false);
   const [variant, setVariant] = useState<LlmCall | null>(null);
   const version = useListVersion();
-  // Looked at again as sessions arrive, until the variant's answer is complete or failed.
-  const done = !!variant && (variant.stopReason != null || variant.error != null);
+  // Looked at again as sessions arrive, until the variant's session is done or aborted.
+  const [done, setDone] = useState(false);
   useEffect(() => {
     if (sent == null || done) return;
     let alive = true;
-    api.llmCall(sent).then((r) => alive && r && setVariant(r), () => {});
+    void Promise.all([api.detail(sent), api.llmCall(sent)]).then(
+      ([d, r]) => {
+        if (!alive) return;
+        if (r) setVariant(r);
+        if (d && (d.summary.state === "done" || d.summary.state === "aborted")) setDone(true);
+      },
+      () => {},
+    );
     return () => {
       alive = false;
     };
@@ -210,13 +217,14 @@ function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClos
       });
       setSent(id);
       setVariant(null);
+      setDone(false);
     } catch (e) {
       say(String(e), "error");
     } finally {
       setBusy(false);
     }
   };
-  const usage = (x: LlmCall) => (x.usage ? `${t("in {n}", { n: fmtInt(x.usage.input) })} · ${t("out {n}", { n: fmtInt(x.usage.output) })}${x.cost ? ` · ≈ ${fmtUsd(x.cost.usd)}` : ""}` : t("no token usage in the response"));
+  const usage = (x: LlmCall) => (x.usage ? `${t("Input {n}", { n: fmtInt(x.usage.input) })} · ${t("Output {n}", { n: fmtInt(x.usage.output) })}${x.cost ? ` · ≈ ${fmtUsd(x.cost.usd)}` : ""}` : t("no token usage in the response"));
   const answer = (x: LlmCall) =>
     x.output
       .filter((p) => p.kind === "text" || p.kind === "toolCall")
@@ -269,7 +277,7 @@ function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClos
         </details>
       )}
       <div className="llm-play-line">
-        <button className="primary" disabled={busy} onClick={() => void send()}>
+        <button className="primary" disabled={busy || !model.trim()} title={!model.trim() ? t("Enter a model") : undefined} onClick={() => void send()}>
           ▶ {t("Send variant")}
         </button>
         {sent != null && (
@@ -315,18 +323,20 @@ function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClos
 
 /** The MCP exchanges that ran the tool calls of the answer. */
 function ToolTrails({ id, state }: { id: number; state: string }) {
-  const [trails, setTrails] = useState<ToolTrail[]>([]);
-  // The MCP exchanges come after the answer: look again as sessions arrive.
-  const version = useListVersion();
-  useEffect(() => setTrails([]), [id]);
+  const [trails, setTrails] = useState<ToolTrail[] | null>(null);
+  // The MCP exchanges come after the answer: look again as agent traffic arrives, until every
+  // call has its exchange and the next request.
+  const stamp = useAgentStamp();
+  const complete = !!trails && trails.every((x) => x.mcp != null && x.resultIn != null);
   useEffect(() => {
+    if (complete) return;
     let alive = true;
     if (state === "done" || state === "aborted") api.llmToolTrails(id).then((r) => alive && setTrails(r), () => {});
     return () => {
       alive = false;
     };
-  }, [id, state, version]);
-  const ran = trails.filter((x) => x.mcp != null);
+  }, [id, state, complete ? "" : stamp]);
+  const ran = (trails ?? []).filter((x) => x.mcp != null);
   if (!ran.length) return null;
   return (
     <div className="small llm-trails">

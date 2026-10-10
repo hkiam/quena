@@ -832,6 +832,12 @@ impl Sanitizer {
         self.url(url, Loc::Url)
     }
 
+    /// Free text outside a session (a prompt, a hint, a changed line): URLs and every enabled
+    /// detector, as in a body.
+    pub fn scrub_text(&mut self, text: &str) -> String {
+        self.scrub(text, Loc::Meta, Enc::Raw).into_owned()
+    }
+
     pub fn set_cancel(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         self.cancel = Some(flag);
     }

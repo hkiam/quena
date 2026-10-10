@@ -1421,6 +1421,7 @@ export const api = {
   launchBrowser: (kind: string, url?: string) => invoke<string>("launch_browser", { kind, url }),
   openTerminal: () => invoke<void>("open_terminal"),
   startAgent: (command: string) => invoke<void>("start_agent", { command }),
+  agentStamp: () => invoke<number>("agent_stamp"),
   llmExport: (key: string, format: "markdown" | "jsonl" | "otel", path: string) => invoke<number>("llm_export", { key, format, path }),
   settingsGet: () => invoke<Settings>("settings_get"),
   settingsSet: (settings: Settings) => invoke<void>("settings_set", { settings }),

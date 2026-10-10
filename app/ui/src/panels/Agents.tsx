@@ -1,25 +1,42 @@
 // Agents: the conversations of AI agents in the capture (each run of Claude Code, Codex, an
 // app), with their turns, what fills the context, where the prompt cache missed and why, and
 // hints where tokens go to waste.
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { api, type CallContext, type ConvDetail, type ConvSide, type ConvSummary, type SessionId } from "../api";
+import { api, type CallContext, type ConvDetail, type ConvSide, type ConvSummary, type ConvTurn, type SessionId } from "../api";
 import { actions } from "../actions";
-import { fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
+import { fmtDuration, fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
 import { CATEGORIES, breaksCache, cacheText, convTree, diffText, hintText, hintTokens } from "../lib/agentText";
 import { CallContextView } from "./CallContext";
 import { AgentTools } from "./AgentTools";
-import { useListVersion } from "../lib/useSettled";
+import { useAgentStamp } from "../lib/useSettled";
 import { confirmAsk, say, set, useStore } from "../store";
 import { plural, t } from "../i18n";
 import { ContextMap } from "./ContextMap";
 
 const tokens = (c: { input: number; output: number }) => c.input + c.output;
 const cacheShare = (read: number, input: number) => (input > 0 ? Math.round((read * 100) / input) : 0);
+/** Turns shown at first in long runs (the rest on request). */
+const TURN_ROWS = 1000;
+
+/** Keyboard on a list row: Enter or Space selects, Shift+Enter opens the session, arrows move. */
+function rowKeys(e: React.KeyboardEvent<HTMLTableRowElement>, select: () => void, open: () => void) {
+  if (e.key === "Enter" && e.shiftKey) {
+    e.preventDefault();
+    open();
+  } else if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    select();
+  } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const next = (e.key === "ArrowDown" ? e.currentTarget.nextElementSibling : e.currentTarget.previousElementSibling) as HTMLElement | null;
+    next?.focus();
+  }
+}
 
 export default function AgentsPanel() {
-  const version = useListVersion();
+  const stamp = useAgentStamp();
   const view = useStore((s) => s.agentView);
   const sel = useStore((s) => s.agentConv);
   const [list, setList] = useState<ConvSummary[] | null>(null);
@@ -29,19 +46,20 @@ export default function AgentsPanel() {
     // The tools view asks for its own report.
     if (view === "tools") return;
     let alive = true;
-    const timer = setTimeout(
-      () =>
-        api.llmConversations().then(
-          (r) => alive && (setList(r), setError(null)),
-          (e) => alive && setError(String(e)),
-        ),
-      0,
+    api.llmConversations().then(
+      (r) => {
+        if (!alive) return;
+        setList(r);
+        setError(null);
+        // Nothing chosen yet: the newest conversation.
+        if (r.length && !useStore.getState().agentConv) set({ agentConv: r[0].key });
+      },
+      (e) => alive && setError(String(e)),
     );
     return () => {
       alive = false;
-      clearTimeout(timer);
     };
-  }, [version, tick, view]);
+  }, [stamp, tick, view]);
   const tree = useMemo(() => convTree(list ?? []), [list]);
   const switcher = (
     <span className="tabs-inline agents-switch" role="tablist">
@@ -53,90 +71,119 @@ export default function AgentsPanel() {
       </button>
     </span>
   );
+  const refresh = (
+    <button className="icon-btn" title={t("Refresh")} onClick={() => setTick(tick + 1)}>
+      <RefreshCw size={13} />
+    </button>
+  );
+  const bar = (extra?: React.ReactNode) => (
+    <div className="lt-bar">
+      {switcher}
+      {extra}
+      <span className="tp-spacer" />
+      {refresh}
+    </div>
+  );
   if (view === "tools")
     return (
       <div className="agents-tools-wrap">
-        <div className="lt-bar">
-          {switcher}
-          <span className="tp-spacer" />
-          <button className="icon-btn" title={t("Refresh")} onClick={() => setTick(tick + 1)}>
-            <RefreshCw size={13} />
-          </button>
-        </div>
-        <AgentTools refresh={`${version}:${tick}`} />
+        {bar()}
+        <AgentTools refresh={`${stamp}:${tick}`} />
       </div>
     );
-  if (error && !list) return <div className="placeholder">{error}</div>;
-  if (!list) return <div className="placeholder">{t("Computing…")}</div>;
-  if (!list.length)
+  if (!list || !list.length)
     return (
       <div className="agents-tools-wrap">
-        <div className="lt-bar">{switcher}</div>
-        <div className="placeholder">{t("No LLM calls in the capture. Start an agent (Claude Code, Codex …) through Quena; each of its runs shows here as a conversation.")}</div>
+        {bar()}
+        <div className="placeholder">
+          {error ?? (!list ? t("Computing…") : t("No LLM calls in the capture. Start an agent (Claude Code, Codex …) through Quena; each of its runs shows here as a conversation."))}
+        </div>
       </div>
     );
   // A conversation opened from the LLM view may not be in the list yet: it loads on its own.
   const shown = sel;
   return (
     <div className="agents">
-      <div className="agents-list scroll">
-        <div className="lt-bar">
-          {switcher}
-          <span className="muted small">{plural(list.length, "{n} conversation", "{n} conversations")}</span>
-          {error && <span className="mocks-error small">{error}</span>}
-          <span className="tp-spacer" />
-          <button className="icon-btn" title={t("Refresh")} onClick={() => setTick(tick + 1)}>
-            <RefreshCw size={13} />
-          </button>
-        </div>
-        <table className="agt-table agents-table">
-          <thead>
-            <tr>
-              <th>{t("Conversation")}</th>
-              <th>{t("Agent")}</th>
-              <th className="num">{t("Turns")}</th>
-              <th className="num">{t("Tokens")}</th>
-              <th className="num" title={t("Share of the input served from the provider's prompt cache")}>
-                {t("Cached")}
-              </th>
-              <th className="num">{t("Cost")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tree.map(({ c, depth }) => (
-              <tr key={c.key} className={c.key === shown ? "selected" : ""} onClick={() => set({ agentConv: c.key })} onDoubleClick={() => void actions.selectIds([c.first])}>
-                <td title={`${c.title}\n${c.models.join(", ")}`}>
-                  <div className="agt-title" style={{ paddingLeft: depth * 14 }}>
-                    {depth > 0 && <span className="muted">↳</span>}
-                    <span className="agt-title-text">{c.title}</span>
-                    {c.cacheMisses > 0 && (
-                      <span className="pill pill-warn" title={t("The cache missed in {n} turns", { n: c.cacheMisses })}>
-                        {c.cacheMisses}
-                      </span>
-                    )}
-                    {c.errors > 0 && <span className="pill pill-err">{c.errors}</span>}
-                  </div>
-                </td>
-                <td className="mono small">{c.agent || c.provider}</td>
-                <td className="num">{c.turns}</td>
-                <td className="num">{fmtInt(tokens(c))}</td>
-                <td className="num">{cacheShare(c.cacheRead, c.input)} %</td>
-                <td className="num">{c.cost != null ? fmtUsd(c.cost) : ""}</td>
+      <div className="agents-list">
+        {bar(
+          <>
+            <span className="muted small">{plural(list.length, "{n} conversation", "{n} conversations")}</span>
+            {error && <span className="mocks-error small">{error}</span>}
+          </>,
+        )}
+        <div className="scroll">
+          <table className="agt-table agents-table">
+            <thead>
+              <tr>
+                <th>{t("Conversation")}</th>
+                <th>{t("Started")}</th>
+                <th>{t("Agent")}</th>
+                <th className="num">{t("Turns")}</th>
+                <th className="num" title={t("Input (cached tokens included) plus output")}>
+                  {t("Tokens")}
+                </th>
+                <th className="num" title={t("Share of the input served from the provider's prompt cache")}>
+                  {t("Cached")}
+                </th>
+                <th className="num" title={t("Estimated, for the turns whose model has a known price")}>
+                  {t("Cost")}
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {tree.map(({ c, depth }) => (
+                <tr
+                  key={c.key}
+                  tabIndex={0}
+                  aria-selected={c.key === shown}
+                  className={c.key === shown ? "selected" : ""}
+                  onClick={() => set({ agentConv: c.key })}
+                  onDoubleClick={() => void actions.selectIds([c.first])}
+                  onKeyDown={(e) => rowKeys(e, () => set({ agentConv: c.key }), () => void actions.selectIds([c.first]))}
+                  title={`${c.title}\n${c.models.join(", ")}\n${t("Double-click: select its first session")}`}
+                >
+                  <td className="agt-title-cell">
+                    <div className="agt-title" style={{ paddingLeft: depth * 14 }}>
+                      {depth > 0 && <span className="muted">↳</span>}
+                      <span className="agt-title-text">{c.title}</span>
+                      {c.cacheMisses > 0 && (
+                        <span className="pill pill-warn" title={t("The cache missed in {n} turns", { n: c.cacheMisses })}>
+                          {c.cacheMisses}
+                        </span>
+                      )}
+                      {c.errors > 0 && (
+                        <span className="pill pill-err" title={t("Calls that failed")}>
+                          {c.errors}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="small">{fmtTime(c.started)}</td>
+                  <td className="small agt-agent">{c.agent || c.provider}</td>
+                  <td className="num">{c.turns}</td>
+                  <td className="num">{fmtInt(tokens(c))}</td>
+                  <td className="num">{c.cacheRead > 0 || c.cacheMisses > 0 ? `${cacheShare(c.cacheRead, c.input)} %` : "–"}</td>
+                  <td className="num">{c.cost != null ? fmtUsd(c.cost) : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
-      <div className="agents-detail scroll pad">{shown ? <Conversation key={shown} convKey={shown} refresh={`${version}:${tick}`} list={list} /> : <div className="placeholder">{t("Choose a conversation.")}</div>}</div>
+      <div className="agents-detail scroll pad">{shown ? <Conversation key={shown} convKey={shown} refresh={`${stamp}:${tick}`} list={list} /> : <div className="placeholder">{t("Choose a conversation.")}</div>}</div>
     </div>
   );
 }
+
+/** A conversation's label in lists: title, start time, turns (runs often share the title). */
+const convLabel = (c: ConvSummary) => `${c.title.slice(0, 50)} · ${fmtTime(c.started)} · ${plural(c.turns, "{n} turn", "{n} turns")}`;
 
 function Conversation({ convKey, refresh, list }: { convKey: string; refresh: string; list: ConvSummary[] }) {
   const [d, setD] = useState<ConvDetail | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [turnId, setTurnId] = useState<SessionId | null>(null);
   const [other, setOther] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
   useEffect(() => {
     let alive = true;
     api.llmConversation(convKey).then(
@@ -148,18 +195,19 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
       alive = false;
     };
   }, [convKey, refresh]);
+  const index = useMemo(() => new Map((d?.turns ?? []).map((x, i) => [x.id, i])), [d]);
   if (d === undefined) return <div className="placeholder">{error ?? t("Computing…")}</div>;
   if (d === null) return <div className="placeholder">{t("The conversation is no longer in the capture.")}</div>;
   const s = d.summary;
   const span = Math.max(1, s.ended - s.started);
   const titleOf = (k: string) => list.find((c) => c.key === k)?.title ?? k;
-  const turnAt = d.turns.findIndex((x) => x.id === turnId);
+  const turnAt = turnId != null ? (index.get(turnId) ?? -1) : -1;
   const exportAs = async (format: "markdown" | "jsonl" | "otel") => {
     const ext = format === "markdown" ? "md" : format === "jsonl" ? "jsonl" : "otel.json";
     const name = format === "markdown" ? t("Markdown") : format === "jsonl" ? t("JSON lines") : t("OpenTelemetry (OTLP JSON)");
-    const path = await save({ defaultPath: `conversation-${convKey}.${ext}`, filters: [{ name, extensions: [ext.split(".").pop() ?? ext] }] });
-    if (!path) return;
     try {
+      const path = await save({ defaultPath: `conversation-${convKey}.${ext}`, filters: [{ name, extensions: [ext.split(".").pop() ?? ext] }] });
+      if (!path) return;
       const n = await api.llmExport(convKey, format, path);
       say(plural(n, "{n} turn exported", "{n} turns exported"));
     } catch (e) {
@@ -172,12 +220,13 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
       const f = await api.llmFreeze(convKey);
       const msg = plural(f.added, "{n} turn added to the agent cache", "{n} turns added to the agent cache");
       const subs = f.conversations > 1 ? ` ${plural(f.conversations - 1, "(with {n} subagent)", "(with {n} subagents)")}` : "";
-      const skipped = f.skipped ? ` ${plural(f.skipped, "{n} could not be kept (cut off or too large).", "{n} could not be kept (cut off or too large).")}` : "";
+      const skipped = f.skipped ? ` ${plural(f.skipped, "{n} turn could not be kept (cut off or too large).", "{n} turns could not be kept (cut off or too large).")}` : "";
       say(msg + subs + skipped);
     } catch (e) {
       say(String(e), "error");
     }
   };
+  const rows = all ? d.turns : d.turns.slice(0, TURN_ROWS);
   return (
     <div className="conv">
       {error && <div className="mocks-error small">{error}</div>}
@@ -188,14 +237,16 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
       <div className="conv-facts small">
         <span>{s.agent || s.provider}</span>
         <span className="mono">{s.models.join(", ")}</span>
-        <span>{plural(s.turns, "{n} turn", "{n} turns")}</span>
-        {s.side > 0 && <span>{plural(s.side, "{n} side call", "{n} side calls")}</span>}
+        <span>
+          {plural(s.turns, "{n} turn", "{n} turns")}
+          {s.side > 0 && ` (${plural(s.side, "{n} side call", "{n} side calls")})`}
+        </span>
         {s.hits > 0 && <span>{plural(s.hits, "{n} from the agent cache", "{n} from the agent cache")}</span>}
-        <span>{fmtMs(Math.round(span / 1000))}</span>
-        <span>{t("in {n}", { n: fmtInt(s.input) })}</span>
-        <span>{t("out {n}", { n: fmtInt(s.output) })}</span>
+        <span title={t("From the first call's start to the last call's end")}>{fmtDuration(span / 1000)}</span>
+        <span>{t("Input {n}", { n: fmtInt(s.input) })}</span>
+        <span>{t("Output {n}", { n: fmtInt(s.output) })}</span>
         <span title={t("Share of the input served from the provider's prompt cache")}>{t("cached {pct} %", { pct: cacheShare(s.cacheRead, s.input) })}</span>
-        {s.cost != null && <span>≈ {fmtUsd(s.cost)}</span>}
+        {s.cost != null && <span title={t("Estimated, for the turns whose model has a known price")}>≈ {fmtUsd(s.cost)}</span>}
         {s.window ? (
           <span title={t("The last request's input of the model's context window")}>
             {t("context {pct} %", { pct: Math.round((s.lastInput * 100) / s.window) })}
@@ -217,7 +268,7 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
             Markdown
           </button>{" "}
           ·{" "}
-          <button type="button" className="linklike" onClick={() => void exportAs("jsonl")} title={t("One call per line, as the LLM view takes it apart: for evaluations")}>
+          <button type="button" className="linklike" onClick={() => void exportAs("jsonl")} title={t("One call per line, as the LLM view takes it apart, with the messages each turn added: for evaluations")}>
             JSONL
           </button>{" "}
           ·{" "}
@@ -225,7 +276,7 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
             OpenTelemetry
           </button>
         </span>
-        <label>
+        <label className="conv-compare-pick">
           {t("Compare with")}{" "}
           <select value={other ?? ""} onChange={(e) => setOther(e.target.value || null)}>
             <option value="">–</option>
@@ -233,7 +284,7 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
               .filter((c) => c.key !== convKey)
               .map((c) => (
                 <option key={c.key} value={c.key}>
-                  {c.title.slice(0, 60)}
+                  {convLabel(c)}
                 </option>
               ))}
           </select>
@@ -274,13 +325,16 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
         </>
       )}
       <h4>{t("Turns")}</h4>
+      <div className="muted small conv-legend">{t("One row per LLM call, in the order they started. Click a row for its context; double-click (or Shift+Enter) selects its session. Orange: the change broke the cached prefix, or the cache missed.")}</div>
       <table className="agt-table conv-turns">
         <thead>
           <tr>
             <th className="num">#</th>
             <th>{t("Time")}</th>
-            <th className="conv-bar-col" />
-            <th className="num">{t("In")}</th>
+            <th className="conv-bar-col" title={t("When the call ran, on the run's time axis")} />
+            <th className="num" title={t("Input tokens, cached ones included")}>
+              {t("In")}
+            </th>
             <th className="num" title={t("Read from the prompt cache")}>
               {t("Cached")}
             </th>
@@ -293,66 +347,22 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
               {t("tok/s")}
             </th>
             <th>{t("Change")}</th>
-            <th>{t("Calls")}</th>
+            <th>{t("Tool calls")}</th>
           </tr>
         </thead>
         <tbody>
-          {d.turns.map((x, i) => {
-            const miss = x.cache.some((c) => c.code === "miss");
-            const left = ((x.started - s.started) * 100) / span;
-            const width = ((x.durationMs ?? 0) * 1000 * 100) / span;
-            return (
-              <tr
-                key={x.id}
-                className={`${turnId === x.id ? "selected" : ""} ${x.error ? "err" : ""} ${x.side ? "side" : ""}`}
-                onClick={() => setTurnId(x.id)}
-                onDoubleClick={() => void actions.selectIds([x.id])}
-                title={[...x.cache.map(cacheText), t("Double-click: select the session")].join("\n")}
-              >
-                <td className="num" title={x.prev != null ? t("Continues #{n}", { n: d.turns.findIndex((y) => y.id === x.prev) + 1 }) : undefined}>
-                  {i + 1}
-                </td>
-                <td className="small">{fmtTime(x.started)}</td>
-                <td className="conv-bar-col">
-                  <div className="conv-bar" style={{ left: `${left}%`, width: `max(2px, ${width}%)` }} />
-                </td>
-                <td className="num">{x.usage ? fmtInt(x.usage.input) : ""}</td>
-                <td className={`num ${miss ? "warn" : ""}`}>{x.usage ? `${cacheShare(x.usage.cacheRead, x.usage.input)} %` : ""}</td>
-                <td className="num">{x.usage ? fmtInt(x.usage.output) : ""}</td>
-                <td className="num">{x.cost != null ? fmtUsd(x.cost) : ""}</td>
-                <td className="num">{x.ttfbMs != null ? fmtMs(x.ttfbMs) : ""}</td>
-                <td className="num" title={x.rate ? rateText(x.rate) : undefined}>
-                  {x.tokensPerS != null ? Math.round(x.tokensPerS) : ""}
-                </td>
-                <td className={`small ${breaksCache(x.diff) ? "warn" : "muted"}`}>
-                  {x.status >= 400 && (
-                    <span className="pill pill-err" title={x.rate ? rateText(x.rate) : undefined}>
-                      {x.status}
-                    </span>
-                  )}{" "}
-                  {diffText(x.diff)}
-                  {x.diff.modelChanged && <span className="mono"> {x.model}</span>}
-                </td>
-                <td className="small mono">
-                  {x.side && (
-                    <span className="pill pill-muted" title={t("No later turn continues this call: a side call of the agent (a prompt suggestion, a summary …)")}>
-                      {t("side call")}
-                    </span>
-                  )}
-                  {x.hit && (
-                    <span className="pill pill-info" title={t("Answered by Quena from the agent cache: nothing was spent")}>
-                      {t("agent cache")}
-                    </span>
-                  )}{" "}
-                  {x.calls.join(", ")}
-                </td>
-              </tr>
-            );
-          })}
+          {rows.map((x, i) => (
+            <TurnRow key={x.id} x={x} i={i} prevIndex={x.prev != null ? index.get(x.prev) : undefined} start={s.started} span={span} selected={turnId === x.id} onSelect={setTurnId} />
+          ))}
         </tbody>
       </table>
+      {!all && d.turns.length > TURN_ROWS && (
+        <button type="button" className="linklike small" onClick={() => setAll(true)}>
+          {t("Show all {n} turns", { n: fmtInt(d.turns.length) })}
+        </button>
+      )}
       {turnAt >= 0 ? (
-        <TurnContext key={d.turns[turnAt].id} id={d.turns[turnAt].id} index={turnAt + 1} />
+        <TurnContext key={d.turns[turnAt].id} id={d.turns[turnAt].id} index={turnAt + 1} refresh={refresh} />
       ) : (
         d.breakdown && (
           <>
@@ -365,16 +375,77 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
   );
 }
 
+const TurnRow = memo(function TurnRow({ x, i, prevIndex, start, span, selected, onSelect }: { x: ConvTurn; i: number; prevIndex: number | undefined; start: number; span: number; selected: boolean; onSelect: (id: SessionId) => void }) {
+  const miss = x.cache.some((c) => c.code === "miss");
+  const left = ((x.started - start) * 100) / span;
+  const width = ((x.durationMs ?? 0) * 1000 * 100) / span;
+  const open = () => void actions.selectIds([x.id]);
+  return (
+    <tr
+      tabIndex={0}
+      aria-selected={selected}
+      className={`${selected ? "selected" : ""} ${x.error ? "err" : ""} ${x.side ? "side" : ""}`}
+      onClick={() => onSelect(x.id)}
+      onDoubleClick={open}
+      onKeyDown={(e) => rowKeys(e, () => onSelect(x.id), open)}
+      title={[...x.cache.map(cacheText), t("Double-click: select the session")].join("\n")}
+    >
+      <td className="num" title={prevIndex != null ? t("Continues #{n}", { n: prevIndex + 1 }) : undefined}>
+        {i + 1}
+      </td>
+      <td className="small">{fmtTime(x.started)}</td>
+      <td className="conv-bar-col">
+        <div className="conv-bar" style={{ left: `${left}%`, width: `max(2px, ${width}%)` }} />
+      </td>
+      <td className="num">{x.usage ? fmtInt(x.usage.input) : ""}</td>
+      <td className={`num ${miss ? "warn" : ""}`}>{x.usage ? `${cacheShare(x.usage.cacheRead, x.usage.input)} %` : ""}</td>
+      <td className="num">{x.usage ? fmtInt(x.usage.output) : ""}</td>
+      <td className="num">{x.cost != null ? fmtUsd(x.cost) : ""}</td>
+      <td className="num">{x.ttfbMs != null ? fmtMs(x.ttfbMs) : ""}</td>
+      <td className="num" title={x.rate ? rateText(x.rate) : undefined}>
+        {x.tokensPerS != null ? Math.round(x.tokensPerS) : ""}
+      </td>
+      <td className={`small ${breaksCache(x.diff) ? "warn" : "muted"}`}>
+        {x.status >= 400 && (
+          <span className="pill pill-err" title={x.rate ? rateText(x.rate) : undefined}>
+            {x.status}
+          </span>
+        )}{" "}
+        {diffText(x.diff)}
+        {x.diff.modelChanged && <span className="mono"> {x.model}</span>}
+      </td>
+      <td className="small">
+        <div className="agt-ellipsis" title={x.calls.join(", ")}>
+          {x.side && (
+            <span className="pill pill-muted" title={t("No later turn continues this call: a side call of the agent (a prompt suggestion, a summary …)")}>
+              {t("side call")}
+            </span>
+          )}
+          {x.hit && (
+            <span className="pill pill-info" title={t("Answered by Quena from the agent cache: nothing was spent")}>
+              {t("agent cache")}
+            </span>
+          )}{" "}
+          <span className="mono">{x.calls.join(", ")}</span>
+        </div>
+      </td>
+    </tr>
+  );
+});
+
 /** A turn: what filled its context, how it differs from the one before, the cache. */
-function TurnContext({ id, index }: { id: SessionId; index: number }) {
+function TurnContext({ id, index, refresh }: { id: SessionId; index: number; refresh: string }) {
   const [c, setC] = useState<CallContext | null | undefined>(undefined);
+  // A turn still running is looked at again until its usage is known.
+  const settled = c != null && c.breakdown.actual != null;
   useEffect(() => {
+    if (settled) return;
     let alive = true;
     api.llmContext(id).then((r) => alive && setC(r), () => alive && setC(null));
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [id, settled ? "" : refresh]);
   return (
     <>
       <h4>{t("Turn {n}", { n: index })}</h4>
@@ -415,7 +486,7 @@ function CompareView({ a, b, refresh }: { a: string; b: string; refresh: string 
     [t("Output tokens"), (x) => x.summary.output, fmtInt, "less"],
     [t("Cached share"), (x) => cacheShare(x.summary.cacheRead, x.summary.input), (n) => `${n} %`, "more"],
     [t("Cost"), (x) => x.summary.cost ?? 0, fmtUsd, "less"],
-    [t("Duration"), (x) => dur(x.summary), (n) => fmtMs(Math.round(n)), "less"],
+    [t("Duration"), (x) => dur(x.summary), fmtDuration, "less"],
     [t("Last request"), (x) => x.summary.lastInput, fmtInt, "less"],
     [t("Cache misses"), (x) => x.summary.cacheMisses, (n) => String(n), "less"],
     [t("Errors"), (x) => x.summary.errors, (n) => String(n), "less"],
@@ -437,6 +508,9 @@ function CompareView({ a, b, refresh }: { a: string; b: string; refresh: string 
   return (
     <div className="conv-compare">
       <h4>{t("A/B comparison")}</h4>
+      <div className="muted small">
+        A: {convLabel(c.a.summary)} — B: {convLabel(c.b.summary)}
+      </div>
       <table className="agt-table">
         <thead>
           <tr>
@@ -479,7 +553,11 @@ function CompareView({ a, b, refresh }: { a: string; b: string; refresh: string 
           </tr>
           {keys((x) => x.tools).map((k) => (
             <tr key={`t:${k}`}>
-              <td className="mono">{k}</td>
+              <td className="mono">
+                <div className="agt-ellipsis" title={k}>
+                  {k}
+                </div>
+              </td>
               <td className="num">{c.a.tools[k] ?? 0}</td>
               <td className="num">{c.b.tools[k] ?? 0}</td>
               <td className="num">{delta(c.a.tools[k] ?? 0, c.b.tools[k] ?? 0, String, "none")}</td>

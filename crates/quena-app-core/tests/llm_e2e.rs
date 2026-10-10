@@ -277,6 +277,11 @@ fn conversations_export() {
     core.llm_export(&key, "jsonl", &jl).unwrap();
     let lines: Vec<serde_json::Value> = std::fs::read_to_string(&jl).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     assert_eq!(lines.len(), 2);
+    let added = lines[1]["call"]["messages"].as_array().unwrap().len();
+    assert!(added < 3 && lines[1]["messagesBefore"].as_u64().unwrap() as usize + added == 3, "turn 2 carries only what it added");
+    let full = dir.path().join("run-full.jsonl");
+    core.llm_export(&key, "jsonl-full", &full).unwrap();
+    let lines: Vec<serde_json::Value> = std::fs::read_to_string(&full).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     assert_eq!(lines[1]["call"]["messages"].as_array().unwrap().len(), 3);
     let ot = dir.path().join("run.otel.json");
     core.llm_export(&key, "otel", &ot).unwrap();

@@ -58,6 +58,17 @@ export function fmtMs(ms: number | null | undefined): string {
   return `${fixed(ms / 1000, ms < 10000 ? 2 : 1)} s`;
 }
 
+/** A longer duration: `850 ms`, `12.4 s`, `3 min 05 s`, `1 h 12 min`. */
+export function fmtDuration(ms: number | null | undefined): string {
+  if (ms == null) return "";
+  if (ms < 60_000) return fmtMs(Math.round(ms));
+  const s = Math.round(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h} h ${String(m).padStart(2, "0")} min`;
+  return `${m} min ${String(s % 60).padStart(2, "0")} s`;
+}
+
 export function headerValue(h: [string, string][] | undefined, name: string): string | undefined {
   if (!h) return undefined;
   const n = name.toLowerCase();

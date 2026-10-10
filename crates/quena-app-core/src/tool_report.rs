@@ -143,9 +143,11 @@ impl AppCore {
         let numbering = cap.numbering();
         let mut todo = Vec::new();
         {
-            let seen = self.mcp_checked.lock();
+            let mut seen = self.mcp_checked.lock();
+            // Ids of an earlier numbering name other sessions now.
+            seen.retain(|(n, _)| *n == numbering);
             cap.index.for_each(|s| {
-                if s.mcp.is_empty() && crate::mcp_traffic::candidate(&s.method, &s.full_url(), Default::default()) && !seen.contains(&(numbering, s.id)) {
+                if s.state.is_final() && s.mcp.is_empty() && crate::mcp_traffic::candidate(&s.method, &s.full_url(), Default::default()) && !seen.contains(&(numbering, s.id)) {
                     todo.push(s.id);
                 }
             });
@@ -162,7 +164,13 @@ impl AppCore {
         if let Some(r) = self.mcp_results.lock().get(&(self.capture().numbering(), id)) {
             return *r;
         }
-        let r = self.mcp_exchange(id).and_then(|x| x.call).map(|c| (c.tokens, c.is_error)).unwrap_or((0, false));
+        let ex = self.mcp_exchange(id);
+        // No answer yet (the older transport's stream is still open): read again next time.
+        let pending = ex.as_ref().is_some_and(|x| x.received.is_empty());
+        let r = ex.and_then(|x| x.call).map(|c| (c.tokens, c.is_error)).unwrap_or((0, false));
+        if pending {
+            return r;
+        }
         let mut g = self.mcp_results.lock();
         if g.len() > 100_000 {
             g.clear();
@@ -220,8 +228,11 @@ impl AppCore {
             let t = tools.entry(key).or_insert_with(|| ToolStat { name: m.tool.clone(), server: (!m.server.is_empty()).then(|| m.server.clone()), ..Default::default() });
             t.mcp_calls += 1;
             t.errors += failed as u32;
-            t.result_tokens += tokens;
-            t.max_result_tokens = t.max_result_tokens.max(tokens);
+            // Result sizes of the calls that did not fail.
+            if !failed {
+                t.result_tokens += tokens;
+                t.max_result_tokens = t.max_result_tokens.max(tokens);
+            }
             if t.server.is_none() && !m.server.is_empty() {
                 t.server = Some(m.server.clone());
             }

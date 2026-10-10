@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { api, type Detail, type McpExchange, type SessionId, type ToolTrail } from "../api";
 import { actions } from "../actions";
 import { fmtInt } from "../lib/format";
-import { useListVersion } from "../lib/useSettled";
+import { useAgentStamp, useListVersion } from "../lib/useSettled";
 import { t } from "../i18n";
 
 /** Whether a session may be an MCP exchange (mirrors the core's cheap check). */
@@ -66,7 +66,10 @@ export function McpView({ detail }: { detail: Detail }) {
   const [trail, setTrail] = useState<ToolTrail | null>(null);
   // The mark and the request that carries the result come later: look again as sessions arrive.
   const version = useListVersion();
+  const stamp = useAgentStamp();
   const mark = detail.summary.mcp ?? "";
+  // The older SSE transport answers on its stream, later; a stream still open grows.
+  const pending = ex?.transport === "sse" && (state !== "done" || (!!ex.call && ex.call.content.length === 0));
   useEffect(() => {
     setEx(undefined);
     setTrail(null);
@@ -77,14 +80,14 @@ export function McpView({ detail }: { detail: Detail }) {
     return () => {
       alive = false;
     };
-  }, [id, state]);
+  }, [id, state, pending ? version : 0]);
   useEffect(() => {
     let alive = true;
-    if (mark.startsWith("tools/call")) api.mcpTrail(id).then((x) => alive && setTrail(x), () => {});
+    if (mark.startsWith("tools/call") && trail?.resultIn == null) api.mcpTrail(id).then((x) => alive && setTrail(x), () => {});
     return () => {
       alive = false;
     };
-  }, [id, mark, version]);
+  }, [id, mark, trail?.resultIn == null ? stamp : 0]);
   if (ex === undefined) return <div className="placeholder">{t("Decoding…")}</div>;
   if (ex === null) return <div className="placeholder">{t("Not an exchange with an MCP server.")}</div>;
   const toolTokens = (ex.tools ?? []).reduce((a, x) => a + x.tokens, 0);
@@ -138,9 +141,9 @@ export function McpView({ detail }: { detail: Detail }) {
                 .sort((a, b) => b.tokens - a.tokens)
                 .map((x) => (
                   <tr key={x.name}>
-                    <td className="mono">{x.name}</td>
+                    <td className="mono nowrap">{x.name}</td>
                     <td className="small">{x.description}</td>
-                    <td className="num">{fmtInt(x.tokens)}</td>
+                    <td className="num nowrap">{fmtInt(x.tokens)}</td>
                   </tr>
                 ))}
             </tbody>

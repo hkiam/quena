@@ -37,9 +37,9 @@ export function CallContextView({ c }: { c: CallContext }) {
         </ul>
       )}
       <ContextMap b={c.breakdown} />
-      {c.window && c.breakdown.actual != null && (
+      {c.window ? (c.breakdown.actual != null && (
         <div className="muted small">{t("{pct} % of the context window ({window} tokens)", { pct: Math.round((c.breakdown.actual * 100) / c.window), window: fmtInt(c.window) })}</div>
-      )}
+      )) : null}
     </div>
   );
 }

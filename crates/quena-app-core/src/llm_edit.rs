@@ -197,12 +197,14 @@ pub fn set_model(v: &mut Value, api: Api, model: &str) -> bool {
 pub fn model_url(url: &str, model: &str) -> Option<String> {
     if let Some(i) = url.find("/model/").map(|i| i + "/model/".len()).filter(|_| url.contains("bedrock-runtime")) {
         let end = url[i..].find('/').map(|e| i + e).unwrap_or(url.len());
-        let enc = model.replace(':', "%3A");
+        // A path segment: an inference profile ARN carries `/` and `:`.
+        let enc = model.replace('%', "%25").replace(':', "%3A").replace('/', "%2F").replace('?', "%3F").replace('#', "%23");
         return (url[i..end] != enc && url[i..end] != *model).then(|| format!("{}{}{}", &url[..i], enc, &url[end..]));
     }
     let i = url.find("/models/")? + "/models/".len();
     let end = url[i..].find(':').map(|e| i + e)?;
-    (url[i..end] != *model).then(|| format!("{}{}{}", &url[..i], model, &url[end..]))
+    let enc = model.replace('%', "%25").replace('/', "%2F").replace('?', "%3F").replace('#', "%23");
+    (url[i..end] != enc).then(|| format!("{}{}{}", &url[..i], enc, &url[end..]))
 }
 
 /// Set the output limit under the key the API uses.

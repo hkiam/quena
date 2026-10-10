@@ -1,5 +1,21 @@
 /* Quena theme (light/dark). Colours follow the app icon: navy, signal blue, copper. */
 :root {
+  --ctx-system: #d9c7ff;
+  --ctx-tools: #b9d4ff;
+  --ctx-overhead: #d3dae6;
+  --ctx-instructions: #ffe08a;
+  --ctx-skills: #ffc58a;
+  --ctx-reminders: #e3e6ea;
+  --ctx-context: #cdeee6;
+  --ctx-summary: #f2d4e8;
+  --ctx-user: #bfe8b0;
+  --ctx-assistant: #c9e7ff;
+  --ctx-thinking: #efe1ff;
+  --ctx-toolcalls: #f6d2a8;
+  --ctx-toolresults: #ffb7b2;
+  --ctx-images: #a8e0e0;
+  --ctx-server: #c4c9f2;
+  --ctx-other: #eceff3;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --bg: #eef1f5;
@@ -67,6 +83,22 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
+    --ctx-system: #4b3a78;
+    --ctx-tools: #26497d;
+    --ctx-overhead: #3a4250;
+    --ctx-instructions: #6b5714;
+    --ctx-skills: #74481a;
+    --ctx-reminders: #3a3f47;
+    --ctx-context: #1f5a4f;
+    --ctx-summary: #63304f;
+    --ctx-user: #2f5f26;
+    --ctx-assistant: #1f4e6e;
+    --ctx-thinking: #4a3566;
+    --ctx-toolcalls: #6b4a22;
+    --ctx-toolresults: #7a2f2b;
+    --ctx-images: #1f5f5f;
+    --ctx-server: #3a3f78;
+    --ctx-other: #30353d;
     --bg: #0e1522;
     --panel-bg: #131c2b;
     --toolbar-bg: #172133;
@@ -128,6 +160,22 @@
   }
 }
 :root[data-theme="dark"] {
+  --ctx-system: #4b3a78;
+  --ctx-tools: #26497d;
+  --ctx-overhead: #3a4250;
+  --ctx-instructions: #6b5714;
+  --ctx-skills: #74481a;
+  --ctx-reminders: #3a3f47;
+  --ctx-context: #1f5a4f;
+  --ctx-summary: #63304f;
+  --ctx-user: #2f5f26;
+  --ctx-assistant: #1f4e6e;
+  --ctx-thinking: #4a3566;
+  --ctx-toolcalls: #6b4a22;
+  --ctx-toolresults: #7a2f2b;
+  --ctx-images: #1f5f5f;
+  --ctx-server: #3a3f78;
+  --ctx-other: #30353d;
   --bg: #0e1522;
   --panel-bg: #131c2b;
   --toolbar-bg: #172133;
@@ -3914,6 +3962,8 @@ tr.capdiff-changed td:first-child {
 .agents-list {
   border-bottom: 1px solid var(--border);
   min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 .agents-detail {
   min-height: 0;
@@ -3941,11 +3991,18 @@ tr.capdiff-changed td:first-child {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.agt-table tbody tr {
+.agents-table tbody tr,
+.conv-turns tbody tr {
   cursor: pointer;
 }
-.agt-table tbody tr:hover {
+.agents-table tbody tr:hover,
+.conv-turns tbody tr:hover {
   background: var(--grid-bg-alt);
+}
+.agents-table tbody tr:focus-visible,
+.conv-turns tbody tr:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 .agt-table tbody tr.selected {
   background: var(--sel-bg);
@@ -3958,11 +4015,39 @@ tr.capdiff-changed td:first-child {
 .conv-hints.warn li {
   color: var(--pill-warn-fg);
 }
+.agents-table .agt-title-cell {
+  width: 100%;
+  max-width: 0;
+}
 .agt-title {
   display: flex;
   align-items: center;
   gap: 4px;
-  max-width: 360px;
+  min-width: 0;
+}
+.agt-agent {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agt-ellipsis {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agt-tool {
+  max-width: 220px;
+}
+.conv-compare-pick select {
+  max-width: 220px;
+}
+.conv-legend {
+  margin: 0 0 4px;
+}
+table.kv td.nowrap {
+  word-break: normal;
+  white-space: nowrap;
 }
 .agt-title-text {
   overflow: hidden;
@@ -3994,11 +4079,7 @@ tr.capdiff-changed td:first-child {
 .conv-hints li {
   margin: 2px 0;
 }
-.conv-turns td:last-child {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+
 .conv-bar-col {
   position: relative;
   width: 90px;
@@ -4064,19 +4145,22 @@ tr.capdiff-changed td:first-child {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.ctx-system { background: var(--mark-purple); }
-.ctx-tools { background: var(--mark-blue); }
-.ctx-instructions { background: var(--mark-gold); }
-.ctx-skills { background: var(--mark-orange); }
-.ctx-reminders,
-.ctx-context,
-.ctx-other { background: var(--pill-muted-bg); }
-.ctx-user { background: var(--mark-green); }
-.ctx-assistant { background: var(--accent-soft); }
-.ctx-thinking { background: var(--pill-violet-bg); }
-.ctx-toolCalls { background: var(--copper-soft); }
-.ctx-toolResults { background: var(--mark-red); }
-.ctx-images { background: var(--pill-info-bg); }
+.ctx-system { background: var(--ctx-system); }
+.ctx-tools { background: var(--ctx-tools); }
+.ctx-overhead { background: var(--ctx-overhead); }
+.ctx-instructions { background: var(--ctx-instructions); }
+.ctx-skills { background: var(--ctx-skills); }
+.ctx-reminders { background: var(--ctx-reminders); }
+.ctx-context { background: var(--ctx-context); }
+.ctx-summary { background: var(--ctx-summary); }
+.ctx-user { background: var(--ctx-user); }
+.ctx-assistant { background: var(--ctx-assistant); }
+.ctx-thinking { background: var(--ctx-thinking); }
+.ctx-toolCalls { background: var(--ctx-toolcalls); }
+.ctx-toolResults { background: var(--ctx-toolresults); }
+.ctx-images { background: var(--ctx-images); }
+.ctx-server { background: var(--ctx-server); }
+.ctx-other { background: var(--ctx-other); }
 .agt-table tr.side td {
   color: var(--muted);
 }

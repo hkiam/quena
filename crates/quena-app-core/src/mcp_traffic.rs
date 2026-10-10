@@ -64,11 +64,18 @@ impl Hint {
 /// Whether a session may be an MCP exchange, by what is cheap to see: MCP headers, the Accept
 /// header MCP clients send, a path or host MCP servers use. Calls to LLM APIs are none.
 pub fn candidate(method: &str, url: &str, hint: Hint) -> bool {
-    if url.starts_with("stdio://") || hint.mcp_header {
+    if url.starts_with("stdio://") {
+        return true;
+    }
+    // A call to an LLM API is never MCP, whatever headers it carries.
+    if crate::llm::api_of(method, url).is_some() {
+        return false;
+    }
+    if hint.mcp_header {
         return true;
     }
     let (post, get) = (method.eq_ignore_ascii_case("POST"), method.eq_ignore_ascii_case("GET"));
-    if !(post || get) || crate::llm::api_of(method, url).is_some() {
+    if !(post || get) {
         return false;
     }
     if post && hint.accepts_both {
@@ -356,6 +363,10 @@ pub fn flags_of(ex: &McpExchange, server: &str) -> Vec<(String, String)> {
 pub struct McpNames {
     by_session: HashMap<(String, String), String>,
     by_server: HashMap<String, String>,
+    /// The older transport's stream found for a host and session (capture numbering, session).
+    streams: HashMap<(String, String), (u64, SessionId)>,
+    /// Exchanges marked so far (for [`AppCore::agent_stamp`]).
+    pub(crate) marks: u64,
 }
 
 /// Where an exchange goes: the URL's authority, or the stdio name.
@@ -398,12 +409,17 @@ impl AppCore {
         let cap = self.capture();
         let host = authority(&d.request.url);
         let started = d.summary.started_at;
+        let numbering = cap.numbering();
+        let known = self.mcp_names.lock().streams.get(&(host.clone(), sid.clone())).filter(|(n, _)| *n == numbering).map(|(_, id)| *id);
         let mut streams: Vec<(i64, SessionId)> = Vec::new();
-        cap.index.for_each(|s| {
-            if s.method.eq_ignore_ascii_case("GET") && s.started_at <= started && authority(&s.full_url()) == host {
-                streams.push((s.started_at, s.id));
-            }
-        });
+        match known {
+            Some(id) => streams.push((0, id)),
+            None => cap.index.for_each(|s| {
+                if s.method.eq_ignore_ascii_case("GET") && s.started_at <= started && s.content_type.to_ascii_lowercase().contains("event-stream") && authority(&s.full_url()) == host {
+                    streams.push((s.started_at, s.id));
+                }
+            }),
+        }
         streams.sort_by(|a, b| b.0.cmp(&a.0));
         for (_, sid_stream) in streams.into_iter().take(20) {
             let Some((sd, _, sresp)) = cap.bodies_stored(sid_stream) else { continue };
@@ -411,6 +427,13 @@ impl AppCore {
             let text = String::from_utf8_lossy(&text);
             if !text.contains(&sid) {
                 continue;
+            }
+            {
+                let mut g = self.mcp_names.lock();
+                if g.streams.len() > 10_000 {
+                    g.streams.clear();
+                }
+                g.streams.insert((host.clone(), sid.clone()), (numbering, sid_stream));
             }
             let ids: Vec<Option<String>> = ex.sent.iter().filter(|m| m.kind == "request").map(|m| m.id.clone()).collect();
             let answers: Vec<Value> = messages(&text).into_iter().filter(|v| v.get("method").is_none() && ids.contains(&id_of(v))).collect();
@@ -493,6 +516,14 @@ impl AppCore {
         } else {
             cap.update_detail(id, set);
         }
+        self.mcp_names.lock().marks += 1;
+    }
+
+    /// Changes whenever LLM calls or MCP exchanges were added or marked: the Agents panel
+    /// and the trails ask again only then (other traffic leaves it alone).
+    pub fn agent_stamp(&self) -> u64 {
+        let digests = self.llm_digests.lock().generation();
+        digests.wrapping_mul(1_000_003).wrapping_add(self.mcp_names.lock().marks).wrapping_add(self.capture().numbering().wrapping_mul(7))
     }
 }
 

@@ -191,16 +191,11 @@ fn segments(text: &str) -> Vec<(Seg, String, &str)> {
     let mut out = Vec::new();
     let mut rest = text;
     loop {
-        // The first tag in what is left.
-        let mut next: Option<(usize, &str, Seg)> = None;
-        for (tag, seg) in TAGS {
-            let open = format!("<{tag}>");
-            if let Some(i) = rest.find(&open)
-                && next.is_none_or(|n| i < n.0)
-            {
-                next = Some((i, tag, *seg));
-            }
-        }
+        // The first tag in what is left (one pass over it, `<` by `<`).
+        let next = rest.match_indices('<').find_map(|(i, _)| {
+            let after = &rest[i + 1..];
+            TAGS.iter().find(|(tag, _)| after.starts_with(tag) && after[tag.len()..].starts_with('>')).map(|(tag, seg)| (i, *tag, *seg))
+        });
         let Some((i, tag, seg)) = next else { break };
         if i > 0 {
             out.push((Seg::Text, String::new(), &rest[..i]));
@@ -376,7 +371,9 @@ pub const AGENT_FLAG: &str = "x-quena-agent";
 pub fn agent_name(user_agent: &str) -> Option<String> {
     let ua = user_agent.trim();
     let lower = ua.to_ascii_lowercase();
-    let version = |prefix: &str| lower.find(prefix).map(|i| ua[i + prefix.len()..].split([' ', ';', ')', '(']).next().unwrap_or("").to_string()).filter(|v| !v.is_empty());
+    // A token of the User-Agent: at its start or after a space (`notcursor/1` is not Cursor).
+    let at = |token: &str| lower.match_indices(token).map(|(i, _)| i).find(|&i| i == 0 || matches!(lower.as_bytes()[i - 1], b' ' | b'(' | b';'));
+    let version = |prefix: &str| at(prefix).map(|i| ua[i + prefix.len()..].split([' ', ';', ')', '(', '/']).next().unwrap_or("").to_string()).filter(|v| !v.is_empty());
     let named = |name: &str, prefix: &str| Some(match version(prefix) {
         Some(v) => format!("{name} {v}"),
         None => name.to_string(),
@@ -392,7 +389,8 @@ pub fn agent_name(user_agent: &str) -> Option<String> {
         ("gemini-cli", "Gemini CLI", "gemini-cli/"),
         ("cursor/", "Cursor", "cursor/"),
         ("githubcopilotchat/", "GitHub Copilot", "githubcopilotchat/"),
-        ("copilot", "GitHub Copilot", "copilot/"),
+        ("copilot/", "GitHub Copilot", "copilot/"),
+        ("copilot-", "GitHub Copilot", "copilot/"),
         ("cline/", "Cline", "cline/"),
         ("roo-code", "Roo Code", "roo-code/"),
         ("aider/", "aider", "aider/"),
@@ -408,11 +406,11 @@ pub fn agent_name(user_agent: &str) -> Option<String> {
         ("litellm", "LiteLLM", "litellm/"),
         ("ollama", "Ollama client", "ollama/"),
     ];
-    known.iter().find(|(k, _, _)| lower.contains(k)).and_then(|(_, name, prefix)| named(name, prefix))
+    known.iter().find(|(k, _, _)| at(k).is_some()).and_then(|(_, name, prefix)| named(name, prefix))
 }
 
 /// Settings that are part of what a provider caches (a change makes the cache miss).
-const CACHED_SETTINGS: &[&str] = &["thinking", "tool_choice", "reasoning.effort", "reasoning_effort", "output_config"];
+const CACHED_SETTINGS: &[&str] = &["thinking", "tool_choice", "reasoning.effort", "reasoning_effort", "output_config", "prompt_cache_retention"];
 
 // ------------------------------------------------------------------ digest
 
@@ -868,7 +866,7 @@ fn cache_notes(base: Option<&Digest>, cur: &Digest, judged: bool) -> Vec<CacheNo
     if could < min {
         return if cur.api == Api::Messages && cur.cache_marks > 0 && u.cache_read == 0 && u.input < min { vec![note("short", &[("min", min.to_string())])] } else { vec![] };
     }
-    if u.cache_read * 2 >= could {
+    if u.cache_read.saturating_mul(2) >= could {
         return vec![];
     }
     let d = diff(Some(b), cur);
@@ -1293,7 +1291,7 @@ fn summary_of(b: &Built, ci: usize, turns: &[Turn], prices: &llm::PriceList) -> 
             models.push(d.model.clone());
         }
     }
-    let sum = |f: fn(&Usage) -> u64| ds.iter().filter_map(|d| d.spent()).map(|u| f(&u)).sum::<u64>();
+    let sum = |f: fn(&Usage) -> u64| ds.iter().filter_map(|d| d.spent()).map(|u| f(&u)).fold(0u64, u64::saturating_add);
     let costs: Vec<f64> = ds.iter().filter(|d| !d.hit).filter_map(|d| d.cost).collect();
     let last_input = main_last.usage.map(|u| u.input).unwrap_or(main_last.est);
     ConvSummary {
@@ -1408,7 +1406,7 @@ fn hints(last: &LlmCall, c: &Conv, turns: &[Turn], window: Option<u64>) -> Vec<H
         && w > 0
         && input * 10 >= w * 7
     {
-        out.push(hint("window", input, &[("pct", (input * 100 / w).to_string()), ("window", w.to_string())]));
+        out.push(hint("window", input, &[("pct", (input.saturating_mul(100) / w.max(1)).to_string()), ("window", w.to_string())]));
     }
     let limited = turns.iter().filter(|t| matches!(t.status, 429 | 529 | 503)).count();
     if limited > 0 {
@@ -1417,7 +1415,7 @@ fn hints(last: &LlmCall, c: &Conv, turns: &[Turn], window: Option<u64>) -> Vec<H
     if let Some(r) = turns.iter().rev().find_map(|t| t.rate.as_ref())
         && let (Some(left), Some(limit)) = (r.tokens_left, r.tokens_limit)
         && limit > 0
-        && left * 10 < limit
+        && left.saturating_mul(10) < limit
     {
         out.push(hint("rateHeadroom", 0, &[("left", left.to_string()), ("limit", limit.to_string())]));
     }
@@ -1473,6 +1471,12 @@ pub struct Digests {
     built: Option<(u64, Arc<Built>)>,
 }
 
+impl Digests {
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+}
+
 impl AppCore {
     /// A session as an LLM call, read without pushing other sessions out of the detail cache.
     fn llm_peek(&self, id: SessionId) -> Option<(SessionDetail, LlmCall)> {
@@ -1498,9 +1502,12 @@ impl AppCore {
         }
         let made = self.llm_peek(id).map(|(d, call)| {
             if !d.extra_flags.iter().any(|(k, _)| k == llm::LLM_FLAG) {
-                let flags = llm::flags_of(&call);
+                let mut flags = llm::flags_of(&call);
+                if let Some(a) = d.request.headers.get("user-agent").and_then(agent_name) {
+                    flags.push((AGENT_FLAG.into(), a));
+                }
                 let set = |det: &mut SessionDetail| {
-                    det.extra_flags.retain(|(k, _)| !k.starts_with(llm::LLM_FLAG) || k == CONV_FLAG);
+                    det.extra_flags.retain(|(k, _)| (!k.starts_with(llm::LLM_FLAG) || k == CONV_FLAG) && k != AGENT_FLAG);
                     det.extra_flags.extend(flags.iter().cloned());
                 };
                 if let Some(live) = cap.live(id) {
@@ -1562,13 +1569,29 @@ impl AppCore {
     /// Digests of all LLM calls in the capture (sessions whose URL is an LLM API), and the
     /// conversations; calls whose conversation flag is missing or out of date get it.
     pub(crate) fn all_built(&self) -> Arc<Built> {
+        // One at a time: callers meanwhile wait and then find the digests made.
+        let _one = self.llm_building.lock();
         let cap = self.capture();
+        let numbering = cap.numbering();
         let mut cand: Vec<(SessionId, String)> = Vec::new();
         cap.index.for_each(|s| {
-            if !s.llm.is_empty() || (s.method.eq_ignore_ascii_case("POST") && llm::api_of("POST", &format!("http://{}{}", s.host, s.url)).is_some()) {
+            // Calls still running are read once they are done (their answer is not complete).
+            if s.state.is_final() && (!s.llm.is_empty() || (s.method.eq_ignore_ascii_case("POST") && llm::api_of("POST", &format!("http://{}{}", s.host, s.url)).is_some())) {
                 cand.push((s.id, s.llm_conv.clone()));
             }
         });
+        // Sessions removed from the capture leave their conversations.
+        {
+            let ids: std::collections::HashSet<SessionId> = cand.iter().map(|(id, _)| *id).collect();
+            let mut g = self.llm_digests.lock();
+            if g.numbering == numbering {
+                let before = g.map.len();
+                g.map.retain(|id, d| d.is_none() || ids.contains(id));
+                if g.map.len() != before {
+                    g.generation += 1;
+                }
+            }
+        }
         for (id, _) in &cand {
             self.llm_digest(*id);
         }
@@ -2006,6 +2029,9 @@ mod tests {
         assert_eq!(agent_name("OpenAI/Python 1.51.0").as_deref(), Some("OpenAI SDK (Python) 1.51.0"));
         assert_eq!(agent_name("GeminiCLI/0.8.2 (darwin; arm64)").as_deref(), Some("Gemini CLI 0.8.2"));
         assert_eq!(agent_name("curl/8.7.1"), None);
+        assert_eq!(agent_name("Mozilla/5.0 notcursor/1.0"), None);
+        assert_eq!(agent_name("my-copilot-proxy"), None);
+        assert_eq!(agent_name("Cursor/1.7/darwin").as_deref(), Some("Cursor 1.7"));
         assert_eq!(quena_index::agent_family("Claude Code 2.0.14"), "Claude Code");
         assert_eq!(quena_index::agent_family("Cursor"), "Cursor");
     }

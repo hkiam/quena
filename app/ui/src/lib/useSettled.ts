@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "../store";
+import { api } from "../api";
 
 /** `value` once it has not changed for `quiet` ms, and at least every `most` ms while it keeps
  * changing (an agent at work changes the list all the time). */
@@ -22,4 +23,19 @@ export function useSettled<T>(value: T, quiet = 400, most = 3000): T {
  * on every change. */
 export function useListVersion(): number {
   return useSettled(useStore((s) => s.listVersion));
+}
+
+/** Changes only when LLM calls or MCP exchanges were added or marked (asked of the core as
+ * the list changes): views of agent data reload then, not on every other session. */
+export function useAgentStamp(): number {
+  const version = useListVersion();
+  const [stamp, setStamp] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    api.agentStamp().then((s) => alive && setStamp(s), () => {});
+    return () => {
+      alive = false;
+    };
+  }, [version]);
+  return stamp;
 }

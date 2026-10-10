@@ -200,10 +200,10 @@ export function describeOp(o: RwOp): string {
     case "comment":
       return `“${o.text}”`;
     case "llmRemoveTool":
-      return `− tool ${o.name}`;
+      return t("− tool {name}", { name: o.name });
     case "llmSetModel":
-      return `model → ${o.model}`;
+      return t("model → {model}", { model: o.model });
     case "llmAppendSystem":
-      return `system + “${o.text.length > 40 ? `${o.text.slice(0, 40)}…` : o.text}”`;
+      return t("system prompt + “{text}”", { text: o.text.length > 40 ? `${o.text.slice(0, 40)}…` : o.text });
   }
 }
