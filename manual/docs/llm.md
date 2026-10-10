@@ -195,28 +195,41 @@ answers the calls one after the other. Streamed answers are replayed as recorded
 
 ### Latency and rate limits
 
-The turns show the time to the response's first byte and the output tokens per second; the
-conversation their medians. A turn refused with 429 (rate limit) or 529/503 (provider
-overloaded) is marked with its status, and the rate limits a response reports
-(`anthropic-ratelimit-*`, `x-ratelimit-*`, `retry-after`) show when pointing at its tokens per
-second. Hints say how many calls were refused and sent again, and when little of the token
-limit is left.
+The turns show the time from sending a request to the response headers (on a new connection
+with connecting) and, for streamed answers, the output tokens per second from the answer's
+first byte; the conversation their medians. A turn refused with 429 (rate limit) or 529/503
+(provider overloaded) is marked with its status; the rate limits a response reports
+(`anthropic-ratelimit-*`, `x-ratelimit-*`, `retry-after`) show when pointing at the status or
+the tokens per second. Hints say how many calls were refused and how many were sent again
+after a failure, and when little of the token limit is left.
 
 ### Try a variant
 
 *Try a variant…* in the LLM view sends the call again with changes: another **system
-prompt**, **tools** left out, another **model**, another **output limit**. The variant goes
-to the same API with the original request's headers — its credentials included — after you
-confirm, and costs tokens like any call. Its answer and tokens show next to the original's;
-the new session is commented *Variant of #N*.
+prompt**, **tools** left out (a tool choice naming one goes too), another **model** (for
+Gemini in the URL), another **output limit** (under the key the API uses: `max_tokens`,
+`max_completion_tokens`, `max_output_tokens`, `maxOutputTokens`, `num_predict`). The variant
+goes to the same API with the original request's headers — its credentials included — after
+you confirm, and costs tokens like any call. For a session loaded from an archive these are
+the credentials of whoever recorded it. Its answer, error and tokens show next to the
+original's; the new session is commented *Variant of #N*, and neither the agent cache nor
+rewrite rules change it.
+
+A changed system prompt is sent as one text: cache marks and Claude Code's attribution block
+are left out, so the provider's cache starts over; a system prompt too long for the view is
+sent unchanged. A variant counts in its conversation as a side call.
 
 ### Freeze a run for replays
 
-*Freeze for replays…* puts a conversation's answered turns into the [agent
-cache](#agent-cache). Run the agent again — after changing a skill, an MCP server, a prompt
-file — and Quena answers the same requests from the recording without asking the model.
-Where the new run asks something the recording does not have, the call goes to the model,
-and the conversation says at which turn the run *left the frozen run*.
+*Freeze for replays…* puts the answered turns of a conversation and of the subagents it
+started into the [agent cache](#agent-cache); turns that cannot be kept (an answer cut off or
+too large) are skipped and counted. Run the agent again — after changing a skill, an MCP
+server, a prompt file — and Quena answers the same requests from the recording without
+asking the model. Where the new run asks something the recording does not have, the call
+goes to the model, and the conversation says at which turn the run *left the frozen run*. A
+request is the same when its URL, model, messages, tools and settings are (key order,
+`user` and `metadata` do not count); when the first request already differs — a date in a
+reminder, say — the new run gets no answer from the recording.
 
 ### Compare two runs
 

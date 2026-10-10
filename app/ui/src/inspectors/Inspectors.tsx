@@ -339,10 +339,10 @@ function Pane({ detail, part, tamper }: { detail: Detail | null; part: Part; tam
         content = <MsgpackView detail={detail} part={part} />;
         break;
       case "llm":
-        content = <LlmView detail={detail} />;
+        content = <LlmView key={detail.summary.id} detail={detail} />;
         break;
       case "mcp":
-        content = <McpView detail={detail} />;
+        content = <McpView key={detail.summary.id} detail={detail} />;
         break;
       case "socketio":
         content = <SocketIoView detail={detail} part={part} />;

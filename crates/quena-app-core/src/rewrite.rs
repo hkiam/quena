@@ -259,6 +259,12 @@ fn edit_cookie(h: &mut Headers, name: &str, value: Option<&str>) {
 fn request_op(op: &COp, r: &mut RequestHead, meta: &mut Meta) -> bool {
     let before = (r.url.clone(), r.headers.clone());
     match op {
+        // Gemini names the model in the URL.
+        COp::LlmSetModel(m) if crate::llm::api_of(&r.method, &r.url) == Some(crate::llm::Api::Gemini) => {
+            if let Some(u) = crate::llm_edit::gemini_model_url(&r.url, m) {
+                r.url = u;
+            }
+        }
         COp::SetHeader(n, v) => r.headers.set(n, v.clone()),
         COp::DefaultHeader(n, v) => {
             if r.headers.get(n).is_none() {
@@ -761,7 +767,7 @@ impl Rewriter {
         for x in &rules {
             applied.names.push(name_of(&x.rule));
         }
-        let (out, notes) = transform_body(&rules, headers, body, self.max_body());
+        let (out, notes) = with_llm_api((phase == Phase::Request).then_some(matched_on), || transform_body(&rules, headers, body, self.max_body()));
         applied.notes.extend(notes);
         applied.changed = out.is_some();
         for x in rules.iter().filter(|x| !x.head_ops) {
@@ -875,7 +881,7 @@ pub fn apply_offline(rules: &[RewriteRule], max_body_kb: u64, req: &RequestHead,
     }
     let body_rules: Vec<&Compiled> = req_rules.iter().copied().filter(|x| x.body_ops && x.type_ok(req_ct.as_deref())).collect();
     if !body_rules.is_empty() && req_body.len() > 0 {
-        let (b, notes) = transform_body(&body_rules, &out.request.headers, req_body, max);
+        let (b, notes) = with_llm_api(Some(&out.request), || transform_body(&body_rules, &out.request.headers, req_body, max));
         out.notes.extend(notes);
         if let Some((h, bytes)) = b {
             out.request.headers = h;
@@ -1048,6 +1054,20 @@ fn pointers(path: &JsonPath, v: &Value) -> Vec<String> {
     path.query_located(v).locations().map(|l| l.to_json_pointer()).collect()
 }
 
+thread_local! {
+    /// The LLM API of the request whose body is being changed (`None`: no LLM request).
+    static LLM_API: std::cell::Cell<Option<crate::llm::Api>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run `f` with the LLM API of request `head` known to the body operations.
+fn with_llm_api<R>(head: Option<&RequestHead>, f: impl FnOnce() -> R) -> R {
+    let api = head.and_then(|h| crate::llm::api_of(&h.method, &h.url));
+    let before = LLM_API.with(|a| a.replace(api));
+    let r = f();
+    LLM_API.with(|a| a.set(before));
+    r
+}
+
 /// Apply one JSON operation; `true` if the document changed.
 fn apply_json(op: &COp, v: &mut Value) -> bool {
     match op {
@@ -1089,104 +1109,12 @@ fn apply_json(op: &COp, v: &mut Value) -> bool {
             changed
         }
         COp::JsonAppendAll(value) => append_all(v, value),
-        COp::LlmRemoveTool(name) => llm_remove_tool(v, name),
-        COp::LlmSetModel(model) => {
-            let has = v.get("model").is_some();
-            if (has || llm_body(v)) && v.get("model").and_then(|m| m.as_str()) != Some(model.as_str()) && v.is_object() {
-                v["model"] = Value::String(model.clone());
-                true
-            } else {
-                false
-            }
-        }
-        COp::LlmAppendSystem(text) => llm_append_system(v, text),
+        // LLM changes only for requests to an LLM API (in its format).
+        COp::LlmRemoveTool(name) => LLM_API.with(|a| a.get()).is_some_and(|api| crate::llm_edit::remove_tool(v, api, name)),
+        COp::LlmSetModel(model) => LLM_API.with(|a| a.get()).is_some_and(|api| crate::llm_edit::set_model(v, api, model)),
+        COp::LlmAppendSystem(text) => LLM_API.with(|a| a.get()).is_some_and(|api| crate::llm_edit::append_system(v, api, text)),
         _ => false,
     }
-}
-
-/// Whether a JSON body is a request to an LLM API.
-fn llm_body(v: &Value) -> bool {
-    ["messages", "input", "contents", "instructions", "system"].iter().any(|k| v.get(*k).is_some())
-}
-
-/// Tool name matching: exact, or a prefix with `*` at the end.
-fn tool_matches(pattern: &str, name: &str) -> bool {
-    match pattern.strip_suffix('*') {
-        Some(p) => name.starts_with(p),
-        None => name == pattern,
-    }
-}
-
-pub(crate) fn llm_remove_tool(v: &mut Value, pattern: &str) -> bool {
-    let name_of = |t: &Value| t.get("name").or_else(|| t.get("function").and_then(|f| f.get("name"))).and_then(|n| n.as_str()).map(str::to_string);
-    let mut changed = false;
-    if let Some(Value::Array(tools)) = v.get_mut("tools") {
-        let before = tools.len();
-        tools.retain(|t| name_of(t).is_none_or(|n| !tool_matches(pattern, &n)));
-        // Gemini: declarations inside tool groups.
-        for t in tools.iter_mut() {
-            for key in ["functionDeclarations", "function_declarations"] {
-                if let Some(Value::Array(decls)) = t.get_mut(key) {
-                    let n = decls.len();
-                    decls.retain(|d| name_of(d).is_none_or(|x| !tool_matches(pattern, &x)));
-                    changed |= decls.len() != n;
-                }
-            }
-        }
-        changed |= tools.len() != before;
-    }
-    changed
-}
-
-fn llm_append_system(v: &mut Value, text: &str) -> bool {
-    let Some(obj) = v.as_object_mut() else { return false };
-    // OpenAI Responses: instructions.
-    if obj.contains_key("instructions") || obj.contains_key("input") {
-        let cur = obj.get("instructions").and_then(|i| i.as_str()).unwrap_or("").to_string();
-        obj.insert("instructions".into(), Value::String(if cur.is_empty() { text.to_string() } else { format!("{cur}\n\n{text}") }));
-        return true;
-    }
-    // Gemini: systemInstruction parts.
-    if obj.contains_key("contents") {
-        let si = obj.entry("systemInstruction").or_insert_with(|| serde_json::json!({"parts": []}));
-        if let Some(Value::Array(parts)) = si.get_mut("parts") {
-            parts.push(serde_json::json!({"text": text}));
-            return true;
-        }
-        return false;
-    }
-    let Some(Value::Array(msgs)) = obj.get("messages") else { return false };
-    let chat_system = msgs.iter().any(|m| matches!(m.get("role").and_then(|r| r.as_str()), Some("system" | "developer")));
-    // Anthropic: a system string or blocks; a request without one that is not OpenAI-shaped
-    // (max_tokens, no system message) gets a system string.
-    if obj.contains_key("system") || (!chat_system && obj.contains_key("max_tokens") && !obj.contains_key("max_completion_tokens")) {
-        match obj.get_mut("system") {
-            Some(Value::String(s)) => {
-                s.push_str("\n\n");
-                s.push_str(text);
-            }
-            Some(Value::Array(blocks)) => blocks.push(serde_json::json!({"type": "text", "text": text})),
-            _ => {
-                obj.insert("system".into(), Value::String(text.to_string()));
-            }
-        }
-        return true;
-    }
-    // OpenAI Chat: the first system message, else a new one in front.
-    let Some(Value::Array(msgs)) = obj.get_mut("messages") else { return false };
-    if let Some(m) = msgs.iter_mut().find(|m| matches!(m.get("role").and_then(|r| r.as_str()), Some("system" | "developer"))) {
-        match m.get_mut("content") {
-            Some(Value::String(s)) => {
-                s.push_str("\n\n");
-                s.push_str(text);
-            }
-            Some(Value::Array(parts)) => parts.push(serde_json::json!({"type": "text", "text": text})),
-            _ => m["content"] = Value::String(text.to_string()),
-        }
-    } else {
-        msgs.insert(0, serde_json::json!({"role": "system", "content": text}));
-    }
-    true
 }
 
 /// Sort key of a JSON pointer: its tokens, array indices compared as numbers.
@@ -1249,8 +1177,13 @@ mod tests {
     }
 
     fn run_opt(text: &str, ops: Vec<Op>) -> (Option<String>, Vec<String>) {
+        run_at("https://api.anthropic.com/v1/messages", text, ops)
+    }
+
+    fn run_at(url: &str, text: &str, ops: Vec<Op>) -> (Option<String>, Vec<String>) {
         let c = compile(&RewriteRule { phase: Phase::Request, ..rule(ops) }).unwrap();
-        transform(text, &[&c])
+        let head = RequestHead { method: "POST".into(), url: url.into(), version: quena_model::HttpVersion::Http11, headers: Headers::default() };
+        with_llm_api(Some(&head), || transform(text, &[&c]))
     }
 
     #[test]
@@ -1263,20 +1196,24 @@ mod tests {
         assert_eq!(v["model"], "claude-haiku-4-5");
         assert_eq!(v["system"][1]["text"], "Be brief.");
         let chat = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"search"}}]}"#;
-        let (t, _) = run_opt(chat, ops(vec![Op::LlmRemoveTool { name: "search".into() }, Op::LlmAppendSystem { text: "Answer in German.".into() }]));
+        let openai = "https://api.openai.com/v1/chat/completions";
+        let (t, _) = run_at(openai, chat, ops(vec![Op::LlmRemoveTool { name: "search".into() }, Op::LlmAppendSystem { text: "Answer in German.".into() }]));
         let v: Value = serde_json::from_str(&t.unwrap()).unwrap();
-        assert!(v["tools"].as_array().unwrap().is_empty());
+        assert!(v.get("tools").is_none(), "no tools left: none at all");
         assert_eq!(v["messages"][0], serde_json::json!({"role": "system", "content": "Answer in German."}));
         let responses = r#"{"model":"gpt-5","instructions":"You are Codex.","input":[]}"#;
-        let (t, _) = run_opt(responses, ops(vec![Op::LlmAppendSystem { text: "x".into() }]));
+        let (t, _) = run_at("https://api.openai.com/v1/responses", responses, ops(vec![Op::LlmAppendSystem { text: "x".into() }]));
         assert_eq!(serde_json::from_str::<Value>(&t.unwrap()).unwrap()["instructions"], "You are Codex.\n\nx");
         let gemini = r#"{"contents":[],"tools":[{"functionDeclarations":[{"name":"a"},{"name":"b"}]}]}"#;
-        let (t, _) = run_opt(gemini, ops(vec![Op::LlmRemoveTool { name: "a".into() }, Op::LlmAppendSystem { text: "s".into() }]));
+        let (t, _) = run_at("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent", gemini, ops(vec![Op::LlmRemoveTool { name: "a".into() }, Op::LlmAppendSystem { text: "s".into() }]));
         let v: Value = serde_json::from_str(&t.unwrap()).unwrap();
         assert_eq!(v["tools"][0]["functionDeclarations"].as_array().unwrap().len(), 1);
         assert_eq!(v["systemInstruction"]["parts"][0]["text"], "s");
         // Nothing to do: no change.
-        let (t, _) = run_opt(chat, ops(vec![Op::LlmRemoveTool { name: "absent".into() }, Op::LlmSetModel { model: "gpt-4o".into() }]));
+        let (t, _) = run_at(openai, chat, ops(vec![Op::LlmRemoveTool { name: "absent".into() }, Op::LlmSetModel { model: "gpt-4o".into() }]));
+        assert!(t.is_none());
+        // Another JSON API with an `input` member is left alone.
+        let (t, _) = run_at("https://api.example.com/search", r#"{"input":{"q":"x"}}"#, ops(vec![Op::LlmAppendSystem { text: "sys".into() }, Op::LlmSetModel { model: "m".into() }]));
         assert!(t.is_none());
     }
 

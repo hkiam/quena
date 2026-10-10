@@ -14,12 +14,16 @@ contain breaking changes (settings, file formats, plugin API).
   variant…* sends an LLM call again with another system prompt, fewer tools, another model or
   output limit (after a confirmation, with the original's headers) and shows answer and
   tokens next to the original's; *Freeze for replays…* puts a conversation's answered turns
-  into the agent cache and shows where a new run left the recording; turns show the time to
-  the first byte, tokens per second, refused calls (429/529/503), retries and the rate limits
-  the provider reports, with hints when calls were refused or little of the limit is left.
+  and of its subagents into the agent cache and shows where a new run left the recording;
+  turns show the time to the response headers, tokens per second of streamed answers, refused
+  calls (429/529/503), retries after failures and the rate limits the provider reports, with
+  hints when calls were refused or little of the limit is left. Variants bypass the agent
+  cache and rewrite rules and count as side calls.
 - Rewrite rules: **LLM: remove tool** (`mcp__jira__*` for all of a server), **LLM: set
-  model**, **LLM: add to system prompt** — for Anthropic, OpenAI Chat and Responses, Gemini;
-  also over MCP (`llmRemoveTool`, `llmSetModel`, `llmAppendSystem`).
+  model**, **LLM: add to system prompt** — in the format of the API known from the URL
+  (Anthropic, OpenAI Chat and Responses, Gemini with the model in the URL, Ollama); a tool
+  choice naming a removed tool goes too; other APIs are left alone; also over MCP
+  (`llmRemoveTool`, `llmSetModel`, `llmAppendSystem`).
 - Breakpoint before LLM requests: *Capture → Breakpoints → Before LLM Requests*, or `bpllm`
   with conditions (`model=claude tool=mcp__jira__* tokens=50k`).
 - **MCP servers** (Model Context Protocol): exchanges over Streamable HTTP and the older SSE

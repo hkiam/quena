@@ -202,7 +202,14 @@ export function RewriteEditor({ rule: initial }: { rule?: RwRule }) {
       <fieldset className="f-section">
         <legend>{t("Changes (in this order)")}</legend>
         {ops.map((d, i) => (
-          <OpRow key={i} d={d} onChange={(n) => setOps(ops.map((x, j) => (j === i ? n : x)))} onRemove={() => setOps(ops.filter((_, j) => j !== i))} onMove={(dir) => move(i, dir)} />
+          <OpRow
+            key={i}
+            d={d}
+            onChange={(n) => {
+              setOps(ops.map((x, j) => (j === i ? n : x)));
+              // LLM changes are for requests.
+              if (n.op.startsWith("llm") && rule.phase !== "request") up({ phase: "request" });
+            }} onRemove={() => setOps(ops.filter((_, j) => j !== i))} onMove={(dir) => move(i, dir)} />
         ))}
         <div>
           <button className="linklike" onClick={() => setOps([...ops, emptyDraft()])}>

@@ -154,10 +154,13 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
   const titleOf = (k: string) => list.find((c) => c.key === k)?.title ?? k;
   const turnAt = d.turns.findIndex((x) => x.id === turnId);
   const freeze = async () => {
-    if (!(await confirmAsk(t("Freeze this conversation?"), t("Its answered turns go into the agent cache: the agent run again gets the same answers from Quena without asking the model, until it asks something else. The conversation then shows where the new run left the recording."), t("Freeze")))) return;
+    if (!(await confirmAsk(t("Freeze this conversation?"), t("Its answered turns and those of the subagents it started go into the agent cache: the agent run again gets the same answers from Quena without asking the model, until it asks something else. The new run then shows where it left the recording."), t("Freeze")))) return;
     try {
-      const n = await api.llmFreeze(convKey);
-      say(plural(n, "{n} turn added to the agent cache", "{n} turns added to the agent cache"));
+      const f = await api.llmFreeze(convKey);
+      const msg = plural(f.added, "{n} turn added to the agent cache", "{n} turns added to the agent cache");
+      const subs = f.conversations > 1 ? ` ${plural(f.conversations - 1, "(with {n} subagent)", "(with {n} subagents)")}` : "";
+      const skipped = f.skipped ? ` ${plural(f.skipped, "{n} could not be kept (cut off or too large).", "{n} could not be kept (cut off or too large).")}` : "";
+      say(msg + subs + skipped);
     } catch (e) {
       say(String(e), "error");
     }
@@ -185,8 +188,8 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
             {t("context {pct} %", { pct: Math.round((s.lastInput * 100) / s.window) })}
           </span>
         ) : null}
-        {s.ttfbMs != null && <span title={t("Median time to the response's first byte")}>{t("first byte {t}", { t: fmtMs(s.ttfbMs) })}</span>}
-        {s.tokensPerS != null && <span title={t("Median output tokens per second")}>{t("{n} tokens/s", { n: Math.round(s.tokensPerS) })}</span>}
+        {s.ttfbMs != null && <span title={t("Median time from sending to the response headers")}>{t("headers after {t}", { t: fmtMs(s.ttfbMs) })}</span>}
+        {s.tokensPerS != null && <span title={t("Median output tokens per second of streamed answers")}>{t("{n} tokens/s", { n: Math.round(s.tokensPerS) })}</span>}
         {s.limited > 0 && <span className="warn">{plural(s.limited, "{n} refused (rate limit)", "{n} refused (rate limit)")}</span>}
         {s.retries > 0 && <span>{plural(s.retries, "{n} retry", "{n} retries")}</span>}
         {s.divergedAt != null && <span className="warn" title={t("Answered from the agent cache until this turn: here the run asked something the recording did not have")}>{t("left the frozen run at turn {n}", { n: s.divergedAt })}</span>}
@@ -256,10 +259,10 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
             </th>
             <th className="num">{t("Out")}</th>
             <th className="num">{t("Cost")}</th>
-            <th className="num" title={t("Time to the response's first byte")}>
-              {t("First byte")}
+            <th className="num" title={t("Time from sending to the response headers (with connecting on a new connection)")}>
+              {t("Headers")}
             </th>
-            <th className="num" title={t("Output tokens per second")}>
+            <th className="num" title={t("Output tokens per second of a streamed answer, from its first byte")}>
               {t("tok/s")}
             </th>
             <th>{t("Change")}</th>
@@ -295,7 +298,11 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
                   {x.tokensPerS != null ? Math.round(x.tokensPerS) : ""}
                 </td>
                 <td className={`small ${breaksCache(x.diff) ? "warn" : "muted"}`}>
-                  {x.status >= 400 && <span className="pill pill-err">{x.status}</span>} 
+                  {x.status >= 400 && (
+                    <span className="pill pill-err" title={x.rate ? rateText(x.rate) : undefined}>
+                      {x.status}
+                    </span>
+                  )}{" "}
                   {diffText(x.diff)}
                   {x.diff.modelChanged && <span className="mono"> {x.model}</span>}
                 </td>
@@ -373,24 +380,27 @@ function CompareView({ a, b, refresh }: { a: string; b: string; refresh: string 
   if (c === undefined) return <div className="muted small">{t("Computing…")}</div>;
   if (c === null) return <div className="muted small">{t("One of the conversations is no longer in the capture.")}</div>;
   const dur = (s: ConvSummary) => Math.max(0, s.ended - s.started) / 1000;
-  const rows: [string, (x: ConvSide) => number, (n: number) => string][] = [
-    [t("Turns"), (x) => x.summary.turns, (n) => String(n)],
-    [t("Input tokens"), (x) => x.summary.input, fmtInt],
-    [t("Output tokens"), (x) => x.summary.output, fmtInt],
-    [t("Cached share"), (x) => cacheShare(x.summary.cacheRead, x.summary.input), (n) => `${n} %`],
-    [t("Cost"), (x) => x.summary.cost ?? 0, fmtUsd],
-    [t("Duration"), (x) => dur(x.summary), (n) => fmtMs(Math.round(n))],
-    [t("Last request"), (x) => x.summary.lastInput, fmtInt],
-    [t("Cache misses"), (x) => x.summary.cacheMisses, (n) => String(n)],
-    [t("Errors"), (x) => x.summary.errors, (n) => String(n)],
-    [t("Hints"), (x) => x.hints, (n) => String(n)],
+  // Which way is better: less (tokens, cost …), more (cached share), or neither (turns, calls).
+  type Better = "less" | "more" | "none";
+  const rows: [string, (x: ConvSide) => number, (n: number) => string, Better][] = [
+    [t("Turns"), (x) => x.summary.turns, (n) => String(n), "none"],
+    [t("Input tokens"), (x) => x.summary.input, fmtInt, "less"],
+    [t("Output tokens"), (x) => x.summary.output, fmtInt, "less"],
+    [t("Cached share"), (x) => cacheShare(x.summary.cacheRead, x.summary.input), (n) => `${n} %`, "more"],
+    [t("Cost"), (x) => x.summary.cost ?? 0, fmtUsd, "less"],
+    [t("Duration"), (x) => dur(x.summary), (n) => fmtMs(Math.round(n)), "less"],
+    [t("Last request"), (x) => x.summary.lastInput, fmtInt, "less"],
+    [t("Cache misses"), (x) => x.summary.cacheMisses, (n) => String(n), "less"],
+    [t("Errors"), (x) => x.summary.errors, (n) => String(n), "less"],
+    [t("Hints"), (x) => x.hints, (n) => String(n), "less"],
   ];
   const keys = (f: (x: ConvSide) => Record<string, number>) => [...new Set([...Object.keys(f(c.a)), ...Object.keys(f(c.b))])].sort((x, y) => (f(c.b)[y] ?? 0) + (f(c.a)[y] ?? 0) - (f(c.b)[x] ?? 0) - (f(c.a)[x] ?? 0));
-  const delta = (va: number, vb: number, fmt: (n: number) => string) => {
+  const delta = (va: number, vb: number, fmt: (n: number) => string, better: Better = "less", relative = true) => {
     if (va === vb) return <span className="muted">=</span>;
-    const pct = va ? Math.round(((vb - va) * 100) / va) : null;
+    const pct = relative && va ? Math.round(((vb - va) * 100) / va) : null;
+    const cls = better === "none" ? "" : (vb > va) === (better === "more") ? "ok" : "warn";
     return (
-      <span className={vb > va ? "warn" : "ok"}>
+      <span className={cls}>
         {vb > va ? "+" : "−"}
         {fmt(Math.abs(vb - va))}
         {pct != null && ` (${pct > 0 ? "+" : ""}${pct} %)`}
@@ -414,12 +424,12 @@ function CompareView({ a, b, refresh }: { a: string; b: string; refresh: string 
           </tr>
         </thead>
         <tbody>
-          {rows.map(([label, f, fmt]) => (
+          {rows.map(([label, f, fmt, better]) => (
             <tr key={label}>
               <td>{label}</td>
               <td className="num">{fmt(f(c.a))}</td>
               <td className="num">{fmt(f(c.b))}</td>
-              <td className="num">{delta(f(c.a), f(c.b), fmt)}</td>
+              <td className="num">{delta(f(c.a), f(c.b), fmt, better, label !== t("Cached share"))}</td>
             </tr>
           ))}
           <tr>
@@ -445,7 +455,7 @@ function CompareView({ a, b, refresh }: { a: string; b: string; refresh: string 
               <td className="mono">{k}</td>
               <td className="num">{c.a.tools[k] ?? 0}</td>
               <td className="num">{c.b.tools[k] ?? 0}</td>
-              <td className="num">{delta(c.a.tools[k] ?? 0, c.b.tools[k] ?? 0, String)}</td>
+              <td className="num">{delta(c.a.tools[k] ?? 0, c.b.tools[k] ?? 0, String, "none")}</td>
             </tr>
           ))}
         </tbody>

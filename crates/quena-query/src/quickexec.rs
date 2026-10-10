@@ -166,7 +166,7 @@ pub fn parse(input: &str) -> Result<Command, ParseError> {
             BreakTarget::Status(arg.parse().map_err(|_| ParseError { msg: "bps needs a status code".into(), pos: 0 })?)
         }),
         "bpv" | "bpm" => Command::BreakMethod(if arg.is_empty() { BreakTarget::Off } else { BreakTarget::Method(arg.to_ascii_uppercase()) }),
-        "bpllm" => Command::BreakLlm(if arg.is_empty() { None } else { Some(LlmBreakSpec::parse(&arg)?) }),
+        "bpllm" => Command::BreakLlm(if arg.is_empty() || arg.eq_ignore_ascii_case("off") { None } else { Some(LlmBreakSpec::parse(&arg)?) }),
         "g" | "go" => Command::Go,
         "dump" => Command::Dump,
         "start" => Command::Capture(true),

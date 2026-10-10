@@ -315,6 +315,15 @@ impl AppCore {
 
     /// Execute a Composer request. Returns the new session id.
     pub fn compose(self: &Arc<Self>, r: ComposeRequest) -> Result<SessionId> {
+        self.compose_inner(r, None)
+    }
+
+    /// [`AppCore::compose`] with a comment the session has from its start.
+    pub fn compose_with_comment(self: &Arc<Self>, r: ComposeRequest, comment: String) -> Result<SessionId> {
+        self.compose_inner(r, Some(comment))
+    }
+
+    fn compose_inner(self: &Arc<Self>, r: ComposeRequest, comment: Option<String>) -> Result<SessionId> {
         let engine = self.proxy_engine()?;
         let cap = self.capture();
         let url = r.url.trim().to_string();
@@ -367,7 +376,7 @@ impl AppCore {
         };
         let head = RequestHead { method: r.method.trim().to_ascii_uppercase(), url, version, headers };
         let shared = engine.proxy.shared.clone();
-        let opts = ExecuteOptions { flags: flags::COMPOSED | if r.breakpoint { flags::BREAKPOINTED } else { 0 }, comment: None, hooks: true, force_h2 };
+        let opts = ExecuteOptions { flags: flags::COMPOSED | if r.breakpoint { flags::BREAKPOINTED } else { 0 }, comment, hooks: true, force_h2 };
         let rt = engine.proxy.runtime().handle().clone();
         let (tx, rx) = std::sync::mpsc::channel();
         let follow = r.follow_redirects;

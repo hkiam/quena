@@ -1150,7 +1150,7 @@ async fn llm_compare(core: State<'_, Core>, a: String, b: String) -> R<Option<qu
 
 /// Put a conversation's answered turns into the agent cache (frozen for replays).
 #[tauri::command]
-async fn llm_freeze(core: State<'_, Core>, key: String) -> R<u32> {
+async fn llm_freeze(core: State<'_, Core>, key: String) -> R<quena_app_core::agent::Frozen> {
     let core = core.inner().clone();
     blocking(move || core.llm_freeze(&key).map_err(e)).await
 }

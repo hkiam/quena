@@ -636,6 +636,11 @@ pub struct BreakpointState {
     pub llm: Option<LlmBreak>,
 }
 
+/// A variant sent from the prompt playground (it goes out as written).
+fn is_variant(s: &SessionView) -> bool {
+    s.live.with_detail(|d| d.summary.has_flag(flags::COMPOSED) && d.summary.comment.starts_with(crate::playground::VARIANT_PREFIX))
+}
+
 /// Conditions of an LLM breakpoint (empty / 0: any).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -1623,9 +1628,19 @@ impl Interceptor for Rules {
             {
                 return RequestAction::Respond { head: h, body: b, delay_ms: 0 };
             }
+            // A variant from the prompt playground goes out as written: no cache, no rewrite.
+            let variant = is_variant(&s);
+            // An LLM breakpoint looks at the request's body; decided before the cache, which it
+            // wins over like any breakpoint.
+            let llm_bp = if want_bp { None } else { this.bp.read().llm.clone() };
+            if let Some(l) = llm_bp {
+                let (h, b) = (head.clone(), body.clone());
+                want_bp = tokio::task::spawn_blocking(move || l.matches(&h, b.as_ref(), &crate::llm::PriceList::default())).await.unwrap_or(false);
+            }
             // 1a. Agent cache: the same LLM API call answered before (mock rules came first;
             // a breakpoint on the request wins over the cache).
             if let Some(b) = &body
+                && !variant
                 && this.cache_wants(&head)
                 && !want_bp
                 && !this.bp_request(&s, &head)
@@ -1724,7 +1739,7 @@ impl Interceptor for Rules {
             }
             // 1c. Rewrite rules: after mocks and the script, before the breakpoint.
             let mut rewritten: Option<Body> = None;
-            if this.rewrite.wants_request() {
+            if this.rewrite.wants_request() && !variant {
                 let mut names = Vec::new();
                 if let Some((h, a)) = this.rewrite.request_head(&head) {
                     if a.changed {
@@ -1752,13 +1767,7 @@ impl Interceptor for Rules {
                 }
                 note_rewrite(&s, &names, script_edited);
             }
-            // 2. Breakpoint before request (an LLM breakpoint looks at the request's body)
-            let llm_bp = if want_bp { None } else { this.bp.read().llm.clone() };
-            if let Some(l) = llm_bp {
-                let prices = this.core().map(|c| c.llm_prices()).unwrap_or_default();
-                let (h, b) = (head.clone(), body.clone());
-                want_bp = tokio::task::spawn_blocking(move || l.matches(&h, b.as_ref(), &prices)).await.unwrap_or(false);
-            }
+            // 2. Breakpoint before request
             if want_bp || this.bp_request(&s, &head) {
                 let r = this.clone().pause(s.clone(), "request", head.url.clone()).await;
                 let mut new_head = r.head_text.as_ref().map(|t| {
@@ -1898,7 +1907,7 @@ impl Interceptor for Rules {
             this.break_response.lock().remove(&s.id);
             let mut resp = resp;
             let mut rewritten: Option<Body> = None;
-            if this.rewrite.response_needs_body(&req, &resp) {
+            if this.rewrite.response_needs_body(&req, &resp) && !is_variant(&s) {
                 let (t, h) = (this.clone(), resp.clone());
                 let _permit = this.rewrite.transform_permit(body.len()).await;
                 // Reads and parses up to the size limit: off the async workers.

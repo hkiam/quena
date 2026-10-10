@@ -161,6 +161,8 @@ function ContextBar({ id, state }: { id: number; state: string }) {
  * model or output limit, and compare answer and tokens. */
 function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClose: () => void }) {
   const original = c.system.join("\n\n");
+  // A shortened text cannot be sent back as the system prompt.
+  const shortened = c.system.some((s) => / … \(\d+ characters\)$/.test(s));
   const limitParam = c.params.find(([k]) => k === "max_tokens" || k === "max_completion_tokens" || k === "max_output_tokens" || k === "maxOutputTokens");
   const [system, setSystem] = useState(original);
   const [model, setModel] = useState(c.model);
@@ -170,30 +172,41 @@ function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClos
   const [busy, setBusy] = useState(false);
   const [variant, setVariant] = useState<LlmCall | null>(null);
   const version = useListVersion();
+  // Looked at again as sessions arrive, until the variant's answer is complete or failed.
+  const done = !!variant && (variant.stopReason != null || variant.error != null);
   useEffect(() => {
-    if (sent == null || variant?.usage) return;
+    if (sent == null || done) return;
     let alive = true;
     api.llmCall(sent).then((r) => alive && r && setVariant(r), () => {});
     return () => {
       alive = false;
     };
-  }, [sent, version]);
-  let host = "";
+  }, [sent, version, done]);
+  let host = detail.request.url;
   try {
     host = new URL(detail.request.url).host;
   } catch {
-    /* shown without host */
+    /* the URL as it is */
   }
   const send = async () => {
-    if (!(await confirmAsk(t("Send the variant?"), t("It goes to {host} with the original request's headers, its credentials included, and costs tokens like any call.", { host }), t("Send")))) return;
+    const text = detail.summary.archive
+      ? t("It goes to {host} with the original request's headers. The session comes from {archive}: these are the credentials of whoever recorded it, and the call costs tokens on their account.", { host, archive: detail.summary.archive })
+      : t("It goes to {host} with the original request's headers, its credentials included, and costs tokens like any call.", { host });
+    if (!(await confirmAsk(t("Send the variant?"), text, t("Send")))) return;
+    let maxTokens: number | null = null;
+    if (limit.trim() !== (limitParam?.[1] ?? "")) {
+      const m = /^(\d+(?:\.\d+)?)\s*([km]?)$/i.exec(limit.trim());
+      const n = m ? Math.round(Number(m[1]) * (m[2].toLowerCase() === "k" ? 1e3 : m[2].toLowerCase() === "m" ? 1e6 : 1)) : NaN;
+      if (!Number.isInteger(n) || n <= 0) return say(t("The output limit is a whole number of tokens, e.g. 1000 or 4k"), "error");
+      maxTokens = n;
+    }
     setBusy(true);
     try {
-      const n = Number(limit);
       const id = await api.llmVariant(detail.summary.id, {
         system: system !== original ? system : null,
         dropTools: [...off],
         model: model !== c.model ? model : null,
-        maxTokens: limit !== (limitParam?.[1] ?? "") && Number.isFinite(n) && n > 0 ? n : null,
+        maxTokens,
       });
       setSent(id);
       setVariant(null);
@@ -204,7 +217,11 @@ function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClos
     }
   };
   const usage = (x: LlmCall) => (x.usage ? `${t("in {n}", { n: fmtInt(x.usage.input) })} · ${t("out {n}", { n: fmtInt(x.usage.output) })}${x.cost ? ` · ≈ ${fmtUsd(x.cost.usd)}` : ""}` : t("no token usage in the response"));
-  const answer = (x: LlmCall) => x.output.filter((p) => p.kind === "text").map((p) => p.text).join("\n");
+  const answer = (x: LlmCall) =>
+    x.output
+      .filter((p) => p.kind === "text" || p.kind === "toolCall")
+      .map((p) => (p.kind === "toolCall" ? `→ ${p.name ?? "?"} ${p.text}` : p.text))
+      .join("\n");
   return (
     <div className="llm-playground">
       <div className="lt-bar">
@@ -215,7 +232,10 @@ function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClos
         </button>
       </div>
       <label className="small">{t("System prompt")}</label>
-      <textarea className="mono" rows={6} value={system} onChange={(e) => setSystem(e.target.value)} spellCheck={false} />
+      <textarea className="mono" rows={6} value={system} disabled={shortened} onChange={(e) => setSystem(e.target.value)} spellCheck={false} />
+      <div className="muted small">
+        {shortened ? t("The system prompt is too long to edit here; it is sent as it was.") : t("A changed system prompt is sent as one text: cache marks (and Claude Code's attribution block) are left out, so the provider's cache starts over.")}
+      </div>
       <div className="llm-play-line">
         <label className="small">
           {t("Model")} <input className="mono" value={model} onChange={(e) => setModel(e.target.value)} spellCheck={false} />
@@ -227,7 +247,7 @@ function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClos
       {c.tools.length > 0 && (
         <details>
           <summary className="small">
-            {t("Tools")} ({c.tools.length - off.size} / {c.tools.length})
+            {t("Tools offered")} ({c.tools.length - off.size} / {c.tools.length})
           </summary>
           <div className="llm-play-tools">
             {c.tools.map((x) => (
@@ -272,11 +292,17 @@ function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClos
               <td>{t("Variant")}</td>
               <td>{variant ? usage(variant) : t("waiting for the answer…")}</td>
             </tr>
+            {variant?.error && (
+              <tr>
+                <td />
+                <td className="mocks-error">{variant.error}</td>
+              </tr>
+            )}
             {variant && (
               <tr>
                 <td>{t("Answer")}</td>
                 <td>
-                  <pre className="llm-text">{answer(variant) || variant.output.map((p) => `→ ${p.name ?? p.kind}`).join("\n")}</pre>
+                  <pre className="llm-text">{answer(variant)}</pre>
                 </td>
               </tr>
             )}

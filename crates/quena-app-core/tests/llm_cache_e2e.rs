@@ -112,8 +112,9 @@ fn llm_answers_served_from_the_cache() {
     post(frozen);
     let frozen_id = marked(4).into_iter().max().unwrap();
     let key = wait("conversation", || core.capture().index.get(frozen_id).map(|s| s.llm_conv).filter(|k| !k.is_empty()));
-    assert_eq!(core.llm_freeze(&key).unwrap(), 1);
-    assert_eq!(core.llm_freeze(&key).unwrap(), 0, "already cached");
+    let f = core.llm_freeze(&key).unwrap();
+    assert_eq!((f.added, f.skipped, f.conversations), (1, 0, 1));
+    assert_eq!(core.llm_freeze(&key).unwrap().added, 0, "already cached");
     let before = calls.load(Ordering::SeqCst);
     post(frozen);
     assert_eq!(calls.load(Ordering::SeqCst), before, "answered from the frozen run");

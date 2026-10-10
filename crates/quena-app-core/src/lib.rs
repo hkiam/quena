@@ -25,6 +25,7 @@ pub mod launch;
 pub mod library;
 pub mod llm;
 pub mod llm_cache;
+pub mod llm_edit;
 pub mod logbuf;
 pub mod mock;
 pub mod mockgen;

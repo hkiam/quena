@@ -162,11 +162,14 @@ goes to the server, or after the response arrives and before it reaches the clie
 | On a response status | `bps 500` |
 | On a request method | `bpv POST` (or `bpm POST`) |
 | Before LLM requests | *Capture → Breakpoints → Before LLM Requests*, or `bpllm *` |
-| Before LLM requests with conditions | `bpllm model=claude tool=mcp__jira__* tokens=50k` — model contains, offers the tool (`*` at the end: a prefix), at least that many input tokens (estimated); all given must hold; a bare word is the model |
+| Before LLM requests with conditions | `bpllm model=claude tool=mcp__jira__* tokens=50k` — model contains, offers the tool (`*` at the end: a prefix), at least that many input tokens (estimated); all given must hold; a bare word is the model; `bpllm` or `bpllm off` switches it off |
 | From a Mock Rule | action `*bpu` or `*bpafter` |
 
-A command without an argument (e.g. `bpu`) switches that breakpoint off. The status bar
-lists the active breakpoints and the number of paused sessions.
+A command without an argument (e.g. `bpu`) switches that breakpoint off; *Off* (`Shift F11`)
+switches off the breakpoints before requests, after responses and before LLM requests. While
+an LLM breakpoint is set, requests to LLM APIs are held until their body is complete (the
+conditions need it), and it applies before the agent cache answers. The status bar lists the
+active breakpoints and the number of paused sessions.
 
 ### Working with a paused session
 
@@ -350,8 +353,11 @@ kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP
     - **LLM: remove tool**, **LLM: set model**, **LLM: add to system prompt** (requests to
       [LLM APIs](llm.md)): take tools out of what an agent offers (`mcp__jira__*` for all
       tools of a server), send another model, or add an instruction at the end of the system
-      prompt — in the format of the API (Anthropic, OpenAI Chat and Responses, Gemini). An
-      agent at work gets the changed requests; its cache prefix changes with them.
+      prompt — in the format of the API, known from the URL (Anthropic, OpenAI Chat and
+      Responses, Gemini, Ollama; for Gemini the model is changed in the URL). A tool choice
+      naming a removed tool goes too. Requests to other APIs stay as they are. An agent at work
+      gets the changed requests; its cache prefix changes with them. Choosing an LLM change
+      sets the rule to change requests.
 - **Preview on #N** tries the rule on the session selected in the list, without sending
   anything: whether its filters take the session, the status and header changes, and the
   body before and after.

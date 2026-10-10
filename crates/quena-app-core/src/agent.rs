@@ -434,6 +434,10 @@ pub struct Digest {
     pub gen_ms: Option<u64>,
     /// Rate limits the provider reported with the response.
     pub rate: Option<RateInfo>,
+    /// The answer was streamed.
+    pub stream: bool,
+    /// Sent from the prompt playground (a side call, never what a turn continues).
+    pub variant: bool,
 }
 
 /// What a response says about the provider's rate limits.
@@ -553,13 +557,18 @@ impl Digest {
                 _ => None,
             },
             rate: resp.and_then(|r| rate_of(&r.headers)),
+            stream: call.stream,
+            variant: d.summary.has_flag(quena_model::flags::COMPOSED) && d.summary.comment.starts_with(crate::playground::VARIANT_PREFIX),
         }
     }
 
-    /// Output tokens per second while the answer came (streamed: from its first byte).
+    /// Output tokens per second of a streamed answer, from the response's first byte to its end.
     pub fn tokens_per_s(&self) -> Option<f64> {
+        if !self.stream {
+            return None;
+        }
         let out = self.spent()?.output;
-        let ms = self.gen_ms.filter(|m| *m >= 50).or(self.duration_ms.map(|d| d as u64)).filter(|m| *m > 0)?;
+        let ms = self.gen_ms.filter(|m| *m >= 50)?;
         (out > 0).then(|| out as f64 * 1000.0 / ms as f64)
     }
 
@@ -931,7 +940,7 @@ fn link<'a>(d: &Digest, earlier: &'a [Arc<Digest>], same_group: &[usize], by_req
     // The call of the same group whose messages this one carries furthest (the latest of
     // equals): a turn extends it, a retry repeats it, an edit changes its end.
     let mut best: Option<(&Arc<Digest>, usize)> = None;
-    for e in same_group.iter().rev().map(|i| &earlier[*i]) {
+    for e in same_group.iter().rev().map(|i| &earlier[*i]).filter(|e| !e.variant) {
         if d.session.is_none() && d.started - e.end_us() > LINK_GAP_US {
             continue;
         }
@@ -986,9 +995,10 @@ pub fn build(digests: &[Arc<Digest>]) -> Built {
     }
     for c in &mut built.convs {
         c.digests.sort_by_key(|d| d.id);
-        // The main line: from the newest call back to the first; calls off it are side calls.
+        // The main line: from the newest call (not a playground variant) back to the first;
+        // calls off it are side calls.
         let mut main: HashSet<SessionId> = HashSet::new();
-        let mut cur = c.digests.iter().max_by_key(|d| (d.started, d.id)).map(|d| d.id);
+        let mut cur = c.digests.iter().filter(|d| !d.variant).max_by_key(|d| (d.started, d.id)).or_else(|| c.digests.iter().max_by_key(|d| (d.started, d.id))).map(|d| d.id);
         while let Some(id) = cur {
             if !main.insert(id) {
                 break;
@@ -996,7 +1006,7 @@ pub fn build(digests: &[Arc<Digest>]) -> Built {
             cur = c.pred.get(&id).copied();
         }
         let continued: HashSet<SessionId> = c.pred.values().copied().collect();
-        c.side = c.digests.iter().map(|d| d.id).filter(|id| !main.contains(id) && !continued.contains(id)).collect();
+        c.side = c.digests.iter().filter(|d| d.variant || (!main.contains(&d.id) && !continued.contains(&d.id))).map(|d| d.id).collect();
     }
     built.parent = parents(&built);
     built
@@ -1089,6 +1099,16 @@ pub struct ConvSummary {
     /// that went another way): the turn where it left the recording.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diverged_at: Option<u32>,
+}
+
+/// Calls sent again unchanged after the one before them failed (no 2xx answer).
+fn retries(c: &Conv, turns: &[Turn]) -> u32 {
+    turns
+        .iter()
+        .filter(|t| {
+            t.diff.kind == "same" && !t.diff.system_changed && !t.diff.model_changed && t.diff.settings_changed.is_empty() && t.diff.tools_added.is_empty() && t.diff.tools_removed.is_empty() && t.diff.tools_changed.is_empty() && t.prev.and_then(|p| c.get(p)).is_some_and(|p| !(200..300).contains(&p.status))
+        })
+        .count() as u32
 }
 
 fn median<T: Copy + PartialOrd>(mut v: Vec<T>) -> Option<T> {
@@ -1258,13 +1278,13 @@ fn summary_of(b: &Built, ci: usize, turns: &[Turn], prices: &llm::PriceList) -> 
         parent: b.parent.get(&ci).map(|p| key_text(b.convs[*p].key)),
         subagent: !c.main() || b.parent.contains_key(&ci),
         limited: ds.iter().filter(|d| d.limited()).count() as u32,
-        retries: turns.iter().filter(|t| t.diff.kind == "same").count() as u32,
+        retries: retries(c, turns),
         ttfb_ms: median(ds.iter().filter_map(|d| d.ttfb_ms).collect()),
         tokens_per_s: median(ds.iter().filter_map(|d| d.tokens_per_s()).collect()),
+        // As the turn table counts: all turns of the conversation.
         diverged_at: {
-            let main: Vec<&Arc<Digest>> = ds.iter().filter(|d| !c.side.contains(&d.id)).collect();
-            let first_hit = main.iter().position(|d| d.hit);
-            first_hit.and_then(|h| main[h..].iter().position(|d| !d.hit).map(|p| (h + p + 1) as u32))
+            let first_hit = ds.iter().position(|d| d.hit);
+            first_hit.and_then(|h| ds[h..].iter().position(|d| !d.hit && !c.side.contains(&d.id)).map(|p| (h + p + 1) as u32))
         },
     }
 }
@@ -1349,8 +1369,7 @@ fn hints(last: &LlmCall, c: &Conv, turns: &[Turn], window: Option<u64>) -> Vec<H
     }
     let limited = turns.iter().filter(|t| matches!(t.status, 429 | 529 | 503)).count();
     if limited > 0 {
-        let retries = turns.iter().filter(|t| t.diff.kind == "same").count();
-        out.push(hint("rateLimited", 0, &[("n", limited.to_string()), ("retries", retries.to_string())]));
+        out.push(hint("rateLimited", 0, &[("n", limited.to_string()), ("retries", retries(c, turns).to_string())]));
     }
     if let Some(r) = turns.iter().rev().find_map(|t| t.rate.as_ref())
         && let (Some(left), Some(limit)) = (r.tokens_left, r.tokens_limit)
@@ -1366,6 +1385,16 @@ fn hints(last: &LlmCall, c: &Conv, turns: &[Turn], window: Option<u64>) -> Vec<H
     }
     out.sort_by(|a, b| b.tokens.cmp(&a.tokens).then_with(|| a.code.cmp(b.code)));
     out
+}
+
+/// What freezing a conversation did.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Frozen {
+    pub added: u32,
+    pub skipped: u32,
+    /// The conversation and its subagents.
+    pub conversations: u32,
 }
 
 /// One side of a comparison of two conversations.
@@ -1567,20 +1596,33 @@ impl AppCore {
         Some(ConvCompare { a: side(a)?, b: side(b)? })
     }
 
-    /// Freeze a conversation for replays: its answered turns go into the agent cache, so the
-    /// agent run again gets the same answers without asking the model (until it asks something
-    /// else). Returns the turns added.
-    pub fn llm_freeze(&self, key: &str) -> anyhow::Result<u32> {
+    /// Freeze a conversation and the subagents it started for replays: their answered turns
+    /// go into the agent cache, so the agent run again gets the same answers without asking the
+    /// model (until it asks something else). Turns that cannot be kept (an answer cut off, too
+    /// large) are skipped and counted.
+    pub fn llm_freeze(&self, key: &str) -> anyhow::Result<Frozen> {
         let b = self.all_built();
-        let c = b.convs.iter().find(|c| key_text(c.key) == key).ok_or_else(|| anyhow::anyhow!("no conversation {key}"))?;
-        let mut n = 0;
-        for d in c.digests.iter().filter(|d| !d.hit && (200..300).contains(&d.status)) {
-            if !self.llm_cached(d.id) {
-                self.llm_cache_set(d.id, true)?;
-                n += 1;
+        let root = b.convs.iter().position(|c| key_text(c.key) == key).ok_or_else(|| anyhow::anyhow!("no conversation {key}"))?;
+        let mut todo = vec![root];
+        let mut seen = HashSet::new();
+        let mut out = Frozen::default();
+        while let Some(ci) = todo.pop() {
+            if !seen.insert(ci) {
+                continue;
+            }
+            todo.extend(b.parent.iter().filter(|(_, p)| **p == ci).map(|(k, _)| *k));
+            for d in b.convs[ci].digests.iter().filter(|d| !d.hit && !d.variant && (200..300).contains(&d.status)) {
+                if self.llm_cached(d.id) {
+                    continue;
+                }
+                match self.llm_cache_set(d.id, true) {
+                    Ok(()) => out.added += 1,
+                    Err(_) => out.skipped += 1,
+                }
             }
         }
-        Ok(n)
+        out.conversations = seen.len() as u32;
+        Ok(out)
     }
 
     /// LLM call `id` in its conversation: its context, and what changed from the call it
@@ -1888,11 +1930,15 @@ mod tests {
         let a = mk(1, 0, 200, false, false);
         assert_eq!(a.ttfb_ms, Some(400));
         assert_eq!(a.tokens_per_s().map(|t| t.round()), Some(20.0), "10 tokens in 0.5 s");
+        let mut not_streamed = (*a).clone();
+        not_streamed.stream = false;
+        assert_eq!(not_streamed.tokens_per_s(), None, "only for streamed answers");
         // A refused call, its retry, then the same request answered again.
         let b = build(&[a.clone(), mk(2, 5, 429, false, true), mk(3, 9, 200, false, false)]);
         let turns = turns_of(&b.convs[0]);
         let s = summary_of(&b, 0, &turns, &llm::PriceList::default());
-        assert_eq!((s.limited, s.retries), (1, 2));
+        // Only the call after the refused one is a retry (the refused call repeats a success).
+        assert_eq!((s.limited, s.retries), (1, 1));
         assert_eq!(s.ttfb_ms, Some(400));
         let hs = hints(&c1, &b.convs[0], &turns, None);
         assert!(hs.iter().any(|h| h.code == "rateLimited" && h.args["n"] == "1"));

@@ -70,6 +70,8 @@ export interface SessionSummary {
   llmCostMicros?: number | null;
   /** The conversation (agent run) of an LLM call. */
   llmConv?: string;
+  /** The archive a session was loaded from (empty: recorded live). */
+  archive?: string;
   /** An exchange with an MCP server (`tools/call get_issue`) and the server. */
   mcp?: string;
   mcpServer?: string;
@@ -1543,7 +1545,7 @@ export const api = {
   toolReport: () => invoke<ToolReport>("tool_report"),
   llmVariant: (id: SessionId, variant: LlmVariant) => invoke<SessionId>("llm_variant", { id, variant }),
   llmCompare: (a: string, b: string) => invoke<{ a: ConvSide; b: ConvSide } | null>("llm_compare", { a, b }),
-  llmFreeze: (key: string) => invoke<number>("llm_freeze", { key }),
+  llmFreeze: (key: string) => invoke<{ added: number; skipped: number; conversations: number }>("llm_freeze", { key }),
   socketioPolling: (id: SessionId, part: Part) => invoke<SioPacket[] | null>("socketio_polling", { id, part }),
   msgpack: (id: SessionId, part: Part) => invoke<Msgpack | null>("msgpack", { id, part }),
   protobufStatus: () => invoke<SchemaStatus>("protobuf_status"),

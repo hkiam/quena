@@ -10,7 +10,9 @@ export async function goAll() {
 /** Break before every LLM request, or no longer (conditions: `bpllm` in the command field). */
 export async function toggleLlm() {
   const b = await api.bpGet();
-  b.llm = b.llm ? null : { model: "", tool: "", minTokens: 0 };
+  // With conditions (bpllm …): every LLM request; else on / off.
+  const conditional = !!b.llm && (b.llm.model || b.llm.tool || b.llm.minTokens > 0);
+  b.llm = b.llm && !conditional ? null : { model: "", tool: "", minTokens: 0 };
   await api.bpSet(b);
   say(t("Break before LLM requests: {state}", { state: b.llm ? t("on") : t("off") }));
 }
