@@ -30,4 +30,10 @@ export const core: Record<string, string> = {
   "Stop Replay": "Replay stoppen",
   "Replay stopped (requests on the way still finish)": "Replay gestoppt (Requests unterwegs laufen noch zu Ende)",
   "Stop": "Stopp",
+  "Do not capture this Host\u2026": "Diesen Host nicht mitschneiden\u2026",
+  "{host} is not captured already": "{host} wird bereits nicht mitgeschnitten",
+  "Do not capture {host}?": "{host} nicht mitschneiden?",
+  "Requests to {host} will not go through Quena (system proxy and started browsers). Settings \u2192 Connections lists the hosts.": "Requests an {host} laufen dann nicht \u00fcber Quena (Systemproxy und gestartete Browser). Einstellungen \u2192 Verbindungen listet die Hosts.",
+  "Do not capture": "Nicht mitschneiden",
+  "{host} is no longer captured": "{host} wird nicht mehr mitgeschnitten",
 };

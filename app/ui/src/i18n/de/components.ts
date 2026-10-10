@@ -631,4 +631,10 @@ export const components: Record<string, string> = {
   "{n} selected requests": "{n} ausgew\u00e4hlte Requests",
   "Decode Selection\u2026": "Auswahl dekodieren\u2026",
   "Decode Value\u2026": "Wert dekodieren\u2026",
+  "These hosts become exceptions of the system proxy and of browsers and terminals Quena starts, so their traffic does not reach Quena; a client that sends them to Quena anyway gets them passed through without decryption.": "Diese Hosts werden Ausnahmen des Systemproxys und der Browser und Terminals, die Quena startet; ihr Traffic erreicht Quena also nicht. Schickt ein Client sie trotzdem an Quena, werden sie ohne Entschl\u00fcsselung durchgereicht.",
+  "Do not capture (bypass Quena)": "Nicht mitschneiden (an Quena vorbei)",
+  "Push, iMessage, iCloud and App Store hosts that pin their certificates and fail behind an intercepting proxy": "Push-, iMessage-, iCloud- und App-Store-Hosts, die ihre Zertifikate pinnen und hinter einem mitlesenden Proxy scheitern",
+  "Also bypass Apple services that pin their certificates": "Auch Apple-Dienste mit Certificate Pinning vorbeileiten",
+  "The DNS domains of a VPN connected when capturing starts (e.g. the company's), so company traffic keeps its direct way": "Die DNS-Domains eines VPN, das beim Start des Mitschnitts verbunden ist (etwa das der Firma), damit Firmen-Traffic seinen direkten Weg beh\u00e4lt",
+  "Also bypass the domains of an active VPN": "Auch die Domains eines aktiven VPN vorbeileiten",
 };

@@ -8,6 +8,10 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Do not capture (bypass Quena)** (*Settings → Connections*, or *Filter Now → Do not capture
+  this Host…*): hosts become exceptions of the system proxy and of started browsers and
+  terminals, and pass Quena undecrypted if a client sends them anyway; Apple services that pin
+  their certificates are bypassed by default; optionally the DNS domains of an active VPN.
 - **Rule actions and templates**: rewrite rules can set or remove query parameters and
   cookies (request `Cookie`, response `Set-Cookie`), and mark or comment the session; **From
   template ▾** adds *Bypass CORS*, *Block cookies*, *Disable caching*, *Change User-Agent*,

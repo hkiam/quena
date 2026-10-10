@@ -74,6 +74,64 @@ pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<(
     imp::set_system_proxy(port, bypass, backup)
 }
 
+/// DNS domains of the VPN connections that are up (e.g. `corp.example`): requests to them
+/// can be kept away from Quena. Empty when none is up or this cannot be told.
+pub fn vpn_domains() -> Vec<String> {
+    imp::vpn_domains()
+}
+
+fn is_vpn_interface(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    ["utun", "ipsec", "ppp", "tun", "tap", "wg", "vpn", "gpd", "cscotun"].iter().any(|p| n.starts_with(p))
+}
+
+fn keep_domain(d: &str, out: &mut Vec<String>) {
+    let d = d.trim().trim_start_matches('~').trim_end_matches('.').to_ascii_lowercase();
+    if d.is_empty() || d == "local" || d.ends_with(".arpa") || !d.contains(|c: char| c.is_ascii_alphanumeric()) || out.contains(&d) {
+        return;
+    }
+    out.push(d);
+}
+
+/// Domains of `scutil --dns` resolvers bound to a VPN interface (utun, ipsec, ppp).
+pub fn parse_scutil_dns(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for block in text.split("\nresolver #").skip(1) {
+        let vpn = block.lines().any(|l| l.trim_start().starts_with("if_index") && l.split('(').nth(1).is_some_and(|n| is_vpn_interface(n.trim_end_matches(')'))));
+        if !vpn {
+            continue;
+        }
+        for l in block.lines() {
+            let l = l.trim();
+            if (l.starts_with("domain") || l.starts_with("search domain"))
+                && let Some((_, v)) = l.split_once(':')
+            {
+                keep_domain(v, &mut out);
+            }
+        }
+    }
+    out
+}
+
+/// Domains of `resolvectl status` links that are VPN interfaces (tun, wg, ppp …).
+pub fn parse_resolvectl(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut vpn = false;
+    for l in text.lines() {
+        let t = l.trim();
+        if t.starts_with("Link ") {
+            vpn = t.split('(').nth(1).is_some_and(|n| is_vpn_interface(n.trim_end_matches(')')));
+        } else if t.starts_with("Global") {
+            vpn = false;
+        } else if vpn && let Some(v) = t.strip_prefix("DNS Domain:") {
+            for d in v.split_whitespace() {
+                keep_domain(d, &mut out);
+            }
+        }
+    }
+    out
+}
+
 /// Restore the system proxy from `backup` (no-op if there is no backup).
 pub fn restore_system_proxy(backup: &Path) -> Result<bool> {
     imp::restore_system_proxy(backup)
@@ -188,5 +246,19 @@ mod secure_tests {
         assert_eq!(super::secure::get(&acct).unwrap().as_deref(), Some(&b"s3cr3t-\x00\xff"[..]));
         super::secure::delete(&acct).unwrap();
         assert_eq!(super::secure::get(&acct).unwrap(), None);
+    }
+}
+
+#[cfg(test)]
+mod vpn_tests {
+    use super::*;
+
+    #[test]
+    fn vpn_domains_from_scutil_and_resolvectl() {
+        let scutil = "DNS configuration\n\nresolver #1\n  search domain[0] : home.lan\n  nameserver[0] : 192.168.1.1\n  if_index : 15 (en0)\n\nresolver #2\n  domain   : corp.example\n  search domain[0] : corp.example\n  search domain[1] : eu.corp.example\n  nameserver[0] : 10.1.1.1\n  if_index : 22 (utun4)\n\nresolver #3\n  domain   : 10.in-addr.arpa\n  if_index : 22 (utun4)\n";
+        assert_eq!(parse_scutil_dns(scutil), ["corp.example", "eu.corp.example"]);
+        let resolvectl = "Global\n       Protocols: +LLMNR\n\nLink 2 (eth0)\n    DNS Domain: home.lan\n\nLink 7 (tun0)\n Current DNS Server: 10.8.0.1\n    DNS Domain: ~corp.example ~.\n";
+        assert_eq!(parse_resolvectl(resolvectl), ["corp.example"]);
+        assert!(parse_scutil_dns("resolver #1\n  domain : x.example\n  if_index : 4 (en1)\n").is_empty());
     }
 }

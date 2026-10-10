@@ -348,3 +348,19 @@ impl ProcessLookup {
         Some(ProcessInfo { pid, name })
     }
 }
+
+/// Connection-specific DNS suffixes of adapters that look like VPN clients.
+pub fn vpn_domains() -> Vec<String> {
+    let script = "Get-DnsClient | Where-Object { $_.ConnectionSpecificSuffix -and ((Get-NetAdapter -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue).InterfaceDescription -match 'VPN|TAP|TUN|WireGuard|Wintun|AnyConnect|Fortinet|GlobalProtect|Juniper|Pulse|OpenVPN|Zscaler') } | ForEach-Object { $_.ConnectionSpecificSuffix }";
+    run("powershell", &["-NoProfile", "-NonInteractive", "-Command", script])
+        .map(|t| {
+            let mut out: Vec<String> = Vec::new();
+            for l in t.lines().map(|l| l.trim().trim_end_matches('.').to_ascii_lowercase()).filter(|l| !l.is_empty()) {
+                if !out.contains(&l) {
+                    out.push(l);
+                }
+            }
+            out
+        })
+        .unwrap_or_default()
+}

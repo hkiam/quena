@@ -23,6 +23,13 @@ pub struct ProxySettings {
     pub use_system_pac: bool,
     /// Manual PAC URL or file path (overrides the system PAC when non-empty).
     pub pac_url: String,
+    /// Hosts that do not go through Quena at all (`;` separated, `*.example.com` allowed): the
+    /// system proxy's exceptions and those of browsers and terminals Quena starts.
+    pub bypass_hosts: String,
+    /// Also keep away Apple services that pin their certificates (push, iMessage, iCloud …).
+    pub bypass_apple: bool,
+    /// Also keep away the DNS domains of a VPN that is up when capturing starts.
+    pub bypass_vpn: bool,
 }
 
 impl Default for ProxySettings {
@@ -38,6 +45,9 @@ impl Default for ProxySettings {
             upstream_bypass: "localhost;127.0.0.1;::1;*.local".into(),
             use_system_pac: true,
             pac_url: String::new(),
+            bypass_hosts: String::new(),
+            bypass_apple: true,
+            bypass_vpn: false,
         }
     }
 }

@@ -25,6 +25,8 @@ pub struct ProxyEngine {
 #[derive(Default)]
 struct State {
     system_proxy: bool,
+    /// The exceptions the system proxy was given (set again when they change).
+    system_bypass: Vec<String>,
     upstream: Option<String>,
     error: Option<String>,
     /// System proxy found before Quena took over (used as upstream).
@@ -38,12 +40,12 @@ struct State {
 /// keep their usual defaults (Bonjour names, link-local addresses). Windows gets none: the
 /// system default there is empty, and `<local>` ("bypass for local addresses") would let
 /// intranet and VPN hosts without a dot pass Quena unseen.
-fn system_bypass() -> Vec<String> {
-    if cfg!(windows) {
-        vec![]
-    } else {
-        vec!["*.local".into(), "169.254/16".into()]
-    }
+/// Exceptions of the system proxy while Quena is it: link-local and `.local`, and the hosts
+/// that do not go through Quena ([`crate::bypass`]).
+fn system_bypass(s: &crate::settings::Settings) -> Vec<String> {
+    let mut v: Vec<String> = if cfg!(windows) { vec![] } else { vec!["*.local".into(), "169.254/16".into()] };
+    v.extend(crate::bypass::hosts(s));
+    v
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,7 +143,8 @@ pub fn proxy_config(s: &Settings, detected: Option<(String, u16)>, system_bypass
             SDecryptScope::NonBrowsers => DecryptScope::NonBrowsers,
             SDecryptScope::Remote => DecryptScope::Remote,
         },
-        skip_decryption: split_list(&s.https.skip_decryption),
+        // Hosts kept away from Quena: passed through undecrypted when a client sends them anyway.
+        skip_decryption: split_list(&s.https.skip_decryption).into_iter().chain(crate::bypass::hosts(s)).collect(),
         ignore_cert_errors: s.https.ignore_cert_errors,
         ignore_cert_errors_hosts: split_list(&s.https.ignore_cert_errors_hosts),
         cert_warn_days: s.https.cert_warn_days,
@@ -463,8 +466,13 @@ impl CaptureEngine for ProxyEngine {
         let s = core.settings();
         if s.proxy.act_as_system_proxy {
             let port = addrs[0].port();
-            match quena_platform::set_system_proxy(port, &system_bypass(), &backup_path(&self.data_dir)) {
-                Ok(()) => self.state.lock().system_proxy = true,
+            let bypass = system_bypass(&s);
+            match quena_platform::set_system_proxy(port, &bypass, &backup_path(&self.data_dir)) {
+                Ok(()) => {
+                    let mut st = self.state.lock();
+                    st.system_proxy = true;
+                    st.system_bypass = bypass;
+                }
                 Err(e) => {
                     // Some services may already point to us: undo the partial change.
                     let _ = quena_platform::restore_system_proxy(&backup_path(&self.data_dir));
@@ -510,11 +518,18 @@ impl CaptureEngine for ProxyEngine {
         let was_running = self.proxy.is_running();
         let old_port = self.proxy.listen_addrs().first().map(|a| a.port());
         self.apply(core)?;
-        // Port changed while acting as system proxy: point the OS to the new port.
+        // Port or exceptions changed while acting as system proxy: tell the OS.
         let new_port = self.proxy.listen_addrs().first().map(|a| a.port());
-        if was_running && old_port != new_port && self.state.lock().system_proxy {
-            if let Some(p) = new_port {
-                let _ = quena_platform::set_system_proxy(p, &system_bypass(), &backup_path(&self.data_dir));
+        let bypass = system_bypass(&core.settings());
+        let (system, changed) = {
+            let st = self.state.lock();
+            (st.system_proxy, st.system_bypass != bypass)
+        };
+        if was_running && system && (old_port != new_port || changed) {
+            if let Some(p) = new_port
+                && quena_platform::set_system_proxy(p, &bypass, &backup_path(&self.data_dir)).is_ok()
+            {
+                self.state.lock().system_bypass = bypass;
             }
         }
         Ok(())
@@ -554,8 +569,16 @@ mod tests {
 
     #[test]
     fn windows_keeps_local_addresses_in_capture() {
-        let b = system_bypass();
+        let mut s = crate::settings::Settings::default();
+        s.proxy.bypass_apple = false;
+        let b = system_bypass(&s);
         assert!(!b.iter().any(|e| e == "<local>"));
         assert_eq!(b.is_empty(), cfg!(windows));
+        // Hosts kept away from Quena are exceptions too.
+        s.proxy.bypass_hosts = "login.example.com".into();
+        assert!(system_bypass(&s).contains(&"login.example.com".to_string()));
+        // … and pass Quena undecrypted when a client sends them anyway.
+        let cfg = proxy_config(&s, None, &[], None);
+        assert!(cfg.skip_decryption.contains(&"login.example.com".to_string()));
     }
 }

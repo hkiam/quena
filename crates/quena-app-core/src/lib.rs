@@ -10,6 +10,7 @@ pub mod capdiff;
 pub mod collections;
 pub mod ws;
 pub mod compose;
+pub mod bypass;
 pub mod details;
 pub mod diagnostics;
 pub mod mcp_setup;

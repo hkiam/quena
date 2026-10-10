@@ -120,6 +120,8 @@ export function sessionMenu(): MenuItem[] {
         { label: t("Hide this URL"), action: () => import("./panels/filterActions").then((m) => m.filterNow("hideUrl")) },
         { label: t("Hide this Process"), action: () => import("./panels/filterActions").then((m) => m.filterNow("hideProcess")) },
         { label: t("Show only this Process"), action: () => import("./panels/filterActions").then((m) => m.filterNow("onlyProcess")) },
+        { separator: true },
+        { label: t("Do not capture this Host…"), action: () => import("./panels/filterActions").then((m) => m.bypassHost()) },
       ],
     },
     { separator: true },

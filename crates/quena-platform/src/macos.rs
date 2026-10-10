@@ -439,3 +439,7 @@ mod tests {
         eprintln!("lookup took {el:?}");
     }
 }
+
+pub fn vpn_domains() -> Vec<String> {
+    run("/usr/sbin/scutil", &["--dns"]).map(|t| crate::parse_scutil_dns(&format!("\n{t}"))).unwrap_or_default()
+}

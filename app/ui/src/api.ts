@@ -547,6 +547,10 @@ export interface Settings {
     upstreamBypass: string;
     useSystemPac: boolean;
     pacUrl: string;
+    /** Hosts that do not go through Quena (system proxy and started browsers/terminals). */
+    bypassHosts?: string;
+    bypassApple?: boolean;
+    bypassVpn?: boolean;
   };
   /** Reverse proxy ports: each forwards everything to one target (while capturing). */
   reverseProxy: { enabled: boolean; entries: ReverseProxyEntry[] };

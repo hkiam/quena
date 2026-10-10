@@ -10,12 +10,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Command line of a Chromium browser with its own profile and Quena as proxy.
-pub fn chromium_args(profile: &Path, port: u16, spki: &str, url: Option<&str>) -> Vec<String> {
+pub fn chromium_args(profile: &Path, port: u16, spki: &str, url: Option<&str>, bypass: &[String]) -> Vec<String> {
+    // Also send localhost through Quena (Chromium bypasses it by default); not the hosts kept
+    // away from Quena.
+    let list: Vec<&str> = std::iter::once("<-loopback>").chain(bypass.iter().map(String::as_str)).collect();
     let mut a = vec![
         format!("--user-data-dir={}", profile.display()),
         format!("--proxy-server=127.0.0.1:{port}"),
-        // Also send localhost through Quena (Chromium bypasses it by default).
-        "--proxy-bypass-list=<-loopback>".to_string(),
+        format!("--proxy-bypass-list={}", list.join(";")),
         // Accept certificates that chain to Quena's root, identified by its key; only with
         // its own profile (--user-data-dir), so the user's normal browser is not affected.
         format!("--ignore-certificate-errors-spki-list={spki}"),
@@ -28,14 +30,15 @@ pub fn chromium_args(profile: &Path, port: u16, spki: &str, url: Option<&str>) -
 }
 
 /// Firefox preferences (`user.js`) for a profile that uses Quena.
-pub fn firefox_prefs(port: u16) -> String {
+pub fn firefox_prefs(port: u16, bypass: &[String]) -> String {
+    let no_proxy = crate::bypass::no_proxy(bypass).replace('"', "");
     let prefs: [(&str, String); 11] = [
         ("network.proxy.type", "1".into()),
         ("network.proxy.http", "\"127.0.0.1\"".into()),
         ("network.proxy.http_port", port.to_string()),
         ("network.proxy.ssl", "\"127.0.0.1\"".into()),
         ("network.proxy.ssl_port", port.to_string()),
-        ("network.proxy.no_proxies_on", "\"\"".into()),
+        ("network.proxy.no_proxies_on", format!("\"{no_proxy}\"")),
         ("network.proxy.allow_hijacking_localhost", "true".into()),
         // Trust the roots of the system store (where "Trust root certificate" puts Quena's).
         ("security.enterprise_roots.enabled", "true".into()),
@@ -53,13 +56,17 @@ pub fn firefox_args(profile: &Path, url: Option<&str>) -> Vec<String> {
 
 /// Environment of a terminal that uses Quena. `bundle`: system roots plus Quena's, for the
 /// variables that replace a tool's trust store; without it only additive ones are set.
-pub fn terminal_env(port: u16, quena_ca: &Path, bundle: Option<&Path>) -> Vec<(String, String)> {
+pub fn terminal_env(port: u16, quena_ca: &Path, bundle: Option<&Path>, bypass: &[String]) -> Vec<(String, String)> {
     let proxy = format!("http://127.0.0.1:{port}");
     let mut env = Vec::new();
     for k in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
         env.push((k.to_string(), proxy.clone()));
         env.push((k.to_ascii_lowercase(), proxy.clone()));
     }
+    // Hosts kept away from Quena; an empty value clears what the user's shell may set.
+    let no_proxy = crate::bypass::no_proxy(bypass);
+    env.push(("NO_PROXY".into(), no_proxy.clone()));
+    env.push(("no_proxy".into(), no_proxy));
     env.push(("QUENA_PROXY".into(), proxy));
     // Node.js adds these roots to its own.
     env.push(("NODE_EXTRA_CA_CERTS".into(), quena_ca.display().to_string()));
@@ -98,10 +105,10 @@ impl AppCore {
         let args = match b.family {
             BrowserFamily::Chromium => {
                 let ca = self.proxy_engine()?.ensure_ca()?;
-                chromium_args(&profile, port, &ca.spki_sha256_base64(), url)
+                chromium_args(&profile, port, &ca.spki_sha256_base64(), url, &crate::bypass::hosts(&self.settings()))
             }
             BrowserFamily::Firefox => {
-                std::fs::write(profile.join("user.js"), firefox_prefs(port)).context("Firefox profile")?;
+                std::fs::write(profile.join("user.js"), firefox_prefs(port, &crate::bypass::hosts(&self.settings()))).context("Firefox profile")?;
                 firefox_args(&profile, url)
             }
         };
@@ -121,7 +128,7 @@ impl AppCore {
             Ok(p)
         });
         let bundle = bundle.transpose()?;
-        let env = terminal_env(port, &ca_path, bundle.as_deref());
+        let env = terminal_env(port, &ca_path, bundle.as_deref(), &crate::bypass::hosts(&self.settings()));
         quena_platform::launch::open_terminal(&env, &self.paths.data.join("terminal")).map_err(|e| anyhow!("{e}"))?;
         tracing::info!(target: "quena", "opened a terminal that uses Quena (port {port})");
         Ok(())
@@ -134,17 +141,19 @@ mod tests {
 
     #[test]
     fn chromium_uses_its_own_profile_and_quena() {
-        let a = chromium_args(Path::new("/data/browser-profiles/chrome"), 8866, "AbC=", Some("https://example.com"));
+        let a = chromium_args(Path::new("/data/browser-profiles/chrome"), 8866, "AbC=", Some("https://example.com"), &["*.bank.example".into()]);
+        assert!(a.contains(&"--proxy-bypass-list=<-loopback>;*.bank.example".to_string()), "{a:?}");
         assert!(a.contains(&"--user-data-dir=/data/browser-profiles/chrome".to_string()));
         assert!(a.contains(&"--proxy-server=127.0.0.1:8866".to_string()));
         assert!(a.contains(&"--ignore-certificate-errors-spki-list=AbC=".to_string()));
         assert_eq!(a.last().unwrap(), "https://example.com");
-        assert_eq!(chromium_args(Path::new("/p"), 1, "x", None).last().unwrap(), "about:blank");
+        assert_eq!(chromium_args(Path::new("/p"), 1, "x", None, &[]).last().unwrap(), "about:blank");
     }
 
     #[test]
     fn firefox_prefs_name_the_port() {
-        let p = firefox_prefs(9000);
+        let p = firefox_prefs(9000, &["*.bank.example".into(), "login.example".into()]);
+        assert!(p.contains("user_pref(\"network.proxy.no_proxies_on\", \".bank.example,login.example\");"), "{p}");
         assert!(p.contains("user_pref(\"network.proxy.http_port\", 9000);"));
         assert!(p.contains("user_pref(\"network.proxy.type\", 1);"));
         assert!(p.lines().all(|l| l.starts_with("user_pref(\"") && l.ends_with(");")), "{p}");
@@ -154,12 +163,13 @@ mod tests {
     fn terminal_env_replaces_trust_stores_only_with_a_bundle() {
         let ca = Path::new("/d/quena-root-ca.pem");
         let get = |env: &[(String, String)], k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        let e = terminal_env(8866, ca, None);
+        let e = terminal_env(8866, ca, None, &["*.bank.example".into()]);
+        assert_eq!(get(&e, "NO_PROXY").as_deref(), Some(".bank.example"));
         assert_eq!(get(&e, "HTTPS_PROXY").as_deref(), Some("http://127.0.0.1:8866"));
         assert_eq!(get(&e, "https_proxy").as_deref(), Some("http://127.0.0.1:8866"));
         assert_eq!(get(&e, "NODE_EXTRA_CA_CERTS").as_deref(), Some("/d/quena-root-ca.pem"));
         assert_eq!(get(&e, "SSL_CERT_FILE"), None);
-        let e = terminal_env(8866, ca, Some(Path::new("/d/bundle.pem")));
+        let e = terminal_env(8866, ca, Some(Path::new("/d/bundle.pem")), &[]);
         assert_eq!(get(&e, "SSL_CERT_FILE").as_deref(), Some("/d/bundle.pem"));
         assert_eq!(get(&e, "REQUESTS_CA_BUNDLE").as_deref(), Some("/d/bundle.pem"));
     }

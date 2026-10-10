@@ -968,6 +968,16 @@ function OptionsDialog() {
             <label className="f-check">
               <input type="checkbox" checked={s.proxy.actAsSystemProxy} onChange={(e) => up((x) => (x.proxy.actAsSystemProxy = e.target.checked))} /> {t("Act as system proxy while capturing")}
             </label>
+            <div className="f-row" title={t("These hosts become exceptions of the system proxy and of browsers and terminals Quena starts, so their traffic does not reach Quena; a client that sends them to Quena anyway gets them passed through without decryption.")}>
+              <span>{t("Do not capture (bypass Quena)")}</span>
+              <input placeholder="login.example.com; *.bank.example" value={s.proxy.bypassHosts ?? ""} onChange={(e) => up((x) => (x.proxy.bypassHosts = e.target.value))} />
+            </div>
+            <label className="f-check" title={t("Push, iMessage, iCloud and App Store hosts that pin their certificates and fail behind an intercepting proxy")}>
+              <input type="checkbox" checked={s.proxy.bypassApple ?? true} onChange={(e) => up((x) => (x.proxy.bypassApple = e.target.checked))} /> {t("Also bypass Apple services that pin their certificates")}
+            </label>
+            <label className="f-check" title={t("The DNS domains of a VPN connected when capturing starts (e.g. the company's), so company traffic keeps its direct way")}>
+              <input type="checkbox" checked={s.proxy.bypassVpn ?? false} onChange={(e) => up((x) => (x.proxy.bypassVpn = e.target.checked))} /> {t("Also bypass the domains of an active VPN")}
+            </label>
             <label className="f-check">
               <input type="checkbox" checked={s.proxy.allowRemote} onChange={(e) => up((x) => (x.proxy.allowRemote = e.target.checked))} /> {t("Allow remote computers to connect")}
             </label>

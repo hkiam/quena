@@ -857,3 +857,7 @@ mod tests {
         std::fs::read_to_string(crt).unwrap()
     }
 }
+
+pub fn vpn_domains() -> Vec<String> {
+    run("resolvectl", &["status", "--no-pager"]).map(|t| crate::parse_resolvectl(&t)).unwrap_or_default()
+}

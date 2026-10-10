@@ -59,3 +59,7 @@ impl ProcessLookup {
         None
     }
 }
+
+pub fn vpn_domains() -> Vec<String> {
+    Vec::new()
+}
