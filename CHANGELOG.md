@@ -7,29 +7,6 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
-### Added
-- LLM calls over a WebSocket: Codex sends OpenAI Responses calls over a WebSocket to
-  `…/responses`; each `response.create` and its events become a session of their own next to
-  the WebSocket (flag `x-quena-ws-call`), read while it is open, so Codex runs show in the
-  Agents panel again.
-- The WebSocket view shows messages compressed with `permessage-deflate` inflated (browsers
-  and most clients negotiate it); before, they showed as bytes.
-- Claude Code's message threads (`thread.previous_message_id`, Claude Code 2.1.2xx): calls
-  that carry only their new messages are linked into one conversation, count as `+n
-  messages`, and hints and the context map use the history put together from the calls
-  before them.
-
-### Fixed
-- WebSocket upgrades to servers that also speak HTTP/2 failed with 405: the upgrade went out
-  over a pooled HTTP/2 connection, where it does not exist. It now always uses HTTP/1.1
-  (Codex fell back to plain requests after several failed attempts).
-- Codex 0.15x: tools offered as an `additional_tools` input item (namespaces of tools) are
-  recognised, and the item no longer pushes Codex's system prompt into the messages; tool
-  calls are read from the stream's items when the final event carries no output; blocks Codex
-  adds (`<recommended_plugins>`, `<apps_instructions>` …) do not count as the user's prompt; a
-  call that only warms the cache no longer names the conversation; chatgpt.com is named
-  *OpenAI (ChatGPT)*.
-
 ## [0.2.0] — 2026-10-10
 
 ### Highlights
@@ -59,7 +36,9 @@ contain breaking changes (settings, file formats, plugin API).
   Gemini, **Claude on Vertex AI** (`rawPredict`), **Amazon Bedrock** (Claude through `invoke`,
   streamed in AWS's binary event stream, and the **Converse API**), Ollama and
   OpenAI-compatible APIs are recognised; only bodies shaped like such a call count, so other
-  apps' `/api/chat` or `/responses` endpoints are left alone.
+  apps' `/api/chat` or `/responses` endpoints are left alone. Calls over a **WebSocket** to
+  `…/responses` (Codex) become sessions of their own next to the WebSocket (flag
+  `x-quena-ws-call`), read while it is open.
   - The **LLM** view shows provider and model, system prompt, the messages with tool calls and
     results (also Codex `developer`, `custom_tool_call` and `local_shell_call` items, images in
     tool results), the answer assembled from server-sent events, JSON lines, arrays or AWS
@@ -76,8 +55,9 @@ contain breaking changes (settings, file formats, plugin API).
 - **Agent conversations** (right pane → *Agents*, also *View → Agents*): the LLM calls of one
   agent run — Claude Code, Codex, an app — put together as a conversation, subagents under the
   conversation whose tool call started them. Each call is linked to the call it continues
-  (Claude Code's previous request, `previous_response_id`, else the furthest common history
-  within the agent's session), so separate runs with the same prompt stay apart and side
+  (Claude Code's previous request or message thread, `previous_response_id`, else the
+  furthest common history within the agent's session; for calls that carry only their new
+  messages the history is put together from the calls before), so separate runs with the same prompt stay apart and side
   calls (prompt suggestions, summaries) are marked instead of breaking the turn order.
   - Turns on a time axis with input, cached share, output, cost, the change from the call it
     continues (`+2 messages`, `message 12 changed`, system prompt, tools, settings, model), the
@@ -208,6 +188,7 @@ contain breaking changes (settings, file formats, plugin API).
 - **MessagePack view** for `application/msgpack` and its variants.
 - **Socket.IO**: the WebSocket view shows event names and arguments, hides ping/pong and
   searches events; a *Socket.IO* view decodes long-polling bodies (v4 and v3).
+- The WebSocket view shows messages compressed with `permessage-deflate` inflated.
 - *Statistics* show median, mean, p90/p95/p99, standard deviation, throughput, header bytes
   and summed DNS, connect, TLS and waiting times; a **Params** view lists the query
   parameters; **Decode Value…** opens the *Text Tools* with the likely decoding; the *Auth*
@@ -275,6 +256,8 @@ contain breaking changes (settings, file formats, plugin API).
   they keep working while the system proxy points to Quena.
 
 ### Fixed
+- WebSocket upgrades to servers that also speak HTTP/2 failed with 405: the upgrade went out
+  over a pooled HTTP/2 connection, where it does not exist. It now always uses HTTP/1.1.
 - Loading a password-protected archive loaded no sessions and gave no reason; it now asks
   for the password.
 - The command field's answers (`filter`, `=404`, errors such as an unknown command) are shown
