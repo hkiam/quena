@@ -480,12 +480,13 @@ function CompareView({ a, b, refresh }: { a: string; b: string; refresh: string 
   const dur = (s: ConvSummary) => Math.max(0, s.ended - s.started) / 1000;
   // Which way is better: less (tokens, cost …), more (cached share), or neither (turns, calls).
   type Better = "less" | "more" | "none";
-  const rows: [string, (x: ConvSide) => number, (n: number) => string, Better][] = [
+  // `null`: not known (a cost without a price), shown as "–" and not compared.
+  const rows: [string, (x: ConvSide) => number | null, (n: number) => string, Better][] = [
     [t("Turns"), (x) => x.summary.turns, (n) => String(n), "none"],
     [t("Input tokens"), (x) => x.summary.input, fmtInt, "less"],
     [t("Output tokens"), (x) => x.summary.output, fmtInt, "less"],
     [t("Cached share"), (x) => cacheShare(x.summary.cacheRead, x.summary.input), (n) => `${n} %`, "more"],
-    [t("Cost"), (x) => x.summary.cost ?? 0, fmtUsd, "less"],
+    [t("Cost"), (x) => x.summary.cost ?? null, fmtUsd, "less"],
     [t("Duration"), (x) => dur(x.summary), fmtDuration, "less"],
     [t("Last request"), (x) => x.summary.lastInput, fmtInt, "less"],
     [t("Cache misses"), (x) => x.summary.cacheMisses, (n) => String(n), "less"],
@@ -525,14 +526,17 @@ function CompareView({ a, b, refresh }: { a: string; b: string; refresh: string 
           </tr>
         </thead>
         <tbody>
-          {rows.map(([label, f, fmt, better]) => (
-            <tr key={label}>
-              <td>{label}</td>
-              <td className="num">{fmt(f(c.a))}</td>
-              <td className="num">{fmt(f(c.b))}</td>
-              <td className="num">{delta(f(c.a), f(c.b), fmt, better, label !== t("Cached share"))}</td>
-            </tr>
-          ))}
+          {rows.map(([label, f, fmt, better]) => {
+            const [va, vb] = [f(c.a), f(c.b)];
+            return (
+              <tr key={label}>
+                <td>{label}</td>
+                <td className="num">{va == null ? "–" : fmt(va)}</td>
+                <td className="num">{vb == null ? "–" : fmt(vb)}</td>
+                <td className="num">{va == null || vb == null ? <span className="muted">–</span> : delta(va, vb, fmt, better, label !== t("Cached share"))}</td>
+              </tr>
+            );
+          })}
           <tr>
             <td colSpan={4} className="muted small">
               {t("Context of the last request")}

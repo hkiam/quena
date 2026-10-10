@@ -1231,6 +1231,7 @@ const PRICES: &[(&str, f64, f64, f64)] = &[
     ("gpt-5-nano", 0.05, 0.40, 0.005),
     ("gpt-5-mini", 0.25, 2.0, 0.025),
     ("gpt-5", 1.25, 10.0, 0.125),
+    ("gpt-5-codex", 1.25, 10.0, 0.125),
     ("gpt-5.1", 1.25, 10.0, 0.125),
     ("gpt-5-pro", 15.0, 120.0, 15.0),
     ("o3-pro", 20.0, 80.0, 20.0),
@@ -1701,6 +1702,7 @@ mod tests {
         assert_eq!(p("gemini-2.5-flash-preview-05-20").as_deref(), Some("gemini-2.5-flash"));
         assert_eq!(p("mistral-large-latest").as_deref(), Some("mistral-large"));
         assert_eq!(p("claude-opus-4-7"), None, "a newer model has no price yet");
+        assert_eq!(p("gpt-5-codex").as_deref(), Some("gpt-5-codex"));
         assert_eq!(p("gpt-5.2"), None);
         assert_eq!(p("o3-deep-research"), None);
     }

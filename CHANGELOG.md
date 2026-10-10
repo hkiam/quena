@@ -7,6 +7,11 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Fixed
+- Agents → *Compare with*: a conversation whose model has no price showed a cost of $0 and
+  "−100 %"; an unknown cost is shown as "–" and not compared.
+- `gpt-5-codex` (Codex) is priced like GPT-5.
+
 ## [0.2.0] — 2026-10-10
 
 ### Highlights
