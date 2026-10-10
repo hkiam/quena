@@ -160,6 +160,17 @@ export function sessionMenu(): MenuItem[] {
     },
     { separator: true },
     { label: t("Compare"), disabled: n !== 2, action: () => import("./panels/compare").then((m) => m.compareSelected()) },
+    {
+      label: t("Compare Groups"),
+      submenu: [
+        { label: t("Use as Before ({n})", { n }), disabled: n === 0, action: () => set({ diffBefore: [...get().selection].sort((x, y) => x - y) }) },
+        {
+          label: t("Compare with Before ({a} → {b})", { a: get().diffBefore?.length ?? 0, b: n }),
+          disabled: n === 0 || !get().diffBefore?.length,
+          action: () => set({ dialog: { kind: "capdiff", a: get().diffBefore ?? [], b: [...get().selection].sort((x, y) => x - y) } }),
+        },
+      ],
+    },
     { label: t("Properties…"), disabled: !one, action: () => import("./panels/properties").then((m) => m.showProperties()) },
   ];
 }

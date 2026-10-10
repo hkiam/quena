@@ -12,7 +12,9 @@ contain breaking changes (settings, file formats, plugin API).
   protocol (HTTP or HTTPS to the target); rewrite rules exported and imported as JSON (also one
   group); AutoSave of only the sessions the filters show; on Windows, *Trust for all users…*
   puts the root certificate into the local machine's store; export as a **WCAT** load test
-  script and import of Internet Explorer **NetXML** captures.
+  script and import of Internet Explorer **NetXML** captures; **comparing groups** of chosen
+  sessions (*Compare Groups*), pairing by path, exact URL or order, and own headers to ignore
+  (also `quena-cli diff --pair-by`, `--ignore-header`, MCP).
 - **Do not capture (bypass Quena)** (*Settings → Connections*, or *Filter Now → Do not capture
   this Host…*): hosts become exceptions of the system proxy and of started browsers and
   terminals, and pass Quena undecrypted if a client sends them anyway; Apple services that pin

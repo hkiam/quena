@@ -263,7 +263,7 @@ export type Dialog =
   | { kind: "rewrite-apply"; ids: SessionId[] }
   /** Capture → Host Remapping…: hosts whose connections go elsewhere. */
   | { kind: "host-remap" }
-  | { kind: "capdiff" }
+  | { kind: "capdiff"; a?: SessionId[]; b?: SessionId[] }
   /** Capture → Start Browser…: installed browsers, a start URL and the terminal. */
   | { kind: "launch" }
   /** Capture → Reverse Proxy…; `target` starts a new entry for it (from a session). */
@@ -313,6 +313,8 @@ export interface AppState {
   gridNonce: number;
   /** Request to load a session into the Composer. */
   composerLoad: { id: SessionId; nonce: number } | null;
+  /** Sessions chosen as "Before" for comparing two groups. */
+  diffBefore: SessionId[] | null;
   /** Bumped when AutoResponder rules change outside the panel. */
   arNonce: number;
   /** Menu commands the active rules script registered (Quena.registerMenu). */
@@ -348,6 +350,7 @@ export const useStore = create<AppState>(() => ({
   dialog: null,
   gridNonce: 0,
   composerLoad: null,
+  diffBefore: null,
   arNonce: 0,
   scriptMenus: [],
   captureBusy: null,

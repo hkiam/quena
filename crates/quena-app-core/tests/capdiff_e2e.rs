@@ -1,6 +1,6 @@
 //! Comparing two archives loaded into the list.
 
-use quena_app_core::capdiff::{CompareOptions, DiffKind, Source, to_markdown};
+use quena_app_core::capdiff::{CompareOptions, DiffKind, PairBy, Source, to_markdown};
 use quena_app_core::{AppCore, Paths};
 use std::time::Duration;
 
@@ -87,7 +87,41 @@ fn hosts_ignored_and_no_answer_is_an_error() {
     let (sa, sb) = (Source::Archive("staging.har".into()), Source::Archive("prod.har".into()));
     let d = core.compare_captures(&sa, &sb).unwrap();
     assert_eq!((d.counts.added, d.counts.removed), (2, 2), "other hosts do not pair");
-    let d = core.compare_captures_with(&sa, &sb, &CompareOptions { ignore_host: true }).unwrap();
+    let d = core.compare_captures_with(&sa, &sb, &CompareOptions { ignore_host: true, ..Default::default() }).unwrap();
     assert_eq!((d.counts.same, d.counts.changed, d.counts.new_errors), (1, 1, 1), "{:#?}", d.entries);
     assert!(d.entries.iter().all(|e| e.key.starts_with("/api/")), "{:#?}", d.entries);
+}
+
+/// Groups of chosen sessions, paired by order or exact URL, with own headers to ignore.
+#[test]
+fn groups_by_order_and_ignored_headers() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"port":0,"actAsSystemProxy":false,"captureOnStartup":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let f = dir.path().join("run.har");
+    har(&f, vec![
+        entry("https://x.example/a/1", 200, "{}", 10, Some(("X-Build", "1"))),
+        entry("https://x.example/b", 200, "{}", 10, None),
+        // The header only before: "removed" unless ignored.
+        entry("https://x.example/a/2", 200, "{}", 10, None),
+        entry("https://x.example/c", 500, "{}", 10, None),
+    ]);
+    let job = core.import_archive(f).unwrap();
+    core.jobs.wait(job, Duration::from_secs(20)).unwrap();
+    core.capture().index.tick();
+    let mut ids = core.capture().index.find_all(|_| true);
+    ids.sort_unstable();
+    let (a, b) = (Source::Ids(ids[..2].to_vec()), Source::Ids(ids[2..].to_vec()));
+    // By order: /a/1 meets /a/2, /b meets /c.
+    let o = CompareOptions { pair_by: PairBy::Order, ..Default::default() };
+    let d = core.compare_captures_with(&a, &b, &o).unwrap();
+    assert_eq!((d.counts.changed, d.counts.added, d.counts.removed), (2, 0, 0), "{:#?}", d.entries);
+    let first = d.entries.iter().find(|e| e.key.ends_with("/a/{n}")).unwrap();
+    assert!(first.changes.iter().any(|c| c.contains("x-build")), "{:?}", first.changes);
+    let o = CompareOptions { pair_by: PairBy::Order, ignore_headers: vec!["X-Build".into()], ..Default::default() };
+    let d = core.compare_captures_with(&a, &b, &o).unwrap();
+    assert_eq!(d.counts.same, 1, "{:#?}", d.entries);
+    // By exact URL nothing pairs.
+    let d = core.compare_captures_with(&a, &b, &CompareOptions { pair_by: PairBy::Url, ..Default::default() }).unwrap();
+    assert_eq!((d.counts.added, d.counts.removed), (2, 2));
 }

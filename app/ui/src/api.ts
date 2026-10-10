@@ -1322,7 +1322,7 @@ export const api = {
     invoke<number>("save_body_range", { id, part, offset, len, path }),
   grpc: (id: SessionId, part: Part, typeName?: string) => invoke<Grpc | null>("grpc", { id, part, typeName: typeName ?? null }),
   compareSources: () => invoke<DiffSourceInfo[]>("compare_sources"),
-  compareCaptures: (a: DiffSource, b: DiffSource, options?: { ignoreHost?: boolean }) => invoke<CaptureDiff>("compare_captures", { a, b, options }),
+  compareCaptures: (a: DiffSource, b: DiffSource, options?: { ignoreHost?: boolean; pairBy?: "path" | "url" | "order"; ignoreHeaders?: string[] }) => invoke<CaptureDiff>("compare_captures", { a, b, options }),
   llmCall: (id: SessionId) => invoke<LlmCall | null>("llm_call", { id }),
   socketioPolling: (id: SessionId, part: Part) => invoke<SioPacket[] | null>("socketio_polling", { id, part }),
   msgpack: (id: SessionId, part: Part) => invoke<Msgpack | null>("msgpack", { id, part }),

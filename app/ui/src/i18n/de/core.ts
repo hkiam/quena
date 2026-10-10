@@ -41,4 +41,7 @@ export const core: Record<string, string> = {
   "Saving a WCAT script to {path}": "WCAT-Skript wird gespeichert: {path}",
   "Export WCAT script": "WCAT-Skript exportieren",
   "Import Internet Explorer NetXML": "Internet-Explorer-NetXML importieren",
+  "Compare Groups": "Gruppen vergleichen",
+  "Use as Before ({n})": "Als Vorher verwenden ({n})",
+  "Compare with Before ({a} \u2192 {b})": "Mit Vorher vergleichen ({a} \u2192 {b})",
 };

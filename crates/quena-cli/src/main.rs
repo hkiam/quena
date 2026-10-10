@@ -462,6 +462,13 @@ struct DiffArgs {
     /// Pair requests by method and path only (e.g. staging against production).
     #[arg(long)]
     ignore_host: bool,
+    /// How requests are paired: `path` (numbers and ids as placeholders), `url` (exact), `order`
+    /// (the n-th with the n-th).
+    #[arg(long, value_enum, default_value_t = DiffPairBy::Path)]
+    pair_by: DiffPairBy,
+    /// A response header not to compare (repeatable).
+    #[arg(long = "ignore-header", value_name = "NAME")]
+    ignore_headers: Vec<String>,
     /// Seconds for loading.
     #[arg(long, default_value_t = 600)]
     timeout: u64,
@@ -474,6 +481,13 @@ enum DiffFormat {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum DiffPairBy {
+    Path,
+    Url,
+    Order,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 enum DiffFail {
     None,
     Errors,
@@ -481,7 +495,7 @@ enum DiffFail {
 }
 
 fn diff(a: DiffArgs) -> Result<bool> {
-    use quena_app_core::capdiff::{CompareOptions, Source, to_markdown};
+    use quena_app_core::capdiff::{CompareOptions, PairBy, Source, to_markdown};
     let deadline = Deadline::after(a.timeout);
     let engine = Engine::bare()?;
     let mut names = Vec::new();
@@ -499,7 +513,12 @@ fn diff(a: DiffArgs) -> Result<bool> {
         }
         names.push(sources[sources.len() - 1].label.clone());
     }
-    let o = CompareOptions { ignore_host: a.ignore_host };
+    let pair_by = match a.pair_by {
+        DiffPairBy::Path => PairBy::Path,
+        DiffPairBy::Url => PairBy::Url,
+        DiffPairBy::Order => PairBy::Order,
+    };
+    let o = CompareOptions { ignore_host: a.ignore_host, pair_by, ignore_headers: a.ignore_headers.clone() };
     let d = engine.core.compare_captures_with(&Source::Archive(names[0].clone()), &Source::Archive(names[1].clone()), &o).map_err(|e| usage(format!("{e:#}")))?;
     let text = match a.format {
         DiffFormat::Md => to_markdown(&d, &a.before.display().to_string(), &a.after.display().to_string(), a.all),

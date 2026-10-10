@@ -14,16 +14,27 @@ import { t } from "../i18n";
 const key = (s: DiffSource) => JSON.stringify(s);
 const KINDS: DiffEntry["kind"][] = ["changed", "added", "removed", "same"];
 
-export function CaptureDiffPanel() {
-  const [sources, setSources] = useState<DiffSourceInfo[]>([]);
-  const [a, setA] = useState<string>("");
-  const [b, setB] = useState<string>("");
+/** Sides made of chosen sessions (Compare Groups in the session menu). */
+function groupSides(groupA?: number[], groupB?: number[]): DiffSourceInfo[] {
+  const out: DiffSourceInfo[] = [];
+  if (groupA?.length) out.push({ source: { kind: "ids", name: groupA }, label: t("Before: {n} chosen sessions", { n: groupA.length }), sessions: groupA.length });
+  if (groupB?.length) out.push({ source: { kind: "ids", name: groupB }, label: t("After: {n} chosen sessions", { n: groupB.length }), sessions: groupB.length });
+  return out;
+}
+
+export function CaptureDiffPanel({ groupA, groupB }: { groupA?: number[]; groupB?: number[] }) {
+  const groups = useMemo(() => groupSides(groupA, groupB), [groupA, groupB]);
+  const [sources, setSources] = useState<DiffSourceInfo[]>(groups);
+  const [a, setA] = useState<string>(groupA?.length ? key(groups[0].source) : "");
+  const [b, setB] = useState<string>(groupB?.length ? key(groups[groups.length - 1].source) : "");
+  const [pairBy, setPairBy] = useState<"path" | "url" | "order">("path");
+  const [ignoreHeaders, setIgnoreHeaders] = useState("");
   const [diff, setDiff] = useState<CaptureDiff | null>(null);
   const [show, setShow] = useState<Record<string, boolean>>({ changed: true, added: true, removed: true, same: false });
   const [busy, setBusy] = useState(false);
   const [ignoreHost, setIgnoreHost] = useState(false);
   const reload = async () => {
-    const s = await api.compareSources();
+    const s = [...groups, ...(await api.compareSources())];
     setSources(s);
     // The two newest sides by default: the last but one as "before".
     if (s.length >= 2) {
@@ -44,7 +55,7 @@ export function CaptureDiffPanel() {
       // Wait until the import is in the list.
       for (let i = 0; i < 120; i++) {
         await new Promise((r) => setTimeout(r, 250));
-        const s = await api.compareSources();
+        const s = [...groups, ...(await api.compareSources())];
         if (s.length > before) {
           setSources(s);
           (side === "a" ? setA : setB)(key(s[s.length - 1].source));
@@ -59,7 +70,7 @@ export function CaptureDiffPanel() {
     if (!a || !b) return;
     setBusy(true);
     try {
-      setDiff(await api.compareCaptures(JSON.parse(a), JSON.parse(b), { ignoreHost }));
+      setDiff(await api.compareCaptures(JSON.parse(a), JSON.parse(b), { ignoreHost, pairBy, ignoreHeaders: ignoreHeaders.split(/[;,\s]+/).filter(Boolean) }));
     } catch (e) {
       say(String(e), "error");
     } finally {
@@ -95,6 +106,20 @@ export function CaptureDiffPanel() {
       <label className="f-check" title={t("For two hosts, such as staging and production: requests are paired by method and path only.")}>
         <input type="checkbox" checked={ignoreHost} onChange={(e) => setIgnoreHost(e.target.checked)} /> {t("Ignore host")}
       </label>
+      <div className="f-row">
+        <span>{t("Pair requests by")}</span>
+        <div className="f-inline">
+          <select value={pairBy} onChange={(e) => setPairBy(e.target.value as typeof pairBy)}>
+            <option value="path">{t("method and path (numbers and ids do not count)")}</option>
+            <option value="url">{t("method and exact URL")}</option>
+            <option value="order">{t("order (the n-th with the n-th)")}</option>
+          </select>
+        </div>
+      </div>
+      <div className="f-row">
+        <span>{t("Also ignore headers")}</span>
+        <input spellCheck={false} placeholder="X-Request-Id; X-Build" value={ignoreHeaders} onChange={(e) => setIgnoreHeaders(e.target.value)} />
+      </div>
       <div className="btn-row">
         <button className="primary" disabled={!a || !b || a === b || busy} onClick={() => void run()}>
           {busy ? t("Comparing…") : t("Compare")}

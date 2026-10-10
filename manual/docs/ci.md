@@ -310,6 +310,8 @@ quena-cli diff release-1.4.har build.har -o diff.md --fail-on errors
 | `--fail-on changes` | exit code 1 on any change, new or gone request |
 | `--all` | also list the requests that stayed the same |
 | `--ignore-host` | pair requests by method and path only (staging against production) |
+| `--pair-by url\|order` | pair by exact URL, or the n-th request with the n-th (default `path`) |
+| `--ignore-header NAME` | a response header not to compare (repeatable) |
 | `-o FILE` | write the result to a file (for a PR comment) |
 
 `.saz`, `.har`, `.pcap` and `.pcapng` work, as for `diagnose`. A file without sessions is

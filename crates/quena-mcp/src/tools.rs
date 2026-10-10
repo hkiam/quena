@@ -84,7 +84,7 @@ static TOOLS: &[Tool] = &[
         description: "Compare two captures in the list: `a` (before) and `b` (after) are `live` (recorded sessions) or the file name of an archive loaded into the list (without `a`/`b`: the sides are listed). Returns requests that changed (status, type, time, headers, body), are new or gone, paired by method, host and normalized path.",
         write: false,
         destructive: false,
-        schema: || obj(json!({ "a": { "type": "string" }, "b": { "type": "string" }, "all": { "type": "boolean", "description": "Also unchanged requests" }, "ignore_host": { "type": "boolean", "description": "Pair by method and path only (staging against production)" } })),
+        schema: || obj(json!({ "a": { "type": "string" }, "b": { "type": "string" }, "all": { "type": "boolean", "description": "Also unchanged requests" }, "ignore_host": { "type": "boolean", "description": "Pair by method and path only (staging against production)" }, "pair_by": { "type": "string", "enum": ["path", "url", "order"] }, "ignore_headers": { "type": "array", "items": { "type": "string" }, "description": "Response headers not compared" } })),
         run: compare_captures,
     },
     Tool {
@@ -1085,6 +1085,10 @@ struct DiffArgs {
     all: bool,
     #[serde(default)]
     ignore_host: bool,
+    #[serde(default)]
+    pair_by: Option<quena_app_core::capdiff::PairBy>,
+    #[serde(default)]
+    ignore_headers: Vec<String>,
 }
 
 fn compare_captures(core: &Arc<AppCore>, a: Value) -> Result<Value> {
@@ -1095,7 +1099,7 @@ fn compare_captures(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         return Ok(json!({ "sides": sources.iter().map(|s| json!({ "name": s.label, "sessions": s.sessions })).collect::<Vec<_>>() }));
     };
     let side = |n: &str| if n.eq_ignore_ascii_case("live") { Source::Live } else { Source::Archive(n.to_string()) };
-    let d = core.compare_captures_with(&side(x), &side(y), &CompareOptions { ignore_host: a.ignore_host })?;
+    let d = core.compare_captures_with(&side(x), &side(y), &CompareOptions { ignore_host: a.ignore_host, pair_by: a.pair_by.unwrap_or_default(), ignore_headers: a.ignore_headers.clone() })?;
     let mut view = View::new(core, 0);
     let entries: Vec<Value> = d
         .entries

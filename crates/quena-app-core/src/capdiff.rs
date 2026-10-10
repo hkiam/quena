@@ -58,6 +58,23 @@ pub enum Source {
 pub struct CompareOptions {
     /// Pair requests to different hosts (staging and production): by method and path only.
     pub ignore_host: bool,
+    /// How requests are paired.
+    pub pair_by: PairBy,
+    /// Response headers not compared (besides the volatile ones), any case.
+    pub ignore_headers: Vec<String>,
+}
+
+/// How the requests of two sides are paired.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PairBy {
+    /// Method, host and the path with numbers and ids as placeholders (the default).
+    #[default]
+    Path,
+    /// Method and the exact URL.
+    Url,
+    /// The n-th request with the n-th (two runs of the same steps).
+    Order,
 }
 
 /// A side as offered for choosing.
@@ -295,9 +312,23 @@ impl AppCore {
         }
         let rows = |ids: &[SessionId]| -> Vec<SessionSummary> { ids.iter().filter_map(|id| cap.index.get(*id)).filter(|s| s.kind != quena_model::SessionKind::Tunnel).collect() };
         let (ra, rb) = (rows(&ids_a), rows(&ids_b));
-        let key = |s: &SessionSummary| {
+        let label = |s: &SessionSummary| {
             let (host, path) = normalize(&s.full_url());
             (s.method.to_ascii_uppercase(), if o.ignore_host { path } else { format!("{host}{path}") })
+        };
+        // The pairing key: by order the position on its side (the label is still shown).
+        let pos_a: HashMap<SessionId, usize> = ra.iter().enumerate().map(|(i, s)| (s.id, i)).collect();
+        let pos_b: HashMap<SessionId, usize> = rb.iter().enumerate().map(|(i, s)| (s.id, i)).collect();
+        let key = |s: &SessionSummary| -> (String, String) {
+            match o.pair_by {
+                PairBy::Path => label(s),
+                PairBy::Url => {
+                    let u = s.full_url();
+                    let u = if o.ignore_host { u.split_once("://").and_then(|(_, r)| r.find('/').map(|i| r[i..].to_string())).unwrap_or(u) } else { u };
+                    (s.method.to_ascii_uppercase(), u)
+                }
+                PairBy::Order => (String::new(), pos_a.get(&s.id).or(pos_b.get(&s.id)).copied().unwrap_or(0).to_string()),
+            }
         };
         // Occurrences of each key on side A, in order.
         let mut by_key: HashMap<(String, String), std::collections::VecDeque<&SessionSummary>> = HashMap::new();
@@ -307,8 +338,8 @@ impl AppCore {
         let mut entries = Vec::new();
         let mut counts = DiffCounts::default();
         for sb in &rb {
-            let k = key(sb);
-            let sa = by_key.get_mut(&k).and_then(|q| q.pop_front());
+            let sa = by_key.get_mut(&key(sb)).and_then(|q| q.pop_front());
+            let k = label(sb);
             let mut e = DiffEntry {
                 kind: DiffKind::Added,
                 method: k.0.clone(),
@@ -326,7 +357,7 @@ impl AppCore {
                 changes: vec![],
             };
             if let Some(sa) = sa {
-                e.changes = self.pair_changes(sa, sb);
+                e.changes = self.pair_changes(sa, sb, &o.ignore_headers);
                 e.kind = if e.changes.is_empty() { DiffKind::Same } else { DiffKind::Changed };
                 if ok(sa.status) && !ok(sb.status) {
                     counts.new_errors += 1;
@@ -337,7 +368,7 @@ impl AppCore {
         // What no session of B took, in the order of A.
         let left: std::collections::HashSet<SessionId> = by_key.values().flatten().map(|s| s.id).collect();
         for s in ra.iter().filter(|s| left.contains(&s.id)) {
-            let k = key(s);
+            let k = label(s);
             entries.push(DiffEntry {
                 kind: DiffKind::Removed,
                 method: k.0,
@@ -368,7 +399,7 @@ impl AppCore {
         Ok(CaptureDiff { sessions_a: ra.len(), sessions_b: rb.len(), counts, entries })
     }
 
-    fn pair_changes(&self, a: &SessionSummary, b: &SessionSummary) -> Vec<String> {
+    fn pair_changes(&self, a: &SessionSummary, b: &SessionSummary, ignore: &[String]) -> Vec<String> {
         let mut out = Vec::new();
         if a.status != b.status {
             out.push(format!("status {} → {}", a.status, b.status));
@@ -383,7 +414,12 @@ impl AppCore {
             }
         }
         let (Some(da), Some(db)) = (self.capture().detail(a.id), self.capture().detail(b.id)) else { return out };
-        let (ha, hb) = (header_map(&da), header_map(&db));
+        let (mut ha, mut hb) = (header_map(&da), header_map(&db));
+        for h in ignore {
+            let h = h.trim().to_ascii_lowercase();
+            ha.remove(&h);
+            hb.remove(&h);
+        }
         for (k, v) in &hb {
             match ha.get(k) {
                 None => out.push(format!("header {k} added")),

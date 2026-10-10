@@ -80,6 +80,12 @@ n-th call of an endpoint meets the n-th on the other side. The result lists
 | `−` gone | only in *Before* |
 | `=` same | nothing of the above (hidden unless chosen) |
 
+**Groups of sessions** compare too: select some sessions and right-click → *Compare Groups →
+Use as Before*, then select others → *Compare with Before*. **Pair requests by** *method and
+path* (the default, as above), *method and exact URL*, or *order* (the n-th request of each
+side with the n-th — two runs of the same steps). **Also ignore headers** takes response
+headers that should not count (`X-Request-Id; X-Build`).
+
 Headers that change on every response (`Date`, `ETag`, request ids, `Set-Cookie` …) are
 ignored; JSON bodies are compared by content, so key order and spacing do not count.
 Requests that answered successfully before and fail now (an error status, or no answer at

@@ -645,4 +645,11 @@ export const components: Record<string, string> = {
   "Root certificate trusted for all users": "Stammzertifikat f\u00fcr alle Benutzer vertrauensw\u00fcrdig",
   "Root certificate removed for all users": "Stammzertifikat f\u00fcr alle Benutzer entfernt",
   "Trust for all users\u2026": "F\u00fcr alle Benutzer vertrauen\u2026",
+  "Before: {n} chosen sessions": "Vorher: {n} gew\u00e4hlte Sessions",
+  "After: {n} chosen sessions": "Nachher: {n} gew\u00e4hlte Sessions",
+  "Pair requests by": "Requests zuordnen nach",
+  "method and path (numbers and ids do not count)": "Methode und Pfad (Zahlen und IDs z\u00e4hlen nicht)",
+  "method and exact URL": "Methode und genauer URL",
+  "order (the n-th with the n-th)": "Reihenfolge (der n-te mit dem n-ten)",
+  "Also ignore headers": "Auch diese Header ignorieren",
 };

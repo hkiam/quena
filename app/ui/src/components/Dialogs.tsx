@@ -1392,7 +1392,7 @@ function DialogBody({ d }: { d: Dialog }) {
     case "capdiff":
       return (
         <Modal title={t("Compare Captures")} onClose={close} wide>
-          <CaptureDiffPanel />
+          <CaptureDiffPanel groupA={d.a} groupB={d.b} />
         </Modal>
       );
     case "host-remap":
