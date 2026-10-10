@@ -106,19 +106,33 @@ fn llm_answers_served_from_the_cache() {
     let st = core.llm_cache_status().unwrap();
     assert_eq!((st.entries.len(), st.hits, st.saved_tokens), (1, 1, 1200));
 
+    // Freezing the conversation of another question caches its answered turn; asked again,
+    // Quena answers, and the conversation shows it was answered from the cache.
+    let frozen = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"Freeze me"}]}"#;
+    post(frozen);
+    let frozen_id = marked(4).into_iter().max().unwrap();
+    let key = wait("conversation", || core.capture().index.get(frozen_id).map(|s| s.llm_conv).filter(|k| !k.is_empty()));
+    assert_eq!(core.llm_freeze(&key).unwrap(), 1);
+    assert_eq!(core.llm_freeze(&key).unwrap(), 0, "already cached");
+    let before = calls.load(Ordering::SeqCst);
+    post(frozen);
+    assert_eq!(calls.load(Ordering::SeqCst), before, "answered from the frozen run");
+    let ab = core.llm_compare(&key, &core.capture().index.get(ids[0]).unwrap().llm_conv).unwrap();
+    assert_eq!((ab.a.summary.key.as_str(), ab.b.summary.turns >= 1), (key.as_str(), true));
+
     // Another question goes to the server; with auto on it is cached by itself.
     core.llm_cache_set_auto(true).unwrap();
     let other = r#"{"model":"gpt-4o","messages":[{"role":"user","content":"Time?"}]}"#;
-    assert!(post(other).contains("answer 3"));
-    wait("auto cached", || (core.llm_cache_status().unwrap().entries.len() == 2).then_some(()));
-    assert!(post(other).contains("answer 3"));
-    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert!(post(other).contains("answer 4"));
+    wait("auto cached", || (core.llm_cache_status().unwrap().entries.len() == 3).then_some(()));
+    assert!(post(other).contains("answer 4"));
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
 
     // Entries can be removed one by one or all at once.
     drop(engine);
     let st = core.llm_cache_status().unwrap();
     let key = st.entries.iter().find(|e| e.source == ids[0]).unwrap().key.clone();
-    assert_eq!(core.llm_cache_remove(&key).unwrap().entries.len(), 1);
+    assert_eq!(core.llm_cache_remove(&key).unwrap().entries.len(), 2);
     assert!(!core.llm_cached(ids[1]));
     assert!(core.llm_cache_clear().unwrap().entries.is_empty());
     assert!(core.llm_cache_set(ids[0] + 1000, true).is_err());

@@ -632,6 +632,57 @@ pub struct BreakpointState {
     pub method: Option<String>,
     /// Release paused sessions automatically after this many seconds (0 = never).
     pub timeout_s: u64,
+    /// `bpllm`: before LLM API requests that match all of these.
+    pub llm: Option<LlmBreak>,
+}
+
+/// Conditions of an LLM breakpoint (empty / 0: any).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LlmBreak {
+    /// The model contains this.
+    pub model: String,
+    /// The request offers this tool (`*` at the end: a prefix).
+    pub tool: String,
+    /// At least this many input tokens, estimated.
+    pub min_tokens: u64,
+}
+
+impl LlmBreak {
+    /// Whether LLM request `head` with body `body` matches.
+    pub fn matches(&self, head: &RequestHead, body: Option<&Body>, prices: &crate::llm::PriceList) -> bool {
+        if crate::llm::api_of(&head.method, &head.url).is_none() {
+            return false;
+        }
+        if self.model.is_empty() && self.tool.is_empty() && self.min_tokens == 0 {
+            return true;
+        }
+        let bytes = body.map(|b| quena_body::text::decoded_prefix(b, &crate::dto::spec_of(&head.headers), 16 << 20)).unwrap_or_default();
+        let Some(call) = crate::llm::parse(&head.method, &head.url, &bytes, None, prices) else { return false };
+        let tool_ok = self.tool.is_empty()
+            || call.tools.iter().any(|t| match self.tool.strip_suffix('*') {
+                Some(p) => t.name.starts_with(p),
+                None => t.name == self.tool,
+            });
+        call.model.to_ascii_lowercase().contains(&self.model.to_ascii_lowercase()) && tool_ok && (self.min_tokens == 0 || crate::agent::breakdown(&call).estimated >= self.min_tokens)
+    }
+
+    pub fn label(&self) -> String {
+        let mut parts = vec!["bpllm".to_string()];
+        if !self.model.is_empty() {
+            parts.push(format!("model={}", self.model));
+        }
+        if !self.tool.is_empty() {
+            parts.push(format!("tool={}", self.tool));
+        }
+        if self.min_tokens > 0 {
+            parts.push(format!("tokens={}", self.min_tokens));
+        }
+        if parts.len() == 1 {
+            parts.push("*".into());
+        }
+        parts.join(" ")
+    }
 }
 
 impl BreakpointState {
@@ -654,6 +705,9 @@ impl BreakpointState {
         }
         if let Some(m) = &self.method {
             v.push(format!("bpv {m}"));
+        }
+        if let Some(l) = &self.llm {
+            v.push(l.label());
         }
         v
     }
@@ -1096,6 +1150,11 @@ impl Rules {
             || b.method.as_ref().is_some_and(|m| head.method.eq_ignore_ascii_case(m))
     }
 
+    /// An LLM breakpoint is set and `head` goes to an LLM API (its body is needed to decide).
+    fn bp_llm_wants(&self, head: &RequestHead) -> bool {
+        self.bp.read().llm.is_some() && crate::llm::api_of(&head.method, &head.url).is_some()
+    }
+
     fn bp_response(&self, s: &SessionView, req: &RequestHead, resp: &ResponseHead) -> bool {
         if self.break_response.lock().contains(&s.id) {
             return true;
@@ -1488,7 +1547,7 @@ fn fix_length(h: &mut Headers, body: &Body) {
 
 impl Interceptor for Rules {
     fn request_mode(&self, s: &SessionView, head: &RequestHead) -> Mode {
-        if self.bp_request(s, head) || self.needs_request_body() || self.rewrite.request_needs_body(head) || self.cache_wants(head) {
+        if self.bp_request(s, head) || self.bp_llm_wants(head) || self.needs_request_body() || self.rewrite.request_needs_body(head) || self.cache_wants(head) {
             Mode::Buffer
         } else {
             Mode::Stream
@@ -1497,7 +1556,7 @@ impl Interceptor for Rules {
 
     fn request_hold_limit(&self, s: &SessionView, head: &RequestHead) -> Option<u64> {
         // Breakpoints and body matchers need the whole body; only rewriting can give up.
-        if self.bp_request(s, head) || self.needs_request_body() {
+        if self.bp_request(s, head) || self.bp_llm_wants(head) || self.needs_request_body() {
             None
         } else {
             let cache = if self.cache_wants(head) { crate::llm_cache::MAX_REQUEST as u64 } else { 0 };
@@ -1693,7 +1752,13 @@ impl Interceptor for Rules {
                 }
                 note_rewrite(&s, &names, script_edited);
             }
-            // 2. Breakpoint before request
+            // 2. Breakpoint before request (an LLM breakpoint looks at the request's body)
+            let llm_bp = if want_bp { None } else { this.bp.read().llm.clone() };
+            if let Some(l) = llm_bp {
+                let prices = this.core().map(|c| c.llm_prices()).unwrap_or_default();
+                let (h, b) = (head.clone(), body.clone());
+                want_bp = tokio::task::spawn_blocking(move || l.matches(&h, b.as_ref(), &prices)).await.unwrap_or(false);
+            }
             if want_bp || this.bp_request(&s, &head) {
                 let r = this.clone().pause(s.clone(), "request", head.url.clone()).await;
                 let mut new_head = r.head_text.as_ref().map(|t| {
@@ -2299,5 +2364,34 @@ mod tests {
         assert!(!reads_file("*404"));
         assert!(!reads_file("session:3"));
         assert!(!reads_file("https://x.example.com/ *nocreds"));
+    }
+}
+
+#[cfg(test)]
+mod llm_break_tests {
+    use super::*;
+
+    #[test]
+    fn llm_breakpoint_conditions() {
+        let head = |url: &str| {
+            let mut h = quena_model::Headers::default();
+            h.push("content-type", "application/json");
+            RequestHead { method: "POST".into(), url: url.into(), version: quena_model::HttpVersion::Http11, headers: h }
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let store = quena_body::BodyStore::open(dir.path(), quena_body::BodyConfig::default()).unwrap();
+        let body = store.store_bytes(br#"{"model":"claude-sonnet-4-5","max_tokens":5,"tools":[{"name":"mcp__jira__get_issue","input_schema":{}}],"messages":[{"role":"user","content":"hi"}]}"#);
+        let prices = crate::llm::PriceList::default();
+        let api = head("https://api.anthropic.com/v1/messages");
+        let any = LlmBreak::default();
+        assert!(any.matches(&api, Some(&body), &prices));
+        assert!(!any.matches(&head("https://example.com/api"), Some(&body), &prices), "only LLM APIs");
+        assert!(LlmBreak { model: "SONNET".into(), ..Default::default() }.matches(&api, Some(&body), &prices));
+        assert!(!LlmBreak { model: "gpt".into(), ..Default::default() }.matches(&api, Some(&body), &prices));
+        assert!(LlmBreak { tool: "mcp__jira__*".into(), ..Default::default() }.matches(&api, Some(&body), &prices));
+        assert!(!LlmBreak { tool: "Bash".into(), ..Default::default() }.matches(&api, Some(&body), &prices));
+        assert!(!LlmBreak { min_tokens: 50_000, ..Default::default() }.matches(&api, Some(&body), &prices));
+        assert_eq!(LlmBreak { model: "claude".into(), min_tokens: 5, ..Default::default() }.label(), "bpllm model=claude tokens=5");
+        assert_eq!(any.label(), "bpllm *");
     }
 }

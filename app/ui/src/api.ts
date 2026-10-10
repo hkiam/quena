@@ -545,7 +545,7 @@ export interface LlmCall {
   stream: boolean;
   system: string[];
   messages: { role: string; parts: LlmPart[] }[];
-  tools: { name: string; description: string; size: number }[];
+  tools: { name: string; description: string; size: number; tokens: number }[];
   params: [string, string][];
   output: LlmPart[];
   stopReason: string | null;
@@ -614,6 +614,30 @@ export interface ConvSummary {
   window?: number;
   parent?: string;
   subagent: boolean;
+  limited: number;
+  retries: number;
+  ttfbMs?: number;
+  tokensPerS?: number;
+  divergedAt?: number;
+}
+export interface RateInfo {
+  tokensLeft?: number;
+  tokensLimit?: number;
+  requestsLeft?: number;
+  requestsLimit?: number;
+  retryAfter?: string;
+}
+export interface ConvSide {
+  summary: ConvSummary;
+  tools: Record<string, number>;
+  context: Record<string, number>;
+  hints: number;
+}
+export interface LlmVariant {
+  system?: string | null;
+  dropTools?: string[];
+  model?: string | null;
+  maxTokens?: number | null;
 }
 export interface ConvTurn {
   id: SessionId;
@@ -631,6 +655,10 @@ export interface ConvTurn {
   messages: number;
   diff: TurnDiff;
   cache: CodeNote[];
+  status: number;
+  ttfbMs?: number;
+  tokensPerS?: number;
+  rate?: RateInfo;
 }
 export interface ConvHint extends CodeNote {
   tokens: number;
@@ -812,7 +840,10 @@ export type RwOp =
   | { op: "setCookie"; name: string; value: string }
   | { op: "removeCookie"; name: string }
   | { op: "mark"; color: MarkColor }
-  | { op: "comment"; text: string };
+  | { op: "comment"; text: string }
+  | { op: "llmRemoveTool"; name: string }
+  | { op: "llmSetModel"; model: string }
+  | { op: "llmAppendSystem"; text: string };
 
 /** A rewrite rule tried on a captured session. */
 export interface RwPreview {
@@ -1135,6 +1166,8 @@ export interface BpState {
   status: number | null;
   method: string | null;
   timeoutS: number;
+  /** `bpllm`: before LLM API requests matching all of these. */
+  llm?: { model: string; tool: string; minTokens: number } | null;
 }
 
 export interface Resume {
@@ -1508,6 +1541,9 @@ export const api = {
   mcpTrail: (id: SessionId) => invoke<ToolTrail | null>("mcp_trail", { id }),
   llmToolTrails: (id: SessionId) => invoke<ToolTrail[]>("llm_tool_trails", { id }),
   toolReport: () => invoke<ToolReport>("tool_report"),
+  llmVariant: (id: SessionId, variant: LlmVariant) => invoke<SessionId>("llm_variant", { id, variant }),
+  llmCompare: (a: string, b: string) => invoke<{ a: ConvSide; b: ConvSide } | null>("llm_compare", { a, b }),
+  llmFreeze: (key: string) => invoke<number>("llm_freeze", { key }),
   socketioPolling: (id: SessionId, part: Part) => invoke<SioPacket[] | null>("socketio_polling", { id, part }),
   msgpack: (id: SessionId, part: Part) => invoke<Msgpack | null>("msgpack", { id, part }),
   protobufStatus: () => invoke<SchemaStatus>("protobuf_status"),

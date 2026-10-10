@@ -75,6 +75,10 @@ export function hintText(h: ConvHint): string {
       return t("The context fills {pct} % of the window ({window} tokens)", { pct: a(h, "pct"), window: num(h, "window") });
     case "cacheMisses":
       return t("The cache missed in {n} of {turns} turns", { n: a(h, "n"), turns: a(h, "turns") });
+    case "rateLimited":
+      return t("{n} calls refused for the rate limit or an overloaded provider; {retries} sent again", { n: a(h, "n"), retries: a(h, "retries") });
+    case "rateHeadroom":
+      return t("Close to the rate limit: {left} of {limit} tokens left", { left: num(h, "left"), limit: num(h, "limit") });
     default:
       return h.code;
   }
@@ -90,6 +94,9 @@ export function hintTokens(h: ConvHint): string {
       return t("{n} tokens input", { n });
     case "cacheMisses":
       return t("{n} tokens without the cache", { n });
+    case "rateLimited":
+    case "rateHeadroom":
+      return t("waiting time instead of tokens");
     default:
       return t("≈ {n} tokens per request", { n });
   }

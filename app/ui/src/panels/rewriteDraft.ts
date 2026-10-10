@@ -22,6 +22,9 @@ export const OP_KINDS: [OpKind, string][] = [
   ["removeCookie", t("Cookie: remove (* all)")],
   ["mark", t("Session: mark")],
   ["comment", t("Session: comment")],
+  ["llmRemoveTool", t("LLM: remove tool (* prefix)")],
+  ["llmSetModel", t("LLM: set model")],
+  ["llmAppendSystem", t("LLM: add to system prompt")],
 ];
 
 export const MARK_COLORS: MarkColor[] = ["red", "blue", "gold", "green", "orange", "purple"];
@@ -73,6 +76,12 @@ export function toDraft(o: RwOp): OpDraft {
     case "mark":
       return { ...d, color: o.color };
     case "comment":
+      return { ...d, text: o.text };
+    case "llmRemoveTool":
+      return { ...d, name: o.name };
+    case "llmSetModel":
+      return { ...d, name: o.model };
+    case "llmAppendSystem":
       return { ...d, text: o.text };
   }
 }
@@ -145,6 +154,15 @@ export function fromDraft(d: OpDraft): { op: RwOp } | { error: string } {
     case "comment":
       if (!d.text.trim()) return { error: t("Enter a comment") };
       return { op: { op: "comment", text: d.text.trim() } };
+    case "llmRemoveTool":
+      if (!d.name.trim()) return { error: t("Enter a tool name") };
+      return { op: { op: "llmRemoveTool", name: d.name.trim() } };
+    case "llmSetModel":
+      if (!d.name.trim()) return { error: t("Enter a model") };
+      return { op: { op: "llmSetModel", model: d.name.trim() } };
+    case "llmAppendSystem":
+      if (!d.text.trim()) return { error: t("Enter the text") };
+      return { op: { op: "llmAppendSystem", text: d.text } };
   }
 }
 
@@ -181,5 +199,11 @@ export function describeOp(o: RwOp): string {
       return `● ${o.color}`;
     case "comment":
       return `“${o.text}”`;
+    case "llmRemoveTool":
+      return `− tool ${o.name}`;
+    case "llmSetModel":
+      return `model → ${o.model}`;
+    case "llmAppendSystem":
+      return `system + “${o.text.length > 40 ? `${o.text.slice(0, 40)}…` : o.text}”`;
   }
 }

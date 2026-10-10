@@ -427,6 +427,44 @@ pub struct Digest {
     pub cache_long: bool,
     /// Estimated input tokens.
     pub est: u64,
+    /// The response status (0: none), time to the response's first byte and from it to the
+    /// end (ms).
+    pub status: u16,
+    pub ttfb_ms: Option<u64>,
+    pub gen_ms: Option<u64>,
+    /// Rate limits the provider reported with the response.
+    pub rate: Option<RateInfo>,
+}
+
+/// What a response says about the provider's rate limits.
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RateInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_left: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_limit: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requests_left: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requests_limit: Option<u64>,
+    /// `retry-after` (seconds, or a date).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after: Option<String>,
+}
+
+/// Rate limits from response headers: Anthropic's `anthropic-ratelimit-*` (input tokens first,
+/// then all tokens), OpenAI's `x-ratelimit-*`.
+pub fn rate_of(h: &quena_model::Headers) -> Option<RateInfo> {
+    let n = |k: &str| h.get(k).and_then(|v| v.trim().parse::<u64>().ok());
+    let r = RateInfo {
+        tokens_left: n("anthropic-ratelimit-input-tokens-remaining").or_else(|| n("anthropic-ratelimit-tokens-remaining")).or_else(|| n("x-ratelimit-remaining-tokens")),
+        tokens_limit: n("anthropic-ratelimit-input-tokens-limit").or_else(|| n("anthropic-ratelimit-tokens-limit")).or_else(|| n("x-ratelimit-limit-tokens")),
+        requests_left: n("anthropic-ratelimit-requests-remaining").or_else(|| n("x-ratelimit-remaining-requests")),
+        requests_limit: n("anthropic-ratelimit-requests-limit").or_else(|| n("x-ratelimit-limit-requests")),
+        retry_after: h.get("retry-after").map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
+    };
+    (r != RateInfo::default()).then_some(r)
 }
 
 fn header<'a>(d: &'a SessionDetail, name: &str) -> Option<&'a str> {
@@ -505,7 +543,29 @@ impl Digest {
             cache_marks: call.cache_marks.iter().filter(|m| !m.starts_with("ttl")).count(),
             cache_long: call.cache_marks.iter().any(|m| m == "ttl 1h"),
             est: breakdown(call).estimated,
+            status: resp.map(|r| r.status).unwrap_or(0),
+            ttfb_ms: match (d.timers.server_done_request.or(d.timers.server_begin_request), d.timers.server_got_first_byte) {
+                (Some(a), Some(b)) if b >= a => Some(((b - a) / 1_000) as u64),
+                _ => None,
+            },
+            gen_ms: match (d.timers.server_got_first_byte, d.timers.server_done_response) {
+                (Some(a), Some(b)) if b >= a => Some(((b - a) / 1_000) as u64),
+                _ => None,
+            },
+            rate: resp.and_then(|r| rate_of(&r.headers)),
         }
+    }
+
+    /// Output tokens per second while the answer came (streamed: from its first byte).
+    pub fn tokens_per_s(&self) -> Option<f64> {
+        let out = self.spent()?.output;
+        let ms = self.gen_ms.filter(|m| *m >= 50).or(self.duration_ms.map(|d| d as u64)).filter(|m| *m > 0)?;
+        (out > 0).then(|| out as f64 * 1000.0 / ms as f64)
+    }
+
+    /// Refused for its rate (429) or the provider being overloaded (529, 503).
+    pub fn limited(&self) -> bool {
+        matches!(self.status, 429 | 529 | 503)
     }
 
     fn end_us(&self) -> i64 {
@@ -1016,6 +1076,27 @@ pub struct ConvSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     pub subagent: bool,
+    /// Calls refused for their rate or an overloaded provider (429, 529, 503), and calls sent
+    /// again unchanged (retries).
+    pub limited: u32,
+    pub retries: u32,
+    /// Median time to the first byte (ms) and output tokens per second.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttfb_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_per_s: Option<f64>,
+    /// Turns answered from Quena's agent cache before the first that was not (a frozen run
+    /// that went another way): the turn where it left the recording.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diverged_at: Option<u32>,
+}
+
+fn median<T: Copy + PartialOrd>(mut v: Vec<T>) -> Option<T> {
+    if v.is_empty() {
+        return None;
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(v[v.len() / 2])
 }
 
 /// One turn of a conversation.
@@ -1041,6 +1122,13 @@ pub struct Turn {
     pub messages: usize,
     pub diff: TurnDiff,
     pub cache: Vec<CacheNote>,
+    pub status: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttfb_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_per_s: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate: Option<RateInfo>,
 }
 
 /// A hint where tokens go to waste.
@@ -1115,6 +1203,10 @@ fn turns_of(c: &Conv) -> Vec<Turn> {
                 messages: d.messages.len(),
                 diff: diff(prev.map(|p| p.as_ref()), d),
                 cache: cache_notes(c.cache_base(d.id).map(|b| b.as_ref()), d, judged),
+                status: d.status,
+                ttfb_ms: d.ttfb_ms,
+                tokens_per_s: d.tokens_per_s(),
+                rate: d.rate.clone(),
             }
         })
         .collect()
@@ -1165,6 +1257,15 @@ fn summary_of(b: &Built, ci: usize, turns: &[Turn], prices: &llm::PriceList) -> 
         window: window_of(&main_last.model, last_input, prices),
         parent: b.parent.get(&ci).map(|p| key_text(b.convs[*p].key)),
         subagent: !c.main() || b.parent.contains_key(&ci),
+        limited: ds.iter().filter(|d| d.limited()).count() as u32,
+        retries: turns.iter().filter(|t| t.diff.kind == "same").count() as u32,
+        ttfb_ms: median(ds.iter().filter_map(|d| d.ttfb_ms).collect()),
+        tokens_per_s: median(ds.iter().filter_map(|d| d.tokens_per_s()).collect()),
+        diverged_at: {
+            let main: Vec<&Arc<Digest>> = ds.iter().filter(|d| !c.side.contains(&d.id)).collect();
+            let first_hit = main.iter().position(|d| d.hit);
+            first_hit.and_then(|h| main[h..].iter().position(|d| !d.hit).map(|p| (h + p + 1) as u32))
+        },
     }
 }
 
@@ -1246,6 +1347,18 @@ fn hints(last: &LlmCall, c: &Conv, turns: &[Turn], window: Option<u64>) -> Vec<H
     {
         out.push(hint("window", input, &[("pct", (input * 100 / w).to_string()), ("window", w.to_string())]));
     }
+    let limited = turns.iter().filter(|t| matches!(t.status, 429 | 529 | 503)).count();
+    if limited > 0 {
+        let retries = turns.iter().filter(|t| t.diff.kind == "same").count();
+        out.push(hint("rateLimited", 0, &[("n", limited.to_string()), ("retries", retries.to_string())]));
+    }
+    if let Some(r) = turns.iter().rev().find_map(|t| t.rate.as_ref())
+        && let (Some(left), Some(limit)) = (r.tokens_left, r.tokens_limit)
+        && limit > 0
+        && left * 10 < limit
+    {
+        out.push(hint("rateHeadroom", 0, &[("left", left.to_string()), ("limit", limit.to_string())]));
+    }
     let misses: Vec<&Turn> = turns.iter().filter(|t| t.cache.iter().any(|n| n.code == "miss")).collect();
     if !misses.is_empty() {
         let lost: u64 = misses.iter().flat_map(|t| &t.cache).filter(|n| n.code == "miss").filter_map(|n| n.args.get("tokens")?.parse::<u64>().ok()).sum();
@@ -1253,6 +1366,26 @@ fn hints(last: &LlmCall, c: &Conv, turns: &[Turn], window: Option<u64>) -> Vec<H
     }
     out.sort_by(|a, b| b.tokens.cmp(&a.tokens).then_with(|| a.code.cmp(b.code)));
     out
+}
+
+/// One side of a comparison of two conversations.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvSide {
+    pub summary: ConvSummary,
+    /// Calls the model asked for, by tool.
+    pub tools: BTreeMap<String, u32>,
+    /// What filled the last request, by category.
+    pub context: BTreeMap<String, u64>,
+    pub hints: u32,
+}
+
+/// Two conversations side by side (an A/B test of a prompt, skill, model, MCP server).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvCompare {
+    pub a: ConvSide,
+    pub b: ConvSide,
 }
 
 // ------------------------------------------------------------------ AppCore
@@ -1413,6 +1546,41 @@ impl AppCore {
         let mut children: Vec<String> = b.parent.iter().filter(|(_, p)| **p == ci).map(|(k, _)| key_text(b.convs[*k].key)).collect();
         children.sort();
         Some(ConvDetail { summary, turns, hints, breakdown, children })
+    }
+
+    /// Two conversations side by side.
+    pub fn llm_compare(&self, a: &str, b: &str) -> Option<ConvCompare> {
+        let side = |key: &str| -> Option<ConvSide> {
+            let d = self.llm_conversation(key)?;
+            let mut tools: BTreeMap<String, u32> = BTreeMap::new();
+            for t in &d.turns {
+                for c in &t.calls {
+                    *tools.entry(c.clone()).or_default() += 1;
+                }
+            }
+            let mut context: BTreeMap<String, u64> = BTreeMap::new();
+            for s in d.breakdown.iter().flat_map(|b| &b.slices) {
+                *context.entry(s.category.to_string()).or_default() += s.tokens;
+            }
+            Some(ConvSide { summary: d.summary, tools, context, hints: d.hints.len() as u32 })
+        };
+        Some(ConvCompare { a: side(a)?, b: side(b)? })
+    }
+
+    /// Freeze a conversation for replays: its answered turns go into the agent cache, so the
+    /// agent run again gets the same answers without asking the model (until it asks something
+    /// else). Returns the turns added.
+    pub fn llm_freeze(&self, key: &str) -> anyhow::Result<u32> {
+        let b = self.all_built();
+        let c = b.convs.iter().find(|c| key_text(c.key) == key).ok_or_else(|| anyhow::anyhow!("no conversation {key}"))?;
+        let mut n = 0;
+        for d in c.digests.iter().filter(|d| !d.hit && (200..300).contains(&d.status)) {
+            if !self.llm_cached(d.id) {
+                self.llm_cache_set(d.id, true)?;
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     /// LLM call `id` in its conversation: its context, and what changed from the call it
@@ -1689,6 +1857,57 @@ mod tests {
         assert_eq!(dups[0].args["tool"], "Grep");
         assert_eq!(h.iter().find(|h| h.code == "unusedTools").unwrap().args["names"], "Bash");
         assert_eq!(h.iter().filter(|h| h.code == "bigResult").count(), 0, "no result is that large here");
+    }
+
+    #[test]
+    fn latency_rate_limits_retries_and_replays() {
+        let mut h = quena_model::Headers::default();
+        h.push("anthropic-ratelimit-input-tokens-remaining", "1500");
+        h.push("anthropic-ratelimit-input-tokens-limit", "40000");
+        h.push("retry-after", "12");
+        let r = rate_of(&h).unwrap();
+        assert_eq!((r.tokens_left, r.tokens_limit, r.retry_after.as_deref()), (Some(1500), Some(40_000), Some("12")));
+        assert!(rate_of(&quena_model::Headers::default()).is_none());
+        let m1 = msg("user", vec![text("Refactor the parser")]);
+        let c1 = call("sys", vec![m1.clone()], 20_000, 0);
+        let mk = |id: SessionId, started: i64, status: u16, hit: bool, rate: bool| {
+            let mut d = detail(started, &[]);
+            d.timers.server_done_request = Some(started * 1_000_000);
+            d.timers.server_got_first_byte = Some(started * 1_000_000 + 400_000);
+            d.timers.server_done_response = Some(started * 1_000_000 + 900_000);
+            let mut resp = quena_model::ResponseHead { status, ..Default::default() };
+            if rate {
+                resp.headers = h.clone();
+            }
+            d.response = Some(resp);
+            if hit {
+                d.extra_flags.push((crate::llm_cache::CACHE_FLAG.into(), "hit".into()));
+            }
+            Arc::new(Digest::new(id, &d, &c1))
+        };
+        let a = mk(1, 0, 200, false, false);
+        assert_eq!(a.ttfb_ms, Some(400));
+        assert_eq!(a.tokens_per_s().map(|t| t.round()), Some(20.0), "10 tokens in 0.5 s");
+        // A refused call, its retry, then the same request answered again.
+        let b = build(&[a.clone(), mk(2, 5, 429, false, true), mk(3, 9, 200, false, false)]);
+        let turns = turns_of(&b.convs[0]);
+        let s = summary_of(&b, 0, &turns, &llm::PriceList::default());
+        assert_eq!((s.limited, s.retries), (1, 2));
+        assert_eq!(s.ttfb_ms, Some(400));
+        let hs = hints(&c1, &b.convs[0], &turns, None);
+        assert!(hs.iter().any(|h| h.code == "rateLimited" && h.args["n"] == "1"));
+        assert!(hs.iter().any(|h| h.code == "rateHeadroom"), "1500 of 40000 left");
+        // A frozen run: answered from the cache until turn 3.
+        let c2 = call("sys", vec![m1.clone(), msg("assistant", vec![text("ok")]), msg("user", vec![text("next")])], 21_000, 0);
+        let c3 = call("sys", vec![m1.clone(), msg("assistant", vec![text("ok")]), msg("user", vec![text("next")]), msg("assistant", vec![text("x")]), msg("user", vec![text("other")])], 22_000, 0);
+        let hit = |id, started, c: &LlmCall| {
+            let mut d = detail(started, &[]);
+            d.extra_flags.push((crate::llm_cache::CACHE_FLAG.into(), "hit".into()));
+            Arc::new(Digest::new(id, &d, c))
+        };
+        let b = build(&[hit(1, 0, &c1), hit(2, 5, &c2), digest(3, 9, &c3)]);
+        let turns = turns_of(&b.convs[0]);
+        assert_eq!(summary_of(&b, 0, &turns, &llm::PriceList::default()).diverged_at, Some(3));
     }
 
     #[test]

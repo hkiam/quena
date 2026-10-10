@@ -3,14 +3,14 @@
 // hints where tokens go to waste.
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { api, type CallContext, type ConvDetail, type ConvSummary, type SessionId } from "../api";
+import { api, type CallContext, type ConvDetail, type ConvSide, type ConvSummary, type SessionId } from "../api";
 import { actions } from "../actions";
 import { fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
-import { breaksCache, cacheText, convTree, diffText, hintText, hintTokens } from "../lib/agentText";
+import { CATEGORIES, breaksCache, cacheText, convTree, diffText, hintText, hintTokens } from "../lib/agentText";
 import { CallContextView } from "./CallContext";
 import { AgentTools } from "./AgentTools";
 import { useListVersion } from "../lib/useSettled";
-import { set, useStore } from "../store";
+import { confirmAsk, say, set, useStore } from "../store";
 import { plural, t } from "../i18n";
 import { ContextMap } from "./ContextMap";
 
@@ -135,6 +135,7 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
   const [d, setD] = useState<ConvDetail | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [turnId, setTurnId] = useState<SessionId | null>(null);
+  const [other, setOther] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
     api.llmConversation(convKey).then(
@@ -152,6 +153,15 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
   const span = Math.max(1, s.ended - s.started);
   const titleOf = (k: string) => list.find((c) => c.key === k)?.title ?? k;
   const turnAt = d.turns.findIndex((x) => x.id === turnId);
+  const freeze = async () => {
+    if (!(await confirmAsk(t("Freeze this conversation?"), t("Its answered turns go into the agent cache: the agent run again gets the same answers from Quena without asking the model, until it asks something else. The conversation then shows where the new run left the recording."), t("Freeze")))) return;
+    try {
+      const n = await api.llmFreeze(convKey);
+      say(plural(n, "{n} turn added to the agent cache", "{n} turns added to the agent cache"));
+    } catch (e) {
+      say(String(e), "error");
+    }
+  };
   return (
     <div className="conv">
       {error && <div className="mocks-error small">{error}</div>}
@@ -175,7 +185,31 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
             {t("context {pct} %", { pct: Math.round((s.lastInput * 100) / s.window) })}
           </span>
         ) : null}
+        {s.ttfbMs != null && <span title={t("Median time to the response's first byte")}>{t("first byte {t}", { t: fmtMs(s.ttfbMs) })}</span>}
+        {s.tokensPerS != null && <span title={t("Median output tokens per second")}>{t("{n} tokens/s", { n: Math.round(s.tokensPerS) })}</span>}
+        {s.limited > 0 && <span className="warn">{plural(s.limited, "{n} refused (rate limit)", "{n} refused (rate limit)")}</span>}
+        {s.retries > 0 && <span>{plural(s.retries, "{n} retry", "{n} retries")}</span>}
+        {s.divergedAt != null && <span className="warn" title={t("Answered from the agent cache until this turn: here the run asked something the recording did not have")}>{t("left the frozen run at turn {n}", { n: s.divergedAt })}</span>}
       </div>
+      <div className="conv-actions small">
+        <button type="button" className="linklike" onClick={() => void freeze()} title={t("Put the answered turns into the agent cache, to run the agent again against them")}>
+          {t("Freeze for replays…")}
+        </button>
+        <label>
+          {t("Compare with")}{" "}
+          <select value={other ?? ""} onChange={(e) => setOther(e.target.value || null)}>
+            <option value="">–</option>
+            {list
+              .filter((c) => c.key !== convKey)
+              .map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.title.slice(0, 60)}
+                </option>
+              ))}
+          </select>
+        </label>
+      </div>
+      {other && <CompareView a={convKey} b={other} refresh={refresh} />}
       {s.parent && (
         <div className="small">
           {t("Started by")}{" "}
@@ -222,6 +256,12 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
             </th>
             <th className="num">{t("Out")}</th>
             <th className="num">{t("Cost")}</th>
+            <th className="num" title={t("Time to the response's first byte")}>
+              {t("First byte")}
+            </th>
+            <th className="num" title={t("Output tokens per second")}>
+              {t("tok/s")}
+            </th>
             <th>{t("Change")}</th>
             <th>{t("Calls")}</th>
           </tr>
@@ -250,7 +290,12 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
                 <td className={`num ${miss ? "warn" : ""}`}>{x.usage ? `${cacheShare(x.usage.cacheRead, x.usage.input)} %` : ""}</td>
                 <td className="num">{x.usage ? fmtInt(x.usage.output) : ""}</td>
                 <td className="num">{x.cost != null ? fmtUsd(x.cost) : ""}</td>
+                <td className="num">{x.ttfbMs != null ? fmtMs(x.ttfbMs) : ""}</td>
+                <td className="num" title={x.rate ? rateText(x.rate) : undefined}>
+                  {x.tokensPerS != null ? Math.round(x.tokensPerS) : ""}
+                </td>
                 <td className={`small ${breaksCache(x.diff) ? "warn" : "muted"}`}>
+                  {x.status >= 400 && <span className="pill pill-err">{x.status}</span>} 
                   {diffText(x.diff)}
                   {x.diff.modelChanged && <span className="mono"> {x.model}</span>}
                 </td>
@@ -303,5 +348,108 @@ function TurnContext({ id, index }: { id: SessionId; index: number }) {
       {c === null && <div className="muted small">{t("The request of this turn cannot be read.")}</div>}
       {c && <CallContextView c={c} />}
     </>
+  );
+}
+
+/** The rate limits a response reported. */
+function rateText(r: { tokensLeft?: number; tokensLimit?: number; requestsLeft?: number; requestsLimit?: number; retryAfter?: string }): string {
+  const parts: string[] = [];
+  if (r.tokensLeft != null) parts.push(t("tokens left: {left} of {limit}", { left: fmtInt(r.tokensLeft), limit: r.tokensLimit != null ? fmtInt(r.tokensLimit) : "?" }));
+  if (r.requestsLeft != null) parts.push(t("requests left: {left} of {limit}", { left: fmtInt(r.requestsLeft), limit: r.requestsLimit != null ? fmtInt(r.requestsLimit) : "?" }));
+  if (r.retryAfter) parts.push(t("retry after {t}", { t: r.retryAfter }));
+  return parts.join("\n");
+}
+
+/** Two conversations side by side: an A/B test of a prompt, skill, model or MCP server. */
+function CompareView({ a, b, refresh }: { a: string; b: string; refresh: string }) {
+  const [c, setC] = useState<{ a: ConvSide; b: ConvSide } | null | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    api.llmCompare(a, b).then((r) => alive && setC(r), () => alive && setC(null));
+    return () => {
+      alive = false;
+    };
+  }, [a, b, refresh]);
+  if (c === undefined) return <div className="muted small">{t("Computing…")}</div>;
+  if (c === null) return <div className="muted small">{t("One of the conversations is no longer in the capture.")}</div>;
+  const dur = (s: ConvSummary) => Math.max(0, s.ended - s.started) / 1000;
+  const rows: [string, (x: ConvSide) => number, (n: number) => string][] = [
+    [t("Turns"), (x) => x.summary.turns, (n) => String(n)],
+    [t("Input tokens"), (x) => x.summary.input, fmtInt],
+    [t("Output tokens"), (x) => x.summary.output, fmtInt],
+    [t("Cached share"), (x) => cacheShare(x.summary.cacheRead, x.summary.input), (n) => `${n} %`],
+    [t("Cost"), (x) => x.summary.cost ?? 0, fmtUsd],
+    [t("Duration"), (x) => dur(x.summary), (n) => fmtMs(Math.round(n))],
+    [t("Last request"), (x) => x.summary.lastInput, fmtInt],
+    [t("Cache misses"), (x) => x.summary.cacheMisses, (n) => String(n)],
+    [t("Errors"), (x) => x.summary.errors, (n) => String(n)],
+    [t("Hints"), (x) => x.hints, (n) => String(n)],
+  ];
+  const keys = (f: (x: ConvSide) => Record<string, number>) => [...new Set([...Object.keys(f(c.a)), ...Object.keys(f(c.b))])].sort((x, y) => (f(c.b)[y] ?? 0) + (f(c.a)[y] ?? 0) - (f(c.b)[x] ?? 0) - (f(c.a)[x] ?? 0));
+  const delta = (va: number, vb: number, fmt: (n: number) => string) => {
+    if (va === vb) return <span className="muted">=</span>;
+    const pct = va ? Math.round(((vb - va) * 100) / va) : null;
+    return (
+      <span className={vb > va ? "warn" : "ok"}>
+        {vb > va ? "+" : "−"}
+        {fmt(Math.abs(vb - va))}
+        {pct != null && ` (${pct > 0 ? "+" : ""}${pct} %)`}
+      </span>
+    );
+  };
+  return (
+    <div className="conv-compare">
+      <h4>{t("A/B comparison")}</h4>
+      <table className="agt-table">
+        <thead>
+          <tr>
+            <th />
+            <th className="num" title={c.a.summary.title}>
+              A
+            </th>
+            <th className="num" title={c.b.summary.title}>
+              B
+            </th>
+            <th className="num">B − A</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, f, fmt]) => (
+            <tr key={label}>
+              <td>{label}</td>
+              <td className="num">{fmt(f(c.a))}</td>
+              <td className="num">{fmt(f(c.b))}</td>
+              <td className="num">{delta(f(c.a), f(c.b), fmt)}</td>
+            </tr>
+          ))}
+          <tr>
+            <td colSpan={4} className="muted small">
+              {t("Context of the last request")}
+            </td>
+          </tr>
+          {keys((x) => x.context).map((k) => (
+            <tr key={`c:${k}`}>
+              <td>{CATEGORIES[k] ?? k}</td>
+              <td className="num">{fmtInt(c.a.context[k] ?? 0)}</td>
+              <td className="num">{fmtInt(c.b.context[k] ?? 0)}</td>
+              <td className="num">{delta(c.a.context[k] ?? 0, c.b.context[k] ?? 0, fmtInt)}</td>
+            </tr>
+          ))}
+          <tr>
+            <td colSpan={4} className="muted small">
+              {t("Tool calls")}
+            </td>
+          </tr>
+          {keys((x) => x.tools).map((k) => (
+            <tr key={`t:${k}`}>
+              <td className="mono">{k}</td>
+              <td className="num">{c.a.tools[k] ?? 0}</td>
+              <td className="num">{c.b.tools[k] ?? 0}</td>
+              <td className="num">{delta(c.a.tools[k] ?? 0, c.b.tools[k] ?? 0, String)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

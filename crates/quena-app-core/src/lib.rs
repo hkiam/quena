@@ -32,6 +32,7 @@ pub mod msgpack;
 pub mod navigator;
 pub mod multipart;
 pub mod pac;
+pub mod playground;
 pub mod plugins;
 pub mod protobuf;
 pub mod rewrite;
@@ -697,6 +698,8 @@ impl AppCore {
                 },
                 "bpv",
             ),
+            Command::BreakLlm(spec) if self.rules.is_some() => self.set_bp(|b| b.llm = spec.map(|s| rules::LlmBreak { model: s.model, tool: s.tool, min_tokens: s.min_tokens }), "bpllm"),
+            Command::BreakLlm(_) => QuickExecResult::error("breakpoints unavailable"),
             Command::Go => {
                 let n = self.rules.as_ref().map(|r| r.go_all()).unwrap_or(0);
                 QuickExecResult::msg(format!("Resumed {n} session(s)"))

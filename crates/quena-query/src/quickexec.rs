@@ -12,6 +12,46 @@ pub enum BreakTarget {
     Method(String),
 }
 
+/// A token count: `50000`, `50k`, `1.5m` (thousands, not KiB).
+fn tokens(v: &str) -> Option<u64> {
+    let v = v.trim().to_ascii_lowercase();
+    let (num, mul) = match v.chars().last()? {
+        'k' => (&v[..v.len() - 1], 1e3),
+        'm' => (&v[..v.len() - 1], 1e6),
+        _ => (v.as_str(), 1.0),
+    };
+    num.parse::<f64>().ok().filter(|n| *n >= 0.0).map(|n| (n * mul) as u64)
+}
+
+/// `bpllm`: break before LLM API requests that match all given conditions.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LlmBreakSpec {
+    /// The model contains this (empty: any).
+    pub model: String,
+    /// The request offers this tool (`*` at the end: a prefix; empty: any).
+    pub tool: String,
+    /// At least this many input tokens, estimated (0: any).
+    pub min_tokens: u64,
+}
+
+impl LlmBreakSpec {
+    /// `model=claude tool=mcp__jira__* tokens=50000`, a bare word for the model, `*` for any.
+    pub fn parse(arg: &str) -> Result<LlmBreakSpec, ParseError> {
+        let mut s = LlmBreakSpec::default();
+        for w in arg.split_whitespace() {
+            match w.split_once('=') {
+                Some(("model", v)) => s.model = v.to_string(),
+                Some(("tool", v)) => s.tool = v.to_string(),
+                Some(("tokens", v)) => s.min_tokens = tokens(v).ok_or(ParseError { msg: "tokens needs a number, e.g. tokens=50k".into(), pos: 0 })?,
+                Some((k, _)) => return Err(ParseError { msg: format!("bpllm knows model=, tool=, tokens= (not {k}=)"), pos: 0 }),
+                None if w == "*" => {}
+                None => s.model = w.to_string(),
+            }
+        }
+        Ok(s)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Command {
     /// Select all sessions matching the expression (`?`, `=`, `@`, `>`, `<`, `select`).
@@ -32,6 +72,8 @@ pub enum Command {
     BreakStatus(BreakTarget),
     /// `bpv`/`bpm` – break on method.
     BreakMethod(BreakTarget),
+    /// `bpllm` – break before LLM requests (`None`: off).
+    BreakLlm(Option<LlmBreakSpec>),
     /// `g`/`go` – resume all breakpointed sessions.
     Go,
     /// `dump` – save all sessions to a SAZ file.
@@ -55,6 +97,7 @@ bpu [text]    break before request (URL contains text); without text: off
 bpafter [t]   break after response (URL contains t)
 bps 500       break on response status
 bpv POST      break on request method
+bpllm [cond]  break before LLM requests: * any, model=claude tool=mcp__jira__* tokens=50k; without: off
 g | go        resume all paused sessions
 dump          save all sessions as .saz
 start | stop  start/stop capturing
@@ -123,6 +166,7 @@ pub fn parse(input: &str) -> Result<Command, ParseError> {
             BreakTarget::Status(arg.parse().map_err(|_| ParseError { msg: "bps needs a status code".into(), pos: 0 })?)
         }),
         "bpv" | "bpm" => Command::BreakMethod(if arg.is_empty() { BreakTarget::Off } else { BreakTarget::Method(arg.to_ascii_uppercase()) }),
+        "bpllm" => Command::BreakLlm(if arg.is_empty() { None } else { Some(LlmBreakSpec::parse(&arg)?) }),
         "g" | "go" => Command::Go,
         "dump" => Command::Dump,
         "start" => Command::Capture(true),
@@ -134,6 +178,16 @@ pub fn parse(input: &str) -> Result<Command, ParseError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn llm_breakpoints() {
+        let Ok(Command::BreakLlm(Some(b))) = parse("bpllm model=claude tool=mcp__jira__* tokens=50k") else { panic!() };
+        assert_eq!(b, LlmBreakSpec { model: "claude".into(), tool: "mcp__jira__*".into(), min_tokens: 50_000 });
+        assert!(matches!(parse("bpllm"), Ok(Command::BreakLlm(None))));
+        assert!(matches!(parse("bpllm *"), Ok(Command::BreakLlm(Some(s))) if s == LlmBreakSpec::default()));
+        assert!(matches!(parse("bpllm gpt"), Ok(Command::BreakLlm(Some(s))) if s.model == "gpt"));
+        assert!(parse("bpllm size=3").is_err());
+    }
+
     use super::*;
     use quena_model::SessionSummary;
 

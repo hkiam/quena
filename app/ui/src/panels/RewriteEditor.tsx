@@ -65,6 +65,9 @@ function OpRow({ d, onChange, onRemove, onMove }: { d: OpDraft; onChange: (d: Op
         </select>
       )}
       {d.op === "comment" && <input {...plain} className="rw-value" value={d.text} placeholder={t("comment")} onChange={(e) => up({ text: e.target.value })} />}
+      {d.op === "llmRemoveTool" && <input {...plain} className="mono rw-path" value={d.name} placeholder="mcp__jira__*" title={t("Tool name; * at the end for all tools starting so")} onChange={(e) => up({ name: e.target.value })} />}
+      {d.op === "llmSetModel" && <input {...plain} className="mono rw-path" value={d.name} placeholder="claude-haiku-4-5" onChange={(e) => up({ name: e.target.value })} />}
+      {d.op === "llmAppendSystem" && <textarea {...plain} className="rw-value" rows={2} value={d.text} placeholder={t("text added to the end of the system prompt")} onChange={(e) => up({ text: e.target.value })} />}
       <span className="rw-op-buttons">
         <button title={t("Move up")} onClick={() => onMove(-1)}>
           ↑

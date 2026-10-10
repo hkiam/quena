@@ -193,6 +193,43 @@ recorded sessions: select them and use *Mock Rules → Mocks from Sessions…* (
 recorded answer (JSON compared regardless of key order); without it, *In recorded order*
 answers the calls one after the other. Streamed answers are replayed as recorded.
 
+### Latency and rate limits
+
+The turns show the time to the response's first byte and the output tokens per second; the
+conversation their medians. A turn refused with 429 (rate limit) or 529/503 (provider
+overloaded) is marked with its status, and the rate limits a response reports
+(`anthropic-ratelimit-*`, `x-ratelimit-*`, `retry-after`) show when pointing at its tokens per
+second. Hints say how many calls were refused and sent again, and when little of the token
+limit is left.
+
+### Try a variant
+
+*Try a variant…* in the LLM view sends the call again with changes: another **system
+prompt**, **tools** left out, another **model**, another **output limit**. The variant goes
+to the same API with the original request's headers — its credentials included — after you
+confirm, and costs tokens like any call. Its answer and tokens show next to the original's;
+the new session is commented *Variant of #N*.
+
+### Freeze a run for replays
+
+*Freeze for replays…* puts a conversation's answered turns into the [agent
+cache](#agent-cache). Run the agent again — after changing a skill, an MCP server, a prompt
+file — and Quena answers the same requests from the recording without asking the model.
+Where the new run asks something the recording does not have, the call goes to the model,
+and the conversation says at which turn the run *left the frozen run*.
+
+### Compare two runs
+
+*Compare with* sets two conversations side by side — an A/B test of a prompt, a skill, a model
+or an MCP server: turns, input and output tokens, cached share, cost, duration, the size of
+the last request, cache misses, errors and hints, what filled the last request by category,
+and the tool calls by tool, each with the difference.
+
+To change what an agent sends while it runs, use the rewrite rules' LLM changes (remove a
+tool, set the model, add to the system prompt; see [rewrite
+rules](change-replay.md#the-editor)); to stop a request and edit it, the breakpoint
+`bpllm` (see [breakpoints](change-replay.md#setting-breakpoints)).
+
 ## MCP servers
 
 Agents call their tools on MCP servers (Model Context Protocol). Quena recognises these

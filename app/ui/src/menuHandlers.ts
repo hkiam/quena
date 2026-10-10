@@ -55,6 +55,8 @@ export async function handleMenu(id: string) {
       return import("./breakpoints").then((m) => m.setAuto("before"));
     case "rules.bp-after":
       return import("./breakpoints").then((m) => m.setAuto("after"));
+    case "rules.bp-llm":
+      return import("./breakpoints").then((m) => m.toggleLlm());
     case "rules.bp-off":
       return import("./breakpoints").then((m) => m.setAuto("off"));
     case "rules.auto-auth": {

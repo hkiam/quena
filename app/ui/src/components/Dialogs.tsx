@@ -250,6 +250,7 @@ const QUICKEXEC_HELP = (
     ["bpafter [t]", t("break after response (URL contains t)")],
     ["bps 500", t("break on response status")],
     ["bpv POST", t("break on request method")],
+    ["bpllm [cond]", t("break before LLM requests: * any; model=claude tool=mcp__jira__* tokens=50k; without: off")],
     ["g | go", t("resume all paused sessions")],
     ["dump", t("save all sessions as .saz")],
     ["start | stop", t("start/stop capturing")],

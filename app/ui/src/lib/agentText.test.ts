@@ -25,6 +25,8 @@ const conv = (key: string, started: number, parent?: string): ConvSummary => ({
   lastInput: 0,
   parent,
   subagent: !!parent,
+  limited: 0,
+  retries: 0,
 });
 const diff = (d: Partial<TurnDiff>): TurnDiff => ({ kind: "append", added: 0, dropped: 0, systemChanged: false, toolsReordered: false, modelChanged: false, ...d });
 

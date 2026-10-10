@@ -247,6 +247,10 @@ in the [manual](https://hkiam.github.io/quena/ci/).
   definition costs in tokens, the way from the model's request to the server and back;
   stdio servers recorded with `quena-cli mcp-tap`; a report of tools and skills offered,
   called, failed and never used
+- **Optimise agents**: compare two runs (A/B), try a variant of a call (system prompt, tools,
+  model), freeze a run in the agent cache and replay against it, change requests on the fly
+  (remove tools, set the model, add to the system prompt) or break before matching LLM
+  requests; latency, tokens per second and rate limits per turn
 - Auto-detected inspectors: **WebSocket**, **SSE**, **gRPC / gRPC-Web / Protobuf**
   (field names from `.proto` files or server reflection, schemaless otherwise),
   **MessagePack**, **Multipart / MTOM**, **SOAP**, **Atom / OData**

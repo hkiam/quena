@@ -191,3 +191,49 @@ fn calls_of_an_archive_from_elsewhere_are_found() {
     assert_eq!(ctx.diff.unwrap().kind, "append");
     core.shutdown();
 }
+
+/// A variant of an LLM call goes out with the changes and the original's headers.
+#[test]
+fn a_variant_is_sent_with_its_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"port":0,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap();
+    core.set_proxy_engine(engine.clone());
+    core.start_capture().unwrap();
+    let addr = engine.proxy.listen_addrs().into_iter().find(|a| a.is_ipv4()).unwrap();
+    let port = fake_llm();
+    let body = r#"{"model":"claude-sonnet-4-20250514","max_tokens":10,"system":"You are long-winded.","tools":[{"name":"Read","input_schema":{}},{"name":"Bash","input_schema":{}}],"messages":[{"role":"user","content":"Hi"}]}"#;
+    let o = Command::new("curl").args(["-sS", "--max-time", "20", "-x", &format!("http://{addr}"), "-H", "Content-Type: application/json", "-H", "x-api-key: sk-test", "--data-binary", body, &format!("http://127.0.0.1:{port}/v1/messages")]).output().unwrap();
+    assert!(o.status.success());
+    let t = Instant::now();
+    let orig = loop {
+        core.capture().index.tick();
+        if let Some(id) = core.capture().index.find_all(|s| !s.llm.is_empty()).first().copied() {
+            break id;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20));
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let var = quena_app_core::playground::Variant { system: Some("Be brief.".into()), drop_tools: vec!["Bash".into()], model: Some("claude-haiku-4-5".into()), max_tokens: None };
+    let new = core.llm_variant(orig, var).unwrap();
+    let t = Instant::now();
+    let d = loop {
+        let d = core.capture().detail(new).unwrap();
+        if d.response.is_some() && d.summary.state == quena_model::SessionState::Done {
+            break d;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20));
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(d.request.headers.get("x-api-key"), Some("sk-test"), "the original's credentials");
+    assert_eq!(d.summary.comment, format!("Variant of #{orig}"));
+    let call = core.llm(new).unwrap();
+    assert_eq!(call.system, ["Be brief."]);
+    assert_eq!(call.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["Read"]);
+    // The fake server answers as Sonnet; the request asked for Haiku.
+    let (req, _) = core.capture().bodies_of(new).unwrap();
+    let sent: serde_json::Value = serde_json::from_slice(&req.read_range(0, req.len() as usize).unwrap()).unwrap();
+    assert_eq!(sent["model"], "claude-haiku-4-5");
+    core.shutdown();
+}

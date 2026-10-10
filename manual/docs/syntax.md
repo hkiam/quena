@@ -21,6 +21,7 @@ Syntax* and the command `help` show this list in the app.
 | `bpafter [text]` | break after responses (URL contains *text*); without text: off |
 | `bps 500` | break on a response status; `bps` alone: off |
 | `bpv POST`, `bpm POST` | break on a request method; alone: off |
+| `bpllm *`, `bpllm model=claude tool=mcp__jira__* tokens=50k` | break before [LLM requests](llm.md) (any, or matching all conditions); alone: off |
 | `g`, `go` | resume all paused sessions |
 | `dump` | save all sessions as `.saz` |
 | `start`, `stop` | start or stop capturing |

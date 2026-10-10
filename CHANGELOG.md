@@ -8,6 +8,20 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Optimising agents** (Agents panel and LLM view): *Compare with* sets two conversations
+  side by side (turns, tokens, cached share, cost, duration, last request, cache misses,
+  errors, hints, context by category, tool calls by tool, with the differences); *Try a
+  variant…* sends an LLM call again with another system prompt, fewer tools, another model or
+  output limit (after a confirmation, with the original's headers) and shows answer and
+  tokens next to the original's; *Freeze for replays…* puts a conversation's answered turns
+  into the agent cache and shows where a new run left the recording; turns show the time to
+  the first byte, tokens per second, refused calls (429/529/503), retries and the rate limits
+  the provider reports, with hints when calls were refused or little of the limit is left.
+- Rewrite rules: **LLM: remove tool** (`mcp__jira__*` for all of a server), **LLM: set
+  model**, **LLM: add to system prompt** — for Anthropic, OpenAI Chat and Responses, Gemini;
+  also over MCP (`llmRemoveTool`, `llmSetModel`, `llmAppendSystem`).
+- Breakpoint before LLM requests: *Capture → Breakpoints → Before LLM Requests*, or `bpllm`
+  with conditions (`model=claude tool=mcp__jira__* tokens=50k`).
 - **MCP servers** (Model Context Protocol): exchanges over Streamable HTTP and the older SSE
   transport are recognised and shown in a new **MCP** view — method, server name and
   version, protocol and session; for `tools/call` the arguments, the result (text, images,

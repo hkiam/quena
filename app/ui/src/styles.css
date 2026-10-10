@@ -4113,3 +4113,42 @@ tr.capdiff-changed td:first-child {
 .agents-switch button.insp-tab.active {
   background: var(--panel-bg);
 }
+.conv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: center;
+  margin: 4px 0;
+}
+.conv-compare td .ok {
+  color: var(--pill-ok-fg);
+}
+.conv-compare td .warn {
+  color: var(--pill-warn-fg);
+}
+.llm-playground {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  margin: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.llm-playground textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+.llm-play-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+}
+.llm-play-tools {
+  display: flex;
+  flex-direction: column;
+  max-height: 160px;
+  overflow: auto;
+}

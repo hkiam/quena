@@ -20,6 +20,7 @@ const FIXED: Record<string, () => string> = {
   "keeponly needs a content type": () => t("keeponly needs a content type, e.g. keeponly json"),
   "tail needs a number": () => t("tail needs a number, e.g. tail 100"),
   "bps needs a status code": () => t("bps needs a status code, e.g. bps 404"),
+  "tokens needs a number, e.g. tokens=50k": () => t("tokens needs a number, e.g. tokens=50k"),
   "unknown command – type help": () => t("Unknown command – type help, or filter EXPRESSION to filter"),
 };
 

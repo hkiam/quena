@@ -6,7 +6,7 @@ import { actions } from "../actions";
 import { useListVersion } from "../lib/useSettled";
 import { fmtInt, fmtUsd } from "../lib/format";
 import { t } from "../i18n";
-import { say, set } from "../store";
+import { confirmAsk, say, set } from "../store";
 import { CallContextView } from "../panels/CallContext";
 
 /** URLs of LLM APIs (mirrors the core's recognition; POST only). */
@@ -157,6 +157,136 @@ function ContextBar({ id, state }: { id: number; state: string }) {
   );
 }
 
+/** Prompt playground: send the call again with another system prompt, fewer tools, another
+ * model or output limit, and compare answer and tokens. */
+function Playground({ detail, c, onClose }: { detail: Detail; c: LlmCall; onClose: () => void }) {
+  const original = c.system.join("\n\n");
+  const limitParam = c.params.find(([k]) => k === "max_tokens" || k === "max_completion_tokens" || k === "max_output_tokens" || k === "maxOutputTokens");
+  const [system, setSystem] = useState(original);
+  const [model, setModel] = useState(c.model);
+  const [limit, setLimit] = useState(limitParam?.[1] ?? "");
+  const [off, setOff] = useState<Set<string>>(new Set());
+  const [sent, setSent] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [variant, setVariant] = useState<LlmCall | null>(null);
+  const version = useListVersion();
+  useEffect(() => {
+    if (sent == null || variant?.usage) return;
+    let alive = true;
+    api.llmCall(sent).then((r) => alive && r && setVariant(r), () => {});
+    return () => {
+      alive = false;
+    };
+  }, [sent, version]);
+  let host = "";
+  try {
+    host = new URL(detail.request.url).host;
+  } catch {
+    /* shown without host */
+  }
+  const send = async () => {
+    if (!(await confirmAsk(t("Send the variant?"), t("It goes to {host} with the original request's headers, its credentials included, and costs tokens like any call.", { host }), t("Send")))) return;
+    setBusy(true);
+    try {
+      const n = Number(limit);
+      const id = await api.llmVariant(detail.summary.id, {
+        system: system !== original ? system : null,
+        dropTools: [...off],
+        model: model !== c.model ? model : null,
+        maxTokens: limit !== (limitParam?.[1] ?? "") && Number.isFinite(n) && n > 0 ? n : null,
+      });
+      setSent(id);
+      setVariant(null);
+    } catch (e) {
+      say(String(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const usage = (x: LlmCall) => (x.usage ? `${t("in {n}", { n: fmtInt(x.usage.input) })} · ${t("out {n}", { n: fmtInt(x.usage.output) })}${x.cost ? ` · ≈ ${fmtUsd(x.cost.usd)}` : ""}` : t("no token usage in the response"));
+  const answer = (x: LlmCall) => x.output.filter((p) => p.kind === "text").map((p) => p.text).join("\n");
+  return (
+    <div className="llm-playground">
+      <div className="lt-bar">
+        <b>{t("Variant")}</b>
+        <span className="tp-spacer" />
+        <button type="button" className="linklike" onClick={onClose}>
+          {t("Close")}
+        </button>
+      </div>
+      <label className="small">{t("System prompt")}</label>
+      <textarea className="mono" rows={6} value={system} onChange={(e) => setSystem(e.target.value)} spellCheck={false} />
+      <div className="llm-play-line">
+        <label className="small">
+          {t("Model")} <input className="mono" value={model} onChange={(e) => setModel(e.target.value)} spellCheck={false} />
+        </label>
+        <label className="small">
+          {t("Output limit")} <input className="mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="max_tokens" />
+        </label>
+      </div>
+      {c.tools.length > 0 && (
+        <details>
+          <summary className="small">
+            {t("Tools")} ({c.tools.length - off.size} / {c.tools.length})
+          </summary>
+          <div className="llm-play-tools">
+            {c.tools.map((x) => (
+              <label key={x.name} className="f-check small">
+                <input
+                  type="checkbox"
+                  checked={!off.has(x.name)}
+                  onChange={(e) => {
+                    const n = new Set(off);
+                    if (e.target.checked) n.delete(x.name);
+                    else n.add(x.name);
+                    setOff(n);
+                  }}
+                />{" "}
+                <span className="mono">{x.name}</span> <span className="muted">≈ {fmtInt(x.tokens)}</span>
+              </label>
+            ))}
+          </div>
+        </details>
+      )}
+      <div className="llm-play-line">
+        <button className="primary" disabled={busy} onClick={() => void send()}>
+          ▶ {t("Send variant")}
+        </button>
+        {sent != null && (
+          <span className="small">
+            {t("Sent as")}{" "}
+            <button type="button" className="linklike" onClick={() => void actions.selectIds([sent])}>
+              #{sent}
+            </button>
+          </span>
+        )}
+      </div>
+      {sent != null && (
+        <table className="kv small">
+          <tbody>
+            <tr>
+              <td>{t("Original")}</td>
+              <td>{usage(c)}</td>
+            </tr>
+            <tr>
+              <td>{t("Variant")}</td>
+              <td>{variant ? usage(variant) : t("waiting for the answer…")}</td>
+            </tr>
+            {variant && (
+              <tr>
+                <td>{t("Answer")}</td>
+                <td>
+                  <pre className="llm-text">{answer(variant) || variant.output.map((p) => `→ ${p.name ?? p.kind}`).join("\n")}</pre>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 /** The MCP exchanges that ran the tool calls of the answer. */
 function ToolTrails({ id, state }: { id: number; state: string }) {
   const [trails, setTrails] = useState<ToolTrail[]>([]);
@@ -189,6 +319,7 @@ function ToolTrails({ id, state }: { id: number; state: string }) {
 export function LlmView({ detail }: { detail: Detail }) {
   const [c, setC] = useState<LlmCall | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [play, setPlay] = useState(false);
   const id = detail.summary.id;
   const state = detail.summary.state;
   useEffect(() => {
@@ -214,7 +345,13 @@ export function LlmView({ detail }: { detail: Detail }) {
         {c.stopReason && <span className="muted small">{t("stop: {reason}", { reason: c.stopReason })}</span>}
         <span className="tp-spacer" />
         <Usage c={c} />
+        {c.api !== "embeddings" && (
+          <button type="button" className="linklike small" title={t("Send this call again with another system prompt, fewer tools, another model or output limit")} onClick={() => setPlay(!play)}>
+            {t("Try a variant…")}
+          </button>
+        )}
       </div>
+      {play && <Playground detail={detail} c={c} onClose={() => setPlay(false)} />}
       <CacheBar detail={detail} />
       <ContextBar id={id} state={state} />
       {c.error && <div className="mocks-error">{c.error}</div>}

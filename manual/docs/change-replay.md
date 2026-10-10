@@ -161,6 +161,8 @@ goes to the server, or after the response arrives and before it reaches the clie
 | After responses whose URL contains a text | `bpafter /api` |
 | On a response status | `bps 500` |
 | On a request method | `bpv POST` (or `bpm POST`) |
+| Before LLM requests | *Capture → Breakpoints → Before LLM Requests*, or `bpllm *` |
+| Before LLM requests with conditions | `bpllm model=claude tool=mcp__jira__* tokens=50k` — model contains, offers the tool (`*` at the end: a prefix), at least that many input tokens (estimated); all given must hold; a bare word is the model |
 | From a Mock Rule | action `*bpu` or `*bpafter` |
 
 A command without an argument (e.g. `bpu`) switches that breakpoint off. The status bar
@@ -345,6 +347,11 @@ kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP
     - **Session: mark** with a colour, **Session: comment** — for the session in the list; the
       message stays as it is (the session is not marked as changed, and *Apply Rewrite Rules…*
       marks the sessions themselves instead of adding copies).
+    - **LLM: remove tool**, **LLM: set model**, **LLM: add to system prompt** (requests to
+      [LLM APIs](llm.md)): take tools out of what an agent offers (`mcp__jira__*` for all
+      tools of a server), send another model, or add an instruction at the end of the system
+      prompt — in the format of the API (Anthropic, OpenAI Chat and Responses, Gemini). An
+      agent at work gets the changed requests; its cache prefix changes with them.
 - **Preview on #N** tries the rule on the session selected in the list, without sending
   anything: whether its filters take the session, the status and header changes, and the
   body before and after.

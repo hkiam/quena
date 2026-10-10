@@ -1134,6 +1134,27 @@ async fn llm_context(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app
     blocking(move || Ok(core.llm_context(id))).await
 }
 
+/// Send an LLM call again with changes (prompt playground); the new session.
+#[tauri::command]
+async fn llm_variant(core: State<'_, Core>, id: SessionId, variant: quena_app_core::playground::Variant) -> R<SessionId> {
+    let core = core.inner().clone();
+    blocking(move || core.llm_variant(id, variant).map_err(e)).await
+}
+
+/// Two conversations side by side.
+#[tauri::command]
+async fn llm_compare(core: State<'_, Core>, a: String, b: String) -> R<Option<quena_app_core::agent::ConvCompare>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.llm_compare(&a, &b))).await
+}
+
+/// Put a conversation's answered turns into the agent cache (frozen for replays).
+#[tauri::command]
+async fn llm_freeze(core: State<'_, Core>, key: String) -> R<u32> {
+    let core = core.inner().clone();
+    blocking(move || core.llm_freeze(&key).map_err(e)).await
+}
+
 /// A session as an MCP exchange (`None`: it is not one).
 #[tauri::command]
 async fn mcp_exchange(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_core::mcp_traffic::McpExchange>> {
@@ -1393,6 +1414,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         llm_conversation,
         llm_context,
         mcp_exchange,
+        llm_variant,
+        llm_compare,
+        llm_freeze,
         mcp_trail,
         llm_tool_trails,
         tool_report,

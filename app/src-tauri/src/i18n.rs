@@ -83,6 +83,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Host Remapping…" => "Host-Umleitung…",
         "Open Terminal" => "Terminal öffnen",
         "Before Requests" => "Vor Requests",
+        "Before LLM Requests" => "Vor LLM-Requests",
         "After Responses" => "Nach Responses",
         "Off" => "Aus",
         "Mock Rules" => "Mock-Regeln",
