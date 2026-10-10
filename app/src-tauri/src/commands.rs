@@ -821,6 +821,20 @@ async fn ar_import_farx(core: State<'_, Core>, path: String) -> R<AutoResponderS
     .await
 }
 
+/// Rewrite rules (of `group`, if given) to a JSON file; returns how many.
+#[tauri::command]
+async fn rw_export(core: State<'_, Core>, path: String, group: Option<String>) -> R<usize> {
+    let core = core.inner().clone();
+    blocking(move || core.rewrite_export(std::path::Path::new(&path), group.as_deref()).map_err(e)).await
+}
+
+/// Add the rewrite rules of a file; returns the new state.
+#[tauri::command]
+async fn rw_import(core: State<'_, Core>, path: String) -> R<quena_app_core::rewrite::RewriteState> {
+    let core = core.inner().clone();
+    blocking(move || core.rewrite_import(std::path::Path::new(&path)).map(|(s, _)| s).map_err(e)).await
+}
+
 #[tauri::command]
 async fn ar_export_farx(core: State<'_, Core>, path: String) -> R<()> {
     let r = rules(core.inner())?;
@@ -1323,6 +1337,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         ar_set,
         ar_add_sessions,
         ar_import_farx,
+        rw_export,
+        rw_import,
         ar_export_farx,
         mock_preview,
         mock_export_wiremock,

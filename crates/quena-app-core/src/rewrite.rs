@@ -1290,6 +1290,37 @@ impl crate::AppCore {
         self.rules.as_ref().map(|r| &r.rewrite).ok_or_else(|| anyhow!("rules are not available"))
     }
 
+    /// Write the rewrite rules (of `group` only, if given) to a JSON file to share. Returns how
+    /// many.
+    pub fn rewrite_export(&self, path: &std::path::Path, group: Option<&str>) -> Result<usize> {
+        let list: Vec<RewriteRule> = self.rewriter()?.state().rules.into_iter().filter(|r| group.is_none_or(|g| r.group == g)).map(|r| RewriteRule { id: 0, hits: 0, ..r }).collect();
+        if list.is_empty() {
+            bail!("there are no rewrite rules to export");
+        }
+        let doc = serde_json::json!({ "format": "quena-rewrite-rules", "version": 1, "rules": list });
+        std::fs::write(path, serde_json::to_vec_pretty(&doc)?)?;
+        Ok(list.len())
+    }
+
+    /// Add the rewrite rules of a file written by [`AppCore::rewrite_export`] (or a
+    /// `rewrite.json`, or a list of rules) at the end; all of them or none (a rule that does
+    /// not compile is named). Returns the new state and how many were added.
+    pub fn rewrite_import(&self, path: &std::path::Path) -> Result<(RewriteState, usize)> {
+        let rw = self.rewriter()?;
+        let v: Value = serde_json::from_slice(&std::fs::read(path)?).map_err(|e| anyhow!("{}: not a rules file ({e})", path.display()))?;
+        let list = v.get("rules").cloned().unwrap_or(v);
+        let incoming: Vec<RewriteRule> = serde_json::from_value(list).map_err(|e| anyhow!("{}: not a list of rewrite rules ({e})", path.display()))?;
+        if incoming.is_empty() {
+            bail!("{} holds no rewrite rules", path.display());
+        }
+        for (i, r) in incoming.iter().enumerate() {
+            compile(r).map_err(|e| anyhow!("rule {} ('{}'): {e}", i + 1, if r.comment.is_empty() { &r.match_ } else { &r.comment }))?;
+        }
+        let n = incoming.len();
+        rw.update(|s| s.rules.extend(incoming.into_iter().map(|r| RewriteRule { id: 0, hits: 0, ..r })))?;
+        Ok((rw.state(), n))
+    }
+
     /// Save one rule: a new one (`id` 0) is added at the end, an existing one replaced.
     /// Locked like the agents' changes, so none is lost.
     pub fn rewrite_update(&self, rule: RewriteRule) -> Result<RewriteState> {

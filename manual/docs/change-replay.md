@@ -373,6 +373,13 @@ prefix stays. Changed messages are marked ✎ in the WebSocket view. Messages ov
 fragmented and `permessage-deflate`-compressed messages pass unchanged; for more control
 use [`onWebSocketMessage`](scripting.md#websocket-messages) in a rules script.
 
+### Share rules
+
+**Export…** saves the rewrite rules to a JSON file (`quena-rewrite-rules.json`); right-click a
+group's chip → *Export group …* for that group only. **Import…** adds the rules of such a file
+(also a `rewrite.json` from a data folder) at the end of the list — all of them, or none if
+one of them is invalid (the message names it).
+
 ### Groups
 
 Rules with the same **group** are switched on and off together with the group's chip above

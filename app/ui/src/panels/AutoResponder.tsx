@@ -92,7 +92,28 @@ function RewriteRules({ version }: { version: number }) {
       </legend>
       <div className="rw-bar">
         {groups.map((g) => (
-          <label key={g} className={`ar-package ${groupOff(g) ? "off" : ""}`} title={t("Switch the rules of this group on or off")}>
+          <label
+            key={g}
+            className={`ar-package ${groupOff(g) ? "off" : ""}`}
+            title={t("Switch the rules of this group on or off")}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              showContextMenu(e.clientX, e.clientY, [
+                {
+                  label: t("Export group {name}…", { name: g }),
+                  action: async () => {
+                    const p = await save({ defaultPath: `${g.replace(/[^\w.-]+/g, "_")}.json`, filters: [{ name: t("Rewrite rules"), extensions: ["json"] }] });
+                    if (!p) return;
+                    try {
+                      say(plural(await api.rwExport(p, g), "{n} rewrite rule saved", "{n} rewrite rules saved"));
+                    } catch (err) {
+                      say(String(err), "error");
+                    }
+                  },
+                },
+              ]);
+            }}
+          >
             <input type="checkbox" checked={!groupOff(g)} onChange={(e) => setGroup(g, e.target.checked)} /> {g}
           </label>
         ))}
@@ -103,6 +124,35 @@ function RewriteRules({ version }: { version: number }) {
         </label>
         <button onClick={() => edit()}>{t("New rewrite rule…")}</button>
         <button onClick={templateMenu}>{t("From template ▾")}</button>
+        <button
+          title={t("Add the rewrite rules of a file (exported from Quena)")}
+          onClick={async () => {
+            const p = await open({ multiple: false, filters: [{ name: t("Rewrite rules"), extensions: ["json"] }] });
+            if (typeof p !== "string") return;
+            try {
+              setRw(await api.rwImport(p));
+              say(t("Rewrite rules imported"));
+            } catch (e) {
+              say(String(e), "error");
+            }
+          }}
+        >
+          {t("Import…")}
+        </button>
+        <button
+          title={t("Save the rewrite rules to a file to share (right-click a group chip for one group)")}
+          onClick={async () => {
+            const p = await save({ defaultPath: "quena-rewrite-rules.json", filters: [{ name: t("Rewrite rules"), extensions: ["json"] }] });
+            if (!p) return;
+            try {
+              say(plural(await api.rwExport(p), "{n} rewrite rule saved", "{n} rewrite rules saved"));
+            } catch (e) {
+              say(String(e), "error");
+            }
+          }}
+        >
+          {t("Export…")}
+        </button>
       </div>
       <table className="kv ar-table">
         <thead>

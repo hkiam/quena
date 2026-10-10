@@ -189,4 +189,10 @@ export const mocks: Record<string, string> = {
   "Turn on": "Einschalten",
   "Added; Mock Rules stay off until they are turned on": "Hinzugef\u00fcgt; Mock Rules bleiben aus, bis sie eingeschaltet werden",
   "Template added: {name}": "Vorlage hinzugef\u00fcgt: {name}",
+  "Export group {name}\u2026": "Gruppe {name} exportieren\u2026",
+  "Add the rewrite rules of a file (exported from Quena)": "Die Rewrite Rules einer Datei hinzuf\u00fcgen (aus Quena exportiert)",
+  "Rewrite rules imported": "Rewrite-Regeln importiert",
+  "Save the rewrite rules to a file to share (right-click a group chip for one group)": "Die Rewrite-Regeln zum Weitergeben in eine Datei speichern (Rechtsklick auf eine Gruppe f\u00fcr nur diese)",
+  "{n} rewrite rule saved": "{n} Rewrite-Regel gespeichert",
+  "{n} rewrite rules saved": "{n} Rewrite-Regeln gespeichert",
 };
