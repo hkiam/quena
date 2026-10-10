@@ -51,6 +51,8 @@ fn de(en: &str) -> Option<&'static str> {
         "SAZ Archive with Password…" => "SAZ-Archiv mit Passwort…",
         "Packet Capture (pcap, pcapng)…" => "Paketmitschnitt (pcap, pcapng)…",
         "cURL Script…" => "cURL-Skript…",
+        "WCAT Script…" => "WCAT-Skript…",
+        "Internet Explorer NetXML…" => "Internet-Explorer-NetXML…",
         "Sanitized for Sharing (SAZ/HAR)…" => "Bereinigt zum Weitergeben (SAZ/HAR)…",
         "Mocks…" => "Mocks…",
         "URL" => "URL",

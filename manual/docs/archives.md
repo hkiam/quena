@@ -9,6 +9,8 @@ Quena reads and writes two archive formats and reads packet captures:
 | **SAZ** (`.saz`) | Session archive compatible with Fiddler Classic. Keeps marks, comments, the Custom column and process information. |
 | **HAR 1.2** (`.har`) | The HTTP Archive format that browsers' developer tools import and export. Comments are kept. |
 | **Packet capture** (`.pcap`, `.pcapng`) | Recordings of tcpdump, Wireshark or dumpcap; import only, HTTPS decrypted with a TLS key log (see [Packet captures](packet-captures.md)). |
+| **Internet Explorer NetXML** (`.xml`) | The network capture of Internet Explorer's F12 tools (HAR written as XML); import only: *File → Import Sessions → Internet Explorer NetXML…* or drop the file. |
+| **WCAT script** (`.wcat`) | A Web Capacity Analysis Tool scenario with one transaction of the sessions' requests (server, port, TLS, path, method, headers, text bodies up to 256 KB, expected status) for a load test; export only: *File → Export Sessions → WCAT Script…*. |
 
 ### Saving
 

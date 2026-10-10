@@ -11,7 +11,8 @@ contain breaking changes (settings, file formats, plugin API).
 - **More of Fiddler's odds and ends**: host remapping with a port in the pattern and a forced
   protocol (HTTP or HTTPS to the target); rewrite rules exported and imported as JSON (also one
   group); AutoSave of only the sessions the filters show; on Windows, *Trust for all users…*
-  puts the root certificate into the local machine's store.
+  puts the root certificate into the local machine's store; export as a **WCAT** load test
+  script and import of Internet Explorer **NetXML** captures.
 - **Do not capture (bypass Quena)** (*Settings → Connections*, or *Filter Now → Do not capture
   this Host…*): hosts become exceptions of the system proxy and of started browsers and
   terminals, and pass Quena undecrypted if a client sends them anyway; Apple services that pin

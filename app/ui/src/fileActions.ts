@@ -116,6 +116,31 @@ export async function handleFileMenu(id: string): Promise<boolean> {
     case "file.import-pcap":
       await loadArchive(true);
       return true;
+    case "file.import-netxml": {
+      const path = await open({ multiple: false, filters: [{ name: t("Internet Explorer network capture (NetXML)"), extensions: ["xml"] }] });
+      if (typeof path !== "string" || !(await prepareImport(baseName(path)))) return true;
+      try {
+        await api.importArchive(path);
+      } catch (e) {
+        say(String(e), "error");
+      }
+      return true;
+    }
+    case "file.export-wcat": {
+      if (!get().listTotal) {
+        say(t("There are no sessions to save"), "error");
+        return true;
+      }
+      const path = await save({ defaultPath: `quena_${stamp()}.wcat`, filters: [{ name: t("WCAT load test script"), extensions: ["wcat"] }] });
+      if (!path) return true;
+      try {
+        await api.exportArchive(selected.length > 1 ? selected : [], path);
+        say(t("Saving a WCAT script to {path}", { path }));
+      } catch (e) {
+        say(String(e), "error");
+      }
+      return true;
+    }
     case "file.save-all":
     case "file.export-saz":
       await saveArchive(id === "file.export-saz" && selected.length > 1 ? selected : [], "saz");

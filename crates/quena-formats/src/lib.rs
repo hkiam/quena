@@ -4,9 +4,11 @@
 pub mod curl;
 pub mod har;
 pub mod http_file;
+pub mod netxml;
 pub mod pcap;
 pub mod raw;
 pub mod saz;
+pub mod wcat;
 mod time_fmt;
 
 #[derive(Debug, thiserror::Error)]

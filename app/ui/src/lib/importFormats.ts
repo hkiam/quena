@@ -7,7 +7,7 @@ export const ARCHIVE_EXTENSIONS = ["saz", "har"];
 /// Packet captures (import only).
 export const CAPTURE_EXTENSIONS = ["pcap", "pcapng", "cap"];
 /// Everything that loads, also SAZ as .zip and HAR as .json.
-const IMPORTABLE = new Set([...ARCHIVE_EXTENSIONS, "zip", "json", ...CAPTURE_EXTENSIONS]);
+const IMPORTABLE = new Set([...ARCHIVE_EXTENSIONS, "zip", "json", "xml", ...CAPTURE_EXTENSIONS]);
 
 export const isImportableName = (name: string) => IMPORTABLE.has(name.split(".").pop()?.toLowerCase() ?? "");
 

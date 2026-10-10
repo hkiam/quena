@@ -36,4 +36,9 @@ export const core: Record<string, string> = {
   "Requests to {host} will not go through Quena (system proxy and started browsers). Settings \u2192 Connections lists the hosts.": "Requests an {host} laufen dann nicht \u00fcber Quena (Systemproxy und gestartete Browser). Einstellungen \u2192 Verbindungen listet die Hosts.",
   "Do not capture": "Nicht mitschneiden",
   "{host} is no longer captured": "{host} wird nicht mehr mitgeschnitten",
+  "Internet Explorer network capture (NetXML)": "Internet-Explorer-Netzwerkmitschnitt (NetXML)",
+  "WCAT load test script": "WCAT-Lasttest-Skript",
+  "Saving a WCAT script to {path}": "WCAT-Skript wird gespeichert: {path}",
+  "Export WCAT script": "WCAT-Skript exportieren",
+  "Import Internet Explorer NetXML": "Internet-Explorer-NetXML importieren",
 };

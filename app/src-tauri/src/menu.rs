@@ -68,6 +68,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                     &item(app, "file.import-har", "HTTP Archive (HAR)…", None)?,
                     &item(app, "file.import-saz", "SAZ Archive…", None)?,
                     &item(app, "file.import-pcap", "Packet Capture (pcap, pcapng)…", None)?,
+                    &item(app, "file.import-netxml", "Internet Explorer NetXML…", None)?,
                 ],
             )?,
             &Submenu::with_items(
@@ -79,6 +80,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                     &item(app, "file.export-saz", "SAZ Archive…", None)?,
                     &item(app, "file.export-saz-protected", "SAZ Archive with Password…", None)?,
                     &item(app, "file.export-curl", "cURL Script…", None)?,
+                    &item(app, "file.export-wcat", "WCAT Script…", None)?,
                     &item(app, "file.export-sanitized", "Sanitized for Sharing (SAZ/HAR)…", None)?,
                     &item(app, "file.export-mocks", "Mocks…", None)?,
                 ],

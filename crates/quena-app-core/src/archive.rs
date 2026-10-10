@@ -28,11 +28,15 @@ pub enum ArchiveFormat {
     Curl,
     /// Packet capture (pcap, pcapng): import only.
     Pcap,
+    /// WCAT load test script: export only.
+    Wcat,
+    /// Internet Explorer F12 network capture (XML): import only.
+    NetXml,
 }
 
 /// Can [`AppCore::import_archive`] load this file (by its extension)?
 pub fn importable(path: &std::path::Path) -> bool {
-    matches!(format_of(path), Some(ArchiveFormat::Saz | ArchiveFormat::Har | ArchiveFormat::Pcap))
+    matches!(format_of(path), Some(ArchiveFormat::Saz | ArchiveFormat::Har | ArchiveFormat::Pcap | ArchiveFormat::NetXml))
 }
 
 /// Is this a packet capture (by its extension)?
@@ -46,6 +50,8 @@ fn format_of(path: &std::path::Path) -> Option<ArchiveFormat> {
         "har" | "json" => Some(ArchiveFormat::Har),
         "sh" | "txt" => Some(ArchiveFormat::Curl),
         "pcap" | "pcapng" | "cap" => Some(ArchiveFormat::Pcap),
+        "wcat" => Some(ArchiveFormat::Wcat),
+        "xml" => Some(ArchiveFormat::NetXml),
         _ => None,
     }
 }
@@ -85,6 +91,8 @@ impl AppCore {
                 ArchiveFormat::Har => quena_formats::har::export(&cap, &ids, &path, &HarOptions::default(), &P(ctx)),
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("use Copy → As cURL".into())),
                 ArchiveFormat::Pcap => Err(quena_formats::FormatError::Invalid("sessions cannot be saved as a packet capture".into())),
+                ArchiveFormat::Wcat => quena_formats::wcat::export(&cap, &ids, &path, &P(ctx)),
+                ArchiveFormat::NetXml => Err(quena_formats::FormatError::Invalid("NetXML is imported only".into())),
             }
             .map_err(|e| e.to_string());
             done(n.is_ok());
@@ -225,6 +233,8 @@ impl AppCore {
                 ArchiveFormat::Saz => quena_formats::saz::import_encrypted(&cap, &path, password.as_deref(), &P(ctx)),
                 ArchiveFormat::Har => quena_formats::har::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("cannot import cURL scripts".into())),
+                ArchiveFormat::Wcat => Err(quena_formats::FormatError::Invalid("WCAT scripts are exported only".into())),
+                ArchiveFormat::NetXml => quena_formats::netxml::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Pcap => quena_formats::pcap::import_with(&cap, &path, &quena_formats::pcap::PcapOptions { keylogs }, &P(ctx)).map(|r| {
                     // Still the capture and numbering the ids were taken from (checked when
                     // the import was asked for; Remove All or another capture may have come since).
@@ -468,7 +478,7 @@ pub fn sanitized_export(
             let o = HarOptions { comment: Some(log.summary_line()), extra: vec![("_quenaRedaction".into(), serde_json::to_value(&log)?)], ..HarOptions::default() };
             quena_formats::har::export(tmp.cap(), &copied, path, &o, &half)?;
         }
-        ArchiveFormat::Curl | ArchiveFormat::Pcap => return Err(anyhow!("a sanitized export is a .saz or .har file")),
+        ArchiveFormat::Curl | ArchiveFormat::Pcap | ArchiveFormat::Wcat | ArchiveFormat::NetXml => return Err(anyhow!("a sanitized export is a .saz or .har file")),
     }
     p.progress(total, total);
     Ok(log)

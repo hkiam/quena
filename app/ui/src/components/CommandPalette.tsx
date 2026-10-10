@@ -38,6 +38,8 @@ const COMMANDS: Cmd[] = [
   { id: "file.import-saz", label: t("Import SAZ archive"), group: t("File") },
   { id: "file.import-pcap", label: t("Import packet capture (pcap, pcapng)"), group: t("File") },
   { id: "file.export-har", label: t("Export HAR"), group: t("File") },
+  { id: "file.export-wcat", label: t("Export WCAT script"), group: t("File") },
+  { id: "file.import-netxml", label: t("Import Internet Explorer NetXML"), group: t("File") },
   { id: "file.export-saz", label: t("Export SAZ archive"), group: t("File") },
   { id: "tools.compare-captures", label: t("Compare captures"), group: t("Tools") },
   { id: "file.export-saz-protected", label: t("Export SAZ archive with password"), group: t("File") },
