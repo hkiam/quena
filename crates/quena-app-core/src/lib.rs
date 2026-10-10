@@ -174,9 +174,10 @@ pub struct AppCore {
     /// Protobuf schemas (`.proto` files, reflection), compiled when needed.
     pub(crate) protobuf: protobuf::Schemas,
     pub(crate) autosave: Mutex<autosave::State>,
+    /// Digests of LLM calls and the conversations built from them.
+    pub(crate) llm_digests: Mutex<agent::Digests>,
     /// LLM prices with the stamps (time, size) of their files.
     #[allow(clippy::type_complexity)]
-    pub(crate) llm_digests: Mutex<agent::Digests>,
     pub(crate) llm_prices: Mutex<Option<((Option<(Option<std::time::SystemTime>, u64)>, Option<(Option<std::time::SystemTime>, u64)>), Arc<llm::PriceList>)>>,
     /// Archives loaded into the list: (file name, capture numbering, session ids).
     pub(crate) imports: Mutex<Vec<(String, u64, Vec<SessionId>)>>,

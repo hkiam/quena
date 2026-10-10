@@ -577,6 +577,7 @@ export interface TurnDiff {
   toolsRemoved?: string[];
   toolsChanged?: string[];
   toolsReordered: boolean;
+  settingsChanged?: string[];
   modelChanged: boolean;
   gapMs?: number;
 }
@@ -591,6 +592,8 @@ export interface ConvSummary {
   provider: string;
   models: string[];
   turns: number;
+  side: number;
+  hits: number;
   first: SessionId;
   last: SessionId;
   started: number;
@@ -605,9 +608,13 @@ export interface ConvSummary {
   lastInput: number;
   window?: number;
   parent?: string;
+  subagent: boolean;
 }
 export interface ConvTurn {
   id: SessionId;
+  prev: SessionId | null;
+  side: boolean;
+  hit: boolean;
   started: number;
   durationMs: number | null;
   model: string;
@@ -635,6 +642,7 @@ export interface CallContext {
   turn: number;
   turns: number;
   prev: SessionId | null;
+  side: boolean;
   breakdown: ContextBreakdown;
   diff: TurnDiff | null;
   changed?: [string, string];

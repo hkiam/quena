@@ -7,10 +7,13 @@ import { plural, t } from "../i18n";
 export const CATEGORIES: Record<string, string> = {
   system: t("System prompt"),
   tools: t("Tool definitions"),
+  overhead: t("Provider's tool prompt"),
   instructions: t("Instruction files"),
   skills: t("Skills list"),
   reminders: t("Reminders"),
   context: t("Environment"),
+  summary: t("Compaction summary"),
+  server: t("History kept by the provider"),
   user: t("User messages"),
   assistant: t("Assistant messages"),
   thinking: t("Thinking"),
@@ -43,10 +46,12 @@ export function cacheText(n: CodeNote): string {
       return t("Message {n} of {of} changed: everything from it on is new to the cache", { n: a(n, "n"), of: a(n, "of") });
     case "modelChanged":
       return t("The model changed from {from} to {to} (each model has its own cache)", { from: a(n, "from"), to: a(n, "to") });
+    case "settingsChanged":
+      return t("Settings the cache depends on changed: {names}", { names: a(n, "names") });
     case "noMarks":
       return t("The request sets no cache_control breakpoint: Anthropic caches marked prefixes only");
     case "short":
-      return t("Shorter than {min} tokens: OpenAI does not cache it", { min: num(n, "min") });
+      return t("Marked for caching, but shorter than the {min} tokens the provider caches for this model", { min: num(n, "min") });
     case "unknown":
       return t("Reason not known (another server, the cache was evicted, or the provider does not report cached tokens)");
     default:
@@ -110,13 +115,14 @@ export function diffText(d: TurnDiff): string {
   if (d.systemChanged) parts.push(t("system prompt changed"));
   const tools = (d.toolsAdded?.length ?? 0) + (d.toolsRemoved?.length ?? 0) + (d.toolsChanged?.length ?? 0);
   if (tools || d.toolsReordered) parts.push(t("tools changed"));
+  if (d.settingsChanged?.length) parts.push(t("settings changed: {names}", { names: d.settingsChanged.join(", ") }));
   if (d.modelChanged) parts.push(t("model changed"));
   return parts.join(" · ");
 }
 
 /** Whether a turn's change breaks the cached prefix. */
 export function breaksCache(d: TurnDiff): boolean {
-  return d.kind === "changed" || d.systemChanged || d.modelChanged || d.toolsReordered || !!(d.toolsAdded?.length || d.toolsRemoved?.length || d.toolsChanged?.length);
+  return d.kind === "changed" || d.systemChanged || d.modelChanged || d.toolsReordered || !!(d.toolsAdded?.length || d.toolsRemoved?.length || d.toolsChanged?.length || d.settingsChanged?.length);
 }
 
 /** Conversations in a tree: subagents under the conversation that started them. */

@@ -71,10 +71,22 @@ pub struct ToolDef {
     /// every request.
     #[serde(default)]
     pub size: usize,
+    /// Its tokens, estimated like the rest of a request.
+    #[serde(default)]
+    pub tokens: u64,
+    /// Hash of the definition (a change of the schema alone changes it).
+    #[serde(skip)]
+    pub hash: u64,
 }
 
 fn tool_def(name: String, description: String, def: &Value) -> ToolDef {
-    ToolDef { name, description, size: def.to_string().len() }
+    // Without a cache_control mark: moving the mark is no change of the tool.
+    let mut d = def.clone();
+    if let Some(o) = d.as_object_mut() {
+        o.remove("cache_control");
+    }
+    let text = d.to_string();
+    ToolDef { name, description, size: text.len(), tokens: crate::agent::estimate_tokens(&text).max(1), hash: crate::agent::hash_text(&text) }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
@@ -132,6 +144,23 @@ pub struct LlmCall {
     /// `system[1]`, `tools[12]`, `messages[40]`; `ttl 1h` when one asks for the long cache.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cache_marks: Vec<String>,
+    /// Claude Code's attribution block (`x-anthropic-billing-header: cc_version=…;
+    /// cc_prev_req=…; cc_is_subagent=true;`): taken out of the system prompt, it changes with
+    /// every request.
+    #[serde(skip)]
+    pub attribution: Vec<(String, String)>,
+    /// `metadata.user_id` as sent (Claude Code: JSON with the session id).
+    #[serde(skip)]
+    pub user: Option<String>,
+    /// The id the response got (OpenAI Responses), which a later `previous_response_id` names.
+    #[serde(skip)]
+    pub response_id: Option<String>,
+}
+
+/// Claude Code's attribution block as key/value pairs (`None`: not one).
+fn attribution_of(text: &str) -> Option<Vec<(String, String)>> {
+    let rest = text.trim_start().strip_prefix("x-anthropic-billing-header:")?;
+    Some(rest.split(';').filter_map(|kv| kv.trim().split_once('=')).map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).collect())
 }
 
 // ------------------------------------------------------------------ detection
@@ -317,6 +346,8 @@ fn openai_content(c: &Value, notes: &mut Vec<String>) -> Vec<Part> {
 
 fn chat_request(v: &Value, call: &mut LlmCall) {
     let notes = &mut call.notes;
+    // System messages after the conversation started stay where they are (agents add notes).
+    let mut started = false;
     for m in v.get("messages").and_then(|m| m.as_array()).into_iter().flatten() {
         let role = s(m, "role").unwrap_or_default();
         let mut parts = openai_content(m.get("content").unwrap_or(&Value::Null), notes);
@@ -330,9 +361,10 @@ fn chat_request(v: &Value, call: &mut LlmCall) {
                 p.id = s(m, "tool_call_id");
             }
         }
-        if role == "system" || role == "developer" {
+        if (role == "system" || role == "developer") && !started {
             call.system.extend(parts.iter().map(|p| p.text.clone()));
         } else {
+            started = true;
             call.messages.push(Message { role, parts });
         }
     }
@@ -340,7 +372,7 @@ fn chat_request(v: &Value, call: &mut LlmCall) {
         let f = t.get("function").unwrap_or(t);
         call.tools.push(tool_def(s(f, "name").unwrap_or_else(|| s(t, "type").unwrap_or_default()), s(f, "description").unwrap_or_default(), t));
     }
-    call.params = params(v, &["temperature", "top_p", "max_tokens", "max_completion_tokens", "reasoning_effort", "tool_choice", "response_format", "seed", "n"]);
+    call.params = params(v, &["temperature", "top_p", "max_tokens", "max_completion_tokens", "reasoning_effort", "tool_choice", "response_format", "seed", "n", "prompt_cache_key", "prompt_cache_retention"]);
 }
 
 fn responses_request(v: &Value, call: &mut LlmCall) {
@@ -350,25 +382,46 @@ fn responses_request(v: &Value, call: &mut LlmCall) {
     match v.get("input") {
         Some(Value::String(t)) => call.messages.push(Message { role: "user".into(), parts: vec![text_part(t, &mut call.notes)] }),
         Some(Value::Array(items)) => {
+            // Developer items after the conversation started (Codex: model switch, permissions,
+            // budget) stay where they are.
+            let mut started = false;
             for it in items {
-                match s(it, "type").as_deref() {
-                    Some("function_call") => call.messages.push(Message {
-                        role: "assistant".into(),
-                        parts: vec![Part { kind: "toolCall".into(), name: s(it, "name"), id: s(it, "call_id"), text: cut(&pretty(it.get("arguments").unwrap_or(&Value::Null)), &mut call.notes) }],
-                    }),
-                    Some("function_call_output") => call.messages.push(Message {
-                        role: "tool".into(),
-                        parts: vec![Part { kind: "toolResult".into(), id: s(it, "call_id"), text: cut(&pretty(it.get("output").unwrap_or(&Value::Null)), &mut call.notes), ..Default::default() }],
-                    }),
-                    Some("reasoning") => {}
-                    _ => {
+                let ty = s(it, "type");
+                let call_part = |name: Option<String>, args: &Value, notes: &mut Vec<String>| Part { kind: "toolCall".into(), name, id: s(it, "call_id").or_else(|| s(it, "id")), text: cut(&pretty(args), notes) };
+                let result_part = |notes: &mut Vec<String>| Part { kind: "toolResult".into(), id: s(it, "call_id"), text: cut(&pretty(it.get("output").unwrap_or(&Value::Null)), notes), ..Default::default() };
+                match ty.as_deref() {
+                    Some("function_call") => {
+                        let p = call_part(s(it, "name"), it.get("arguments").unwrap_or(&Value::Null), &mut call.notes);
+                        call.messages.push(Message { role: "assistant".into(), parts: vec![p] });
+                    }
+                    // Codex: apply_patch as a freeform tool; shell calls of the model.
+                    Some("custom_tool_call") => {
+                        let p = call_part(s(it, "name"), it.get("input").unwrap_or(&Value::Null), &mut call.notes);
+                        call.messages.push(Message { role: "assistant".into(), parts: vec![p] });
+                    }
+                    Some("local_shell_call") => {
+                        let p = call_part(Some("local_shell".into()), it.get("action").unwrap_or(&Value::Null), &mut call.notes);
+                        call.messages.push(Message { role: "assistant".into(), parts: vec![p] });
+                    }
+                    Some("function_call_output" | "custom_tool_call_output" | "local_shell_call_output") => {
+                        let p = result_part(&mut call.notes);
+                        call.messages.push(Message { role: "tool".into(), parts: vec![p] });
+                    }
+                    Some("reasoning") => call.messages.push(Message { role: "assistant".into(), parts: vec![Part { kind: "thinking".into(), text: "[reasoning]".into(), ..Default::default() }] }),
+                    Some("message") | None => {
                         let role = s(it, "role").unwrap_or_else(|| "user".into());
                         let parts = openai_content(it.get("content").unwrap_or(&Value::Null), &mut call.notes);
-                        if role == "system" || role == "developer" {
+                        if (role == "system" || role == "developer") && !started {
                             call.system.extend(parts.into_iter().map(|p| p.text));
                         } else {
+                            started = true;
                             call.messages.push(Message { role, parts });
                         }
+                    }
+                    // web_search_call, compaction items, …
+                    Some(other) => {
+                        started = true;
+                        call.messages.push(Message { role: "assistant".into(), parts: vec![Part { kind: "other".into(), name: Some(other.to_string()), text: cut(&pretty(it), &mut call.notes), ..Default::default() }] });
                     }
                 }
             }
@@ -378,7 +431,7 @@ fn responses_request(v: &Value, call: &mut LlmCall) {
     for t in v.get("tools").and_then(|t| t.as_array()).into_iter().flatten() {
         call.tools.push(tool_def(s(t, "name").unwrap_or_else(|| s(t, "type").unwrap_or_default()), s(t, "description").unwrap_or_default(), t));
     }
-    call.params = params(v, &["temperature", "top_p", "max_output_tokens", "tool_choice", "previous_response_id", "store"]);
+    call.params = params(v, &["temperature", "top_p", "max_output_tokens", "tool_choice", "previous_response_id", "store", "prompt_cache_key", "prompt_cache_retention"]);
     if let Some(r) = v.get("reasoning").and_then(|r| r.get("effort")) {
         call.params.push(("reasoning.effort".into(), r.as_str().unwrap_or_default().into()));
     }
@@ -389,25 +442,39 @@ fn anthropic_blocks(c: &Value, notes: &mut Vec<String>) -> Vec<Part> {
         Value::String(t) => vec![text_part(t, notes)],
         Value::Array(items) => items
             .iter()
-            .map(|b| match s(b, "type").as_deref() {
-                Some("text") => text_part(&s(b, "text").unwrap_or_default(), notes),
-                Some("image") => Part { kind: "image".into(), text: "[image]".into(), name: b.get("source").and_then(|x| s(x, "media_type")), ..Default::default() },
-                Some("document") => Part { kind: "other".into(), text: "[document]".into(), ..Default::default() },
-                Some("tool_use" | "server_tool_use") => Part { kind: "toolCall".into(), name: s(b, "name"), id: s(b, "id"), text: cut(&pretty(b.get("input").unwrap_or(&Value::Null)), notes) },
-                Some("tool_result") => {
-                    let content = match b.get("content") {
-                        Some(Value::Array(a)) => a.iter().filter_map(|x| s(x, "text")).collect::<Vec<_>>().join("\n"),
-                        Some(x) => pretty(x),
-                        None => String::new(),
-                    };
-                    Part { kind: "toolResult".into(), id: s(b, "tool_use_id"), text: cut(&content, notes), ..Default::default() }
+            .flat_map(|b| -> Vec<Part> {
+                // Images and documents a tool result carries (a screenshot, a PDF read).
+                if s(b, "type").as_deref() == Some("tool_result")
+                    && let Some(Value::Array(a)) = b.get("content")
+                {
+                    let mut out = vec![anthropic_block(b, notes)];
+                    out.extend(a.iter().filter(|x| matches!(s(x, "type").as_deref(), Some("image" | "document"))).map(|x| Part { kind: "image".into(), text: format!("[{}]", s(x, "type").unwrap_or_default()), id: s(b, "tool_use_id"), ..Default::default() }));
+                    return out;
                 }
-                Some("thinking") => Part { kind: "thinking".into(), text: cut(&s(b, "thinking").unwrap_or_default(), notes), ..Default::default() },
-                Some("redacted_thinking") => Part { kind: "thinking".into(), text: "[redacted]".into(), ..Default::default() },
-                _ => Part { kind: "other".into(), text: cut(&pretty(b), notes), ..Default::default() },
+                vec![anthropic_block(b, notes)]
             })
             .collect(),
         _ => vec![],
+    }
+}
+
+fn anthropic_block(b: &Value, notes: &mut Vec<String>) -> Part {
+    match s(b, "type").as_deref() {
+        Some("text") => text_part(&s(b, "text").unwrap_or_default(), notes),
+        Some("image") => Part { kind: "image".into(), text: "[image]".into(), name: b.get("source").and_then(|x| s(x, "media_type")), ..Default::default() },
+        Some("document") => Part { kind: "other".into(), text: "[document]".into(), ..Default::default() },
+        Some("tool_use" | "server_tool_use") => Part { kind: "toolCall".into(), name: s(b, "name"), id: s(b, "id"), text: cut(&pretty(b.get("input").unwrap_or(&Value::Null)), notes) },
+        Some("tool_result") => {
+            let content = match b.get("content") {
+                Some(Value::Array(a)) => a.iter().filter_map(|x| s(x, "text")).collect::<Vec<_>>().join("\n"),
+                Some(x) => pretty(x),
+                None => String::new(),
+            };
+            Part { kind: "toolResult".into(), id: s(b, "tool_use_id"), text: cut(&content, notes), ..Default::default() }
+        }
+        Some("thinking") => Part { kind: "thinking".into(), text: cut(&s(b, "thinking").unwrap_or_default(), notes), ..Default::default() },
+        Some("redacted_thinking") => Part { kind: "thinking".into(), text: "[redacted]".into(), ..Default::default() },
+        _ => Part { kind: "other".into(), text: cut(&pretty(b), notes), ..Default::default() },
     }
 }
 
@@ -445,9 +512,17 @@ fn cache_marks(v: &Value) -> Vec<String> {
 fn anthropic_request(v: &Value, call: &mut LlmCall) {
     match v.get("system") {
         Some(Value::String(t)) => call.system.push(cut(t, &mut call.notes)),
-        Some(Value::Array(a)) => call.system.extend(a.iter().filter_map(|b| s(b, "text"))),
+        Some(Value::Array(a)) => {
+            for t in a.iter().filter_map(|b| s(b, "text")) {
+                match attribution_of(&t) {
+                    Some(kv) => call.attribution.extend(kv),
+                    None => call.system.push(t),
+                }
+            }
+        }
         _ => {}
     }
+    call.user = v.get("metadata").and_then(|m| s(m, "user_id"));
     for m in v.get("messages").and_then(|m| m.as_array()).into_iter().flatten() {
         let parts = anthropic_blocks(m.get("content").unwrap_or(&Value::Null), &mut call.notes);
         call.messages.push(Message { role: s(m, "role").unwrap_or_default(), parts });
@@ -459,6 +534,9 @@ fn anthropic_request(v: &Value, call: &mut LlmCall) {
     call.params = params(v, &["max_tokens", "temperature", "top_p", "top_k", "tool_choice", "stop_sequences"]);
     if let Some(t) = v.get("thinking").filter(|t| !t.is_null()) {
         call.params.push(("thinking".into(), t.to_string()));
+    }
+    if let Some(o) = v.get("output_config").filter(|o| !o.is_null()) {
+        call.params.push(("output_config".into(), o.to_string()));
     }
 }
 
@@ -551,7 +629,8 @@ fn chat_response(v: &Value, call: &mut LlmCall) {
 fn openai_usage(u: &Value) -> Usage {
     let input = n(u, "prompt_tokens").max(n(u, "input_tokens"));
     let output = n(u, "completion_tokens").max(n(u, "output_tokens"));
-    let cached = u.get("prompt_tokens_details").or_else(|| u.get("input_tokens_details")).map(|d| n(d, "cached_tokens")).unwrap_or(0);
+    // DeepSeek reports its cache hits at the top level.
+    let cached = u.get("prompt_tokens_details").or_else(|| u.get("input_tokens_details")).map(|d| n(d, "cached_tokens")).unwrap_or(0).max(n(u, "prompt_cache_hit_tokens"));
     let reasoning = u.get("completion_tokens_details").or_else(|| u.get("output_tokens_details")).map(|d| n(d, "reasoning_tokens")).unwrap_or(0);
     Usage { input, output, cache_read: cached, cache_write: 0, reasoning }
 }
@@ -621,7 +700,8 @@ fn responses_response(v: &Value, call: &mut LlmCall) {
                 let summary: Vec<String> = it.get("summary").and_then(|x| x.as_array()).into_iter().flatten().filter_map(|x| s(x, "text")).collect();
                 call.output.push(Part { kind: "thinking".into(), text: if summary.is_empty() { "[reasoning]".into() } else { cut(&summary.join("\n"), &mut call.notes) }, ..Default::default() });
             }
-            Some(other) => call.output.push(Part { kind: "toolCall".into(), name: Some(other.to_string()), id: s(it, "id"), text: cut(&pretty(it), &mut call.notes) }),
+            Some("custom_tool_call") => call.output.push(Part { kind: "toolCall".into(), name: s(it, "name"), id: s(it, "call_id"), text: cut(&pretty(it.get("input").unwrap_or(&Value::Null)), &mut call.notes) }),
+            Some(other) => call.output.push(Part { kind: "toolCall".into(), name: s(it, "name").or_else(|| Some(other.to_string())), id: s(it, "call_id").or_else(|| s(it, "id")), text: cut(&pretty(it), &mut call.notes) }),
             None => {}
         }
     }
@@ -635,6 +715,7 @@ fn responses_response(v: &Value, call: &mut LlmCall) {
     if call.model.is_empty() {
         call.model = s(v, "model").unwrap_or_default();
     }
+    call.response_id = s(v, "id");
 }
 
 fn responses_stream(text: &str, call: &mut LlmCall) {
@@ -992,6 +1073,7 @@ const CONTEXT: &[(&str, u64)] = &[
     ("gpt-4.1", 1_047_576),
     ("gpt-5", 272_000),
     ("o1", 200_000),
+    ("o1-mini", 128_000),
     ("o3", 200_000),
     ("o4", 200_000),
     ("gemini-1.5", 1_048_576),
@@ -1059,6 +1141,9 @@ pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &
         error: None,
         notes: vec![],
         cache_marks: vec![],
+        attribution: vec![],
+        user: None,
+        response_id: None,
     };
     match api {
         Api::Chat => chat_request(&req, &mut call),
@@ -1234,8 +1319,13 @@ impl AppCore {
         let d = cap.detail(id)?;
         api_of(&d.request.method, &d.request.url)?;
         let (req, resp) = cap.bodies_of(id)?;
-        let request = quena_body::text::decoded_prefix(&req, &crate::dto::spec_of(&d.request.headers), MAX_BODY);
-        let response = d.response.as_ref().map(|r| (quena_body::text::decoded_prefix(&resp, &crate::dto::spec_of(&r.headers), MAX_BODY), r.headers.get("content-type").unwrap_or("").to_ascii_lowercase()));
+        self.llm_from(&d, &req, &resp)
+    }
+
+    /// Session `d` with its bodies as an LLM call.
+    pub(crate) fn llm_from(&self, d: &SessionDetail, req: &quena_body::Body, resp: &quena_body::Body) -> Option<LlmCall> {
+        let request = quena_body::text::decoded_prefix(req, &crate::dto::spec_of(&d.request.headers), MAX_BODY);
+        let response = d.response.as_ref().map(|r| (quena_body::text::decoded_prefix(resp, &crate::dto::spec_of(&r.headers), MAX_BODY), r.headers.get("content-type").unwrap_or("").to_ascii_lowercase()));
         parse(&d.request.method, &d.request.url, &request, response.as_ref().map(|(b, ct)| (b.as_slice(), ct.as_str())), &self.llm_prices())
     }
 
@@ -1270,9 +1360,9 @@ impl AppCore {
         let Some(detail) = cap.detail(id) else { return };
         let mut flags = flags_of(&call);
         // The conversation it belongs to (kept for the Agents panel as well).
-        let digest = self.keep_digest(numbering, crate::agent::Digest::new(id, &detail, &call));
-        if digest.key != 0 {
-            flags.push((crate::agent::CONV_FLAG.into(), crate::agent::key_text(digest.key)));
+        self.keep_digest(numbering, id, Some(crate::agent::Digest::new(id, &detail, &call)));
+        if let Some(k) = self.conv_key(id) {
+            flags.push((crate::agent::CONV_FLAG.into(), k));
         }
         // Answered from the agent cache: nothing was spent, so no tokens or cost to add up.
         let hit = detail.extra_flags.iter().any(|(k, _)| k == crate::llm_cache::CACHE_FLAG);
@@ -1510,5 +1600,46 @@ mod tests {
         let c = call("https://api.openai.com/v1/chat/completions", &format!(r#"{{"model":"m","messages":[{{"role":"user","content":"{long}"}}]}}"#), "{}", "application/json");
         assert!(c.messages[0].parts[0].text.len() < MAX_TEXT + 100);
         assert!(!c.notes.is_empty());
+    }
+
+    #[test]
+    fn agent_formats_keep_their_place() {
+        // Codex: developer items after the start stay messages; freeform and shell tools.
+        let req = r#"{"model":"gpt-5-codex","instructions":"You are Codex.","input":[
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions instructions>sandbox</permissions instructions>"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"Add a flag"}]},
+            {"type":"custom_tool_call","name":"apply_patch","call_id":"c1","input":"*** Begin Patch"},
+            {"type":"custom_tool_call_output","call_id":"c1","output":"Done"},
+            {"type":"local_shell_call","call_id":"c2","action":{"command":["ls"]}},
+            {"type":"local_shell_call_output","call_id":"c2","output":"a b"},
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"<model_switch>now gpt-5</model_switch>"}]},
+            {"type":"web_search_call","id":"w1","action":{"query":"x"}}
+        ],"prompt_cache_key":"thread-9"}"#;
+        let resp = r#"{"id":"resp_42","model":"gpt-5-codex","status":"completed","output":[{"type":"custom_tool_call","name":"apply_patch","call_id":"c3","input":"*** Begin Patch"}],"usage":{"input_tokens":10,"output_tokens":2}}"#;
+        let c = call("https://chatgpt.com/backend-api/codex/responses", req, resp, "application/json");
+        assert_eq!(c.system.len(), 2, "instructions and the leading developer item: {:?}", c.system);
+        let roles: Vec<&str> = c.messages.iter().map(|m| m.role.as_str()).collect();
+        assert_eq!(roles, ["user", "assistant", "tool", "assistant", "tool", "developer", "assistant"]);
+        assert_eq!(c.messages[1].parts[0].name.as_deref(), Some("apply_patch"));
+        assert_eq!(c.messages[3].parts[0].name.as_deref(), Some("local_shell"));
+        assert_eq!(c.messages[6].parts[0].kind, "other");
+        assert_eq!(c.output[0].name.as_deref(), Some("apply_patch"));
+        assert_eq!(c.response_id.as_deref(), Some("resp_42"));
+        assert!(c.params.iter().any(|(k, v)| k == "prompt_cache_key" && v == "thread-9"));
+        // Anthropic: a screenshot in a tool result, metadata, effort; tools hashed by schema.
+        let req = r#"{"model":"claude-sonnet-4-5","max_tokens":5,"metadata":{"user_id":"{\"session_id\":\"s-1\"}"},"output_config":{"effort":"high"},
+            "tools":[{"name":"Read","description":"r","input_schema":{"type":"object","properties":{"a":{"enum":["x"]}}}}],
+            "messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"shot"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA"}}]}]}]}"#;
+        let c = parse("POST", "https://api.anthropic.com/v1/messages", req.as_bytes(), None, &PriceList::default()).unwrap();
+        let kinds: Vec<&str> = c.messages[0].parts.iter().map(|p| p.kind.as_str()).collect();
+        assert_eq!(kinds, ["toolResult", "image"]);
+        assert_eq!(c.user.as_deref(), Some(r#"{"session_id":"s-1"}"#));
+        assert!(c.params.iter().any(|(k, _)| k == "output_config"));
+        let other = parse("POST", "https://api.anthropic.com/v1/messages", req.replace(r#"["x"]"#, r#"["y"]"#).as_bytes(), None, &PriceList::default()).unwrap();
+        assert_eq!(c.tools[0].size, other.tools[0].size);
+        assert_ne!(c.tools[0].hash, other.tools[0].hash, "a schema change of the same size counts");
+        // DeepSeek reports cache hits at the top level.
+        let c = call("https://api.deepseek.com/chat/completions", r#"{"model":"deepseek-chat","messages":[{"role":"user","content":"hi"}]}"#, r#"{"choices":[{"message":{"content":"x"}}],"usage":{"prompt_tokens":100,"completion_tokens":1,"prompt_cache_hit_tokens":64}}"#, "application/json");
+        assert_eq!(c.usage.unwrap().cache_read, 64);
     }
 }

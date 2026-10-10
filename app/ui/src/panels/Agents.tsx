@@ -1,21 +1,39 @@
 // Agents: the conversations of AI agents in the capture (each run of Claude Code, Codex, an
 // app), with their turns, what fills the context, where the prompt cache missed and why, and
 // hints where tokens go to waste.
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { api, type CallContext, type ConvDetail, type ConvSummary, type ConvTurn } from "../api";
+import { api, type CallContext, type ConvDetail, type ConvSummary, type SessionId } from "../api";
 import { actions } from "../actions";
 import { fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
 import { breaksCache, cacheText, convTree, diffText, hintText, hintTokens } from "../lib/agentText";
+import { CallContextView } from "./CallContext";
 import { set, useStore } from "../store";
 import { plural, t } from "../i18n";
 import { ContextMap } from "./ContextMap";
 
 const tokens = (c: { input: number; output: number }) => c.input + c.output;
+
+/** `value` once it has not changed for `quiet` ms, and at least every `most` ms while it keeps
+ * changing (an agent at work changes the list all the time). */
+function useSettled<T>(value: T, quiet = 400, most = 3000): T {
+  const [settled, setSettled] = useState(value);
+  const since = useRef(Date.now());
+  useEffect(() => {
+    if (Object.is(value, settled)) return;
+    const wait = Math.max(0, Math.min(quiet, most - (Date.now() - since.current)));
+    const timer = setTimeout(() => {
+      since.current = Date.now();
+      setSettled(value);
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [value, settled, quiet, most]);
+  return settled;
+}
 const cacheShare = (read: number, input: number) => (input > 0 ? Math.round((read * 100) / input) : 0);
 
 export default function AgentsPanel() {
-  const version = useStore((s) => s.listVersion);
+  const version = useSettled(useStore((s) => s.listVersion));
   const sel = useStore((s) => s.agentConv);
   const [list, setList] = useState<ConvSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,16 +46,15 @@ export default function AgentsPanel() {
           (r) => alive && (setList(r), setError(null)),
           (e) => alive && setError(String(e)),
         ),
-      list ? 400 : 0,
+      0,
     );
     return () => {
       alive = false;
       clearTimeout(timer);
     };
-    // A new session shows after a moment; many in a row do not ask each time.
-  }, [Math.floor(version / 20), tick]);
+  }, [version, tick]);
   const tree = useMemo(() => convTree(list ?? []), [list]);
-  if (error) return <div className="placeholder">{error}</div>;
+  if (error && !list) return <div className="placeholder">{error}</div>;
   if (!list) return <div className="placeholder">{t("Computing…")}</div>;
   if (!list.length)
     return (
@@ -45,12 +62,14 @@ export default function AgentsPanel() {
         {t("No LLM calls in the capture. Start an agent (Claude Code, Codex …) through Quena; each of its runs shows here as a conversation.")}
       </div>
     );
-  const shown = sel && list.some((c) => c.key === sel) ? sel : null;
+  // A conversation opened from the LLM view may not be in the list yet: it loads on its own.
+  const shown = sel;
   return (
     <div className="agents">
       <div className="agents-list scroll">
         <div className="lt-bar">
           <span className="muted small">{plural(list.length, "{n} conversation", "{n} conversations")}</span>
+          {error && <span className="mocks-error small">{error}</span>}
           <span className="tp-spacer" />
           <button className="icon-btn" title={t("Refresh")} onClick={() => setTick(tick + 1)}>
             <RefreshCw size={13} />
@@ -73,16 +92,16 @@ export default function AgentsPanel() {
             {tree.map(({ c, depth }) => (
               <tr key={c.key} className={c.key === shown ? "selected" : ""} onClick={() => set({ agentConv: c.key })} onDoubleClick={() => void actions.selectIds([c.first])}>
                 <td title={`${c.title}\n${c.models.join(", ")}`}>
-                  <span style={{ paddingLeft: depth * 14 }}>
-                    {depth > 0 && <span className="muted">↳ </span>}
-                    {c.title}
-                  </span>
-                  {c.cacheMisses > 0 && (
-                    <span className="pill pill-warn" title={t("The cache missed in {n} turns", { n: c.cacheMisses })}>
-                      {c.cacheMisses}
-                    </span>
-                  )}
-                  {c.errors > 0 && <span className="pill pill-err">{c.errors}</span>}
+                  <div className="agt-title" style={{ paddingLeft: depth * 14 }}>
+                    {depth > 0 && <span className="muted">↳</span>}
+                    <span className="agt-title-text">{c.title}</span>
+                    {c.cacheMisses > 0 && (
+                      <span className="pill pill-warn" title={t("The cache missed in {n} turns", { n: c.cacheMisses })}>
+                        {c.cacheMisses}
+                      </span>
+                    )}
+                    {c.errors > 0 && <span className="pill pill-err">{c.errors}</span>}
+                  </div>
                 </td>
                 <td className="mono small">{c.agent || c.provider}</td>
                 <td className="num">{c.turns}</td>
@@ -94,28 +113,35 @@ export default function AgentsPanel() {
           </tbody>
         </table>
       </div>
-      <div className="agents-detail scroll pad">{shown ? <Conversation key={shown} convKey={shown} version={version} list={list} /> : <div className="placeholder">{t("Choose a conversation.")}</div>}</div>
+      <div className="agents-detail scroll pad">{shown ? <Conversation key={shown} convKey={shown} refresh={`${version}:${tick}`} list={list} /> : <div className="placeholder">{t("Choose a conversation.")}</div>}</div>
     </div>
   );
 }
 
-function Conversation({ convKey, version, list }: { convKey: string; version: number; list: ConvSummary[] }) {
+function Conversation({ convKey, refresh, list }: { convKey: string; refresh: string; list: ConvSummary[] }) {
   const [d, setD] = useState<ConvDetail | null | undefined>(undefined);
-  const [turn, setTurn] = useState<ConvTurn | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [turnId, setTurnId] = useState<SessionId | null>(null);
   useEffect(() => {
     let alive = true;
-    api.llmConversation(convKey).then((r) => alive && setD(r), () => alive && setD(null));
+    api.llmConversation(convKey).then(
+      (r) => alive && (setD(r), setError(null)),
+      // An error keeps what is shown.
+      (e) => alive && setError(String(e)),
+    );
     return () => {
       alive = false;
     };
-  }, [convKey, Math.floor(version / 20)]);
-  if (d === undefined) return <div className="placeholder">{t("Computing…")}</div>;
+  }, [convKey, refresh]);
+  if (d === undefined) return <div className="placeholder">{error ?? t("Computing…")}</div>;
   if (d === null) return <div className="placeholder">{t("The conversation is no longer in the capture.")}</div>;
   const s = d.summary;
   const span = Math.max(1, s.ended - s.started);
   const titleOf = (k: string) => list.find((c) => c.key === k)?.title ?? k;
+  const turnAt = d.turns.findIndex((x) => x.id === turnId);
   return (
     <div className="conv">
+      {error && <div className="mocks-error small">{error}</div>}
       <div className="conv-head">
         <b>{s.title}</b>
         <span className="muted small mono">{s.key}</span>
@@ -124,6 +150,8 @@ function Conversation({ convKey, version, list }: { convKey: string; version: nu
         <span>{s.agent || s.provider}</span>
         <span className="mono">{s.models.join(", ")}</span>
         <span>{plural(s.turns, "{n} turn", "{n} turns")}</span>
+        {s.side > 0 && <span>{plural(s.side, "{n} side call", "{n} side calls")}</span>}
+        {s.hits > 0 && <span>{plural(s.hits, "{n} from the agent cache", "{n} from the agent cache")}</span>}
         <span>{fmtMs(Math.round(span / 1000))}</span>
         <span>{t("in {n}", { n: fmtInt(s.input) })}</span>
         <span>{t("out {n}", { n: fmtInt(s.output) })}</span>
@@ -138,9 +166,9 @@ function Conversation({ convKey, version, list }: { convKey: string; version: nu
       {s.parent && (
         <div className="small">
           {t("Started by")}{" "}
-          <span className="linklike" onClick={() => set({ agentConv: s.parent ?? null })}>
+          <button type="button" className="linklike" onClick={() => set({ agentConv: s.parent ?? null })}>
             {titleOf(s.parent)}
-          </span>
+          </button>
         </div>
       )}
       {d.children.length > 0 && (
@@ -149,9 +177,9 @@ function Conversation({ convKey, version, list }: { convKey: string; version: nu
           {d.children.map((k, i) => (
             <Fragment key={k}>
               {i > 0 && ", "}
-              <span className="linklike" onClick={() => set({ agentConv: k })}>
+              <button type="button" className="linklike" onClick={() => set({ agentConv: k })}>
                 {titleOf(k)}
-              </span>
+              </button>
             </Fragment>
           ))}
         </div>
@@ -189,21 +217,21 @@ function Conversation({ convKey, version, list }: { convKey: string; version: nu
           {d.turns.map((x, i) => {
             const miss = x.cache.some((c) => c.code === "miss");
             const left = ((x.started - s.started) * 100) / span;
-            const width = Math.max(0.5, (((x.durationMs ?? 0) * 1000) * 100) / span);
+            const width = ((x.durationMs ?? 0) * 1000 * 100) / span;
             return (
               <tr
                 key={x.id}
-                className={`${turn?.id === x.id ? "selected" : ""} ${x.error ? "err" : ""}`}
-                onClick={() => {
-                  setTurn(x);
-                  void actions.selectIds([x.id]);
-                }}
-                title={x.cache.map(cacheText).join("\n")}
+                className={`${turnId === x.id ? "selected" : ""} ${x.error ? "err" : ""} ${x.side ? "side" : ""}`}
+                onClick={() => setTurnId(x.id)}
+                onDoubleClick={() => void actions.selectIds([x.id])}
+                title={[...x.cache.map(cacheText), t("Double-click: select the session")].join("\n")}
               >
-                <td className="num">{i + 1}</td>
+                <td className="num" title={x.prev != null ? t("Continues #{n}", { n: d.turns.findIndex((y) => y.id === x.prev) + 1 }) : undefined}>
+                  {i + 1}
+                </td>
                 <td className="small">{fmtTime(x.started)}</td>
                 <td className="conv-bar-col">
-                  <div className="conv-bar" style={{ left: `${left}%`, width: `${width}%` }} />
+                  <div className="conv-bar" style={{ left: `${left}%`, width: `max(2px, ${width}%)` }} />
                 </td>
                 <td className="num">{x.usage ? fmtInt(x.usage.input) : ""}</td>
                 <td className={`num ${miss ? "warn" : ""}`}>{x.usage ? `${cacheShare(x.usage.cacheRead, x.usage.input)} %` : ""}</td>
@@ -213,14 +241,26 @@ function Conversation({ convKey, version, list }: { convKey: string; version: nu
                   {diffText(x.diff)}
                   {x.diff.modelChanged && <span className="mono"> {x.model}</span>}
                 </td>
-                <td className="small mono">{x.calls.join(", ")}</td>
+                <td className="small mono">
+                  {x.side && (
+                    <span className="pill pill-muted" title={t("No later turn continues this call: a side call of the agent (a prompt suggestion, a summary …)")}>
+                      {t("side call")}
+                    </span>
+                  )}
+                  {x.hit && (
+                    <span className="pill pill-info" title={t("Answered by Quena from the agent cache: nothing was spent")}>
+                      {t("agent cache")}
+                    </span>
+                  )}{" "}
+                  {x.calls.join(", ")}
+                </td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      {turn ? (
-        <TurnContext key={turn.id} turn={turn} index={d.turns.indexOf(turn) + 1} />
+      {turnAt >= 0 ? (
+        <TurnContext key={d.turns[turnAt].id} id={d.turns[turnAt].id} index={turnAt + 1} />
       ) : (
         d.breakdown && (
           <>
@@ -234,15 +274,15 @@ function Conversation({ convKey, version, list }: { convKey: string; version: nu
 }
 
 /** A turn: what filled its context, how it differs from the one before, the cache. */
-function TurnContext({ turn, index }: { turn: ConvTurn; index: number }) {
+function TurnContext({ id, index }: { id: SessionId; index: number }) {
   const [c, setC] = useState<CallContext | null | undefined>(undefined);
   useEffect(() => {
     let alive = true;
-    api.llmContext(turn.id).then((r) => alive && setC(r), () => alive && setC(null));
+    api.llmContext(id).then((r) => alive && setC(r), () => alive && setC(null));
     return () => {
       alive = false;
     };
-  }, [turn.id]);
+  }, [id]);
   return (
     <>
       <h4>{t("Turn {n}", { n: index })}</h4>
@@ -250,43 +290,5 @@ function TurnContext({ turn, index }: { turn: ConvTurn; index: number }) {
       {c === null && <div className="muted small">{t("The request of this turn cannot be read.")}</div>}
       {c && <CallContextView c={c} />}
     </>
-  );
-}
-
-/** Change from the previous turn, cache notes and the context map (also in the LLM view). */
-export function CallContextView({ c }: { c: CallContext }) {
-  return (
-    <div className="call-ctx">
-      {c.diff && c.diff.kind !== "first" && (
-        <div className="small">
-          <b>{t("Change from the turn before:")}</b> {diffText(c.diff)}
-          {c.diff.gapMs != null && c.diff.gapMs > 0 && <span className="muted"> · {t("{t} after it", { t: fmtMs(c.diff.gapMs) })}</span>}
-          {!!c.diff.toolsAdded?.length && <div className="mono small">+ {c.diff.toolsAdded.join(", ")}</div>}
-          {!!c.diff.toolsRemoved?.length && <div className="mono small">− {c.diff.toolsRemoved.join(", ")}</div>}
-          {!!c.diff.toolsChanged?.length && <div className="mono small">~ {c.diff.toolsChanged.join(", ")}</div>}
-        </div>
-      )}
-      {c.changed && (
-        <div className="call-ctx-changed small">
-          <div>
-            <span className="muted">{t("before:")}</span> <span className="mono">{c.changed[0]}</span>
-          </div>
-          <div>
-            <span className="muted">{t("now:")}</span> <span className="mono">{c.changed[1]}</span>
-          </div>
-        </div>
-      )}
-      {c.cache.length > 0 && (
-        <ul className="conv-hints warn">
-          {c.cache.map((n, i) => (
-            <li key={i}>{cacheText(n)}</li>
-          ))}
-        </ul>
-      )}
-      <ContextMap b={c.breakdown} />
-      {c.window && c.breakdown.actual != null && (
-        <div className="muted small">{t("{pct} % of the context window ({window} tokens)", { pct: Math.round((c.breakdown.actual * 100) / c.window), window: fmtInt(c.window) })}</div>
-      )}
-    </div>
   );
 }

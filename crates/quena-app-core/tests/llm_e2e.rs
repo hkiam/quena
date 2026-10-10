@@ -110,7 +110,7 @@ fn turns_of_an_agent_run_make_a_conversation() {
     let port = fake_llm();
     let post = |body: &str| {
         let o = Command::new("curl")
-            .args(["-sS", "--max-time", "20", "-x", &format!("http://{addr}"), "-A", "claude-cli/2.0.14 (external, cli)", "-H", "Content-Type: application/json", "--data-binary", body, &format!("http://127.0.0.1:{port}/v1/messages")])
+            .args(["-sS", "--max-time", "20", "-x", &format!("http://{addr}"), "-A", "claude-cli/2.0.14 (external, cli)", "-H", "X-Claude-Code-Session-Id: 6f1c", "-H", "Content-Type: application/json", "--data-binary", body, &format!("http://127.0.0.1:{port}/v1/messages")])
             .output()
             .unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -143,14 +143,51 @@ fn turns_of_an_agent_run_make_a_conversation() {
     let d = core.llm_conversation(&run.key).unwrap();
     assert_eq!(d.turns[1].diff.kind, "append");
     assert_eq!(d.turns[1].diff.added, 2);
-    // The fake server never reports cache reads: the second turn missed, and the request did
-    // mark its system prompt for caching, so the reason is not known.
-    assert_eq!(d.turns[1].cache.iter().map(|c| c.code).collect::<Vec<_>>(), ["miss", "unknown"]);
+    // 1,000 input tokens: shorter than Anthropic caches, although the request marks its system
+    // prompt for caching.
+    assert_eq!(d.turns[1].cache.iter().map(|c| c.code).collect::<Vec<_>>(), ["short"]);
     let b = d.breakdown.unwrap();
     assert!(b.slices.iter().any(|s| s.category == "instructions" && s.label == "/r/CLAUDE.md"), "{:?}", b.slices);
     assert_eq!(b.slices.iter().map(|s| s.tokens).sum::<u64>().abs_diff(1000) <= 5, true);
     let ctx = core.llm_context(rows[1].id).unwrap();
     assert_eq!((ctx.turn, ctx.turns, ctx.prev), (2, 2, Some(rows[0].id)));
     assert_eq!(ctx.window, Some(200_000));
+    core.shutdown();
+}
+
+/// A HAR from another tool carries no LLM flags: the Agents panel finds the calls by their
+/// URL and flags them.
+#[test]
+fn calls_of_an_archive_from_elsewhere_are_found() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"port":0,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let entry = |body: &str, input: u64, read: u64| {
+        let resp = format!(r#"{{"model":"claude-sonnet-4-5","content":[{{"type":"text","text":"ok"}}],"stop_reason":"end_turn","usage":{{"input_tokens":{},"cache_read_input_tokens":{read},"output_tokens":5}}}}"#, input - read);
+        serde_json::json!({
+            "startedDateTime": "2026-10-10T10:00:00.000Z", "time": 100,
+            "request": {"method": "POST", "url": "https://api.anthropic.com/v1/messages", "httpVersion": "HTTP/1.1", "headers": [{"name": "Content-Type", "value": "application/json"}], "queryString": [], "cookies": [], "headersSize": -1, "bodySize": body.len(), "postData": {"mimeType": "application/json", "text": body}},
+            "response": {"status": 200, "statusText": "OK", "httpVersion": "HTTP/1.1", "headers": [{"name": "Content-Type", "value": "application/json"}], "cookies": [], "content": {"size": resp.len(), "mimeType": "application/json", "text": resp}, "redirectURL": "", "headersSize": -1, "bodySize": resp.len()},
+            "cache": {}, "timings": {"send": 0, "wait": 100, "receive": 0}
+        })
+    };
+    let first = r#"{"model":"claude-sonnet-4-5","max_tokens":5,"system":"You are an agent.","messages":[{"role":"user","content":"Summarize the logs"}]}"#;
+    let second = r#"{"model":"claude-sonnet-4-5","max_tokens":5,"system":"You are an agent.","messages":[{"role":"user","content":"Summarize the logs"},{"role":"assistant","content":"ok"},{"role":"user","content":"shorter"}]}"#;
+    let har = serde_json::json!({"log": {"version": "1.2", "creator": {"name": "other", "version": "1"}, "entries": [entry(first, 5000, 0), entry(second, 5100, 4900)]}});
+    let f = dir.path().join("agent.har");
+    std::fs::write(&f, serde_json::to_vec(&har).unwrap()).unwrap();
+    let job = core.import_archive(f).unwrap();
+    core.jobs.wait(job, Duration::from_secs(20)).unwrap();
+    core.capture().index.tick();
+    assert!(core.capture().index.find_all(|s| !s.llm.is_empty()).is_empty(), "no flags yet");
+    let convs = core.llm_conversations();
+    assert_eq!(convs.len(), 1, "{convs:?}");
+    assert_eq!((convs[0].turns, convs[0].input), (2, 10_100));
+    core.capture().index.tick();
+    let flagged: Vec<_> = core.capture().index.find_all(|s| !s.llm.is_empty() && s.llm_conv == convs[0].key);
+    assert_eq!(flagged.len(), 2, "the calls got their LLM and conversation flags");
+    let ctx = core.llm_context(flagged[1]).unwrap();
+    assert_eq!((ctx.turn, ctx.turns), (2, 2));
+    assert_eq!(ctx.diff.unwrap().kind, "append");
     core.shutdown();
 }

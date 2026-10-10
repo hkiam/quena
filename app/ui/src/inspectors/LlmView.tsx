@@ -5,7 +5,7 @@ import { api, type CallContext, type Detail, type LlmCall, type LlmPart } from "
 import { fmtInt, fmtUsd } from "../lib/format";
 import { t } from "../i18n";
 import { say, set } from "../store";
-import { CallContextView } from "../panels/Agents";
+import { CallContextView } from "../panels/CallContext";
 
 /** URLs of LLM APIs (mirrors the core's recognition; POST only). */
 export function llmCandidate(detail: Detail): boolean {
@@ -135,15 +135,17 @@ function ContextBar({ id, state }: { id: number; state: string }) {
           <>
             {" · "}
             {t("turn {n} of {of}", { n: c.turn, of: c.turns })}{" "}
-            <span
+            <button
+              type="button"
               className="linklike"
               onClick={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 set({ agentConv: c.key, activeTab: "agents" });
               }}
             >
               {t("Show conversation")}
-            </span>
+            </button>
           </>
         )}
         {miss && <span className="pill pill-warn">{t("cache missed")}</span>}

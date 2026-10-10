@@ -3958,10 +3958,19 @@ tr.capdiff-changed td:first-child {
 .conv-hints.warn li {
   color: var(--pill-warn-fg);
 }
-.agents-table td:first-child {
-  max-width: 320px;
+.agt-title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 360px;
+}
+.agt-title-text {
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+}
+.agt-title .pill {
+  flex: none;
 }
 .agt-table .pill {
   margin-left: 4px;
@@ -4068,3 +4077,9 @@ tr.capdiff-changed td:first-child {
 .ctx-toolCalls { background: var(--copper-soft); }
 .ctx-toolResults { background: var(--mark-red); }
 .ctx-images { background: var(--pill-info-bg); }
+.agt-table tr.side td {
+  color: var(--muted);
+}
+.agt-table td .pill + .pill {
+  margin-left: 2px;
+}

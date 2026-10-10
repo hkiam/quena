@@ -21,9 +21,19 @@ contain breaking changes (settings, file formats, plugin API).
   context** as a map: system prompt, each tool definition, CLAUDE.md/AGENTS.md, skills list,
   reminders, environment, messages, thinking, tool calls and results by tool, images —
   estimated and scaled to the reported input tokens. The LLM view shows the same for one
-  call under *Context*. Calls get the flag `x-quena-llm-conv`: column *Conversation*, *Group
-  by → Conversation (agent run)*, filter `conv == …`. Context windows come from the LiteLLM
-  list (`max_input_tokens`) or the model's family; tool definitions report their size.
+  call under *Context*. Each call is linked to the call it continues (Claude Code's
+  previous request, `previous_response_id`, else the furthest common history within the
+  agent's session — Claude Code's session id, Codex's thread, `prompt_cache_key`), so
+  separate runs with the same prompt stay apart and side calls (prompt suggestions,
+  summaries) are marked instead of breaking the turn order; answers from the agent cache cost
+  nothing. Calls get the flag `x-quena-llm-conv`: column *Conversation*, *Group by →
+  Conversation (agent run)*, filter `conv == …`; LLM calls in archives from other tools are
+  found by their URL and flagged. Context windows come from the LiteLLM list
+  (`max_input_tokens`) or the model's family; tool definitions report their size and tokens.
+- LLM view: Claude Code's attribution block (`x-anthropic-billing-header`) is no longer shown
+  as part of the system prompt; Codex `developer` items after the start stay in the
+  conversation; `custom_tool_call` (apply_patch), `local_shell_call` and other Responses
+  items are understood; images in tool results show; DeepSeek's cache hits count.
 - **Snapshot library** (*File → Snapshot Library…*): archives in folders of the data folder,
   saved from the selection or the list (also with a password), sessions added to a snapshot
   later, opened as a **source** of its own — *Group by → Source* and the navigator list *live*

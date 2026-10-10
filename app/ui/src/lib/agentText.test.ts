@@ -9,6 +9,8 @@ const conv = (key: string, started: number, parent?: string): ConvSummary => ({
   provider: "",
   models: [],
   turns: 1,
+  side: 0,
+  hits: 0,
   first: 1,
   last: 1,
   started,
@@ -22,6 +24,7 @@ const conv = (key: string, started: number, parent?: string): ConvSummary => ({
   cacheMisses: 0,
   lastInput: 0,
   parent,
+  subagent: !!parent,
 });
 const diff = (d: Partial<TurnDiff>): TurnDiff => ({ kind: "append", added: 0, dropped: 0, systemChanged: false, toolsReordered: false, modelChanged: false, ...d });
 
@@ -41,5 +44,7 @@ describe("agent texts", () => {
     expect(breaksCache(diff({ toolsAdded: ["x"] }))).toBe(true);
     expect(cacheText({ code: "expired", args: { minutes: "7", ttl: "5" } })).toContain("7 min");
     expect(cacheText({ code: "novel" })).toBe("novel");
+    expect(diffText(diff({ added: 1, settingsChanged: ["thinking"] }))).toBe("+1 message · settings changed: thinking");
+    expect(breaksCache(diff({ settingsChanged: ["anthropic-beta"] }))).toBe(true);
   });
 });
