@@ -22,6 +22,7 @@ const FIELDS: Partial<Record<ColumnKey, string>> = {
   cert: "certdays",
   llm: "llm",
   tokens: "tokens",
+  conversation: "conv",
   tls: "tls",
   remoteIp: "ip",
   http: "http",

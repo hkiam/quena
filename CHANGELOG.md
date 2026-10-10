@@ -8,6 +8,22 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Agent conversations** (right pane → *Agents*): the LLM calls of one agent run — Claude
+  Code, Codex, an app — put together as a conversation (same system prompt and first prompt
+  of the user; what agents add around it does not count), subagents under the conversation
+  whose tool call started them. Per conversation: turns on a time axis with input, cached
+  share, output, cost, the change from the turn before (`+2 messages`, `message 12 changed`,
+  system prompt, tools, model) and the tools called; **why the prompt cache missed** (an
+  earlier message, the system prompt or tools changed, another model, the cache expired, no
+  `cache_control` breakpoint, too short for OpenAI); **hints** where tokens go to waste (the
+  same tool result several times, large results, repeated calls, recurring reminders, tools
+  never called, a context near the window) with the tokens they cost; and **what fills the
+  context** as a map: system prompt, each tool definition, CLAUDE.md/AGENTS.md, skills list,
+  reminders, environment, messages, thinking, tool calls and results by tool, images —
+  estimated and scaled to the reported input tokens. The LLM view shows the same for one
+  call under *Context*. Calls get the flag `x-quena-llm-conv`: column *Conversation*, *Group
+  by → Conversation (agent run)*, filter `conv == …`. Context windows come from the LiteLLM
+  list (`max_input_tokens`) or the model's family; tool definitions report their size.
 - **Snapshot library** (*File → Snapshot Library…*): archives in folders of the data folder,
   saved from the selection or the list (also with a password), sessions added to a snapshot
   later, opened as a **source** of its own — *Group by → Source* and the navigator list *live*

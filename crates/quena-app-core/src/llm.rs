@@ -67,6 +67,14 @@ pub struct Message {
 pub struct ToolDef {
     pub name: String,
     pub description: String,
+    /// Bytes of the whole definition as sent (name, description, schema): what it adds to
+    /// every request.
+    #[serde(default)]
+    pub size: usize,
+}
+
+fn tool_def(name: String, description: String, def: &Value) -> ToolDef {
+    ToolDef { name, description, size: def.to_string().len() }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
@@ -120,6 +128,10 @@ pub struct LlmCall {
     pub error: Option<String>,
     /// Texts were shortened, the response is not complete, …
     pub notes: Vec<String>,
+    /// Where the request asks the provider to cache its prefix (Anthropic `cache_control`):
+    /// `system[1]`, `tools[12]`, `messages[40]`; `ttl 1h` when one asks for the long cache.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cache_marks: Vec<String>,
 }
 
 // ------------------------------------------------------------------ detection
@@ -326,7 +338,7 @@ fn chat_request(v: &Value, call: &mut LlmCall) {
     }
     for t in v.get("tools").and_then(|t| t.as_array()).into_iter().flatten() {
         let f = t.get("function").unwrap_or(t);
-        call.tools.push(ToolDef { name: s(f, "name").unwrap_or_else(|| s(t, "type").unwrap_or_default()), description: s(f, "description").unwrap_or_default() });
+        call.tools.push(tool_def(s(f, "name").unwrap_or_else(|| s(t, "type").unwrap_or_default()), s(f, "description").unwrap_or_default(), t));
     }
     call.params = params(v, &["temperature", "top_p", "max_tokens", "max_completion_tokens", "reasoning_effort", "tool_choice", "response_format", "seed", "n"]);
 }
@@ -364,7 +376,7 @@ fn responses_request(v: &Value, call: &mut LlmCall) {
         _ => {}
     }
     for t in v.get("tools").and_then(|t| t.as_array()).into_iter().flatten() {
-        call.tools.push(ToolDef { name: s(t, "name").unwrap_or_else(|| s(t, "type").unwrap_or_default()), description: s(t, "description").unwrap_or_default() });
+        call.tools.push(tool_def(s(t, "name").unwrap_or_else(|| s(t, "type").unwrap_or_default()), s(t, "description").unwrap_or_default(), t));
     }
     call.params = params(v, &["temperature", "top_p", "max_output_tokens", "tool_choice", "previous_response_id", "store"]);
     if let Some(r) = v.get("reasoning").and_then(|r| r.get("effort")) {
@@ -399,6 +411,37 @@ fn anthropic_blocks(c: &Value, notes: &mut Vec<String>) -> Vec<Part> {
     }
 }
 
+/// The places an Anthropic request sets `cache_control` (and whether one asks for the 1 h cache).
+fn cache_marks(v: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut long = false;
+    let mut mark = |b: &Value, at: String, out: &mut Vec<String>| {
+        if let Some(c) = b.get("cache_control").filter(|c| !c.is_null()) {
+            long |= s(c, "ttl").as_deref() == Some("1h");
+            out.push(at);
+        }
+    };
+    if let Some(Value::Array(a)) = v.get("system") {
+        for (i, b) in a.iter().enumerate() {
+            mark(b, format!("system[{i}]"), &mut out);
+        }
+    }
+    for (i, t) in v.get("tools").and_then(|t| t.as_array()).into_iter().flatten().enumerate() {
+        mark(t, format!("tools[{i}]"), &mut out);
+    }
+    for (i, m) in v.get("messages").and_then(|m| m.as_array()).into_iter().flatten().enumerate() {
+        mark(m, format!("messages[{i}]"), &mut out);
+        for b in m.get("content").and_then(|c| c.as_array()).into_iter().flatten() {
+            mark(b, format!("messages[{i}]"), &mut out);
+        }
+    }
+    out.dedup();
+    if long {
+        out.push("ttl 1h".into());
+    }
+    out
+}
+
 fn anthropic_request(v: &Value, call: &mut LlmCall) {
     match v.get("system") {
         Some(Value::String(t)) => call.system.push(cut(t, &mut call.notes)),
@@ -410,8 +453,9 @@ fn anthropic_request(v: &Value, call: &mut LlmCall) {
         call.messages.push(Message { role: s(m, "role").unwrap_or_default(), parts });
     }
     for t in v.get("tools").and_then(|t| t.as_array()).into_iter().flatten() {
-        call.tools.push(ToolDef { name: s(t, "name").unwrap_or_default(), description: s(t, "description").unwrap_or_default() });
+        call.tools.push(tool_def(s(t, "name").unwrap_or_default(), s(t, "description").unwrap_or_default(), t));
     }
+    call.cache_marks = cache_marks(v);
     call.params = params(v, &["max_tokens", "temperature", "top_p", "top_k", "tool_choice", "stop_sequences"]);
     if let Some(t) = v.get("thinking").filter(|t| !t.is_null()) {
         call.params.push(("thinking".into(), t.to_string()));
@@ -455,7 +499,7 @@ fn gemini_request(v: &Value, call: &mut LlmCall) {
     }
     for t in v.get("tools").and_then(|t| t.as_array()).into_iter().flatten() {
         for f in t.get("functionDeclarations").or_else(|| t.get("function_declarations")).and_then(|f| f.as_array()).into_iter().flatten() {
-            call.tools.push(ToolDef { name: s(f, "name").unwrap_or_default(), description: s(f, "description").unwrap_or_default() });
+            call.tools.push(tool_def(s(f, "name").unwrap_or_default(), s(f, "description").unwrap_or_default(), f));
         }
     }
     if let Some(g) = v.get("generationConfig").or_else(|| v.get("generation_config")) {
@@ -785,6 +829,9 @@ pub struct Price {
     /// Input written to the cache (default: like input).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_write: Option<f64>,
+    /// Context window: the most input tokens the model takes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
 }
 
 /// Own prices, in the data folder.
@@ -854,6 +901,7 @@ pub fn parse_litellm(json: &[u8]) -> Result<BTreeMap<String, Price>, String> {
             output: per_m(e, "output_cost_per_token").unwrap_or(0.0),
             cache_read: per_m(e, "cache_read_input_token_cost"),
             cache_write: per_m(e, "cache_creation_input_token_cost"),
+            context: e.get("max_input_tokens").and_then(|x| x.as_u64()).filter(|x| *x > 0),
         };
         out.insert(name, p);
     }
@@ -933,8 +981,34 @@ pub fn price_of(model: &str, prices: &PriceList) -> Option<(String, Price)> {
     }
     PRICES.iter().filter(|(k, ..)| m.strip_prefix(k).is_some_and(same_model)).max_by_key(|(k, ..)| k.len()).map(|(k, i, o, c)| {
         let write = if k.starts_with("claude") { Some(i * 1.25) } else { None };
-        (format!("{k} (built-in list prices, 2025)"), Price { input: *i, output: *o, cache_read: Some(*c), cache_write: write })
+        (format!("{k} (built-in list prices, 2025)"), Price { input: *i, output: *o, cache_read: Some(*c), cache_write: write, context: builtin_context(&m) })
     })
+}
+
+/// Context windows (input tokens) of model families, by name prefix (the longest wins).
+const CONTEXT: &[(&str, u64)] = &[
+    ("claude", 200_000),
+    ("gpt-4o", 128_000),
+    ("gpt-4.1", 1_047_576),
+    ("gpt-5", 272_000),
+    ("o1", 200_000),
+    ("o3", 200_000),
+    ("o4", 200_000),
+    ("gemini-1.5", 1_048_576),
+    ("gemini-2", 1_048_576),
+    ("deepseek", 128_000),
+    ("mistral-large", 128_000),
+    ("mistral-small", 128_000),
+];
+
+fn builtin_context(model: &str) -> Option<u64> {
+    CONTEXT.iter().filter(|(k, _)| model.starts_with(k)).max_by_key(|(k, _)| k.len()).map(|(_, c)| *c)
+}
+
+/// The context window of `model`: from the price that applies, else by its family.
+pub fn context_of(model: &str, prices: &PriceList) -> Option<u64> {
+    let m = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+    price_of(model, prices).and_then(|(_, p)| p.context).or_else(|| builtin_context(&m))
 }
 
 /// Estimated cost of `u` at `p`.
@@ -984,6 +1058,7 @@ pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &
         cost: None,
         error: None,
         notes: vec![],
+        cache_marks: vec![],
     };
     match api {
         Api::Chat => chat_request(&req, &mut call),
@@ -1192,9 +1267,15 @@ impl AppCore {
             return;
         }
         let Some(call) = self.llm(id) else { return };
+        let Some(detail) = cap.detail(id) else { return };
         let mut flags = flags_of(&call);
+        // The conversation it belongs to (kept for the Agents panel as well).
+        let digest = self.keep_digest(numbering, crate::agent::Digest::new(id, &detail, &call));
+        if digest.key != 0 {
+            flags.push((crate::agent::CONV_FLAG.into(), crate::agent::key_text(digest.key)));
+        }
         // Answered from the agent cache: nothing was spent, so no tokens or cost to add up.
-        let hit = cap.detail(id).is_some_and(|d| d.extra_flags.iter().any(|(k, _)| k == crate::llm_cache::CACHE_FLAG));
+        let hit = detail.extra_flags.iter().any(|(k, _)| k == crate::llm_cache::CACHE_FLAG);
         if hit {
             flags.retain(|(k, _)| k != LLM_TOKENS_FLAG && k != LLM_COST_FLAG);
         }
@@ -1244,7 +1325,7 @@ mod tests {
         let name = |m: &str, l: &PriceList| price_of(m, l).map(|(k, _)| k);
         assert!(name("claude-opus-4-7-20261001", &l).unwrap().starts_with("claude-opus-4-7 (LiteLLM price list, fetched 2025-10-09"));
         assert!(name("gpt-4o", &l).unwrap().contains("built-in"), "built-in for what the list lacks");
-        l.custom.insert("gpt-9".into(), Price { input: 1.0, output: 1.0, cache_read: None, cache_write: None });
+        l.custom.insert("gpt-9".into(), Price { input: 1.0, output: 1.0, cache_read: None, cache_write: None, context: None });
         assert!(name("gpt-9", &l).unwrap().contains("llm-prices.json"), "own prices first");
     }
 
@@ -1411,7 +1492,7 @@ mod tests {
         assert_eq!(c.usage.map(|u| u.total()), Some(38));
         assert!(c.cost.is_none(), "no price for local models");
         let mut prices = PriceList::default();
-        prices.custom.insert("llama3".to_string(), Price { input: 1.0, output: 2.0, cache_read: None, cache_write: None });
+        prices.custom.insert("llama3".to_string(), Price { input: 1.0, output: 2.0, cache_read: None, cache_write: None, context: None });
         let p = parse("POST", "http://127.0.0.1:11434/api/chat", req.as_bytes(), Some((resp.as_bytes(), "application/x-ndjson")), &prices).unwrap();
         assert!((p.cost.unwrap().usd - (26.0 + 24.0) / 1e6).abs() < 1e-12);
         let g = call("http://127.0.0.1:11434/api/generate", r#"{"model":"llama3.2","prompt":"Why?","system":"Short.","stream":false}"#, r#"{"model":"llama3.2","response":"Because.","done":true,"prompt_eval_count":3,"eval_count":2}"#, "application/json");

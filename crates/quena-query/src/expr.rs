@@ -59,6 +59,8 @@ pub enum Field {
     Llm,
     /// Tokens of an LLM call (input + output).
     Tokens,
+    /// The conversation (agent run) of an LLM call (`conv == 3fa2c01d`).
+    Conv,
     /// TLS version (`tls == TLSv1.2`).
     Tls,
     /// The server's IP address.
@@ -152,6 +154,7 @@ impl Field {
             "certdays" | "cert" => Field::CertDays,
             "llm" | "model" => Field::Llm,
             "tokens" => Field::Tokens,
+            "conv" | "conversation" => Field::Conv,
             "tls" | "tlsversion" => Field::Tls,
             "ip" | "remoteip" | "serverip" => Field::RemoteIp,
             "http" | "httpversion" | "version" => Field::Http,
@@ -304,6 +307,7 @@ fn text_of(f: Field, s: &SessionSummary) -> String {
         Field::CertDays => cert_days(s).map(|d| d.to_string()).unwrap_or_default(),
         Field::Llm => s.llm.clone(),
         Field::Tokens => s.llm_tokens.map(|t| t.to_string()).unwrap_or_default(),
+        Field::Conv => s.llm_conv.clone(),
         Field::Tls => s.tls.clone(),
         Field::RemoteIp => s.remote_ip.clone(),
         Field::Http => s.http_version.clone(),

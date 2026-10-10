@@ -1,10 +1,11 @@
 // LLM inspector: a call to an LLM API as a conversation — system prompt, messages, tool
 // calls and results, the answer (assembled from a stream), token usage and estimated cost.
 import { useEffect, useState } from "react";
-import { api, type Detail, type LlmCall, type LlmPart } from "../api";
+import { api, type CallContext, type Detail, type LlmCall, type LlmPart } from "../api";
 import { fmtInt, fmtUsd } from "../lib/format";
 import { t } from "../i18n";
-import { say } from "../store";
+import { say, set } from "../store";
+import { CallContextView } from "../panels/Agents";
 
 /** URLs of LLM APIs (mirrors the core's recognition; POST only). */
 export function llmCandidate(detail: Detail): boolean {
@@ -111,6 +112,47 @@ function CacheBar({ detail }: { detail: Detail }) {
   );
 }
 
+/** The call in its conversation: turn, what fills the context, change and cache. */
+function ContextBar({ id, state }: { id: number; state: string }) {
+  const [c, setC] = useState<CallContext | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setC(null);
+    if (state === "done" || state === "aborted") api.llmContext(id).then((r) => alive && setC(r), () => {});
+    return () => {
+      alive = false;
+    };
+  }, [id, state]);
+  if (!c) return null;
+  const miss = c.cache.some((n) => n.code === "miss");
+  const tokens = c.breakdown.actual ?? c.breakdown.estimated;
+  return (
+    <details className="llm-details llm-context">
+      <summary>
+        {t("Context")}: {t("{n} tokens", { n: fmtInt(tokens) })}
+        {c.window ? ` · ${Math.round((tokens * 100) / c.window)} %` : ""}
+        {c.key && (
+          <>
+            {" · "}
+            {t("turn {n} of {of}", { n: c.turn, of: c.turns })}{" "}
+            <span
+              className="linklike"
+              onClick={(e) => {
+                e.preventDefault();
+                set({ agentConv: c.key, activeTab: "agents" });
+              }}
+            >
+              {t("Show conversation")}
+            </span>
+          </>
+        )}
+        {miss && <span className="pill pill-warn">{t("cache missed")}</span>}
+      </summary>
+      <CallContextView c={c} />
+    </details>
+  );
+}
+
 export function LlmView({ detail }: { detail: Detail }) {
   const [c, setC] = useState<LlmCall | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +183,7 @@ export function LlmView({ detail }: { detail: Detail }) {
         <Usage c={c} />
       </div>
       <CacheBar detail={detail} />
+      <ContextBar id={id} state={state} />
       {c.error && <div className="mocks-error">{c.error}</div>}
       {c.notes.map((n) => (
         <div key={n} className="muted small">

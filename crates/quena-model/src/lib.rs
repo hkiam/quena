@@ -336,6 +336,9 @@ pub struct SessionSummary {
     pub llm_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_cost_micros: Option<u64>,
+    /// The conversation (agent run) an LLM call belongs to.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub llm_conv: String,
     /// TLS version towards the server (else towards the client), e.g. `TLSv1.3`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tls: String,
@@ -451,6 +454,7 @@ impl SessionDetail {
         let flag = |k: &str| self.extra_flags.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
         s.llm = flag("x-quena-llm").unwrap_or_default().to_string();
         s.llm_tokens = flag("x-quena-llm-tokens").and_then(|v| v.parse().ok());
+        s.llm_conv = flag("x-quena-llm-conv").unwrap_or_default().to_string();
         s.llm_cost_micros = flag("x-quena-llm-cost").and_then(|v| v.parse::<f64>().ok()).map(|c| (c * 1_000_000.0).round() as u64);
         s.request_body_len = self.request_body.wire_len();
         if let Some(resp) = &self.response {

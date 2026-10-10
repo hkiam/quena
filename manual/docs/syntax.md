@@ -67,6 +67,7 @@ not kind == tunnel
 | `certdays` | `cert` | days until the server's certificate expires (`0`: expired or expires within a day); e.g. `certdays < 30` |
 | `llm` | `model` | [LLM API call](llm.md): `provider/model`, e.g. `llm ~ claude` |
 | `tokens` | | tokens of an LLM call (input + output) |
+| `conv` | `conversation` | the conversation (agent run) of an LLM call, e.g. `conv == 3fa2c01d` |
 | `tls` | `tlsversion` | TLS version towards the server (else the client), e.g. `tls == TLSv1.2` |
 | `ip` | `remoteip`, `serverip` | the server's IP address, e.g. `ip ~= "10.*"` |
 | `http` | `httpversion`, `version` | HTTP version of the request: `HTTP/1.1`, `HTTP/2` … |

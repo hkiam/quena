@@ -2,6 +2,7 @@
 //! [`AppCore`]. The Tauri shell is a thin binding on top; headless tests and a
 //! future CLI use the same API.
 
+pub mod agent;
 pub mod archive;
 pub mod auth;
 pub mod autosave;
@@ -175,6 +176,7 @@ pub struct AppCore {
     pub(crate) autosave: Mutex<autosave::State>,
     /// LLM prices with the stamps (time, size) of their files.
     #[allow(clippy::type_complexity)]
+    pub(crate) llm_digests: Mutex<agent::Digests>,
     pub(crate) llm_prices: Mutex<Option<((Option<(Option<std::time::SystemTime>, u64)>, Option<(Option<std::time::SystemTime>, u64)>), Arc<llm::PriceList>)>>,
     /// Archives loaded into the list: (file name, capture numbering, session ids).
     pub(crate) imports: Mutex<Vec<(String, u64, Vec<SessionId>)>>,
@@ -220,6 +222,7 @@ impl AppCore {
             diag_report: Mutex::new(Default::default()),
             protobuf: protobuf::Schemas::default(),
             autosave: Mutex::new(Default::default()),
+            llm_digests: Mutex::new(agent::Digests::default()),
             llm_prices: Mutex::new(None),
             imports: Mutex::new(Vec::new()),
             replay_generation: std::sync::atomic::AtomicU64::new(0),

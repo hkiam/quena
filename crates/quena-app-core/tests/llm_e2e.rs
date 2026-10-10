@@ -97,3 +97,60 @@ fn llm_calls_are_marked_and_counted() {
     assert!((st.llm_cost - (0.0105 + (100.0 * 2.5 + 20.0 * 10.0) / 1e6)).abs() < 1e-9, "{}", st.llm_cost);
     core.shutdown();
 }
+
+#[test]
+fn turns_of_an_agent_run_make_a_conversation() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"port":0,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap();
+    core.set_proxy_engine(engine.clone());
+    core.start_capture().unwrap();
+    let addr = engine.proxy.listen_addrs().into_iter().find(|a| a.is_ipv4()).unwrap();
+    let port = fake_llm();
+    let post = |body: &str| {
+        let o = Command::new("curl")
+            .args(["-sS", "--max-time", "20", "-x", &format!("http://{addr}"), "-A", "claude-cli/2.0.14 (external, cli)", "-H", "Content-Type: application/json", "--data-binary", body, &format!("http://127.0.0.1:{port}/v1/messages")])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    };
+    let sys = r#""system":[{"type":"text","text":"You are Claude Code.","cache_control":{"type":"ephemeral"}}],"tools":[{"name":"Read","description":"Read a file","input_schema":{"type":"object"}}]"#;
+    let first = r#"{"role":"user","content":[{"type":"text","text":"<system-reminder>Contents of /r/CLAUDE.md (project):\nUse tabs.</system-reminder>"},{"type":"text","text":"Fix the parser"}]}"#;
+    post(&format!(r#"{{"model":"claude-sonnet-4-20250514","max_tokens":10,"stream":true,{sys},"messages":[{first}]}}"#));
+    post(&format!(r#"{{"model":"claude-sonnet-4-20250514","max_tokens":10,"stream":true,{sys},"messages":[{first},{{"role":"assistant","content":[{{"type":"tool_use","id":"t1","name":"Read","input":{{"file":"p.rs"}}}}]}},{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"t1","content":"fn parse() {{}}"}}]}}]}}"#));
+    post(r#"{"model":"claude-sonnet-4-20250514","max_tokens":10,"stream":true,"system":"Write a title","messages":[{"role":"user","content":"Fix the parser"}]}"#);
+    let t = Instant::now();
+    let rows = loop {
+        core.capture().index.tick();
+        let rows: Vec<_> = core.capture().index.find_all(|s| !s.llm_conv.is_empty()).into_iter().filter_map(|id| core.capture().index.get(id)).collect();
+        if rows.len() == 3 {
+            break rows;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20), "not marked: {rows:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(rows[0].llm_conv, rows[1].llm_conv, "two turns of one run");
+    assert_ne!(rows[0].llm_conv, rows[2].llm_conv, "another system prompt: another conversation");
+    let e = quena_query::expr::parse(&format!("conv == {}", rows[0].llm_conv)).unwrap();
+    assert_eq!(core.capture().index.find_all(|s| e.eval(s)).len(), 2);
+    let convs = core.llm_conversations();
+    assert_eq!(convs.len(), 2);
+    let run = convs.iter().find(|c| c.turns == 2).unwrap();
+    assert_eq!(run.title, "Fix the parser");
+    assert_eq!(run.agent, "claude-cli/2.0.14");
+    assert_eq!(run.input, 2000);
+    let d = core.llm_conversation(&run.key).unwrap();
+    assert_eq!(d.turns[1].diff.kind, "append");
+    assert_eq!(d.turns[1].diff.added, 2);
+    // The fake server never reports cache reads: the second turn missed, and the request did
+    // mark its system prompt for caching, so the reason is not known.
+    assert_eq!(d.turns[1].cache.iter().map(|c| c.code).collect::<Vec<_>>(), ["miss", "unknown"]);
+    let b = d.breakdown.unwrap();
+    assert!(b.slices.iter().any(|s| s.category == "instructions" && s.label == "/r/CLAUDE.md"), "{:?}", b.slices);
+    assert_eq!(b.slices.iter().map(|s| s.tokens).sum::<u64>().abs_diff(1000) <= 5, true);
+    let ctx = core.llm_context(rows[1].id).unwrap();
+    assert_eq!((ctx.turn, ctx.turns, ctx.prev), (2, 2, Some(rows[0].id)));
+    assert_eq!(ctx.window, Some(200_000));
+    core.shutdown();
+}

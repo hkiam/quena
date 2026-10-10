@@ -3,7 +3,7 @@ import type { NetworkProfile } from "./lib/diagReport";
 import type { FilterSettings, GroupBy, JobInfo, LogEntry, RwRule, SanitizedExport, SessionId, Settings, Sort, Status } from "./api";
 import { t } from "./i18n";
 
-export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "diagnostics";
+export type RightTab = "statistics" | "inspectors" | "autoresponder" | "composer" | "filters" | "log" | "timeline" | "diagnostics" | "agents";
 
 export type ColumnKey =
   | "id"
@@ -25,6 +25,7 @@ export type ColumnKey =
   | "llm"
   | "tokens"
   | "cost"
+  | "conversation"
   | "tls"
   | "remoteIp"
   | "http"
@@ -63,6 +64,7 @@ export const COLUMN_TITLES: Record<ColumnKey, string> = {
   llm: "LLM",
   tokens: t("Tokens"),
   cost: t("Cost"),
+  conversation: t("Conversation"),
   tls: "TLS",
   remoteIp: t("Server IP"),
   http: t("HTTP version"),
@@ -108,6 +110,7 @@ export const DEFAULT_COLUMNS: ColumnConf[] = [
   col("llm", 140, false),
   col("tokens", 64, false, "right"),
   col("cost", 64, false, "right"),
+  col("conversation", 90, false),
   col("tls", 64, false),
   col("remoteIp", 110, false),
   col("http", 70, false),
@@ -137,6 +140,7 @@ export const CLASSIC_COLUMNS: ColumnConf[] = [
   col("llm", 140, false),
   col("tokens", 64, false, "right"),
   col("cost", 64, false, "right"),
+  col("conversation", 90, false),
   col("tls", 64, false),
   col("remoteIp", 110, false),
   col("http", 70, false),
@@ -300,6 +304,8 @@ export interface AppState {
   focusId: SessionId | null;
   anchorIndex: number | null;
   activeTab: RightTab;
+  /** The conversation the Agents panel shows (its key). */
+  agentConv: string | null;
   /** The navigator narrows the list to this group or path (with what to call it). */
   scope: { scope: import("./api").NavScope; label: string } | null;
   jobs: JobInfo[];
@@ -340,6 +346,7 @@ export const useStore = create<AppState>(() => ({
   focusId: null,
   anchorIndex: null,
   activeTab: "inspectors",
+  agentConv: null,
   scope: null,
   jobs: [],
   log: [],

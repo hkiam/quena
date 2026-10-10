@@ -239,6 +239,10 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **LLM traffic**: calls to OpenAI, Anthropic, Gemini, Ollama and compatible APIs as a
   conversation — system prompt, messages, tool calls, the answer assembled from streams,
   tokens and estimated cost; columns, filters and statistics per model
+- **Agent conversations** (Claude Code, Codex, own apps): the turns of each run with
+  subagents, what fills the context (system prompt, each tool, CLAUDE.md/AGENTS.md, tool
+  results …), the change from turn to turn, why the prompt cache missed, and hints where
+  tokens go to waste
 - Auto-detected inspectors: **WebSocket**, **SSE**, **gRPC / gRPC-Web / Protobuf**
   (field names from `.proto` files or server reflection, schemaless otherwise),
   **MessagePack**, **Multipart / MTOM**, **SOAP**, **Atom / OData**

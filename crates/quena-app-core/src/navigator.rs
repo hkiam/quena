@@ -35,6 +35,7 @@ pub fn group_value(s: &SessionSummary, by: GroupBy) -> Option<std::borrow::Cow<'
         GroupBy::Custom => text(&s.custom).map(|_| s.custom.as_str().into()),
         GroupBy::Via => text(&s.via).map(|_| s.via.as_str().into()),
         GroupBy::Llm => text(&s.llm).map(|_| s.llm.as_str().into()),
+        GroupBy::Conversation => text(&s.llm_conv).map(|_| s.llm_conv.as_str().into()),
         GroupBy::Source => Some(quena_index::source_of(s).into()),
     }
 }

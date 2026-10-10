@@ -8,6 +8,7 @@
 // plugin → Plugin, proxy → Proxy, certificate → Zertifikat, host → Host, path → Pfad.
 // Style: neutral and short, no "Sie"/"du" where it can be avoided ("Sessions auswählen",
 // "Datei wählen"); keep technical terms, shortcuts, commands and placeholders unchanged.
+import { agents } from "./de/agents";
 import { components } from "./de/components";
 import { core } from "./de/core";
 import { diagnostics } from "./de/diagnostics";
@@ -24,4 +25,5 @@ export const de: Record<string, string> = {
   ...diagnostics,
   ...mocks,
   ...sanitize,
+  ...agents,
 };

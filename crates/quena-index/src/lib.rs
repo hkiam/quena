@@ -40,6 +40,8 @@ pub enum Column {
     Llm,
     Tokens,
     Cost,
+    /// The conversation (agent run) of an LLM call.
+    Conversation,
     /// TLS version, the server's IP address, the request's HTTP version.
     Tls,
     RemoteIp,
@@ -91,6 +93,8 @@ pub enum GroupBy {
     Via,
     /// The LLM provider/model.
     Llm,
+    /// The conversation (agent run) of LLM calls.
+    Conversation,
     /// Where the session comes from: recorded live, or the archive it was loaded from.
     Source,
 }
@@ -138,6 +142,7 @@ fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
         GroupBy::Custom => text(&r.custom, false),
         GroupBy::Via => text(&r.via, false),
         GroupBy::Llm => text(&r.llm, false),
+        GroupBy::Conversation => text(&r.llm_conv, false),
         GroupBy::Source => Some(hash_str(source_of(r), false)),
     }
 }
@@ -170,6 +175,7 @@ fn compare(a: &SessionSummary, b: &SessionSummary, c: Column) -> Ordering {
         Column::Llm => a.llm.cmp(&b.llm),
         Column::Tokens => a.llm_tokens.cmp(&b.llm_tokens),
         Column::Cost => a.llm_cost_micros.cmp(&b.llm_cost_micros),
+        Column::Conversation => a.llm_conv.cmp(&b.llm_conv),
         Column::Tls => a.tls.cmp(&b.tls),
         Column::RemoteIp => ip_key(&a.remote_ip).cmp(&ip_key(&b.remote_ip)),
         Column::Http => a.http_version.cmp(&b.http_version),

@@ -3903,3 +3903,168 @@ tr.capdiff-changed td:first-child {
 .library-buttons {
   flex-wrap: wrap;
 }
+
+/* Agents panel: conversations of LLM calls */
+.agents {
+  display: grid;
+  grid-template-rows: minmax(120px, 38%) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.agents-list {
+  border-bottom: 1px solid var(--border);
+  min-height: 0;
+}
+.agents-detail {
+  min-height: 0;
+}
+.agt-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.agt-table th,
+.agt-table td {
+  text-align: left;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+.agt-table th {
+  color: var(--muted);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--panel-bg);
+}
+.agt-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.agt-table tbody tr {
+  cursor: pointer;
+}
+.agt-table tbody tr:hover {
+  background: var(--grid-bg-alt);
+}
+.agt-table tbody tr.selected {
+  background: var(--sel-bg);
+  color: var(--sel-fg);
+}
+.agt-table tr.err td:first-child {
+  color: var(--pill-err-fg);
+}
+.agt-table td.warn,
+.conv-hints.warn li {
+  color: var(--pill-warn-fg);
+}
+.agents-table td:first-child {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agt-table .pill {
+  margin-left: 4px;
+}
+.conv-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.conv-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 4px 0;
+  color: var(--muted);
+}
+.conv-hints {
+  margin: 2px 0 6px;
+  padding-left: 18px;
+}
+.conv-hints li {
+  margin: 2px 0;
+}
+.conv-turns td:last-child {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.conv-bar-col {
+  position: relative;
+  width: 90px;
+  min-width: 90px;
+}
+.conv-bar {
+  position: absolute;
+  top: 5px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.7;
+}
+.call-ctx {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.call-ctx-changed {
+  border-left: 3px solid var(--pill-warn-bg);
+  padding-left: 6px;
+  word-break: break-word;
+}
+.llm-context .pill {
+  margin-left: 6px;
+}
+/* Context map: a treemap of what fills a request */
+.ctx-map {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ctx-tm {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ctx-cell {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--panel-bg);
+  overflow: hidden;
+  font-size: 11px;
+  padding: 1px 3px;
+  color: var(--fg);
+}
+.ctx-cell span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+.ctx-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  vertical-align: baseline;
+}
+.ctx-list td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ctx-system { background: var(--mark-purple); }
+.ctx-tools { background: var(--mark-blue); }
+.ctx-instructions { background: var(--mark-gold); }
+.ctx-skills { background: var(--mark-orange); }
+.ctx-reminders,
+.ctx-context,
+.ctx-other { background: var(--pill-muted-bg); }
+.ctx-user { background: var(--mark-green); }
+.ctx-assistant { background: var(--accent-soft); }
+.ctx-thinking { background: var(--pill-violet-bg); }
+.ctx-toolCalls { background: var(--copper-soft); }
+.ctx-toolResults { background: var(--mark-red); }
+.ctx-images { background: var(--pill-info-bg); }

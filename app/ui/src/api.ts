@@ -68,6 +68,8 @@ export interface SessionSummary {
   llm?: string;
   llmTokens?: number | null;
   llmCostMicros?: number | null;
+  /** The conversation (agent run) of an LLM call. */
+  llmConv?: string;
   /** TLS version, the server's IP address, the request's HTTP version. */
   tls?: string;
   remoteIp?: string;
@@ -77,7 +79,7 @@ export interface SessionSummary {
 }
 
 /** "Group by" of the session list (crates/quena-index). */
-export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via" | "llm" | "source";
+export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via" | "llm" | "conversation" | "source";
 
 /** An archive or folder of the snapshot library (crates/quena-app-core/src/library.rs). */
 export interface LibraryEntry {
@@ -429,6 +431,7 @@ export type Column =
   | "llm"
   | "tokens"
   | "cost"
+  | "conversation"
   | "tls"
   | "remoteIp"
   | "http"
@@ -537,7 +540,7 @@ export interface LlmCall {
   stream: boolean;
   system: string[];
   messages: { role: string; parts: LlmPart[] }[];
-  tools: { name: string; description: string }[];
+  tools: { name: string; description: string; size: number }[];
   params: [string, string][];
   output: LlmPart[];
   stopReason: string | null;
@@ -545,6 +548,98 @@ export interface LlmCall {
   cost: { usd: number; price: string } | null;
   error: string | null;
   notes: string[];
+  /** Where an Anthropic request sets cache_control (`system[0]`, `messages[12]`, `ttl 1h`). */
+  cacheMarks?: string[];
+}
+
+export type LlmUsage = NonNullable<LlmCall["usage"]>;
+
+/** A slice of a request's context (tokens: estimate scaled to the reported usage). */
+export interface ContextSlice {
+  category: string;
+  label: string;
+  tokens: number;
+  est: number;
+  count: number;
+}
+export interface ContextBreakdown {
+  slices: ContextSlice[];
+  estimated: number;
+  actual: number | null;
+}
+export interface TurnDiff {
+  kind: "first" | "append" | "same" | "changed";
+  at?: number;
+  added: number;
+  dropped: number;
+  systemChanged: boolean;
+  toolsAdded?: string[];
+  toolsRemoved?: string[];
+  toolsChanged?: string[];
+  toolsReordered: boolean;
+  modelChanged: boolean;
+  gapMs?: number;
+}
+export interface CodeNote {
+  code: string;
+  args?: Record<string, string>;
+}
+export interface ConvSummary {
+  key: string;
+  title: string;
+  agent: string;
+  provider: string;
+  models: string[];
+  turns: number;
+  first: SessionId;
+  last: SessionId;
+  started: number;
+  ended: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number | null;
+  errors: number;
+  cacheMisses: number;
+  lastInput: number;
+  window?: number;
+  parent?: string;
+}
+export interface ConvTurn {
+  id: SessionId;
+  started: number;
+  durationMs: number | null;
+  model: string;
+  usage: LlmUsage | null;
+  cost: number | null;
+  stop: string | null;
+  error: boolean;
+  calls: string[];
+  messages: number;
+  diff: TurnDiff;
+  cache: CodeNote[];
+}
+export interface ConvHint extends CodeNote {
+  tokens: number;
+}
+export interface ConvDetail {
+  summary: ConvSummary;
+  turns: ConvTurn[];
+  hints: ConvHint[];
+  breakdown: ContextBreakdown | null;
+  children: string[];
+}
+export interface CallContext {
+  key: string | null;
+  turn: number;
+  turns: number;
+  prev: SessionId | null;
+  breakdown: ContextBreakdown;
+  diff: TurnDiff | null;
+  changed?: [string, string];
+  cache: CodeNote[];
+  window?: number;
 }
 
 export interface Settings {
@@ -1343,6 +1438,9 @@ export const api = {
   compareSources: () => invoke<DiffSourceInfo[]>("compare_sources"),
   compareCaptures: (a: DiffSource, b: DiffSource, options?: { ignoreHost?: boolean; pairBy?: "path" | "url" | "order"; ignoreHeaders?: string[] }) => invoke<CaptureDiff>("compare_captures", { a, b, options }),
   llmCall: (id: SessionId) => invoke<LlmCall | null>("llm_call", { id }),
+  llmConversations: () => invoke<ConvSummary[]>("llm_conversations"),
+  llmConversation: (key: string) => invoke<ConvDetail | null>("llm_conversation", { key }),
+  llmContext: (id: SessionId) => invoke<CallContext | null>("llm_context", { id }),
   socketioPolling: (id: SessionId, part: Part) => invoke<SioPacket[] | null>("socketio_polling", { id, part }),
   msgpack: (id: SessionId, part: Part) => invoke<Msgpack | null>("msgpack", { id, part }),
   protobufStatus: () => invoke<SchemaStatus>("protobuf_status"),

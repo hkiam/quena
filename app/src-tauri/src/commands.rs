@@ -1113,6 +1113,27 @@ async fn llm_call(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_co
     blocking(move || Ok(core.llm(id))).await
 }
 
+/// The conversations (agent runs) of the LLM calls in the capture.
+#[tauri::command]
+async fn llm_conversations(core: State<'_, Core>) -> R<Vec<quena_app_core::agent::ConvSummary>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.llm_conversations())).await
+}
+
+/// A conversation with its turns, hints and the context of its last request.
+#[tauri::command]
+async fn llm_conversation(core: State<'_, Core>, key: String) -> R<Option<quena_app_core::agent::ConvDetail>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.llm_conversation(&key))).await
+}
+
+/// An LLM call in its conversation: context breakdown, change from the turn before, cache.
+#[tauri::command]
+async fn llm_context(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_core::agent::CallContext>> {
+    let core = core.inner().clone();
+    blocking(move || Ok(core.llm_context(id))).await
+}
+
 /// Socket.IO packets of a long-polling body (`None`: not Socket.IO polling).
 #[tauri::command]
 async fn socketio_polling(core: State<'_, Core>, id: SessionId, part: Part) -> R<Option<Vec<quena_app_core::socketio::SioPacket>>> {
@@ -1340,6 +1361,9 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         compare_captures,
         socketio_polling,
         llm_call,
+        llm_conversations,
+        llm_conversation,
+        llm_context,
         collections_list,
         import_dropped,
         autosave_now,

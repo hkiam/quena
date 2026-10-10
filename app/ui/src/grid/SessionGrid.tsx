@@ -48,6 +48,8 @@ function groupLabel(r: SessionSummary, first: number): string {
       return r.custom;
     case "via":
       return r.via ?? "";
+    case "conversation":
+      return t("Conversation {key}", { key: r.llmConv ?? "" });
     default:
       return "";
   }
@@ -110,6 +112,8 @@ function cellText(r: SessionSummary, key: ColumnKey): string {
       return r.llmTokens != null ? fmtInt(r.llmTokens) : "";
     case "cost":
       return r.llmCostMicros != null ? fmtUsd(r.llmCostMicros / 1_000_000) : "";
+    case "conversation":
+      return r.llmConv ?? "";
     case "tls":
       return r.tls ?? "";
     case "remoteIp":

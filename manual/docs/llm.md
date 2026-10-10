@@ -39,6 +39,57 @@ An error the API answered with (rate limit, invalid request) is shown at the top
 longer than 200,000 characters are shortened in this view; the body views show them
 whole. A stream that ended early says so.
 
+## Conversations of agents
+
+An agent — Claude Code, Codex, an app of your own — sends its whole conversation with every
+turn. The **Agents** panel (right pane, *Agents*) puts the calls of one run together:
+
+- **Conversations**, newest first: title (the first prompt), agent (by its User-Agent,
+  e.g. `claude-cli/2.0.14`), turns, tokens, the share of input the provider's prompt cache
+  served, the estimated cost. A badge counts the turns where the cache missed. A
+  **subagent** (Claude Code's *Task*) is listed under the conversation whose tool call
+  started it.
+- Choose one to see its **turns**: time, a bar on the run's time axis, input, cached share,
+  output, cost, **the change from the turn before** (`+2 messages`; `message 12 changed`,
+  `system prompt changed`, `tools changed`, `model changed` — those break the cached prefix)
+  and the tools the answer called. Clicking a turn selects its session.
+- **Hints** where tokens go to waste, with the tokens they cost: the same tool result more
+  than once in the context, large tool results, the same call repeated with the same
+  arguments, a reminder the agent adds again and again, tools offered in every request but
+  never called, a context close to the model's window, turns where the cache missed.
+- **What fills the context**: a map of the last request (or the turn clicked) — system
+  prompt, each tool definition, instruction files (CLAUDE.md, AGENTS.md), the list of
+  skills, reminders, the environment, user and assistant messages, thinking, tool calls and
+  results by tool, images. The slices are estimated from the text and scaled to the input
+  tokens the provider reported, so they add up to the real figure.
+
+Calls belong to one conversation when they start with the same system prompt and the same
+first prompt of the user; what agents add around it (`<system-reminder>`, AGENTS.md,
+`<environment_context>`) does not count. Each call gets the flag `x-quena-llm-conv` with the
+conversation's key: column **Conversation**, *Group by → Conversation (agent run)* and the
+filter `conv == 3fa2c01d`. Archives without the flag get it when the panel opens.
+
+### Why the cache missed
+
+Providers keep the start of a request (Anthropic for 5 minutes, or 1 hour when asked; OpenAI
+for prompts from 1,024 tokens) and charge it at a fraction of the price the next time. When a
+turn's cached input stays below half of what it could have been, the turn says why:
+
+| Reason | What happened |
+|---|---|
+| Message *n* changed | An earlier message differs: everything from it on is new to the cache. |
+| System prompt changed / tool definitions changed | Also when only the order of the tools changed. |
+| Model changed | Each model has its own cache. |
+| Cache expired | More than the cache's lifetime passed since the turn before. |
+| No cache_control breakpoint | Anthropic caches only prefixes the request marks. |
+| Shorter than 1,024 tokens | OpenAI does not cache shorter prompts. |
+| Reason not known | Another server, the cache was evicted, or the provider reports no cached tokens. |
+
+The **LLM** view shows the same for one call under *Context*: its turn in the conversation
+(*Show conversation* opens the panel), the map, the change from the turn before (the message
+that changed, before and after) and the cache. The context window comes from the fetched
+LiteLLM list, else from the model's family.
+
 ## In the session list
 
 When a call is done, it gets the flags `x-quena-llm` (`provider/model`),
