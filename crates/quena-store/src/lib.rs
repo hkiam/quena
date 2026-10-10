@@ -627,19 +627,30 @@ impl Capture {
 
     /// Remove sessions and their bodies.
     pub fn remove(&self, ids: &HashSet<SessionId>) {
-        let _edits = self.edits.lock();
-        let removed = self.index.remove(ids);
-        let mut bodies = Vec::new();
-        for id in &removed {
-            if let Some((a, b)) = self.bodies_of(*id) {
-                bodies.push(a);
-                bodies.push(b);
+        // Under `edits` only what keeps a finishing session from coming back (it leaves the
+        // index and the live table); reading body references and deleting rows and files
+        // happen after, so a large removal does not hold up sessions that finish meanwhile.
+        let (removed, live) = {
+            let _edits = self.edits.lock();
+            let removed = self.index.remove(ids);
+            let mut live = Vec::new();
+            for id in &removed {
+                if let Some(l) = self.live.write().remove(id) {
+                    live.push((l.request_body(), l.response_body()));
+                }
+                self.cache.lock().remove(*id);
             }
-            self.live.write().remove(id);
-            self.cache.lock().remove(*id);
+            (removed, live)
+        };
+        let mut bodies = live;
+        for id in &removed {
+            if let Ok(Some(d)) = self.db.get(*id) {
+                bodies.push((self.bodies.open_ref(&d.request_body), self.bodies.open_ref(&d.response_body)));
+            }
         }
         self.db.delete(removed);
-        for b in bodies {
+        for (a, b) in bodies {
+            self.bodies.delete(&a);
             self.bodies.delete(&b);
         }
     }

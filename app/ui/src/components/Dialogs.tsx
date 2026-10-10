@@ -762,6 +762,9 @@ function McpOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => 
     up((x) => (x.mcp = { ...m, ...x.mcp, token }));
   };
   const command = `claude mcp add --transport http quena http://127.0.0.1:${m.port}/mcp --header "Authorization: Bearer ${m.token}"`;
+  // Clients are set up from the saved settings: not while the dialog holds other ones.
+  const savedMcp = useStore((st) => st.settings?.mcp);
+  const unsaved = !savedMcp || savedMcp.enabled !== m.enabled || savedMcp.port !== m.port || savedMcp.token !== m.token;
   return (
     <>
       <p className="muted small">{t("AI agents connect over the Model Context Protocol (MCP) to read sessions and, with full control, set rules and send requests. Only programs on this computer that know the token can connect.")}</p>
@@ -838,7 +841,8 @@ function McpOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => 
             ).map(([c, name]) => (
               <button
                 key={c}
-                title={t("Writes the Quena server with its token into the user configuration of {name} (a copy of the file is kept as .bak). Click OK first so the server runs with these settings.", { name })}
+                disabled={unsaved}
+                title={unsaved ? t("Click OK first: the server's settings are not saved yet") : t("Writes the Quena server with its token into the user configuration of {name} (a copy of the file is kept as .bak). Click OK first so the server runs with these settings.", { name })}
                 onClick={async () => {
                   try {
                     say(t("Added Quena: {where}", { where: await api.mcpSetupClient(c) }));

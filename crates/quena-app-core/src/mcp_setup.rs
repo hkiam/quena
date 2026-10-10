@@ -51,25 +51,34 @@ pub fn config_path(client: McpClient) -> Result<Option<PathBuf>> {
     })
 }
 
-/// A copy of `path` beside it (`.bak`), before changing it.
+/// A copy of `path` beside it (`.bak`) the first time Quena changes it (later changes keep
+/// that original).
 fn backup(path: &Path) -> Result<()> {
-    if path.exists() {
-        let mut b = path.as_os_str().to_owned();
-        b.push(".bak");
-        std::fs::copy(path, PathBuf::from(b)).with_context(|| format!("back up {}", path.display()))?;
+    let mut b = path.as_os_str().to_owned();
+    b.push(".bak");
+    let b = PathBuf::from(b);
+    if path.exists() && !b.exists() {
+        std::fs::copy(path, &b).with_context(|| format!("back up {}", path.display()))?;
     }
     Ok(())
 }
 
+/// Replace `path` with `text`: through a symbolic link to its target (a dotfiles repository
+/// stays linked), with the file's permissions kept (a 0600 file stays private).
 fn write_atomic(path: &Path, text: &str) -> Result<()> {
-    if let Some(dir) = path.parent() {
+    let target = if path.is_symlink() { std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()) } else { path.to_path_buf() };
+    if let Some(dir) = target.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let mut tmp = path.as_os_str().to_owned();
+    let perms = std::fs::metadata(&target).ok().map(|m| m.permissions());
+    let mut tmp = target.as_os_str().to_owned();
     tmp.push(".quena-tmp");
     let tmp = PathBuf::from(tmp);
     std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)?;
+    if let Some(p) = perms {
+        let _ = std::fs::set_permissions(&tmp, p);
+    }
+    std::fs::rename(&tmp, &target)?;
     Ok(())
 }
 
@@ -87,30 +96,23 @@ pub fn merge_json(text: Option<&str>, servers_key: &str, entry: Value) -> Result
     Ok(serde_json::to_string_pretty(&v)? + "\n")
 }
 
-/// The `[mcp_servers.quena]` table of a Codex `config.toml` replaced (or added), the rest kept
-/// line by line.
-pub fn merge_codex(text: Option<&str>, url: &str, token: &str) -> String {
-    let header = format!("[mcp_servers.{ENTRY}]");
-    let mut out = Vec::new();
-    let mut skipping = false;
-    for line in text.unwrap_or("").lines() {
-        let t = line.trim();
-        if t.starts_with('[') {
-            skipping = t == header || t.starts_with(&format!("[mcp_servers.{ENTRY}."));
-        }
-        if !skipping {
-            out.push(line);
-        }
-    }
-    while out.last().is_some_and(|l| l.trim().is_empty()) {
-        out.pop();
-    }
-    let mut s = out.join("\n");
-    if !s.is_empty() {
-        s.push_str("\n\n");
-    }
-    s.push_str(&format!("{header}\nurl = \"{url}\"\nhttp_headers = {{ \"Authorization\" = \"Bearer {token}\" }}\n"));
-    s
+/// The `mcp_servers.quena` table of a Codex `config.toml` replaced (or added), the rest kept
+/// as written. A file that is no valid TOML is not touched.
+pub fn merge_codex(text: Option<&str>, url: &str, token: &str) -> Result<String> {
+    let mut doc: toml_edit::DocumentMut = text.unwrap_or("").parse().map_err(|e| anyhow!("the file is no valid TOML ({e}); it was left as it is"))?;
+    let servers = doc.entry("mcp_servers").or_insert_with(|| {
+        let mut t = toml_edit::Table::new();
+        t.set_implicit(true);
+        toml_edit::Item::Table(t)
+    });
+    let servers = servers.as_table_like_mut().ok_or_else(|| anyhow!("`mcp_servers` is no table; the file was left as it is"))?;
+    let mut entry = toml_edit::Table::new();
+    entry.insert("url", toml_edit::value(url));
+    let mut headers = toml_edit::InlineTable::new();
+    headers.insert("Authorization", format!("Bearer {token}").into());
+    entry.insert("http_headers", toml_edit::value(headers));
+    servers.insert(ENTRY, toml_edit::Item::Table(entry));
+    Ok(doc.to_string())
 }
 
 /// What agents read in the skill.
@@ -185,7 +187,7 @@ impl AppCore {
         let text = match client {
             McpClient::VsCode => merge_json(old.as_deref(), "servers", json!({ "type": "http", "url": url, "headers": { "Authorization": auth } }))?,
             McpClient::Cursor => merge_json(old.as_deref(), "mcpServers", json!({ "url": url, "headers": { "Authorization": auth } }))?,
-            McpClient::Codex => merge_codex(old.as_deref(), &url, &token),
+            McpClient::Codex => merge_codex(old.as_deref(), &url, &token)?,
             McpClient::ClaudeCode => unreachable!(),
         };
         backup(&path)?;
@@ -207,26 +209,43 @@ impl AppCore {
     }
 }
 
-/// `claude mcp add` (user scope), after removing an earlier entry; through a login shell so
-/// the `claude` of the user's PATH is found.
+/// `claude mcp add` (user scope), after removing an earlier entry. The arguments go to the
+/// program one by one (no shell joins them); on macOS and Linux a login shell finds the
+/// user's `claude`, on Windows its `claude.cmd` / `claude.exe`.
 fn claude_add(url: &str, token: &str) -> Result<String> {
-    let add = format!("claude mcp add --scope user --transport http {ENTRY} {url} --header \"Authorization: Bearer {token}\"");
-    let script = format!("claude mcp remove --scope user {ENTRY} >/dev/null 2>&1; {add}");
-    let out = if cfg!(windows) {
-        std::process::Command::new("cmd").args(["/C", &format!("claude mcp remove --scope user {ENTRY} >NUL 2>&1 & {add}")]).output()
-    } else {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
-        std::process::Command::new(shell).args(["-lc", &script]).output()
+    let header = format!("Authorization: Bearer {token}");
+    let add: [&str; 9] = ["mcp", "add", "--scope", "user", "--transport", "http", ENTRY, url, "--header"];
+    let run = |args: &[&str]| -> std::io::Result<std::process::Output> {
+        if cfg!(windows) {
+            let mut last = Err(std::io::Error::new(std::io::ErrorKind::NotFound, "claude"));
+            for exe in ["claude.cmd", "claude.exe", "claude"] {
+                last = std::process::Command::new(exe).args(args).output();
+                if !matches!(&last, Err(e) if e.kind() == std::io::ErrorKind::NotFound) {
+                    break;
+                }
+            }
+            last
+        } else {
+            // `"$@"` hands the arguments over as they are.
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+            std::process::Command::new(shell).args(["-lc", "exec claude \"$@\"", "claude"]).args(args).output()
+        }
     };
-    match out {
+    let _ = run(&["mcp", "remove", "--scope", "user", ENTRY]);
+    let mut args: Vec<&str> = add.to_vec();
+    args.push(&header);
+    match run(&args) {
         Ok(o) if o.status.success() => Ok("Claude Code (user scope)".into()),
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
             let err = err.trim().replace(token, "<token>");
-            if err.contains("not found") || err.contains("not recognized") {
+            if err.contains("not found") || err.contains("not recognized") || o.status.code() == Some(127) {
                 bail!("the `claude` command was not found; run this in a terminal instead: claude mcp add --transport http {ENTRY} {url} --header \"Authorization: Bearer <token>\"");
             }
             bail!("claude mcp add failed: {err}")
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            bail!("the `claude` command was not found; run this in a terminal instead: claude mcp add --transport http {ENTRY} {url} --header \"Authorization: Bearer <token>\"")
         }
         Err(e) => bail!("could not run claude: {e}"),
     }
@@ -251,14 +270,40 @@ mod tests {
 
     #[test]
     fn codex_table_replaced() {
-        let old = "model = \"o3\"\n\n[mcp_servers.quena]\nurl = \"old\"\n\n[mcp_servers.quena.env]\nA = \"1\"\n\n[mcp_servers.other]\ncommand = \"x\"\n";
-        let s = merge_codex(Some(old), "http://127.0.0.1:8867/mcp", "tok");
-        assert!(s.starts_with("model = \"o3\"\n"), "{s}");
+        let old = "model = \"o3\" # mine\n\n[mcp_servers.quena]  # an older one\nurl = \"old\"\n\n[mcp_servers.quena.env]\nA = \"1\"\n\n[mcp_servers.other]\ncommand = \"x\"\n";
+        let s = merge_codex(Some(old), "http://127.0.0.1:8867/mcp", "tok").unwrap();
+        assert!(s.starts_with("model = \"o3\" # mine\n"), "{s}");
         assert!(s.contains("[mcp_servers.other]\ncommand = \"x\""), "{s}");
-        assert!(!s.contains("old") && !s.contains("A = \"1\""), "{s}");
-        assert_eq!(s.matches("[mcp_servers.quena]").count(), 1);
-        assert!(s.ends_with("http_headers = { \"Authorization\" = \"Bearer tok\" }\n"), "{s}");
-        assert!(merge_codex(None, "u", "t").starts_with("[mcp_servers.quena]\n"));
+        assert!(!s.contains("\"old\"") && !s.contains("A = \"1\""), "{s}");
+        let v: toml_edit::DocumentMut = s.parse().unwrap();
+        assert_eq!(v["mcp_servers"]["quena"]["url"].as_str(), Some("http://127.0.0.1:8867/mcp"));
+        assert_eq!(v["mcp_servers"]["quena"]["http_headers"]["Authorization"].as_str(), Some("Bearer tok"));
+        // Written another way: still one entry.
+        let s = merge_codex(Some("[mcp_servers]\nquena = { url = \"x\" }\n"), "u", "t").unwrap();
+        assert_eq!(s.matches("quena").count(), 1, "{s}");
+        assert!(merge_codex(Some("[broken"), "u", "t").is_err(), "a broken file is not touched");
+        assert!(merge_codex(None, "u", "t").unwrap().contains("[mcp_servers.quena]"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_and_permissions_survive() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.json");
+        std::fs::write(&real, "{}").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let link = dir.path().join("mcp.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        backup(&link).unwrap();
+        write_atomic(&link, "{\"a\":1}").unwrap();
+        assert!(link.is_symlink(), "still a link");
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "{\"a\":1}");
+        assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o600);
+        // The first copy stays the original.
+        write_atomic(&link, "{\"a\":2}").unwrap();
+        backup(&link).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.path().join("mcp.json.bak")).unwrap(), "{}");
     }
 
     #[test]

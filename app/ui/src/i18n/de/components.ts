@@ -675,4 +675,5 @@ export const components: Record<string, string> = {
   "Name for the {n} selected sessions": "Name f\u00fcr die {n} ausgew\u00e4hlten Sessions",
   "Adding {n} session to {name}": "{n} Session wird zu {name} hinzugef\u00fcgt",
   "Adding {n} sessions to {name}": "{n} Sessions werden zu {name} hinzugef\u00fcgt",
+  "Click OK first: the server's settings are not saved yet": "Zuerst OK klicken: Die Einstellungen des Servers sind noch nicht gespeichert",
 };

@@ -1562,25 +1562,33 @@ impl Interceptor for Rules {
             {
                 return RequestAction::Respond { head: h, body: b, delay_ms: 0 };
             }
-            // 1a. Agent cache: the same LLM API call answered before (mock rules came first).
+            // 1a. Agent cache: the same LLM API call answered before (mock rules came first;
+            // a breakpoint on the request wins over the cache).
             if let Some(b) = &body
                 && this.cache_wants(&head)
+                && !want_bp
+                && !this.bp_request(&s, &head)
             {
                 let bytes = quena_body::text::decoded_prefix(b, &crate::dto::spec_of(&head.headers), crate::llm_cache::MAX_REQUEST + 1);
                 if bytes.len() <= crate::llm_cache::MAX_REQUEST
-                    && let Some(key) = crate::llm_cache::key_of(&head.method, &head.url, &bytes)
-                    && let Some((e, answer)) = this.llm_cache.hit(key)
-                    && let Some(body) = this.store_bytes(&answer)
+                    && let Some(key) = crate::llm_cache::key_of(&head.method, &head.url, &head.headers, &bytes)
                 {
-                    let flag = crate::llm_cache::hit_flag(&e);
-                    s.live.update(|d| {
-                        d.extra_flags.retain(|(k, _)| k != crate::llm_cache::CACHE_FLAG);
-                        d.extra_flags.push((crate::llm_cache::CACHE_FLAG.into(), flag.clone()));
-                        if d.summary.comment.is_empty() {
-                            d.summary.comment = format!("Agent cache: answer of #{}", e.source);
-                        }
-                    });
-                    return RequestAction::Respond { head: crate::llm_cache::response_of(&e), body, delay_ms: 0 };
+                    // Reads the kept answer from disk: off the async workers.
+                    let t = this.clone();
+                    let found = tokio::task::spawn_blocking(move || t.llm_cache.hit(&key)).await.ok().flatten();
+                    if let Some((e, answer)) = found
+                        && let Some(body) = this.store_bytes(&answer)
+                    {
+                        let flag = crate::llm_cache::hit_flag(&e);
+                        s.live.update(|d| {
+                            d.extra_flags.retain(|(k, _)| k != crate::llm_cache::CACHE_FLAG);
+                            d.extra_flags.push((crate::llm_cache::CACHE_FLAG.into(), flag.clone()));
+                            if d.summary.comment.is_empty() {
+                                d.summary.comment = format!("Agent cache: answer of #{}", e.source);
+                            }
+                        });
+                        return RequestAction::Respond { head: crate::llm_cache::response_of(&e), body, delay_ms: 0 };
+                    }
                 }
             }
             // 1b. Script onBeforeRequest (heads/metadata only; bodies keep streaming).

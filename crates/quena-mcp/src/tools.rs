@@ -89,7 +89,7 @@ static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "run_diagnostics",
-        description: "Run Quena's diagnostics over sessions (all, those matching `filter`, or `ids`) and return the findings: slow or failing endpoints, retries, caching, compression, redirects, TLS and connection problems … each with severity, observation, impact, recommendations and the session ids. Takes up to `wait_s` seconds (default 120); the report also appears in Quena's Diagnostics tab.",
+        description: "Run Quena's diagnostics over sessions (all, those matching `filter`, or `ids`) and return the findings: slow or failing endpoints, retries, caching, compression, redirects, TLS and connection problems … each with severity, observation, impact, recommendations and the session ids. Takes up to `wait_s` seconds (default 120). The report replaces the one in Quena's Diagnostics tab (an analysis running there is stopped).",
         write: false,
         destructive: false,
         schema: || obj(json!({
@@ -769,17 +769,30 @@ impl View {
         }
     }
 
-    /// Free text (a finding, a fact): URLs in it redacted like [`View::url`].
+    /// Free text (a finding, a fact): URLs in it (any case, also `ws(s)://`) and paths with a
+    /// query (`/cb?code=…`) redacted like [`View::url`].
     fn text(&mut self, s: &str) -> String {
-        if self.red.is_none() || !s.contains("://") {
+        if self.red.is_none() || !(s.contains("://") || s.contains('?')) {
             return s.to_string();
         }
+        let ends = |c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')' | ']' | '`' | ',');
         let mut out = String::with_capacity(s.len());
         let mut rest = s;
-        while let Some(i) = rest.find("http://").into_iter().chain(rest.find("https://")).min() {
+        loop {
+            let lower = rest.to_ascii_lowercase();
+            let url = ["http://", "https://", "ws://", "wss://"].iter().filter_map(|p| lower.find(p)).min();
+            // A path with a query: starts after a space or the start, with `/`.
+            let path = rest.char_indices().find(|&(i, c)| c == '/' && (i == 0 || rest[..i].ends_with(char::is_whitespace)) && rest[i..].split(ends).next().is_some_and(|t| t.contains('?'))).map(|(i, _)| i);
+            let Some(i) = url.into_iter().chain(path).min() else { break };
             out.push_str(&rest[..i]);
-            let end = rest[i..].find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | ')' | ']' | '`')).map_or(rest.len(), |e| i + e);
-            out.push_str(&self.url(&rest[i..end]));
+            let end = rest[i..].find(ends).map_or(rest.len(), |e| i + e);
+            let token = &rest[i..end];
+            if token.starts_with('/') {
+                let scrubbed = self.url(&format!("http://h{token}"));
+                out.push_str(scrubbed.strip_prefix("http://h").unwrap_or(&scrubbed));
+            } else {
+                out.push_str(&self.url(token));
+            }
             rest = &rest[end..];
         }
         out.push_str(rest);
@@ -1164,6 +1177,11 @@ fn run_diagnostics(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let info = core.jobs.wait(job, wait).map_err(|_| anyhow!("diagnostics did not finish within {} s (it goes on in Quena; read it later with get_diagnostics_report)", wait.as_secs()))?;
     if let Some(e) = info.error.filter(|e| !e.is_empty()) {
         bail!("diagnostics failed: {e}");
+    }
+    // Cancelled: another analysis (the user's, or another agent's) replaced this one, and the
+    // report there is not this run's.
+    if info.status != quena_jobs::JobStatus::Done {
+        bail!("diagnostics did not finish ({:?}): another analysis was started meanwhile; try again", info.status);
     }
     report_json(core, a.all)
 }
@@ -2166,6 +2184,15 @@ fn export_archive(core: &Arc<AppCore>, a: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn free_text_is_redacted() {
+        let mut v = View { red: Some(Sanitizer::new(SanitizeOptions::preset("credentials").unwrap_or_default())) };
+        let t = v.text("see HTTPS://a.example/cb?code=SECRET1 and /reset?token=SECRET2, wss://w.example/s?access_token=SECRET3");
+        assert!(!t.contains("SECRET1") && !t.contains("SECRET2") && !t.contains("SECRET3"), "{t}");
+        assert!(t.contains("/reset?"), "{t}");
+        assert_eq!(v.text("no urls here"), "no urls here");
+    }
 
     #[test]
     fn read_only_marks_write_tools() {

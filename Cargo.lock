@@ -4059,6 +4059,7 @@ dependencies = [
  "bytes",
  "dirs 6.0.0",
  "flate2",
+ "hex",
  "http",
  "http-body",
  "http-body-util",
@@ -4094,6 +4095,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
+ "toml_edit 0.25.15+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "zip",
@@ -4206,6 +4208,7 @@ dependencies = [
  "quena-app-core",
  "quena-body",
  "quena-formats",
+ "quena-jobs",
  "quena-model",
  "quena-query",
  "quena-report",
@@ -6211,6 +6214,7 @@ dependencies = [
  "indexmap 2.14.2",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.4",
 ]
 
