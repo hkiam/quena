@@ -1629,7 +1629,7 @@ impl AppCore {
         let Some(call) = self.llm(id) else { return };
         let Some(detail) = cap.detail(id) else { return };
         let mut flags = flags_of(&call);
-        if let Some(a) = detail.request.headers.get("user-agent").and_then(crate::agent::agent_name) {
+        if let Some(a) = detail.request.headers.get("user-agent").and_then(crate::agent::agent_label) {
             flags.push((crate::agent::AGENT_FLAG.into(), a));
         }
         // The conversation it belongs to (kept for the Agents panel as well).

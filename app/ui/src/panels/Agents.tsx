@@ -221,7 +221,8 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
       const msg = plural(f.added, "{n} turn added to the agent cache", "{n} turns added to the agent cache");
       const subs = f.conversations > 1 ? ` ${plural(f.conversations - 1, "(with {n} subagent)", "(with {n} subagents)")}` : "";
       const skipped = f.skipped ? ` ${plural(f.skipped, "{n} turn could not be kept (cut off or too large).", "{n} turns could not be kept (cut off or too large).")}` : "";
-      say(msg + subs + skipped);
+      const cached = f.cached ? ` ${plural(f.cached, "{n} turn was in it already.", "{n} turns were in it already.")}` : "";
+      say(msg + subs + "." + cached + skipped);
     } catch (e) {
       say(String(e), "error");
     }

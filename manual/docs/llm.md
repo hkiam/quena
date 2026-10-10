@@ -77,7 +77,8 @@ When a call is done, it gets the flags `x-quena-llm` (`provider/model`),
 `x-quena-llm-tokens`, `x-quena-llm-usage` and `x-quena-llm-cost`. LLM and MCP requests also
 get `x-quena-agent`, the agent or SDK that sent them, read from the User-Agent
 (`Claude Code 2.0.14`, `Codex 0.46.0`, `Gemini CLI`, `Cursor`, `GitHub Copilot`,
-`OpenAI SDK (Python)` …; clients Quena does not know get no such flag). The flags
+`OpenAI SDK (Python)` …; for clients Quena does not know, the first word of the User-Agent,
+such as `my-app/1.2`). The flags
 are kept in `.saz` archives. LLM calls in archives from other tools (without Quena's flags)
 get them when the Agents panel opens.
 

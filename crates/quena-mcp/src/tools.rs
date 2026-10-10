@@ -615,6 +615,7 @@ static TOOLS: &[Tool] = &[
                 "all_requests": { "type": "boolean" },
                 "all_responses": { "type": "boolean" },
                 "request_url": { "type": "string", "description": "Break before requests whose URL contains this" },
+                "llm": { "type": "string", "description": "Break before LLM API requests (as they go out after rules scripts and rewrite rules): `*` for every one, or conditions that must all hold: `model=claude tool=mcp__jira__* tokens=50k` (model contains, tool offered with `*` as prefix, estimated input tokens at least); \"\" switches it off" },
                 "response_url": { "type": "string", "description": "Break after responses whose URL contains this" },
                 "status": { "type": "integer", "description": "Break on this response status" },
                 "method": { "type": "string" },
@@ -2191,11 +2192,22 @@ struct BreakpointArgs {
     status: Option<u16>,
     method: Option<String>,
     timeout_s: Option<u64>,
+    /// `bpllm` conditions: `*` any LLM request, `model=claude tool=mcp__jira__* tokens=50k`; "" off.
+    llm: Option<String>,
 }
 
 fn set_breakpoints(core: &Arc<AppCore>, a: Value) -> Result<Value> {
     let a: BreakpointArgs = args(a)?;
     let r = rules(core)?;
+    // Checked before anything changes.
+    let llm = match a.llm.as_deref().map(str::trim) {
+        None => None,
+        Some("" | "off") => Some(None),
+        Some(spec) => {
+            let s = quena_query::quickexec::LlmBreakSpec::parse(spec).map_err(|e| anyhow!("llm: {}", e.msg))?;
+            Some(Some(quena_app_core::rules::LlmBreak { model: s.model, tool: s.tool, min_tokens: s.min_tokens }))
+        }
+    };
     let text = |s: String| {
         let s = s.trim().to_lowercase();
         (!s.is_empty()).then_some(s)
@@ -2221,6 +2233,9 @@ fn set_breakpoints(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         }
         if let Some(v) = a.timeout_s {
             b.timeout_s = v;
+        }
+        if let Some(v) = llm {
+            b.llm = v;
         }
     });
     Ok(json!({ "breakpoints": r.breakpoints() }))

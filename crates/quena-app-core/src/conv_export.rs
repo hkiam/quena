@@ -57,6 +57,50 @@ fn usage_line(t: &Turn) -> String {
     s
 }
 
+/// A cache note in words (as the Agents panel says it, in English).
+fn cache_text(code: &str, args: &std::collections::BTreeMap<String, String>) -> String {
+    let a = |k: &str| args.get(k).map(String::as_str).unwrap_or("");
+    match code {
+        "miss" => format!("Cache missed: {} tokens were processed again without it", a("tokens")),
+        "expired" => format!("Cache expired: {} min since the previous turn (lifetime {} min)", a("minutes"), a("ttl")),
+        "systemChanged" => "The system prompt changed".into(),
+        "toolsChanged" => format!("The tool definitions changed (+{} −{}, {} changed; or their order)", a("added"), a("removed"), a("changed")),
+        "messageChanged" => format!("Message {} of {} changed: everything from it on is new to the cache", a("n"), a("of")),
+        "modelChanged" => format!("The model changed from {} to {}", a("from"), a("to")),
+        "settingsChanged" => format!("Settings the cache depends on changed: {}", a("names")),
+        "noMarks" => "The request sets no cache_control breakpoint: Anthropic caches marked prefixes only".into(),
+        "short" => format!("Marked for caching, but shorter than the {} tokens the provider caches for this model", a("min")),
+        "unknown" => "Reason not known".into(),
+        other => other.to_string(),
+    }
+}
+
+/// A hint in words, with what its tokens mean.
+fn hint_text(code: &str, args: &std::collections::BTreeMap<String, String>, tokens: u64) -> String {
+    let a = |k: &str| args.get(k).map(String::as_str).unwrap_or("");
+    let tool = || if a("tool").is_empty() { "?" } else { a("tool") };
+    let what = match code {
+        "dupResult" => format!("The same {} result is in the context {} times", tool(), a("n")),
+        "bigResult" => format!("A large {} result", tool()),
+        "repeatCall" => format!("{} called {} times with the same arguments: {}", tool(), a("n"), a("args")),
+        "dupReminder" => format!("The same reminder {} times: {}", a("n"), a("text")),
+        "unusedTools" => format!("{} of {} tools never called in {} turns: {}", a("n"), a("of"), a("turns"), a("names")),
+        "window" => format!("The context fills {} % of the window ({} tokens)", a("pct"), a("window")),
+        "cacheMisses" => format!("The cache missed in {} of {} turns", a("n"), a("turns")),
+        "rateLimited" => format!("{} calls refused for the rate limit or an overloaded provider; {} sent again", a("n"), a("retries")),
+        "rateHeadroom" => format!("Close to the rate limit: {} of {} tokens left", a("left"), a("limit")),
+        other => other.to_string(),
+    };
+    let cost = match code {
+        "unusedTools" => format!("{tokens} tokens in every request"),
+        "window" => format!("{tokens} tokens input"),
+        "cacheMisses" => format!("{tokens} tokens without the cache"),
+        "rateLimited" | "rateHeadroom" => "waiting time instead of tokens".into(),
+        _ => format!("≈ {tokens} tokens per request"),
+    };
+    format!("{what} — {cost}")
+}
+
 /// Nanoseconds since the epoch, as OTLP JSON wants them (a string).
 fn nanos(us: i64) -> String {
     (us.max(0) as u128 * 1_000).to_string()
@@ -107,14 +151,14 @@ impl AppCore {
                 }
                 let _ = writeln!(out, "- Conversation: {} (Quena)\n", s.key);
                 for h in &d.hints {
-                    let _ = writeln!(out, "> Hint: {} ({} tokens)", h.code, h.tokens);
+                    let _ = writeln!(out, "> Hint: {}", hint_text(h.code, &h.args, h.tokens));
                 }
                 w.write_all(out.as_bytes())?;
                 for (i, t) in d.turns.iter().enumerate() {
                     let mut out = String::new();
                     let _ = writeln!(out, "\n## Turn {} — #{}\n\n{}\n", i + 1, t.id, usage_line(t));
                     for n in &t.cache {
-                        let _ = writeln!(out, "> Cache: {} {}", n.code, n.args.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "));
+                        let _ = writeln!(out, "> Cache: {}", cache_text(n.code, &n.args));
                     }
                     match self.llm(t.id) {
                         None => out.push_str("_(request not readable)_\n"),
@@ -210,5 +254,25 @@ impl AppCore {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn codes_are_written_in_words() {
+        let args: BTreeMap<String, String> = [("tool", "Read"), ("n", "3"), ("args", "{}")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        assert_eq!(hint_text("repeatCall", &args, 21_544), "Read called 3 times with the same arguments: {} — ≈ 21544 tokens per request");
+        let miss: BTreeMap<String, String> = [("tokens".to_string(), "38100".to_string())].into_iter().collect();
+        assert_eq!(cache_text("miss", &miss), "Cache missed: 38100 tokens were processed again without it");
+        for code in ["dupResult", "bigResult", "dupReminder", "unusedTools", "window", "cacheMisses", "rateLimited", "rateHeadroom"] {
+            assert_ne!(hint_text(code, &BTreeMap::new(), 1).split(" — ").next(), Some(code), "{code}");
+        }
+        for code in ["expired", "systemChanged", "toolsChanged", "messageChanged", "modelChanged", "settingsChanged", "noMarks", "short", "unknown"] {
+            assert_ne!(cache_text(code, &BTreeMap::new()), code);
+        }
     }
 }

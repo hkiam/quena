@@ -7,7 +7,18 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Changed
+- The LLM breakpoint (`bpllm`) looks at a request as it goes out, after the rules script and
+  rewrite rules, like the agent cache. Agents can set it over MCP (`set_breakpoints` with
+  `llm`).
+- The *Agent* column names clients Quena does not know by the first word of their User-Agent,
+  as the Agents panel does, instead of leaving it empty.
+- The Markdown export writes hints and cache notes in words instead of their codes.
+
 ### Fixed
+- *Freeze for replays…* counts the turns that were in the agent cache already instead of
+  leaving them out of its message.
+- The "same reminder" hint counted bytes instead of characters for its minimum length.
 - Exchanges recorded by `quena-cli mcp-tap` had no start time: they sorted as 1970 and the
   tool call trail never found the LLM call that asked for the tool.
 

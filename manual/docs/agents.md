@@ -212,7 +212,7 @@ written; its subagents are exported on their own.
 
 | Format | What it holds |
 |---|---|
-| **Markdown** | A header (agent, models, turns, tokens, cost, key) and the hints by their codes (`dupResult` …), then each turn: model, tokens and cost, the cache notes (`miss`, `expired` …), the system prompt (first turn only), the messages the turn added (tool calls and results included) and the answer. Each part is cut at 4,000 characters. To read or share. |
+| **Markdown** | A header (agent, models, turns, tokens, cost, key) and the hints in words, then each turn: model, tokens and cost, the cache notes in words (*Cache missed: … tokens were processed again without it*), the system prompt (first turn only), the messages the turn added (tool calls and results included) and the answer. Each part is cut at 4,000 characters. To read or share. |
 | **JSON lines** | One line per turn, for evaluations: `conversation`, `turn`, `session`, `started`, `side`, the change (`diff`), the cache notes, and `call`, the LLM call as the LLM view takes it apart. `call` carries only the messages this turn added (`messagesBefore` says how many came before), and the system prompt and tools only when they differ from the line before. |
 | **OpenTelemetry** | Spans after the OpenTelemetry GenAI semantic conventions as OTLP JSON: a span for the run (`invoke_agent`) and one per call (`chat <model>`) with provider, model, tokens, cached tokens, finish reason and the names of the tools called. No prompts or results. Trace and span ids are derived from the conversation's key and start, so exporting the same run again keeps them. To load into Langfuse, Phoenix or another tracing tool. |
 

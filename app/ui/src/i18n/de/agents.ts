@@ -237,6 +237,8 @@ export const agents: Record<string, string> = {
   "Show all {n} turns": "Alle {n} Turns zeigen",
   "{n} turn could not be kept (cut off or too large).": "{n} Turn ließ sich nicht übernehmen (abgebrochen oder zu groß).",
   "{n} turns could not be kept (cut off or too large).": "{n} Turns ließen sich nicht übernehmen (abgebrochen oder zu groß).",
+  "{n} turn was in it already.": "{n} Turn war schon darin.",
+  "{n} turns were in it already.": "{n} Turns waren schon darin.",
   "Of the model's context window ({n} tokens)": "Vom Kontextfenster des Modells ({n} Tokens)",
   "{n} tool": "{n} Tool",
   "MCP exchanges that failed (error or isError)": "Fehlgeschlagene MCP-Aufrufe (Fehler oder isError)",

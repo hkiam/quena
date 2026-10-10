@@ -1630,13 +1630,6 @@ impl Interceptor for Rules {
             }
             // A variant from the prompt playground goes out as written: no cache, no rewrite.
             let variant = is_variant(&s);
-            // An LLM breakpoint looks at the request's body; decided before the cache, which it
-            // wins over like any breakpoint.
-            let llm_bp = if want_bp { None } else { this.bp.read().llm.clone() };
-            if let Some(l) = llm_bp {
-                let (h, b) = (head.clone(), body.clone());
-                want_bp = tokio::task::spawn_blocking(move || l.matches(&h, b.as_ref(), &crate::llm::PriceList::default())).await.unwrap_or(false);
-            }
             // 1b. Script onBeforeRequest (heads/metadata only; bodies keep streaming).
             if this.script_active() && this.script.has_request_hook() {
                 let (host, path) = split_url_host_path(&head.url);
@@ -1737,7 +1730,14 @@ impl Interceptor for Rules {
                 }
                 note_rewrite(&s, &names, script_edited);
             }
-            // 1d. Agent cache: the same LLM API call answered before (mock rules came first;
+            // 1d. An LLM breakpoint looks at the request as it goes out (after the script and
+            // rewrite rules); decided before the cache, which it wins over like any breakpoint.
+            let llm_bp = if want_bp { None } else { this.bp.read().llm.clone() };
+            if let Some(l) = llm_bp {
+                let (h, b) = (head.clone(), rewritten.clone().or_else(|| body.clone()));
+                want_bp = tokio::task::spawn_blocking(move || l.matches(&h, b.as_ref(), &crate::llm::PriceList::default())).await.unwrap_or(false);
+            }
+            // 1e. Agent cache: the same LLM API call answered before (mock rules came first;
             // a breakpoint on the request wins over the cache). Looked up as the request goes
             // out after the script and rewrite rules, which is what a session keeps and caches.
             if let Some(b) = rewritten.as_ref().or(body.as_ref())

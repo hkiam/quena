@@ -87,8 +87,10 @@ alone switches it off. The menu item switches between every LLM request and off;
 conditions set, it switches to every LLM request. See
 [Setting breakpoints](change-replay.md#setting-breakpoints).
 
-The breakpoint is decided on the request as the agent sent it, before the rules script and
-rewrite rules change it, and it wins over the agent cache.
+The breakpoint is decided on the request as it goes out, after the rules script and rewrite
+rules changed it (a model or tool a rule changed counts as changed), and it wins over the
+agent cache. Agents set it over [Quena's MCP server](mcp.md) with `set_breakpoints`
+(`"llm": "model=claude tokens=50k"`, `"*"` for every request, `""` to switch it off).
 
 ## Agent cache
 
@@ -146,8 +148,8 @@ The answers are kept in `llm-cache/` in the data directory and stay over restart
 
 *Freeze for replays…* in a conversation puts its answered turns, and those of the subagents it
 started, into the [agent cache](#agent-cache). Turns that cannot be kept (an answer cut off or
-too large) are skipped and counted; error answers, variants and answers already from the cache
-are left out.
+too large) are skipped and counted, as are turns already in the cache; error answers, variants
+and answers that came from the cache are left out.
 
 Then run the agent again, after changing a skill, an MCP server or a prompt file. Quena
 answers every request that is [the same](#when-two-requests-are-the-same) as one in the

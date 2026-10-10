@@ -150,6 +150,15 @@ fn mcp_over_http() {
     let (e, err) = tool(addr, "list_sessions", json!({ "filter": "status >=" }));
     assert!(err, "{e}");
 
+    // --- LLM breakpoint
+    let (b, err) = tool(addr, "set_breakpoints", json!({ "llm": "model=claude tokens=50k" }));
+    assert!(!err, "{b}");
+    assert_eq!(b["breakpoints"]["llm"]["model"], "claude", "{b}");
+    let (e, err) = tool(addr, "set_breakpoints", json!({ "llm": "colour=red" }));
+    assert!(err, "unknown conditions are rejected: {e}");
+    let (b, _) = tool(addr, "set_breakpoints", json!({ "llm": "" }));
+    assert!(b["breakpoints"]["llm"].is_null(), "{b}");
+
     // --- Mock rules
     let (r, err) = tool(addr, "add_mock_rule", json!({ "match": "exact:http://127.0.0.1:1/mocked", "action": "*418" }));
     assert!(!err, "{r}");

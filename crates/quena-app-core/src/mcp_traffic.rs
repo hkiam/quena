@@ -504,7 +504,7 @@ impl AppCore {
         self.answer_from_stream(&d, &req, &mut ex);
         let server = self.mcp_server(&d, &ex);
         let mut flags = flags_of(&ex, &server);
-        if let Some(a) = d.request.headers.get("user-agent").and_then(crate::agent::agent_name) {
+        if let Some(a) = d.request.headers.get("user-agent").and_then(crate::agent::agent_label) {
             flags.push((crate::agent::AGENT_FLAG.into(), a));
         }
         let set = |det: &mut SessionDetail| {

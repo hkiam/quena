@@ -84,7 +84,7 @@ fit.
 
 Exchanges get the flags `x-quena-mcp` (the method and tool, e.g. `tools/call get_issue`) and
 `x-quena-mcp-server` (the name from `initialize`, else the host; for `mcp-tap` the name given
-with `--name`), and `x-quena-agent` when the User-Agent names a known agent:
+with `--name`), and `x-quena-agent`, the agent from the User-Agent (as for [LLM calls](llm.md#in-the-session-list)):
 
 - columns **MCP** and **MCP server**;
 - *Group by → MCP server*;

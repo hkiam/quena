@@ -161,7 +161,7 @@ like the bodies.
 | Tool | Full control | What it does |
 |---|---|---|
 | `get_breakpoints` | | breakpoints and paused sessions |
-| `set_breakpoints` | ✓ | set or clear the [breakpoints](change-replay.md#setting-breakpoints) before requests, after responses, by URL, status or method (not the LLM breakpoint `bpllm`) |
+| `set_breakpoints` | ✓ | set or clear the [breakpoints](change-replay.md#setting-breakpoints) before requests, after responses, by URL, status or method, and the LLM breakpoint (`llm`: the conditions of `bpllm`) |
 | `resume_session`, `resume_all` | ✓ | release paused sessions, unchanged or with a new head and body, aborted, or answered |
 
 ### Send and replay

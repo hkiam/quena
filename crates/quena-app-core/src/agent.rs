@@ -363,6 +363,12 @@ pub fn agent_of(user_agent: &str) -> String {
     user_agent.split_whitespace().next().unwrap_or("").to_string()
 }
 
+/// The agent as the Agents panel and the Agent column name it: [`agent_name`], else the first
+/// word of the User-Agent (an app of your own, `python-requests/2.32`).
+pub fn agent_label(user_agent: &str) -> Option<String> {
+    agent_name(user_agent).or_else(|| Some(agent_of(user_agent)).filter(|a| !a.is_empty()))
+}
+
 /// Flag naming the AI agent or SDK that sent an LLM or MCP request (kept in archives).
 pub const AGENT_FLAG: &str = "x-quena-agent";
 
@@ -560,7 +566,7 @@ impl Digest {
             provider: call.provider.clone(),
             api: call.api,
             model: call.model.clone(),
-            agent: header(d, "user-agent").map(|ua| agent_name(ua).unwrap_or_else(|| agent_of(ua))).unwrap_or_default(),
+            agent: header(d, "user-agent").and_then(agent_label).unwrap_or_default(),
             group,
             session,
             parent_session,
@@ -1383,7 +1389,7 @@ fn hints(last: &LlmCall, c: &Conv, turns: &[Turn], window: Option<u64>) -> Vec<H
     let mut reminders: HashMap<u64, (u64, u32, String)> = HashMap::new();
     for p in last.messages.iter().filter(|m| m.role == "user").flat_map(|m| &m.parts).filter(|p| p.kind == "text") {
         for (seg, _, t) in segments(&p.text) {
-            if seg == Seg::Reminder && t.len() >= 100 {
+            if seg == Seg::Reminder && t.chars().nth(99).is_some() {
                 let e = reminders.entry(hash_text(t)).or_insert((estimate_tokens(t), 0, snippet(t.trim_start_matches("<system-reminder>"), 80)));
                 e.1 += 1;
             }
@@ -1433,6 +1439,8 @@ fn hints(last: &LlmCall, c: &Conv, turns: &[Turn], window: Option<u64>) -> Vec<H
 #[serde(rename_all = "camelCase")]
 pub struct Frozen {
     pub added: u32,
+    /// Turns whose answer was in the agent cache already.
+    pub cached: u32,
     pub skipped: u32,
     /// The conversation and its subagents.
     pub conversations: u32,
@@ -1503,7 +1511,7 @@ impl AppCore {
         let made = self.llm_peek(id).map(|(d, call)| {
             if !d.extra_flags.iter().any(|(k, _)| k == llm::LLM_FLAG) {
                 let mut flags = llm::flags_of(&call);
-                if let Some(a) = d.request.headers.get("user-agent").and_then(agent_name) {
+                if let Some(a) = d.request.headers.get("user-agent").and_then(agent_label) {
                     flags.push((AGENT_FLAG.into(), a));
                 }
                 let set = |det: &mut SessionDetail| {
@@ -1679,6 +1687,7 @@ impl AppCore {
             todo.extend(b.parent.iter().filter(|(_, p)| **p == ci).map(|(k, _)| *k));
             for d in b.convs[ci].digests.iter().filter(|d| !d.hit && !d.variant && (200..300).contains(&d.status)) {
                 if self.llm_cached(d.id) {
+                    out.cached += 1;
                     continue;
                 }
                 match self.llm_cache_set(d.id, true) {
