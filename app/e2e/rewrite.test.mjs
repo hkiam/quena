@@ -60,7 +60,7 @@ test("Rewrite rule: editor with preview, live change, applied to a captured sess
   await fill(await d.waitFor(".rw-op .rw-value"), '"free"');
   await d.click(await d.waitFor(".rw-editor .rp-buttons button", { text: "Preview on #" }));
   await d.waitFor(".rw-preview", { text: "free", timeout: 10000 });
-  await d.click(await d.waitFor(".rw-editor .rp-buttons .primary", { text: "Add" }));
+  await d.clickEnabled(".rw-editor .rp-buttons .primary", { text: "Add" });
   await d.waitFor(".ar-table", { text: "price as text", timeout: 10000 });
 
   // Live traffic is changed.

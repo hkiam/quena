@@ -27,8 +27,8 @@ test("starts and lists the sessions of the HAR passed on the command line", asyn
 
 test("selecting a session shows its URL, headers and pretty JSON body", async () => {
   const canvas = await d.waitFor(".grid-canvas");
-  await d.clickAt(canvas, 80, 12); // first row
-  await d.waitFor(".insp-url", { text: "https://api.example.com/v1/items?page=2" });
+  // The first row; again while the list is still loading its rows.
+  await d.until(() => d.clickAt(canvas, 80, 12), ".insp-url", { text: "https://api.example.com/v1/items?page=2" });
   // Request headers table (wire order) …
   await d.waitFor(".hv-table", { text: "quena-e2e" });
   // … and the response body, loaded lazily with the editor.

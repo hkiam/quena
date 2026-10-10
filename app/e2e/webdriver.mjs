@@ -82,6 +82,32 @@ export class Driver {
     }
   }
 
+  /** Wait for an enabled `css` (with `text`) and click it: a click on a button React has not
+   *  enabled yet (state from the last keystrokes not rendered) is silently lost. */
+  async clickEnabled(css, { timeout = 10000, text } = {}) {
+    const end = Date.now() + timeout;
+    for (;;) {
+      const el = await this.waitFor(css, { timeout: Math.max(end - Date.now(), 1), text });
+      if (!(await this.exec("return arguments[0].disabled", [{ [ELEMENT]: el }]).catch(() => true))) return this.click(el);
+      if (Date.now() > end) throw new Error(`timeout waiting for ${css} to be enabled`);
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+
+  /** Do `action` until `css` (with `text`) shows up: for clicks that can land before the UI
+   *  is ready for them (a row of a list still loading). Each try waits `every` ms. */
+  async until(action, css, { timeout = 20000, every = 3000, text } = {}) {
+    const end = Date.now() + timeout;
+    for (;;) {
+      await action();
+      try {
+        return await this.waitFor(css, { timeout: Math.min(every, Math.max(end - Date.now(), 1)), text });
+      } catch (e) {
+        if (Date.now() > end) throw e;
+      }
+    }
+  }
+
   /** Text content (DOM), independent of CSS visibility, clipping or ellipsis. */
   text(el) {
     return this.exec("return arguments[0].textContent", [{ [ELEMENT]: el }]);

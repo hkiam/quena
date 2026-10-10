@@ -48,6 +48,7 @@ test("Capture → Reverse Proxy…: add an entry, it forwards and records", asyn
   await d.exec(`window.__quena.menu("tools.reverse-proxy")`);
   await d.waitFor(".modal-title", { text: "Reverse Proxy" });
   await d.click(await d.waitFor(".reverse-proxy button", { text: "Add entry…" }));
+  await d.waitFor(".rp-editor input");
   const inputs = await d.findAll(".rp-editor input");
   // Name, local port, target.
   await d.cmd("POST", d.s(`/element/${inputs[0]}/clear`), {});
@@ -55,8 +56,8 @@ test("Capture → Reverse Proxy…: add an entry, it forwards and records", asyn
   await d.cmd("POST", d.s(`/element/${inputs[1]}/clear`), {});
   await d.type(inputs[1], String(port));
   await d.type(inputs[2], `http://127.0.0.1:${targetPort}/base`);
-  await d.click(await d.waitFor(".rp-buttons .primary", { text: "Add" }));
-  await d.waitFor(".rp-list", { text: "api" });
+  await d.clickEnabled(".rp-buttons .primary", { text: "Add" });
+  await d.waitFor(".rp-list", { text: "api", timeout: 15000 });
 
   await d.ensureCapturing();
   await d.waitFor(".rp-tag.rp-on", { text: "listening", timeout: 15000 });

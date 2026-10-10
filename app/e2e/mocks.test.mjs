@@ -85,7 +85,7 @@ test("Mocks from Sessions → Create Mock Rules now answers through the proxy", 
   await d.click(await d.waitFor('.mocks-dialog input[name="mock-target"][value="apply"]'));
   // Live preview: one mapping from one session.
   await d.waitFor(".mocks-counts", { text: "1 mapping", timeout: 15000 });
-  await d.click(await d.waitFor(".mocks-actions .primary", { text: "Create rules" }));
+  await d.clickEnabled(".mocks-actions .primary", { text: "Create rules" });
   // The dialog closes, the Mock Rules tab shows the package and its rule.
   await d.waitFor(".ar-package", { text: "1 rule", timeout: 20000 });
   await d.waitFor(".ar-table", { text: "items" });
