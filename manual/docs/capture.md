@@ -32,7 +32,10 @@ the **globe button** next to the capture switch, *Capture → Start Browser…*,
     - *Start with URL…* opens the dialog to enter a start page.
 - **Terminal.** A new terminal window (Terminal.app, Windows Terminal or `cmd`, or the Linux
   terminal found) whose shell has:
-    - `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (also in lower case) pointing to Quena;
+    - `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (also in lower case) pointing to Quena, and
+      `QUENA_PROXY` with the same address for your own scripts;
+    - `NO_PROXY` and `no_proxy` with the hosts of *Settings → Connections → Do not capture*
+      (empty when there are none, which also clears what your shell may set);
     - `NODE_EXTRA_CA_CERTS` and `CODEX_CA_CERTIFICATE` with Quena's root certificate (Node.js
       programs such as Claude Code and Gemini CLI, and Codex, add it to their own roots);
     - on macOS and Linux also `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
@@ -45,11 +48,19 @@ the **globe button** next to the capture switch, *Capture → Start Browser…*,
 
 - **AI agent.** *Start Agent…* (or *Start Claude Code* / *Start Codex* in the globe button's
   menu) opens such a terminal and runs the agent's command in it (`claude`, `codex`, `gemini`
-  …, in your login shell, so its `PATH` finds it); the shell stays open after it. Its calls to
-  the model and to MCP servers over HTTP go through Quena and show in the [Agents
-  panel](llm.md#conversations-of-agents). HTTPS decryption must be on.
+  or any other command). On macOS and Linux it runs in an interactive login shell
+  (`$SHELL -l -i -c …`), so what your `.zprofile` or `.zshrc` adds to `PATH` (nvm, for
+  example) is found; when the agent ends, a fresh login shell stays open. Its calls to the
+  model and to MCP servers over HTTP go through Quena and show in the
+  [Agents panel](agents.md#the-agents-panel). HTTPS decryption must be on.
 
-Agents can do the same with the MCP tools `launch_browser` and `open_terminal`.
+    Node.js agents such as Claude Code and Gemini CLI ignore the macOS and Windows system
+    proxy, so *Act as system proxy* alone does not catch them: start them with
+    *Start Agent…*, or set the variables above yourself. More in
+    [Get agent traffic into Quena](agents-overview.md#get-agent-traffic-into-quena).
+
+AI agents can start a browser or a terminal too, with the MCP tools `launch_browser` and
+`open_terminal` (a plain terminal; that tool takes no command, so it cannot start an agent).
 
 ## Listen port
 

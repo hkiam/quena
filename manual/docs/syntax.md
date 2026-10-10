@@ -21,7 +21,7 @@ Syntax* and the command `help` show this list in the app.
 | `bpafter [text]` | break after responses (URL contains *text*); without text: off |
 | `bps 500` | break on a response status; `bps` alone: off |
 | `bpv POST`, `bpm POST` | break on a request method; alone: off |
-| `bpllm *`, `bpllm model=claude tool=mcp__jira__* tokens=50k` | break before [LLM requests](llm.md) (any, or matching all conditions); alone: off |
+| `bpllm *`, `bpllm model=claude tool=mcp__jira__* tokens=50k` | break before [LLM requests](optimize-agents.md#break-before-llm-requests) (any, or matching all conditions); alone: off |
 | `g`, `go` | resume all paused sessions |
 | `dump` | save all sessions as `.saz` |
 | `start`, `stop` | start or stop capturing |
@@ -68,8 +68,8 @@ not kind == tunnel
 | `certdays` | `cert` | days until the server's certificate expires (`0`: expired or expires within a day); e.g. `certdays < 30` |
 | `llm` | `model` | [LLM API call](llm.md): `provider/model`, e.g. `llm ~ claude` |
 | `tokens` | | tokens of an LLM call (input + output) |
-| `conv` | `conversation` | the conversation (agent run) of an LLM call, e.g. `conv == 3fa2c01d` |
-| `mcp` | | an exchange with an [MCP server](llm.md#mcp-servers): method and tool, e.g. `mcp ~ "tools/call"` |
+| `conv` | `conversation` | the [conversation](agents.md) (agent run) of an LLM call, e.g. `conv == 3fa2c01d9b` |
+| `mcp` | | an exchange with an [MCP server](mcp-traffic.md): method and tool, e.g. `mcp ~ "tools/call"` |
 | `mcpserver` | | the MCP server's name, e.g. `mcpserver == jira` |
 | `agent` | | the AI agent or SDK of an LLM or MCP request, e.g. `agent ~ "claude code"` |
 | `tls` | `tlsversion` | TLS version towards the server (else the client), e.g. `tls == TLSv1.2` |

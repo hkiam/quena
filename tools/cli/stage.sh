@@ -33,7 +33,7 @@ if [ -n "${SBOM:-}" ]; then
   cp "$SBOM" "$dir/sbom.cdx.json"
 fi
 cat > "$dir/README.txt" <<TXT
-quena-cli $version: Quena's diagnostics for CI pipelines.
+quena-cli $version: Quena's diagnostics for CI pipelines, a headless reverse proxy and mcp-tap for stdio MCP servers.
 
   quena-cli diagnose capture.har --fail-on critical
   quena-cli diagnose capture.har --baseline main.json --budget requests=+10% -o junit=junit.xml

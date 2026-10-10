@@ -329,7 +329,7 @@ export const inspectors: Record<string, string> = {
   "stop: {reason}": "Ende: {reason}",
   "Answer": "Antwort",
   "Answered by Quena from the agent cache: {what}": "Von Quena aus dem Agent-Cache beantwortet: {what}",
-  "The same request (URL and JSON body; key order, user and metadata do not count) is then answered by Quena without asking the model. Settings → Bodies & Storage → Agent cache.": "Dieselbe Anfrage (URL und JSON-Body; Reihenfolge der Schlüssel, user und metadata zählen nicht) beantwortet Quena dann, ohne das Modell zu fragen. Einstellungen → Bodies & Storage → Agent-Cache.",
+  "The same request (URL, credentials and JSON body; what changes with every request, like key order, user, metadata, Claude Code's attribution block or cache marks, does not count) is then answered by Quena without asking the model. Settings → Bodies & Storage → Agent cache.": "Dieselbe Anfrage (URL, Zugangsdaten und JSON-Body; was sich bei jeder Anfrage ändert, etwa Reihenfolge der Schlüssel, user, metadata, der Attributionsblock von Claude Code oder Cache-Marken, zählt nicht) wird dann von Quena beantwortet, ohne das Modell zu fragen. Einstellungen → Bodies & Speicher → Agent-Cache.",
   "Cache this answer (agent cache)": "Diese Antwort cachen (Agent-Cache)",
   "no answer": "keine Antwort",
   "waiting for the answer…": "Antwort steht noch aus…",

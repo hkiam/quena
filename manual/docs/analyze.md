@@ -2,7 +2,7 @@
 
 ## Statistics
 
-The **Statistics** tab (`F7`) summarizes the **selected** sessions — or all sessions when
+The **Statistics** tab (`F7`) summarises the **selected** sessions — or all sessions when
 nothing is selected — and updates while traffic arrives:
 
 - request count, bytes sent and received (bodies), first request and last response,

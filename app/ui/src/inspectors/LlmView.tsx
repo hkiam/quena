@@ -99,7 +99,7 @@ function CacheBar({ detail }: { detail: Detail }) {
   if (hit) return <div className="llm-cache llm-cache-hit">{t("Answered by Quena from the agent cache: {what}", { what: hit })}</div>;
   if (!done || cached === null) return null;
   return (
-    <label className="f-check llm-cache" title={t("The same request (URL and JSON body; key order, user and metadata do not count) is then answered by Quena without asking the model. Settings → Bodies & Storage → Agent cache.")}>
+    <label className="f-check llm-cache" title={t("The same request (URL, credentials and JSON body; what changes with every request, like key order, user, metadata, Claude Code's attribution block or cache marks, does not count) is then answered by Quena without asking the model. Settings → Bodies & Storage → Agent cache.")}>
       <input
         type="checkbox"
         checked={cached}

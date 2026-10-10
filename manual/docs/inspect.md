@@ -92,7 +92,8 @@ These views appear only when the content fits:
 | *Socket.IO* | Socket.IO long-polling (`/socket.io/?…transport=polling`) | the Engine.IO / Socket.IO packets of the request or response body (protocol v4 and v3), with events, namespaces, acks and arguments |
 | *SSE* | `text/event-stream` responses | the stream split into events, live |
 | *gRPC* | gRPC, gRPC-Web and Protobuf messages | message frames and their fields; with a [schema](#grpc-and-protobuf-with-a-schema) field names, types and enum values |
-| *LLM* | calls to LLM APIs (OpenAI, Anthropic, Gemini, Ollama, compatible) | the conversation, tool calls, the answer (also from a stream), tokens and estimated cost — see [LLM traffic](llm.md) |
+| *LLM* | calls to LLM APIs (OpenAI, Anthropic, Gemini, Claude on Vertex AI and Amazon Bedrock, the Bedrock Converse API, Ollama, OpenAI-compatible) | the conversation, tool calls, the answer (also from a stream), tokens and estimated cost — see [LLM traffic](llm.md#the-llm-view) |
+| *MCP* | exchanges with an MCP server (MCP headers, `stdio://` sessions from `quena-cli mcp-tap`, paths such as `/mcp`, `/sse`, `/messages`) | the method, the tool called with its arguments and result, the tools a server offers with what they cost in tokens, and the tool call trail from the model's answer to the server and back — see [MCP servers and skills](mcp-traffic.md#the-mcp-view) |
 | *MessagePack* | `application/msgpack`, `x-msgpack`, `vnd.msgpack` | the values as a tree, like *JSON*, plus binary data, extension types and timestamps |
 | *Parts* | `multipart/*` bodies, including MTOM | the parts of `multipart/related`, `form-data` and `mixed` |
 | *SOAP* | SOAP envelopes | SOAP version, action, operation, body and SOAP faults |
@@ -106,7 +107,9 @@ SOAP and Atom/OData also work on the output of decoder plugins, e.g. Fast Infose
 - With flat views, the views are ordered by how well they fit the content: *Headers* first,
   then the special and plugin views, then *Body*, and so on. As many views as fit the
   width are shown as tabs; the rest are under **More**. The active view is always visible.
-- Until you choose a view for a kind of content, the one that fits opens: *SOAP* for SOAP,
+- Until you choose a view for a kind of content, the one that fits opens: *LLM* for LLM API
+  calls; *MCP* only when the exchange is surely MCP (recognised by Quena, MCP headers, or
+  recorded by `quena-cli mcp-tap`) — a path like `/messages` alone only offers the view; *SOAP* for SOAP,
   *gRPC* for gRPC, *WebSocket* for WebSockets, *Image* for images, *Form Data* for form
   requests, *Body* for JSON, XML, HTML, JavaScript, CSS and text, *Hex* for binary content,
   *Headers* when there is no body.

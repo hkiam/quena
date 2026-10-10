@@ -84,13 +84,18 @@ nav:
       - Diagnostics in CI: ci.md
       - Archives and copying: archives.md
       - Packet captures: packet-captures.md
+  - AI agents:
+      - Overview: agents-overview.md
       - LLM traffic: llm.md
+      - Agent conversations: agents.md
+      - MCP servers and skills: mcp-traffic.md
+      - Optimising agents: optimize-agents.md
+      - Quena's MCP server: mcp.md
   - Advanced:
       - Rules scripts: scripting.md
       - Automatic authentication: authentication.md
       - Client certificates and throttling: network.md
       - Plugins: plugins.md
-      - AI agents (MCP): mcp.md
   - Reference:
       - Settings: settings.md
       - Keyboard shortcuts: shortcuts.md

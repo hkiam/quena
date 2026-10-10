@@ -85,7 +85,7 @@ it onto the window.
 
 ## macOS says the app is damaged or from an unidentified developer
 
-The packages are not notarized yet. Open *System Settings → Privacy & Security* after the
+The packages are not notarised yet. Open *System Settings → Privacy & Security* after the
 first launch attempt and choose *Open Anyway*.
 
 ## The corporate proxy asks for a password
@@ -110,10 +110,77 @@ Check the status bar: *Mock Rules* answer requests locally, *Rewrite rules* chan
 responses (both are listed in the Mock Rules tab). Changed sessions are marked *tampered*
 and name the rule in their comment. A rule an AI agent added stays until it is removed.
 
-## An AI agent cannot connect
+## An AI agent cannot connect to Quena's MCP server
 
-See [AI agents → Check the connection](mcp.md#check-the-connection). After *OK* in the
-options, Quena reports when the server could not start (for example, the port is in use).
+See [Quena's MCP server → Check the connection](mcp.md#check-the-connection). After *OK* in
+the options, Quena reports when the server could not start (for example, the port is in use).
+
+## Agent traffic does not show up
+
+Claude Code, Codex or another agent runs, but its LLM calls do not appear (or only as
+tunnels):
+
+- **HTTPS decryption is off**, or the provider's host is in *Skip decryption for*. Turn
+  decryption on in *Capture → HTTPS Settings…*; the sessions then show as LLM calls.
+- **The agent was started outside Quena.** Node.js agents (Claude Code, Gemini CLI) ignore
+  the macOS and Windows system proxy. Start them with *Capture → Start Agent…*, or set
+  `HTTPS_PROXY` and the certificate variables yourself — see
+  [Get agent traffic into Quena](agents-overview.md#get-agent-traffic-into-quena).
+- **The agent does not trust Quena's certificate.** It needs `NODE_EXTRA_CA_CERTS`
+  (Node.js agents) or `CODEX_CA_CERTIFICATE` (Codex) pointing to Quena's root certificate;
+  *Start Agent…* and *Open Terminal* set both.
+- **The host is in *Do not capture*** (*Settings → Connections*): it then goes past Quena,
+  also from terminals Quena starts (`NO_PROXY`).
+- **The agent has its own proxy setting**, e.g. a corporate proxy in its configuration, which
+  sends its traffic past Quena. Point that setting at Quena and let Quena chain to the
+  corporate proxy ([Upstream proxy and PAC](capture.md#upstream-proxy-and-pac)).
+- **IDE agents** (Cursor, GitHub Copilot and others in an editor) follow the editor's proxy
+  settings: set the proxy there and trust Quena's root certificate in the system.
+- **MCP servers that talk over stdio** send nothing over the network. Record them with
+  [`quena-cli mcp-tap`](mcp-traffic.md#servers-that-talk-over-stdio).
+
+## Exchanges recorded by mcp-tap do not appear
+
+- **Capturing is off.** The app reads mcp-tap's recordings only while it captures.
+- **The MCP client cannot find `quena-cli`.** Desktop apps and IDEs often do not have your
+  shell's `PATH`: give the full path to the program in the client's configuration
+  ([Install → quena-cli](install.md#quena-cli)). The client's MCP log shows whether the
+  server started.
+- **App and quena-cli use different data folders.** In [portable mode](settings.md#portable-mode),
+  or when the app runs with `QUENA_DATA_DIR`, pass the same folder with
+  `--data-dir` (see [Data folder](install.md#data-folder)).
+
+## One agent run splits into several conversations, or two runs merge
+
+Quena puts calls together by the agent's session id (Claude Code, Codex) and by their
+messages ([How calls are put together](agents.md#how-calls-are-put-together)):
+
+- Calls without a session id that are more than 30 minutes apart are not linked by their
+  messages alone, so a long pause starts a new conversation.
+- A call whose system prompt starts differently, or whose first user prompt differs, starts
+  a conversation of its own.
+- Two runs of an app that sends no session id, the same system prompt and the same first
+  prompt within 30 minutes can end up in one conversation.
+
+## The Agents panel says "Reason not known" for a cache miss
+
+The prompt cache missed, but nothing in the request explains it: the model, the system
+prompt, the tools, the cache settings and the earlier messages are the same, and the time
+since the previous turn is within the cache's lifetime. Typical causes are on the provider's
+side: the request went to another server, the cache entry was evicted early, or the provider
+does not report cached tokens for this call. See
+[Why the cache missed](agents.md#why-the-cache-missed).
+
+## Replays or variants of Bedrock calls fail with 403
+
+Requests to Amazon Bedrock are signed with AWS Signature Version 4: the signature covers the
+URL, headers and body. Quena leaves signed requests alone where it can: the
+[LLM rewrite operations](optimize-agents.md#change-requests-while-an-agent-runs) skip them,
+and the [prompt playground](optimize-agents.md#try-a-variant) refuses them with a reason.
+Everything else that changes such a request still breaks the signature, and Bedrock answers
+`403`: edits at a breakpoint, generic JSON rewrite operations, a rules script that
+changes the request, and replays with a changed body. Replay the request unchanged, or make
+the change in the agent itself.
 
 ## Recording stopped: "Recording suspended (disk)"
 

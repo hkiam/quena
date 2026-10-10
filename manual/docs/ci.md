@@ -5,7 +5,7 @@ Functional tests rarely notice network regressions: the page still works, but it
 runs Quena's [Diagnostics](diagnostics.md) on the HAR files your end-to-end tests record and
 turns the report into a **quality gate**: the build fails when the traffic got worse.
 
-It is the same analyzer and the same redaction as in the app, without a window: no proxy, no
+It is the same analyser and the same redaction as in the app, without a window: no proxy, no
 certificate, no settings of the desktop app are used or changed.
 
 ## Quick start
@@ -74,7 +74,8 @@ certificate, no settings of the desktop app are used or changed.
 
     Download `quena-cli-<version>-<platform>` from the
     [releases](https://github.com/hkiam/quena/releases) (Windows, macOS, Linux x64/arm64),
-    unpack it and keep the `plugins` folder next to the program:
+    unpack it and keep the `plugins` folder next to the program (details in
+    [Install → quena-cli](install.md#quena-cli)):
 
     ```bash
     quena-cli diagnose captures/*.har --fail-on critical
@@ -127,7 +128,7 @@ The key figures for budgets are those of the report:
 | `operations` | user operations |
 | `rate` | requests per second — missing when the capture has no duration (span 0) |
 | `open` | requests still open at the end of the capture — only when there are any |
-| `notAnalysed` | sessions beyond the analyzer's limit — only when there are any |
+| `notAnalysed` | sessions beyond the analyser's limit — only when there are any |
 
 Limits are plain numbers in the unit of the figure (bytes, milliseconds), e.g.
 `bytes=5000000`. A budget for a key the report does not contain (a typo, or one of the
@@ -199,7 +200,7 @@ first ten). `--quiet` suppresses all of it; errors are still printed.
 |---|---|
 | `--profile` | `full`, `performance`, `troubleshooting`, `auth`, `resilience`, `modernization` (`quena-cli profiles` lists them) |
 | `--lang de` | report texts in German |
-| `--set slowMs=1500` | an analyzer option (thresholds, network profiles); not `lang` or `profile` — use `--lang` and `--profile` |
+| `--set slowMs=1500` | an analyser option (thresholds, network profiles); not `lang` or `profile` — use `--lang` and `--profile` |
 | `--host api.example.com`, `--process chrome` | analyse only part of the traffic |
 | `--plugins DIR` | use the plugins of this folder only (instead of the `plugins` folder next to the program and `QUENA_PLUGIN_DIR`) |
 | `--timeout 600` | give up when the whole run (import and analysis) takes longer than this many seconds |
@@ -239,12 +240,12 @@ quena-cli mock captures/*.har --package shop.quena-mocks --host api.example.com
 
 | `sanitize` option | Effect |
 |---|---|
-| `-o PATH` | the sanitized archive, `.saz` or `.har` |
+| `-o PATH` | the sanitised archive, `.saz` or `.har` |
 | `--preset` | `support` (default: credentials, tokens, e-mail addresses, IBANs and card numbers), `gdpr` (also phone numbers, IP addresses, personal fields, national ids, process names; bodies cut), or `credentials` (only credentials and tokens) |
 | `--config FILE` | sanitize options as JSON — the options object, or the app's saved `{"options": …, "format": …}` — instead of a preset |
 | `--log PATH` | also write the redaction log (`.json`, or text) |
 | `-q`, `--quiet` | no progress messages on stderr (errors only) |
-| `--timeout SECONDS` | give up when the whole run (imports, sanitizing, writing) takes longer (default 600); exit code 3, and a half-written archive is removed |
+| `--timeout SECONDS` | give up when the whole run (imports, sanitising, writing) takes longer (default 600); exit code 3, and a half-written archive is removed |
 
 | `mock` option | Effect |
 |---|---|
@@ -321,7 +322,10 @@ an error (exit code 2), not an empty side.
 
 `quena-cli mcp-tap --name NAME -- COMMAND ARGS…` runs an MCP server that talks over stdio,
 passes its input and output through unchanged and records the exchanges for the Quena app;
-see [MCP servers](llm.md#servers-that-talk-over-stdio). It exits with the server's exit code
+see [MCP servers and skills](mcp-traffic.md#servers-that-talk-over-stdio). Install
+`quena-cli` as described in [Install → quena-cli](install.md#quena-cli) and give MCP clients
+its full path; `--data-dir` points it to the app's data folder when that is portable or set
+with `QUENA_DATA_DIR`. It exits with the server's exit code
 (128 + the signal when a signal ended the server), with 2 when the server cannot be started.
 
 ## Exit codes
@@ -335,6 +339,6 @@ see [MCP servers](llm.md#servers-that-talk-over-stdio). It exits with the server
 
 ## Privacy
 
-Tokens, cookie values and secret URL parameters are removed before the analyzer sees the
+Tokens, cookie values and secret URL parameters are removed before the analyser sees the
 traffic ([details](diagnostics.md#privacy)). Reports still contain URLs and host names —
 mind that when you publish them, e.g. as artifacts of a public repository.

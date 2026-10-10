@@ -106,6 +106,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Navigator: Groups" => "Navigator: Gruppen",
         "Navigator: Structure" => "Navigator: Struktur",
         "Diagnostics" => "Diagnose",
+        "Agents" => "Agenten",
         "Tunnels (CONNECT)" => "Tunnel (CONNECT)",
         "Image Requests" => "Bild-Requests",
         "304 Not Modified" => "304 Not Modified",

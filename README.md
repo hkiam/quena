@@ -7,7 +7,7 @@
 **The easy, intuitive — yet seriously powerful — HTTP(S) debugging proxy. On every desktop.**
 
 Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Linux.<br>
-**And it doesn't stop at showing your traffic: it diagnoses it.**
+**And it doesn't stop at showing your traffic: it diagnoses it, and it shows what your AI agents do.**
 
 [![CI](https://github.com/hkiam/quena/actions/workflows/ci.yml/badge.svg)](https://github.com/hkiam/quena/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -18,6 +18,7 @@ Capture, inspect, change and replay HTTP(S) traffic — on macOS, Windows and Li
 
 [Why Quena?](#why-quena) ·
 [Diagnostics](#diagnostics) ·
+[AI agents](#ai-agents) ·
 [Features](#features) ·
 [Screenshots](#screenshots) ·
 [Getting started](#getting-started) ·
@@ -53,6 +54,9 @@ Quena is an independent, open-source take on this kind of tool, with its own des
   `quena-cli` analyses the HAR files of your Playwright or Cypress tests and fails the build
   when a change brings new N+1 queries, retry storms or sign-in loops, or 40 % more requests
   than `main`. See [Diagnostics in CI](#diagnostics-in-ci).
+- **Sees what AI agents do.** Claude Code, Codex or your own agent: every model call,
+  conversation, MCP tool call and its cost, why the prompt cache missed, and where tokens go
+  to waste. See [AI agents](#ai-agents).
 - **Easy to use.** Start Quena, and traffic appears. HTTPS decryption is one checkbox and one
   "Trust" click. No accounts, no cloud, no setup wizard marathon.
 - **Reaches clients that ignore proxies.** A backend with a fixed API URL, a container, a
@@ -130,7 +134,7 @@ pass for you and answers three questions for every finding:
   quality gate — see [Diagnostics in CI](#diagnostics-in-ci).
 - **Local, deterministic, private.** The analysis runs in a sandboxed plugin on your machine;
   the same capture always gives the same report. Tokens, cookie values and sensitive URL
-  parameters are removed before the analyzer sees the traffic.
+  parameters are removed before the analyser sees the traffic.
 
 <table>
 <tr>
@@ -150,7 +154,7 @@ duplicates, redundant refreshes and double submits, N+1, polling, retries and re
 chatty operations, OData queries and paging, HTTP errors and connection failures,
 authentication, redirect chains and loops, cookies, caching, connection reuse, TLS versions,
 CORS preflights, latency and bandwidth sensitivity — is described in the
-[manual](https://hkiam.github.io/quena/diagnostics/). The analyzer is a plugin with a
+[manual](https://hkiam.github.io/quena/diagnostics/). The analyser is a plugin with a
 documented [contract](plugins/webdiag/REPORT.md), so you can add your own.
 
 ### Diagnostics in CI
@@ -191,11 +195,26 @@ quena-cli: 1 critical, 4 warning, 9 info · vs. baseline: 2 new, 1 resolved, 0 c
 - **Records what has no browser:** `quena-cli reverse --route api=8080=http://localhost:3000
   --save api.har` sits in front of the service your API tests call (also as a Docker sidecar)
   and hands the capture to the gate.
-- **Same engine, same privacy:** the analyzer and the redaction of the desktop app; nothing
+- **Same engine, same privacy:** the analyser and the redaction of the desktop app; nothing
   leaves the build machine.
 
 Examples for [Playwright](examples/ci-playwright) and [Cypress](examples/ci-cypress); details
 in the [manual](https://hkiam.github.io/quena/ci/).
+
+---
+
+## AI agents
+
+Start Claude Code, Codex or any other agent from Quena (*Capture → Start Agent…*) and every
+model call becomes readable: system prompt, messages, tool calls, the answer, tokens and cost.
+The **Agents** panel puts the calls together into one conversation per run, with its turns,
+subagents and side calls, what changed from one call to the next, why the provider's prompt
+cache missed, where tokens go to waste and what fills the context. MCP tool calls are traced
+from the model's request to the server and back, stdio servers included via `quena-cli mcp-tap`.
+To make a run cheaper, try a variant of a call, change requests while the agent runs, freeze
+a run and replay against it, and compare two runs side by side. OpenAI, Anthropic, Gemini,
+Vertex AI, Amazon Bedrock, Ollama and OpenAI-compatible APIs are recognised; everything stays
+on your machine. Details in the [manual](https://hkiam.github.io/quena/agents-overview/).
 
 ---
 
@@ -236,31 +255,42 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Socket.IO** decoded in the WebSocket view and for long-polling: events, namespaces,
   acks, arguments; WebSocket messages changed or dropped on the way by rewrite rules or the
   rules script (`onWebSocketMessage`)
-- **LLM traffic**: calls to OpenAI, Anthropic, Gemini, Ollama and compatible APIs as a
-  conversation — system prompt, messages, tool calls, the answer assembled from streams,
-  tokens and estimated cost; columns, filters and statistics per model
-- **Agent conversations** (Claude Code, Codex, own apps): the turns of each run with
-  subagents, what fills the context (system prompt, each tool, CLAUDE.md/AGENTS.md, tool
-  results …), the change from turn to turn, why the prompt cache missed, and hints where
-  tokens go to waste
-- **MCP servers**: tool calls with arguments and results, `tools/list` with what each
-  definition costs in tokens, the way from the model's request to the server and back;
-  stdio servers recorded with `quena-cli mcp-tap`; a report of tools and skills offered,
-  called, failed and never used
-- **Optimise agents**: compare two runs (A/B), try a variant of a call (system prompt, tools,
-  model), freeze a run in the agent cache and replay against it, change requests on the fly
-  (remove tools, set the model, add to the system prompt) or break before matching LLM
-  requests; latency, tokens per second and rate limits per turn
-- **Agents end to end**: start Claude Code, Codex or any agent in a terminal that uses Quena,
-  see which agent sent what (Agent column), export a run as Markdown, JSONL or OpenTelemetry
-  spans; Claude on Amazon Bedrock and Google Vertex AI and Bedrock Converse recognised; the
-  conversations, context, tool report also for AI agents over MCP
-- Auto-detected inspectors: **WebSocket**, **SSE**, **gRPC / gRPC-Web / Protobuf**
+- Auto-detected inspectors: **LLM** and **MCP** (see [AI agents & LLM](#ai-agents--llm)), **WebSocket**, **SSE**, **gRPC / gRPC-Web / Protobuf**
   (field names from `.proto` files or server reflection, schemaless otherwise),
   **MessagePack**, **Multipart / MTOM**, **SOAP**, **Atom / OData**
 - **Fast Infoset** (SOAP, OData, EDMX) via bundled plugin
 - Transparent gzip / deflate / brotli / zstd decoding, with bomb protection
 - Large-body viewer: open a multi-GB body instantly, search it, save ranges
+
+### AI agents & LLM
+- **LLM traffic**: calls to OpenAI (Chat Completions and Responses), Anthropic, Gemini,
+  Claude on Google Vertex AI and Amazon Bedrock (also the Converse API), Ollama and
+  OpenAI-compatible APIs taken apart — system prompt, messages, tool calls, the answer
+  assembled from streams, tokens and estimated cost; LLM, Tokens and Cost columns, filters
+  and statistics per model
+- **Agent conversations** (Claude Code, Codex, your own apps) in the **Agents** panel: the turns
+  of each run with subagents and side calls, the change from the call each turn continues,
+  why the prompt cache missed, hints where tokens go to waste, a map of what fills the context
+  (system prompt, each tool, CLAUDE.md/AGENTS.md, tool results …), latency, tokens per second,
+  refused calls, retries and rate limits per turn
+- **MCP traffic**: an MCP view for tool calls with arguments and results, `tools/list` with
+  what each definition costs in tokens, and the tool call trail from the model's request to
+  the server and back; stdio servers recorded with `quena-cli mcp-tap`
+- **Tools & skills**: tools and skills offered, called, failed and never used, and what their
+  definitions cost
+- **Prompt playground**: send a call again as a variant — another system prompt, fewer tools,
+  another model or output limit
+- **LLM rewrite operations**: remove a tool, set the model or add to the system prompt of
+  requests while an agent runs; **break before LLM requests** (`bpllm`, with model, tool and
+  token conditions)
+- **Agent cache**: answer repeated LLM calls without asking the model; **freeze** a run and
+  replay against it, and see where a new run leaves it
+- **Compare two runs** (A/B), and **export** a run as Markdown, JSON lines or OpenTelemetry
+  GenAI spans
+- **Start Agent**: Claude Code, Codex or any command in a terminal whose proxy and root
+  certificate are Quena's; the **Agent** column, grouping and filter show which agent sent what
+- **For AI agents over MCP**: conversations, context, tool report and LLM calls of the capture
+  (`list_conversations`, `get_conversation`, `get_context`, `get_tool_report`, `get_llm_call`)
 
 </td>
 <td valign="top" width="50%">
@@ -291,10 +321,11 @@ in the [manual](https://hkiam.github.io/quena/ci/).
 - **Diagnostics**: prioritised findings with evidence — N+1, duplicates, polling, retries,
   auth loops, caching, compression, OData queries, latency/bandwidth sensitivity
 - Filters, Find, Statistics, Timeline, Compare, Text Tools
-- **Grouping** by keep-alive connection, host, process, trace id or session cookie
+- **Grouping** by keep-alive connection, host, process, trace id, session cookie, custom
+  column, reverse proxy, LLM model, conversation, MCP server, agent or source
 - **Navigator**: hosts and paths or the groups next to the list; a click narrows it
-- Comments, color marks, custom column
-- **MCP server**: AI agents (Claude Code …) read the capture and, if allowed,
+- Comments, colour marks, custom column
+- **Quena's MCP server**: AI agents (Claude Code …) read the capture and, if allowed,
   set rules and breakpoints and send requests
 
 ### Enterprise-ready
@@ -406,7 +437,7 @@ the system proxy (restored on quit), a trusted root certificate, and saved passw
 Credential Manager). Needs the Edge WebView2 Runtime, which Windows 11 and current Windows 10
 include.
 
-The packages are not signed with a paid certificate or notarized yet. On macOS, open
+The packages are not signed with a paid certificate or notarised yet. On macOS, open
 *System Settings → Privacy & Security* after the first launch attempt and choose *Open Anyway*;
 on Windows, SmartScreen may ask you to confirm (*More info → Run anyway*).
 
@@ -597,7 +628,7 @@ Please report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 
 ## Roadmap
 
-- Signed and notarized releases for macOS and Windows
+- Signed and notarised releases for macOS and Windows
 - Capture without a system proxy (macOS Network Extension), HAR live import, remote capture
 - "Any Process" window picker for process filters
 - HTTP/3 (QUIC)
@@ -612,7 +643,7 @@ Ideas and feedback are welcome in [Discussions](https://github.com/hkiam/quena/d
 Contributions of all sizes are welcome — bug reports, documentation, inspectors, plugins, platform
 support. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
-All dependencies must use permissive licenses (MIT, Apache-2.0, BSD, ISC, Zlib …); this is checked
+All dependencies must use permissive licences (MIT, Apache-2.0, BSD, ISC, Zlib …); this is checked
 in CI with [`cargo-deny`](deny.toml).
 
 ## License

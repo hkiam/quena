@@ -123,7 +123,7 @@ export function McpView({ detail }: { detail: Detail }) {
           ))}
           {trail && (
             <>
-              <h4>{t("Way of the call")}</h4>
+              <h4>{t("Tool call trail")}</h4>
               <TrailView tr={trail} />
             </>
           )}

@@ -214,6 +214,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "view.log", "Log", None)?,
             &item(app, "view.timeline", "Timeline", None)?,
             &item(app, "view.diagnostics", "Diagnostics", None)?,
+            &item(app, "view.agents", "Agents", None)?,
             &sep()?,
             &item(app, "view.navigator", "Navigator", Some("CmdOrCtrl+Alt+N"))?,
             &item(app, "view.groups", "Navigator: Groups", None)?,

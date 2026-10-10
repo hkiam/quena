@@ -118,7 +118,7 @@ pub fn merge_codex(text: Option<&str>, url: &str, token: &str) -> Result<String>
 /// What agents read in the skill.
 pub const SKILL: &str = r#"---
 name: quena-traffic-debugging
-description: Debug HTTP(S) traffic captured by Quena (a local debugging proxy) through its MCP server - failing or slow requests, API errors, auth problems, LLM API calls and costs, mocking endpoints. Use when the user mentions Quena, captured traffic, sessions, a request that fails in the app or browser, or wants an endpoint mocked.
+description: Debug HTTP(S) traffic captured by Quena (a local debugging proxy) through its MCP server - failing or slow requests, API errors, auth problems, LLM API calls and costs, AI agent runs (conversations, prompt cache, MCP tool calls), mocking endpoints. Use when the user mentions Quena, captured traffic, sessions, a request that fails in the app or browser, why an agent run is slow or expensive, or wants an endpoint mocked.
 ---
 
 # Debugging traffic with Quena
@@ -147,6 +147,18 @@ Quena records HTTP(S) requests with their responses as numbered *sessions*. Its 
 - `get_session` shows headers and the start of both bodies (decoded); `get_body` reads more.
 - `get_llm_call` takes an LLM API call apart: model, messages, tools, answer, tokens, cost.
 - Compare a failing call with a successful one of the same endpoint before concluding.
+
+## AI agent runs
+
+- `list_conversations` lists the runs of agents (Claude Code, Codex, apps) put together from their
+  LLM calls: tokens, cost, cache misses, retries, latency. `get_conversation` (key) shows the turns,
+  what changed from one call to the next, why the prompt cache missed and hints where tokens go to
+  waste; long runs come in pages (`limit`, `offset`).
+- `get_context` (session id) shows what fills one call's input: system prompt, tool definitions,
+  instruction files, tool results by tool.
+- `get_tool_report` lists tools and skills across runs: offered, called, failed, never called, and
+  what their definitions cost.
+- `list_sessions` with `mcp != ""` finds MCP exchanges, `conv == "KEY"` the calls of one run.
 
 ## Change things (only with full control)
 

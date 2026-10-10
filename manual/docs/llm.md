@@ -1,8 +1,9 @@
 # LLM traffic
 
 Applications that use large language models talk to their APIs over HTTPS like any other
-client. Quena recognises these calls and shows them as what they are: a conversation with
-a model, its tools, the answer and what it cost — also when the answer came as a stream.
+client. Quena recognises these calls and shows them as what they are: a request to a model,
+its tools, the answer and what it cost, also when the answer came as a stream. How the calls
+of one agent run fit together is on [Agent conversations](agents.md).
 
 ## What is recognised
 
@@ -13,16 +14,30 @@ a model, its tools, the answer and what it cost — also when the answer came as
 | Anthropic Messages | `POST …/v1/messages` |
 | Google Gemini and Vertex AI | `POST …:generateContent`, `…:streamGenerateContent` |
 | Ollama | `POST …/api/chat`, `…/api/generate` |
-| Embeddings | `POST …/embeddings`, `…/api/embed`, `…:embedContent` |
+| Embeddings | `POST …/embeddings`, `…/api/embed`, `…/api/embeddings`, `…:embedContent`, `…:batchEmbedContents` |
 | Claude on Google Vertex AI | `POST …/publishers/anthropic/models/…:rawPredict`, `…:streamRawPredict` (Anthropic's format) |
 | Claude on Amazon Bedrock | `POST bedrock-runtime…/model/…anthropic.…/invoke`, `…/invoke-with-response-stream` (Anthropic's format, streamed in AWS's event stream) |
 | Amazon Bedrock Converse (any model) | `POST bedrock-runtime…/model/…/converse`, `…/converse-stream` |
 
-The provider is named by the API's host (`OpenAI`, `Anthropic`, `Google Gemini`, `Google
-Vertex AI`, `Amazon Bedrock`, …); other hosts — a company gateway, a local server — keep their
-host name. Models named in the URL (Gemini, Vertex AI, Bedrock — `us.anthropic.claude-…-v1:0`)
-are taken from there and priced like the provider's own. HTTPS decryption must be on, as for
-any HTTPS content.
+A request counts only when its JSON body carries what that API needs (`messages`,
+`contents`, `input` …), so another application's `/api/chat` is not taken for Ollama. HTTPS
+decryption must be on, as for any HTTPS content.
+
+The provider is named by the API's host (`OpenAI`, `Azure OpenAI`, `Anthropic`, `Google
+Gemini`, `Google Vertex AI`, `Amazon Bedrock`, `Mistral`, `Groq`, `OpenRouter` …); other hosts,
+such as a company gateway or a local server, keep their host name (Ollama's APIs are named
+`Ollama`). Models named in the URL (Gemini, Vertex AI, Bedrock, e.g.
+`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) are taken from there and priced like the
+provider's own model.
+
+!!! note "Amazon Bedrock and AWS Signature V4"
+    Bedrock requests are signed with AWS Signature V4 (`Authorization: AWS4-HMAC-SHA256 …`,
+    or `X-Amz-Signature=` in a presigned URL). The signature covers the body, so AWS refuses
+    any changed copy with `403`. Quena therefore leaves signed requests alone in its LLM
+    rewrite operations, and the prompt playground refuses them. Edits at a breakpoint,
+    generic JSON rewrite rules and replays with a changed body still break the signature.
+    Errors in AWS's event stream (exception frames) and Bedrock's `{"message": …}` errors show
+    as the call's error.
 
 ## The LLM view
 
@@ -30,126 +45,75 @@ Selecting such a session opens the **LLM** view (on both the request and the res
 side):
 
 - a header with provider, model, whether the answer was streamed, the stop reason
-  (`stop`, `end_turn`, `tool_calls`, `max_tokens` …), the **token usage** — input, output,
-  read from and written to the provider's cache, reasoning — and the **estimated cost**;
-- the **system prompt** (also `instructions`, `systemInstruction`);
+  (`stop`, `end_turn`, `tool_calls`, `max_tokens` …), the **token usage** (input, output,
+  read from and written to the provider's cache, reasoning) and the **estimated cost**;
+- the **system prompt** (also `instructions`, `systemInstruction`), without Claude Code's
+  attribution block (`x-anthropic-billing-header: …`), which changes with every request;
 - the **messages** sent, by role: text, images as placeholders, **tool calls** with their
   arguments and **tool results** with the call they answer;
 - the **answer**: text, thinking or reasoning summaries (collapsed), tool calls. Streams
-  (server-sent events, Ollama's JSON lines, Gemini's array) are put together;
+  (server-sent events, Ollama's JSON lines, Gemini's array, AWS's event stream) are put
+  together;
 - **tools and parameters**: the tool definitions offered and the parameters sent
-  (`temperature`, `max_tokens`, `reasoning_effort`, `thinking` …).
+  (`temperature`, `max_tokens`, `reasoning_effort`, `thinking` …);
+- under the answer, the **MCP exchanges** that ran its tool calls (see
+  [Tool call trail](mcp-traffic.md#tool-call-trail));
+- **Context**: the call's turn in its conversation (*Show conversation* opens the Agents
+  panel), the map of what fills its input, the change from the call it continues and the
+  provider's cache verdict, described on
+  [Agent conversations](agents.md#the-context-section-of-the-llm-view).
 
 An error the API answered with (rate limit, invalid request) is shown at the top. Texts
 longer than 200,000 characters are shortened in this view; the body views show them
 whole. A stream that ended early says so.
 
-## Conversations of agents
-
-An agent — Claude Code, Codex, an app of your own — sends its whole conversation with every
-turn. The **Agents** panel (right pane, *Agents*) puts the calls of one run together:
-
-- **Conversations**, newest first: title (the first prompt), agent (by its User-Agent,
-  e.g. `claude-cli/2.0.14`), turns, tokens, the share of input the provider's prompt cache
-  served, the estimated cost. A badge counts the turns where the cache missed. A
-  **subagent** (Claude Code's *Task*, a Codex sub-thread) is listed under the conversation
-  that started it.
-- Choose one to see its **turns**: time, a bar on the run's time axis, input, cached share,
-  output, cost, **the change from the call it continues** (`+2 messages`; `message 12
-  changed`, `system prompt changed`, `tools changed`, `settings changed: thinking`, `model
-  changed` — those break the cached prefix) and the tools the answer called. A **side call**
-  — a call no later turn continues, such as Claude Code's prompt suggestions and summaries —
-  is marked as such; answers from Quena's [agent cache](#agent-cache) are marked and cost
-  nothing. Click a turn for its context; double-click selects its session.
-- **Hints** where tokens go to waste, with the tokens they cost: the same tool result more
-  than once in the context, large tool results, the same call repeated with the same
-  arguments, a reminder the agent adds again and again, tools offered in every request but
-  never called, a context close to the model's window, turns where the cache missed.
-- **What fills the context**: a map of the last request (or the turn clicked) — system
-  prompt, each tool definition, the provider's tool prompt, instruction files (CLAUDE.md,
-  AGENTS.md), the list of skills, reminders, the environment, a compaction summary, user and
-  assistant messages, thinking, tool calls and results by tool, images (also those in tool
-  results). The slices are estimated from the text and scaled to the input tokens the
-  provider reported, so they add up to the real figure; images and the tool prompt count with
-  fixed amounts. History the provider keeps (`previous_response_id`) shows as a slice of its
-  own.
-
-Each call is linked to the call it continues: the request Claude Code names as the previous
-one, the response a `previous_response_id` names, or else — among calls of the same agent
-session (Claude Code's session id, Codex's session or thread, `prompt_cache_key`) with the
-same system prompt and first prompt of the user — the one whose messages it carries
-furthest. What agents add around the user's words (`<system-reminder>`, AGENTS.md,
-`<environment_context>`, slash-command caveats, Claude Code's attribution block in the system
-prompt) does not count. Without a session id, calls more than 30 minutes apart are not linked
-by their messages alone. Subagents are found by the parent session the agent names, as the
-agent's own subagent in the same session, or by their first prompt in a tool call shortly
-before.
-
-Each call gets the flag `x-quena-llm-conv` with the conversation's key: column
-**Conversation**, *Group by → Conversation (agent run)* and the filter `conv == 22480fee4e`.
-LLM and MCP requests also get the agent that sent them, by its User-Agent (`x-quena-agent`:
-`Claude Code 2.0.14`, `Codex 0.46.0`, `Gemini CLI`, `Cursor`, `OpenAI SDK (Python)` …):
-column **Agent**, *Group by → Agent* (without the version), filter `agent ~ "claude code"`.
-LLM calls in archives from other tools (no Quena flags) are found by their URL when the panel
-opens and get all LLM flags.
-
-### Why the cache missed
-
-Providers keep the start of a request (Anthropic for 5 minutes, or 1 hour when asked; OpenAI
-5–10 minutes, or 24 hours with `prompt_cache_retention`) and charge it at a fraction of the
-price the next time. When a turn's cached input stays below half of what it could have been,
-the turn says why — judged against the call it continues (or the nearest before it that used
-tokens), and only where the provider reports cached tokens (Anthropic always; others once a
-turn of the conversation was served from the cache):
-
-| Reason | What happened |
-|---|---|
-| Message *n* changed | An earlier message differs: everything from it on is new to the cache. |
-| System prompt changed / tool definitions changed | Also when only the order of the tools or a tool's schema changed. |
-| Settings changed | `thinking`, `tool_choice`, the effort, or the `anthropic-beta` header. |
-| Model changed | Each model has its own cache. |
-| Cache expired | More than the cache's lifetime passed since the turn before. |
-| No cache_control breakpoint | Anthropic caches only prefixes the request marks. |
-| Marked, but too short | The request asks for caching, but is shorter than the provider caches for the model (Anthropic: 1,024 tokens, 2,048 for Haiku 3, 4,096 for the newest models). |
-| Reason not known | Another server, the cache was evicted, or the provider reports no cached tokens. |
-
-The **LLM** view shows the same for one call under *Context*: its turn in the conversation
-(*Show conversation* opens the panel), the map, the change from the turn before (the message
-that changed, before and after) and the cache. The context window comes from the fetched
-LiteLLM list, else from the model's family.
+From the view, *Cache this answer* puts a successful answer into the
+[agent cache](optimize-agents.md#agent-cache), and *Try a variant…* sends the call again
+with changes ([Try a variant](optimize-agents.md#try-a-variant)).
 
 ## In the session list
 
 When a call is done, it gets the flags `x-quena-llm` (`provider/model`),
-`x-quena-llm-tokens`, `x-quena-llm-usage` and `x-quena-llm-cost`. They are kept in `.saz`
-archives.
+`x-quena-llm-tokens`, `x-quena-llm-usage` and `x-quena-llm-cost`. LLM and MCP requests also
+get `x-quena-agent`, the agent or SDK that sent them, read from the User-Agent
+(`Claude Code 2.0.14`, `Codex 0.46.0`, `Gemini CLI`, `Cursor`, `GitHub Copilot`,
+`OpenAI SDK (Python)` …; clients Quena does not know get no such flag). The flags
+are kept in `.saz` archives. LLM calls in archives from other tools (without Quena's flags)
+get them when the Agents panel opens.
 
-- Columns **LLM**, **Tokens** and **Cost** (right-click the column headers); they sort.
-- *Group by → LLM model* puts the calls of each model together.
-- Filters: `llm ~ claude`, `llm == "OpenAI/gpt-4o"`, `tokens > 10000` (see
-  [syntax](syntax.md#filter-expressions)).
+- Columns **LLM**, **Tokens**, **Cost** and **Agent** (right-click the column headers); they
+  sort. The column **Conversation** is described on
+  [Agent conversations](agents.md#columns-grouping-and-filters).
+- *Group by → LLM model* puts the calls of each model together, *Group by → Agent (Claude
+  Code, Codex …)* those of each agent.
+- Filters: `llm ~ claude`, `llm == "OpenAI/gpt-4o"`, `tokens > 10000`,
+  `agent ~ "claude code"` (see [syntax](syntax.md#filter-expressions)).
 - *Statistics* lists calls, tokens and estimated cost per model for the selection.
 
 ## Costs
 
-The cost is an estimate: tokens times the model's list price, with cached input at the
-cached price. Discounts and batch prices are not known, and models without a price show
-*cost unknown*. Prices come from three places, the first that knows the model wins
+The cost is an estimate: tokens times the model's list price. Input read from the provider's
+cache is charged at the cached price, input written to it at the cache-write price, and the
+rest at the input price. Discounts and batch prices are not known, and models without a price
+show *cost unknown*. Answers from Quena's agent cache cost nothing and are not added up.
+Prices come from three places, and the first that knows the model wins
 (*Settings → Bodies & Storage → LLM prices* shows all three):
 
 1. **Your own prices** in `llm-prices.json` in the [data directory](settings.md#data-directory)
-   — *Create llm-prices.json* / *Edit llm-prices.json* opens it. US dollars per million
-   tokens, by model name prefix (the longest prefix wins):
+   (*Create llm-prices.json* / *Edit llm-prices.json* opens it). US dollars per million
+   tokens, by model name prefix (the longest prefix wins). `cacheRead` and `cacheWrite`
+   default to the input price; `context`, the model's context window in tokens, is optional:
 
     ```json
     {
       "gpt-5.1": { "input": 1.25, "output": 10, "cacheRead": 0.125 },
       "claude-opus-4-5": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 },
+      "my-model": { "input": 0.5, "output": 1.5, "context": 128000 },
       "llama": { "input": 0, "output": 0 }
     }
     ```
 
-    Changes count from the next call on, without a restart. A file that is no valid JSON is
+    Changes count from the next call on, without a restart. A file that is not valid JSON is
     reported in the settings, the log and the *LLM* view; its prices are not used until it
     is fixed.
 
@@ -165,33 +129,9 @@ cached price. Discounts and batch prices are not known, and models without a pri
    as published in 2025, matched like the fetched list (a newer `claude-opus-4-7` does not
    get the price of `claude-opus-4`).
 
-## Agent cache
-
-The agent cache answers a call that was answered before, without asking the model again: an
-agent or an app under development that sends the same prompt twice pays and waits only
-once.
-
-- In the **LLM** view of a successful call, check **Cache this answer**. From then on, the
-  same request is answered by Quena from the kept answer, streamed answers as recorded.
-- *Settings → Bodies & Storage → Agent cache → Cache every LLM call* caches each successful
-  call by itself.
-- "The same request" means the same method and URL, the same credentials (`Authorization`,
-  `x-api-key`, `?key=` … — kept only as a hash: another key never gets these answers) and API
-  version headers (`anthropic-version`, `anthropic-beta`, `openai-beta` …), and the same JSON
-  body; key order, spacing and the fields `user` and `metadata` do not count.
-- The answer is kept decoded (any client can read it) and without headers that name the
-  account (`set-cookie`, `openai-organization`, request ids). At most 2000 answers or 1 GB are
-  kept; the least recently used go first. A breakpoint on the request wins over the cache.
-- A session answered from the cache shows *Answered by Quena from the agent cache* with the
-  tokens, estimated cost and time saved (flag `x-quena-cache`); its tokens and cost are not
-  added up in the columns and *Statistics*, as nothing was spent.
-- The settings list the kept answers with their hits and the total saved, remove single ones
-  or all, and name calls of the capture **asked more than once** that are not cached yet,
-  with what the repeats cost — *Cache* caches them.
-- Mock rules come first: a request a mock rule answers never reaches the cache.
-
-The answers are kept in `llm-cache/` in the data directory and stay over restarts. Agents use
-`llm_cache_status` and, with full control, `cache_llm_calls` ([MCP](mcp.md)).
+Model names are compared without a provider path (`openai/gpt-4o`) and without Bedrock's
+region, vendor and version (`us.anthropic.claude-sonnet-4-5-20250929-v1:0` →
+`claude-sonnet-4-5-20250929`).
 
 ## Replay answers without calling the model
 
@@ -201,143 +141,13 @@ recorded sessions: select them and use *Mock Rules → Mocks from Sessions…* (
 recorded answer (JSON compared regardless of key order); without it, *In recorded order*
 answers the calls one after the other. Streamed answers are replayed as recorded.
 
-### Latency and rate limits
+To answer an agent's repeated calls automatically, or to run an agent again against a
+recorded run, use the [agent cache](optimize-agents.md#agent-cache) and
+[Freeze a run for replays](optimize-agents.md#freeze-a-run-for-replays).
 
-The turns show the time from sending a request to the response headers (on a new connection
-with connecting) and, for streamed answers, the output tokens per second from the answer's
-first byte; the conversation their medians. A turn refused with 429 (rate limit) or 529/503
-(provider overloaded) is marked with its status; the rate limits a response reports
-(`anthropic-ratelimit-*`, `x-ratelimit-*`, `retry-after`) show when pointing at the status or
-the tokens per second. Hints say how many calls were refused and how many were sent again
-after a failure, and when little of the token limit is left.
+## For AI agents
 
-### Try a variant
-
-*Try a variant…* in the LLM view sends the call again with changes: another **system
-prompt**, **tools** left out (a tool choice naming one goes too), another **model** (for
-Gemini in the URL), another **output limit** (under the key the API uses: `max_tokens`,
-`max_completion_tokens`, `max_output_tokens`, `maxOutputTokens`, `num_predict`). The variant
-goes to the same API with the original request's headers — its credentials included — after
-you confirm, and costs tokens like any call. For a session loaded from an archive these are
-the credentials of whoever recorded it. Its answer, error and tokens show next to the
-original's; the new session is commented *Variant of #N*, and neither the agent cache nor
-rewrite rules change it.
-
-A changed system prompt is sent as one text: cache marks and Claude Code's attribution block
-are left out, so the provider's cache starts over; a system prompt too long for the view is
-sent unchanged. A variant counts in its conversation as a side call.
-
-### Freeze a run for replays
-
-*Freeze for replays…* puts the answered turns of a conversation and of the subagents it
-started into the [agent cache](#agent-cache); turns that cannot be kept (an answer cut off or
-too large) are skipped and counted. Run the agent again — after changing a skill, an MCP
-server, a prompt file — and Quena answers the same requests from the recording without
-asking the model. Where the new run asks something the recording does not have, the call
-goes to the model, and the conversation says at which turn the run *left the frozen run*. A
-request is the same when its URL, model, messages, tools and settings are (key order,
-`user` and `metadata` do not count); when the first request already differs — a date in a
-reminder, say — the new run gets no answer from the recording.
-
-### Export a conversation
-
-*Export:* in a conversation writes it as **Markdown** (each turn with what it added — new
-messages, tool calls and results — and the answer, to read or share), **JSONL** (one call per
-line as the LLM view takes it apart, with turn, change and cache notes: for evaluations), or
-**OpenTelemetry** spans after the GenAI semantic conventions (OTLP JSON: a span for the run,
-one per call with model, tokens and finish reason, no content) to load into Langfuse, Phoenix
-or another tracing tool.
-
-### Compare two runs
-
-*Compare with* sets two conversations side by side — an A/B test of a prompt, a skill, a model
-or an MCP server: turns, input and output tokens, cached share, cost, duration, the size of
-the last request, cache misses, errors and hints, what filled the last request by category,
-and the tool calls by tool, each with the difference.
-
-To change what an agent sends while it runs, use the rewrite rules' LLM changes (remove a
-tool, set the model, add to the system prompt; see [rewrite
-rules](change-replay.md#the-editor)); to stop a request and edit it, the breakpoint
-`bpllm` (see [breakpoints](change-replay.md#setting-breakpoints)).
-
-## MCP servers
-
-Agents call their tools on MCP servers (Model Context Protocol). Quena recognises these
-exchanges — JSON-RPC over Streamable HTTP (a POST answered with JSON or a stream of
-server-sent events), the older SSE transport (a GET stream and POSTs to `/messages`) — and
-shows them in the **MCP** view:
-
-- the method (`initialize`, `tools/list`, `tools/call`, `resources/read` …), the server's
-  name and version, the protocol version and the MCP session;
-- for `tools/call`: the tool, its **arguments**, the **result** (text, images, resources,
-  structured content), whether it failed, and how many tokens the result adds to the
-  agent's next request;
-- the **way of the call**: the LLM call whose answer asked for the tool, the MCP exchange that
-  ran it, the next LLM call that carries the result back to the model — and how many
-  requests offer the tool, with what its definition costs in each;
-- for `tools/list`: the tools offered with the tokens each definition costs;
-- all JSON-RPC messages sent and received.
-
-The LLM view lists, under the answer, the MCP exchanges that ran its tool calls (of the same
-server, the same client process first). Over the older SSE transport a tool call's result
-arrives on the server's event stream, not in the answer to the POST; Quena takes it from
-there. A stream stays open for the whole run and is marked when it closes.
-
-Exchanges get the flags `x-quena-mcp` (`tools/call get_issue`) and `x-quena-mcp-server` (the
-name from `initialize`, else the host): columns **MCP** and **MCP server**, *Group by → MCP
-server*, filters `mcp ~ "tools/call"` and `mcpserver == jira`. Exchanges in archives from
-elsewhere get them when the tools report or the way of a call is asked for.
-
-### Servers that talk over stdio
-
-Most MCP servers run as a local process and talk over stdin and stdout; no proxy sees that.
-Put `quena-cli mcp-tap` in front of the server's command in the MCP client's configuration.
-`quena-cli` is a download of its own (see [CI](ci.md#quick-start)); give its full path, as
-apps started from the dock or the start menu do not see the shell's `PATH`:
-
-```json
-{
-  "mcpServers": {
-    "jira": {
-      "command": "/usr/local/bin/quena-cli",
-      "args": ["mcp-tap", "--name", "jira", "--", "npx", "-y", "jira-mcp-server"]
-    }
-  }
-}
-```
-
-`mcp-tap` runs the server and passes everything through unchanged; it pairs the requests with
-their responses and writes each exchange to `mcp-tap/` in Quena's data folder (only for the
-user: the recordings hold tool arguments and results). It finds that folder as the app does
-— unless the app is portable or started with `QUENA_DATA_DIR`: then add `"--data-dir",
-"<the app's data folder>"` before `--` (*About Quena* shows it). On
-Windows, commands like `npx` or `uvx` that are `.cmd` files are run through `cmd.exe`. When
-the folder cannot be written, the server still runs, without recording. A signal (Ctrl-C,
-the client ending the server) is passed on to the server, which gets five seconds to end;
-`mcp-tap` exits with the server's exit code.
-
-While Quena captures, the exchanges appear as sessions `stdio://jira/tools/call`, with the
-server's process and the name given with `--name` as MCP server; requests of the server to
-the client (sampling, roots) as `stdio://jira/server/…`, requests never answered (the server
-ended, the client cancelled) without a response. Exchanges recorded while Quena does not
-capture wait in the folder and appear when it captures. Recordings read completely are
-removed after a week without new exchanges.
-
-## Tools and skills
-
-*Agents → Tools & skills* sums up the tools and skills of all conversations:
-
-- every **tool**: the LLM requests that offer it and what its definition costs in each and
-  in all, how often the model called it, the exchanges with its MCP server, failures, and the
-  average and largest result in tokens. Tools that are offered but never called are shown
-  muted — *Only tools never called* lists them alone, with the tokens they cost in all. MCP
-  tools named the way Claude Code names them (`mcp__jira__get_issue`) are matched with the
-  server's `get_issue`;
-- every **skill**: in how many conversations it is listed, how often the model loaded it
-  (Claude Code's Skill tool, or reading its `SKILL.md`), and in how many conversations.
-
-## AI agents
-
-Over [MCP](mcp.md), `get_llm_call` returns a call taken apart the same way; the session
-rows carry `llm` and `tokens`. Unless agents may see secrets, the bodies are redacted first
-(credentials and secret fields), as for `get_session`.
+Over [Quena's MCP server](mcp.md), `get_llm_call` returns a call taken apart the same way;
+the session rows carry `llm` and `tokens`. Unless agents may see secrets, the bodies are
+redacted first (credentials and secret fields), as for `get_session`. The tools for
+conversations are listed on [Agent conversations](agents.md#for-ai-agents).

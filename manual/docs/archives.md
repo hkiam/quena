@@ -77,7 +77,7 @@ So that an archive is not mixed with live traffic by accident, loading **stops c
 and when the list already holds sessions, Quena asks: **Remove and load** (only the archive
 is in the list afterwards), **Keep and load** (the archive is added), or *Cancel*. *Don't ask
 again* remembers the answer; *Settings → General → Importing into a non-empty list* changes
-it back. Opening a sanitized copy after the [sanitized export](#sanitized-export-for-sharing)
+it back. Opening a sanitised copy after the [sanitized export](#sanitized-export-for-sharing)
 adds it without asking, to compare it with the original.
 
 ### Packet captures
@@ -139,7 +139,7 @@ deterministic and runs locally; no AI model and no network are involved.
   cards with their written layout); phone numbers need a country or area prefix, 8–15
   digits and consistent separators, and are no dates; e-mail addresses stop before file
   extensions and escapes; timestamps, ids, versions and UUIDs are left alone.
-* **Bodies** can be kept (sanitized), cut to a size, replaced by a placeholder
+* **Bodies** can be kept (sanitised), cut to a size, replaced by a placeholder
   (`<body removed: 12 KB application/json>`) or dropped; binary bodies (images, fonts, PDF,
   archives) and uploaded files become placeholders.
 * **Redaction log.** After the export Quena lists what was replaced, by category and place
@@ -153,7 +153,7 @@ deterministic and runs locally; no AI model and no network are involved.
 !!! warning "Check before you share"
     Automatic detection cannot know every field of every application — a customer number
     in a custom format is just a number. Add your own names and patterns under *Custom*,
-    and look through the sanitized file before you send it.
+    and look through the sanitised file before you send it.
 
 The same export runs on the command line: `quena-cli sanitize capture.har -o shared.har
 --preset gdpr` ([Diagnostics in CI](ci.md#sanitize-and-mocks)).

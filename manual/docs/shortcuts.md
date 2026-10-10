@@ -27,6 +27,11 @@ Shortcuts* shows this list in the app.
 | Close a dialog | `Esc` |
 | Performance overlay | `Ctrl/⌘ Shift P` |
 
+Views and commands without a shortcut are in the menus and the command palette, e.g. the
+[Agents panel](agents.md#the-agents-panel) (*View → Agents*), *Start Agent…* (*Capture*) and
+the breakpoint before LLM requests (*Capture → Breakpoints → Before LLM Requests*, or `bpllm`
+in the command field).
+
 ## Inspect
 
 These work while the focus is in the request or response card (e.g. after clicking one of

@@ -22,6 +22,13 @@ the client process and your own notes. The list handles hundreds of thousands of
 | *Caching* | Caching-related response headers. |
 | *Started* | Time the request started. |
 | *Via* | How the request came in besides the proxy port: the [reverse proxy](reverse-proxy.md) entry, `SOCKS5` or `transparent` ([SOCKS and transparent](socks-transparent.md)). |
+| *LLM* | For a call to an LLM API: provider and model (`Anthropic/claude-sonnet-4-5`) — see [LLM traffic](llm.md#the-llm-view). |
+| *Tokens* | The LLM call's tokens, input and output together. |
+| *Cost* | The LLM call's estimated cost in US dollars ([Costs](llm.md#costs)). |
+| *Conversation* | The key of the agent run the LLM call belongs to — see [Agent conversations](agents.md#how-calls-are-put-together). |
+| *MCP* | For an exchange with an MCP server: what it is, e.g. `tools/call get_issue` — see [MCP servers and skills](mcp-traffic.md#the-mcp-view). |
+| *MCP server* | The MCP server of that exchange. |
+| *Agent* | The AI agent or SDK that sent an LLM or MCP request, from its User-Agent (`Claude Code 2.0.14`). |
 | *TLS* | TLS version towards the server (else towards the client). |
 | *Server IP* | The address the request was sent to. Sorts by number. |
 | *HTTP version* | HTTP version of the request (`HTTP/1.1`, `HTTP/2` …). |
@@ -49,7 +56,8 @@ one part of the traffic. Show it with the ▯ button at the left of the toolbar,
 ![The navigator's structure: shop.example.com/api/ is picked, the list shows only its 8 sessions](img/navigator.png)
 
 - **Groups** lists the groups of the sessions (see *Grouping* below) — every connection,
-  host, process, trace id, session cookie or Custom value — with how many sessions and
+  host, process, trace id, session cookie, Custom value, model, conversation, MCP server,
+  agent … — with how many sessions and
   errors each has. The choice of *Group by* is the list's own, so the list shows the same
   groups.
 - **Structure** shows hosts and paths as a tree (see [Analyze](analyze.md#structure)). It
@@ -63,7 +71,7 @@ one part of the traffic. Show it with the ▯ button at the left of the toolbar,
 
 ## Grouping
 
-*Group by* (right-click the heading row, or the command palette) keeps sessions that
+*Group by* (right-click the heading row, or *Group by …* in the command palette) keeps sessions that
 belong together in one block:
 
 | Group by | Sessions that share |
@@ -76,6 +84,9 @@ belong together in one block:
 | *Custom column* | the value a [rules script](scripting.md) puts into *Custom*: your own grouping |
 | *Via (reverse proxy, SOCKS, transparent)* | the [reverse proxy](reverse-proxy.md) entry, or the [SOCKS or transparent](socks-transparent.md) port the requests came through |
 | *LLM model* | the provider and model of [LLM API calls](llm.md) |
+| *Conversation (agent run)* | the [agent conversation](agents.md) of LLM calls: one run of Claude Code, Codex or your app |
+| *MCP server* | the [MCP server](mcp-traffic.md) an exchange went to |
+| *Agent (Claude Code, Codex …)* | the agent or SDK that sent LLM or MCP requests, without its version |
 | *Source (live, archives)* | where the session comes from: recorded *live*, or the archive it was loaded from (each [snapshot](archives.md#snapshot-library) apart) |
 
 - Groups appear in the order of their first session; **inside each group the list is

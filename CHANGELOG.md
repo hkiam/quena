@@ -7,345 +7,257 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-10
+
+### Highlights
+- **See what your AI agents do.** LLM traffic of OpenAI, Anthropic, Gemini, Vertex AI,
+  Amazon Bedrock, Ollama and compatible APIs taken apart with tokens and costs; agent runs of
+  Claude Code, Codex or your own app put together as conversations, with why the prompt cache
+  missed, hints where tokens go to waste and a map of what fills the context; MCP servers
+  (also stdio ones through `quena-cli mcp-tap`) with the trail of every tool call; tools and
+  skills across runs; prompt playground, LLM rewrite operations, an LLM breakpoint, the agent
+  cache with frozen runs, A/B comparison and export. *Start Agent…* runs an agent through Quena.
+- **Reverse proxy, SOCKS and transparent ports** for clients that cannot use a proxy, also
+  headless as `quena-cli reverse`; **host remapping**; *Do not capture* for hosts that must
+  bypass Quena.
+- **Compare captures** and groups of sessions (app, `quena-cli diff`, MCP).
+- **Rewrite rules with an editor**, groups, templates, applied to captured sessions and to
+  WebSocket messages.
+- **Snapshot library**, **AutoSave** and **password-protected archives**.
+- **Your company's CA**, the CA exported with its key, and warnings for expiring server
+  certificates.
+- **gRPC with a schema** (`.proto` files or server reflection), MessagePack and Socket.IO views.
+- A **software bill of materials** (CycloneDX) for every release.
+
 ### Added
-- **Start Agent…** (*Capture* menu and the globe button: *Start Claude Code*, *Start
-  Codex*): runs an AI agent in a terminal that uses Quena (proxy, `NODE_EXTRA_CA_CERTS`, now
-  also `CODEX_CA_CERTIFICATE`), so its calls show in the Agents panel.
-- **Agent** column, *Group by → Agent* and filter `agent`: the AI agent or SDK that sent an
-  LLM or MCP request, by its User-Agent (Claude Code, Codex, Gemini CLI, Cursor, GitHub
-  Copilot, Cline, aider, the OpenAI/Anthropic SDKs …; flag `x-quena-agent`).
-- **Export a conversation** as Markdown (turns with what each added and the answer), JSONL
-  (one call per line, for evaluations) or OpenTelemetry GenAI spans (OTLP JSON, no content).
-- MCP tools for AI agents: `list_conversations`, `get_conversation`, `get_context`,
-  `get_tool_report`.
-- LLM traffic of **Claude on Google Vertex AI** (`rawPredict`) and **Amazon Bedrock**
-  (`invoke`, streamed in AWS's binary event stream) and of the **Bedrock Converse API** is
-  recognised; model ids like `us.anthropic.claude-sonnet-4-5-20250929-v1:0` are priced; LLM
-  changes (rewrite rules, playground) set the model in the URL where these APIs name it.
-- **Optimising agents** (Agents panel and LLM view): *Compare with* sets two conversations
-  side by side (turns, tokens, cached share, cost, duration, last request, cache misses,
-  errors, hints, context by category, tool calls by tool, with the differences); *Try a
-  variant…* sends an LLM call again with another system prompt, fewer tools, another model or
-  output limit (after a confirmation, with the original's headers) and shows answer and
-  tokens next to the original's; *Freeze for replays…* puts a conversation's answered turns
-  and of its subagents into the agent cache and shows where a new run left the recording;
-  turns show the time to the response headers, tokens per second of streamed answers, refused
-  calls (429/529/503), retries after failures and the rate limits the provider reports, with
-  hints when calls were refused or little of the limit is left. Variants bypass the agent
-  cache and rewrite rules and count as side calls.
-- Rewrite rules: **LLM: remove tool** (`mcp__jira__*` for all of a server), **LLM: set
-  model**, **LLM: add to system prompt** — in the format of the API known from the URL
-  (Anthropic, OpenAI Chat and Responses, Gemini with the model in the URL, Ollama); a tool
-  choice naming a removed tool goes too; other APIs are left alone; also over MCP
-  (`llmRemoveTool`, `llmSetModel`, `llmAppendSystem`).
-- Breakpoint before LLM requests: *Capture → Breakpoints → Before LLM Requests*, or `bpllm`
-  with conditions (`model=claude tool=mcp__jira__* tokens=50k`).
+
+#### AI agents and LLM traffic
+- **LLM traffic**: calls to OpenAI (Chat Completions, Responses), Anthropic Messages, Google
+  Gemini, **Claude on Vertex AI** (`rawPredict`), **Amazon Bedrock** (Claude through `invoke`,
+  streamed in AWS's binary event stream, and the **Converse API**), Ollama and
+  OpenAI-compatible APIs are recognised; only bodies shaped like such a call count, so other
+  apps' `/api/chat` or `/responses` endpoints are left alone.
+  - The **LLM** view shows provider and model, system prompt, the messages with tool calls and
+    results (also Codex `developer`, `custom_tool_call` and `local_shell_call` items, images in
+    tool results), the answer assembled from server-sent events, JSON lines, arrays or AWS
+    event streams, stop reason, errors (also AWS stream exceptions), token usage (cache,
+    reasoning) and an estimated cost. Claude Code's attribution block is shown apart from the
+    system prompt.
+  - **Prices**: built-in list prices (e.g. Claude Opus 4.5, Sonnet 4.5, GPT-5.1, o3-pro), own
+    ones and context windows in `llm-prices.json` (reported when it is not valid JSON), and
+    *Fetch prices* (*Settings → Bodies & Storage → LLM prices*) downloads LiteLLM's list of
+    several hundred models on request. Bedrock model ids like
+    `us.anthropic.claude-sonnet-4-5-20250929-v1:0` are priced.
+  - Finished calls get flags; columns *LLM*, *Tokens*, *Cost*, *Group by → LLM model*,
+    filter fields `llm` and `tokens`, per-model totals in *Statistics*. MCP: `get_llm_call`.
+- **Agent conversations** (right pane → *Agents*, also *View → Agents*): the LLM calls of one
+  agent run — Claude Code, Codex, an app — put together as a conversation, subagents under the
+  conversation whose tool call started them. Each call is linked to the call it continues
+  (Claude Code's previous request, `previous_response_id`, else the furthest common history
+  within the agent's session), so separate runs with the same prompt stay apart and side
+  calls (prompt suggestions, summaries) are marked instead of breaking the turn order.
+  - Turns on a time axis with input, cached share, output, cost, the change from the call it
+    continues (`+2 messages`, `message 12 changed`, system prompt, tools, settings, model), the
+    tools called, the time to the response headers, tokens per second of streamed answers,
+    refused calls (429/529/503), retries and the rate limits the provider reports.
+  - **Why the prompt cache missed**: an earlier message, the system prompt, tools or settings
+    changed, another model, the cache expired (5 minutes, 1 hour, OpenAI's 24 hours), no
+    `cache_control` mark, too short to be cached.
+  - **Hints** where tokens go to waste: the same tool result several times, large results,
+    repeated calls, recurring reminders, tools never called, a context near the window, cache
+    misses, refused calls and little rate limit left — with the tokens they cost.
+  - **What fills the context** as a map: system prompt, each tool definition,
+    CLAUDE.md/AGENTS.md, skills list, reminders, environment, messages, thinking, tool calls
+    and results by tool, images — estimated and scaled to the reported input tokens. The LLM
+    view shows the same for one call under *Context*.
+  - Flag `x-quena-llm-conv`: column *Conversation*, *Group by → Conversation (agent run)*,
+    filter `conv`. LLM calls in archives from other tools are found by their URL and flagged.
+  - **Agent** column, *Group by → Agent* and filter `agent`: the agent or SDK that sent an LLM
+    or MCP request, from its User-Agent (Claude Code, Codex, Gemini CLI, Cursor, GitHub
+    Copilot, Cline, aider, the OpenAI/Anthropic SDKs …; flag `x-quena-agent`).
+  - **Export** a conversation as Markdown (each turn with what it added and the answer), JSON
+    lines (one call per line with the messages it added, for evaluations) or OpenTelemetry
+    GenAI spans (OTLP JSON, counts and models, no content).
 - **MCP servers** (Model Context Protocol): exchanges over Streamable HTTP and the older SSE
-  transport are recognised and shown in a new **MCP** view — method, server name and
-  version, protocol and session; for `tools/call` the arguments, the result (text, images,
-  resources, structured content), failures and the tokens the result adds to the agent's
-  next request; `tools/list` with the tokens of each tool definition; all JSON-RPC messages.
-  The **way of a tool call** is linked: the LLM call that asked for it, the MCP exchange that
-  ran it, the LLM call that carries the result back (also from the LLM view's answer).
-  Flags `x-quena-mcp` and `x-quena-mcp-server`; columns *MCP* and *MCP server*, *Group by →
-  MCP server*, filters `mcp` and `mcpserver`.
-- `quena-cli mcp-tap --name NAME -- COMMAND …` records MCP servers that talk over stdio:
+  transport are recognised and shown in a new **MCP** view — method, server name and version,
+  protocol and session; for `tools/call` the arguments, the result (text, images, resources,
+  structured content), failures and the tokens the result adds to the agent's next request;
+  `tools/list` with the tokens of each tool definition; all JSON-RPC messages, also batches
+  and results sent on the older transport's stream.
+  - The **tool call trail** links the LLM call that asked for a tool, the MCP exchange that
+    ran it and the LLM call that carries the result back (also from the LLM view's answer).
+  - Flags `x-quena-mcp` and `x-quena-mcp-server`; columns *MCP* and *MCP server*, *Group by →
+    MCP server*, filters `mcp` and `mcpserver`.
+- **`quena-cli mcp-tap --name NAME -- COMMAND …`** records MCP servers that talk over stdio:
   it passes everything through and writes the exchanges to Quena's data folder (`--data-dir`
-  for a portable app; files only for the user), where the app picks them up while capturing
-  (`stdio://NAME/tools/call`). The server runs even when recording fails; signals are passed
-  on to it; on Windows `.cmd` launchers such as `npx` work; requests never answered are
-  recorded too.
-- *Agents → Tools & skills*: every tool across the conversations with the requests that
-  offer it, what its definition costs in each and in all, model calls, MCP exchanges,
-  failures and result sizes, tools never called; every skill with where it is listed and
-  how often it was loaded (Skill tool or `SKILL.md`).
-- **Agent conversations** (right pane → *Agents*): the LLM calls of one agent run — Claude
-  Code, Codex, an app — put together as a conversation (same system prompt and first prompt
-  of the user; what agents add around it does not count), subagents under the conversation
-  whose tool call started them. Per conversation: turns on a time axis with input, cached
-  share, output, cost, the change from the turn before (`+2 messages`, `message 12 changed`,
-  system prompt, tools, model) and the tools called; **why the prompt cache missed** (an
-  earlier message, the system prompt or tools changed, another model, the cache expired, no
-  `cache_control` breakpoint, too short for OpenAI); **hints** where tokens go to waste (the
-  same tool result several times, large results, repeated calls, recurring reminders, tools
-  never called, a context near the window) with the tokens they cost; and **what fills the
-  context** as a map: system prompt, each tool definition, CLAUDE.md/AGENTS.md, skills list,
-  reminders, environment, messages, thinking, tool calls and results by tool, images —
-  estimated and scaled to the reported input tokens. The LLM view shows the same for one
-  call under *Context*. Each call is linked to the call it continues (Claude Code's
-  previous request, `previous_response_id`, else the furthest common history within the
-  agent's session — Claude Code's session id, Codex's thread, `prompt_cache_key`), so
-  separate runs with the same prompt stay apart and side calls (prompt suggestions,
-  summaries) are marked instead of breaking the turn order; answers from the agent cache cost
-  nothing. Calls get the flag `x-quena-llm-conv`: column *Conversation*, *Group by →
-  Conversation (agent run)*, filter `conv == …`; LLM calls in archives from other tools are
-  found by their URL and flagged. Context windows come from the LiteLLM list
-  (`max_input_tokens`) or the model's family; tool definitions report their size and tokens.
-- LLM view: Claude Code's attribution block (`x-anthropic-billing-header`) is no longer shown
-  as part of the system prompt; Codex `developer` items after the start stay in the
-  conversation; `custom_tool_call` (apply_patch), `local_shell_call` and other Responses
-  items are understood; images in tool results show; DeepSeek's cache hits count.
-- **Snapshot library** (*File → Snapshot Library…*): archives in folders of the data folder,
-  saved from the selection or the list (also with a password), sessions added to a snapshot
-  later, opened as a **source** of its own — *Group by → Source* and the navigator list *live*
-  and each loaded archive, so one snapshot can be looked at while capturing goes on.
-- **More of Fiddler's odds and ends**: host remapping with a port in the pattern and a forced
-  protocol (HTTP or HTTPS to the target); rewrite rules exported and imported as JSON (also one
-  group); AutoSave of only the sessions the filters show; on Windows, *Trust for all users…*
-  puts the root certificate into the local machine's store; export as a **WCAT** load test
-  script and import of Internet Explorer **NetXML** captures; **comparing groups** of chosen
-  sessions (*Compare Groups*), pairing by path, exact URL or order, and own headers to ignore
-  (also `quena-cli diff --pair-by`, `--ignore-header`, MCP).
-- **Do not capture (bypass Quena)** (*Settings → Connections*, or *Filter Now → Do not capture
-  this Host…*): hosts become exceptions of the system proxy and of started browsers and
-  terminals, and pass Quena undecrypted if a client sends them anyway; Apple services that pin
-  their certificates are bypassed by default; optionally the DNS domains of an active VPN.
-- **Rule actions and templates**: rewrite rules can set or remove query parameters and
-  cookies (request `Cookie`, response `Set-Cookie`), and mark or comment the session; **From
-  template ▾** adds *Bypass CORS*, *Block cookies*, *Disable caching*, *Change User-Agent*,
-  *Mark errors red*, *Block a host* and *Allow only one host* as a group. MCP
-  `add_rewrite_rule` takes the new operations.
-- **Composer**: request **tabs** (kept over restarts), query parameters and headers as
-  **tables** with a checkbox to leave one out (`#` in the text form), **Follow redirects**
-  (each hop its own session; also MCP `send_request` `follow_redirects`), method `QUERY`.
-- **Inspecting and replaying**: *Statistics* show median, mean, p90/p95/p99, standard
-  deviation, throughput, header bytes and the summed DNS, connect, TLS and waiting times; a
-  **Params** view lists the query parameters; **Decode Value… / Decode Selection…** in the
-  context menus open the *Text Tools* with the likely decoding; the *Auth* view decodes
-  **SAML** requests and responses (Redirect and POST bindings, also in an identity
-  provider's HTML form); **Advanced Replay** sends up to 100,000 repeats one after the other
-  or 1–100 at a time and can be stopped (MCP `replay_sessions` takes `parallel`).
-- **Filters and columns**: filter on request and response headers (`reqheader.NAME`,
-  `resheader.NAME`, `header.NAME`), cookies (`cookie.NAME`), bodies (`reqbody`, `resbody`),
-  TLS version (`tls`), server IP (`ip`) and HTTP version (`http`), also in the command field
-  and for agents. **Saved filters** with names and match counts. **Column filters** from the
-  heading's context menu (value or operator), a ⏷ on filtered columns. New columns *TLS*,
-  *Server IP*, *HTTP version*, and up to three **header columns** added from the *Headers*
-  view (right-click → *Add … as a Column*), which also offers *Filter Sessions with this …*.
-- **Agent cache**: an LLM API call answered before is answered by Quena again, without asking
-  the model (same URL and JSON body; key order, `user` and `metadata` not counting). Cache a
-  call in the *LLM* view or every call (*Settings → Bodies & Storage → Agent cache*); hits
-  show the tokens, cost and time saved and spend nothing in the totals; calls asked more
-  than once are pointed out. Mock rules come first. MCP: `llm_cache_status`,
-  `cache_llm_calls`.
-- **AI agents**: the diagnostics as MCP tools (`run_diagnostics`, `get_diagnostics_report`;
-  findings with evidence and session ids, URLs redacted like everything else), MCP prompts
-  (`debug_failures`, `analyze_performance`, `explain_session`, `llm_costs`, `mock_endpoint`),
-  *Set up for* Claude Code, VS Code, Cursor or Codex in one click (the server with its token
-  added to the user configuration, a copy of the file kept), and an agent skill
+  for a portable app; files only for the user, at most 1 GB each, removed after a week
+  without exchanges), where the app picks them up while capturing (`stdio://NAME/tools/call`).
+  The server runs even when recording fails; signals are passed on to it; on Windows `.cmd`
+  launchers such as `npx` work; requests never answered are recorded too.
+- **Tools & skills** (*Agents → Tools & skills*): every tool across the conversations with
+  the requests that offer it, what its definition costs, model calls, MCP exchanges, failures
+  and result sizes, tools never called; every skill with where it is listed and how often it
+  was loaded (Skill tool or `SKILL.md`).
+- **Optimising agents**:
+  - *Try a variant…* (LLM view) sends a call again with another system prompt, fewer tools,
+    another model or output limit, after a confirmation and with the original's headers, and
+    shows answer and tokens next to the original's. Variants bypass the agent cache and
+    rewrite rules and count as side calls; requests signed with AWS Signature V4 are refused
+    with the reason.
+  - Rewrite rules **LLM: remove tool** (`mcp__jira__*` for all of a server), **LLM: set
+    model** and **LLM: add to system prompt**, in the format of the API known from the URL
+    (Anthropic, OpenAI Chat and Responses, Gemini, Bedrock Converse, Ollama; the model in the
+    URL for Gemini, Vertex AI and Bedrock); a tool choice naming a removed tool is removed as
+    well; signed Bedrock requests are left unchanged. Also over MCP (`llmRemoveTool`,
+    `llmSetModel`, `llmAppendSystem`).
+  - **Break before LLM requests**: *Capture → Breakpoints → Before LLM Requests*, or `bpllm`
+    with conditions (`model=claude tool=mcp__jira__* tokens=50k`).
+  - **Agent cache**: an LLM API call answered before is answered by Quena again without asking
+    the model. The key leaves out what changes with every request (key order, `user`,
+    `metadata`, Claude Code's attribution block, `prompt_cache_key`, cache marks, AWS
+    signatures) and is taken from the request as it goes out after rewrite rules. Cache a call
+    in the *LLM* view or every call (*Settings → Bodies & Storage → Agent cache*); hits show
+    the tokens, cost and time saved and spend nothing in the totals. Mock rules come first.
+    MCP: `llm_cache_status`, `cache_llm_calls`.
+  - *Freeze for replays…* puts a conversation's answered turns and those of its subagents into
+    the agent cache and shows where a new run left the recording.
+  - *Compare with* sets two conversations side by side (turns, tokens, cached share, cost,
+    duration, last request, cache misses, errors, hints, context by category, tool calls by
+    tool) with the differences coloured by which way is better.
+- **Start Agent…** (*Capture* menu and the globe button: *Start Claude Code*, *Start Codex*,
+  or any command): runs an AI agent in a terminal that uses Quena (proxy,
+  `NODE_EXTRA_CA_CERTS`, `CODEX_CA_CERTIFICATE`), in an interactive login shell so what the
+  shell profile adds to PATH is found.
+- **Quena's MCP server for agents**: the diagnostics as tools (`run_diagnostics`,
+  `get_diagnostics_report`; findings with evidence and session ids), the agent runs
+  (`list_conversations`, `get_conversation` with `limit`/`offset`, `get_context`,
+  `get_tool_report`; prompts redacted like bodies), MCP prompts (`debug_failures`,
+  `analyze_performance`, `explain_session`, `llm_costs`, `mock_endpoint`), *Set up for*
+  Claude Code, VS Code, Cursor or Codex in one click (the server with its token added to the
+  user configuration, a copy of the file kept), and an agent skill
   `quena-traffic-debugging` for Claude Code and Codex.
-- **Compare captures** (*Tools → Compare Captures…*): the live capture and archives loaded
-  into the list, side by side.
-  - Requests are paired by method, host and normalized path and marked new, gone or
-    changed (status, type, time, headers, body; JSON by content).
-  - Requests that now fail are counted apart. Double-click compares two sessions; *Copy as
-    Markdown*.
-  - Headless: `quena-cli diff before after --fail-on errors|changes`. MCP:
-    `compare_captures`.
-- **AutoSave** (*Settings → General*): all sessions are saved as `.saz` every few minutes
-  when something changed, into the data folder or a chosen one; the newest archives are
-  kept (10 by default). *Save now*, *Open folder*.
-- **Password-protected archives**: *File → Export Sessions → SAZ Archive with Password…*
-  encrypts the archive with AES-256 (readable by Fiddler, 7-Zip, WinZip). Loading or
-  dropping a protected archive asks for its password; before, it loaded no sessions without
-  saying why.
-- **Socket.IO**: the WebSocket view shows the event name or packet type and the arguments
-  of Socket.IO messages, can hide ping/pong and search for events; a *Socket.IO* view
-  decodes long-polling bodies (v4 and v3).
-- **Change WebSocket messages on the way**: rewrite rules with *Change: WebSocket messages*
-  (direction, JSON also inside Socket.IO packets) and `onWebSocketMessage(msg)` in rules
-  scripts (change text, drop). Changed and dropped messages are marked in the frame log.
-  MCP: rewrite rules take `phase: webSocket` and `direction`.
-- **LLM traffic**: calls to OpenAI (Chat Completions, Responses), Anthropic Messages,
-  Google Gemini, Ollama and OpenAI-compatible APIs are recognised.
-  - The **LLM** view shows provider and model, system prompt, the messages with tool calls
-    and results, the answer (assembled from server-sent events, JSON lines or arrays),
-    stop reason, token usage (cache, reasoning) and an estimated cost (built-in list
-    prices, own ones in `llm-prices.json`).
-  - Finished calls get flags; new columns *LLM*, *Tokens*, *Cost*, grouping by model,
-    filter fields `llm` and `tokens`, per-model totals in *Statistics*. MCP:
-    `get_llm_call`.
-- **LLM prices kept up to date without a new release** (*Settings → Bodies & Storage → LLM
-  prices*): *Fetch prices* downloads LiteLLM's price list (several hundred models), on
-  request only and through the upstream settings; own prices in `llm-prices.json` still come
-  first and can be created and opened from there. A `llm-prices.json` that is no valid JSON
-  is reported (settings, log, *LLM* view) instead of being ignored without a word.
-- **Collections in the Composer**: requests are saved as `.http` files in the data folder
-  (one per collection; JetBrains/VS Code format).
-  - Load, send, run all with a result list, sort, duplicate and remove requests; edit the
-    collection's variables and choose an environment; import existing `.http` files.
-  - Requests with `{{variables}}` are sent with the collection's variables. MCP:
-    `list_collections`, `collection:NAME` in `run_http_file` / `list_http_requests`.
-- **HTTP version per Composer request**: automatic, HTTP/1.1 or HTTP/2 (also cleartext
-  h2c). `.http` files keep a version written after the URL.
-- **Use an existing CA** (*Capture → HTTPS Settings… → Import CA…*), e.g. the company's
-  interception CA that machines already trust: a PKCS#12 file (`.p12`/`.pfx`, also legacy
-  3DES/RC2) or a PEM certificate with its key (PKCS#8, PKCS#1 RSA, SEC1 EC).
-  - Quena checks that it is a CA allowed to sign certificates, that the key belongs to it
-    and that it is valid. An intermediate CA sends its chain along with every leaf.
-  - The previous CA's files are kept. Headless: `quena-cli reverse --ca-p12` with
-    `QUENA_CA_PASSWORD`.
-- **Export the CA with its key** as a password-protected `.p12` (for a second machine).
-  The dialog shows the CA's name and validity; the device assistant and the iOS profile use
-  the CA's real name.
-- **Expiring server certificates**: sessions to servers whose certificate expires within 30
-  days (setting) are flagged `x-quena-cert`, expired ones too when certificate errors are
-  ignored. New column *Cert. until*, filter field `certdays`, and the server certificate's
-  subject, issuer and validity in *Properties*.
-- **gRPC and Protobuf with a schema**: with `.proto` files (*Settings → Bodies & Storage →
-  Protobuf schemas*, files or folders, import paths) the *gRPC* view shows field names,
-  schema types, enum values by name and nested message types; unknown fields stay by
-  number. The message type comes from the gRPC method in the URL, or is chosen for plain
-  Protobuf bodies.
-  - **Server reflection** (off by default): *Fetch schema from server* asks the session's
-    gRPC server for its schema (v1, else v1alpha, imports by file name) and keeps it in the
-    data directory.
-  - The view also uncompresses messages per `grpc-encoding`, reads gRPC-Web trailers
-    (`grpc-status` in the last frame) and decodes `grpc-web-text` (base64).
-- **MessagePack view** for `application/msgpack`, `x-msgpack` and `vnd.msgpack`: the
-  values as a tree, with binary data, extension types, timestamps and streams of several
-  values.
-- **Rewrite rules have an editor** in the Mock Rules tab: *New rewrite rule…*, a double-click
-  or the context menu.
-  - Every operation has its own fields: JSONPath, a JSON value, regex and replacement,
-    header, status. The form checks what it can before saving.
-  - A preview tries the rule on the selected session and shows the status, header and body
-    before and after.
-  - Rules can be sorted, cloned and put into **groups** that are switched on and off
-    together. The largest body a rule changes can be set.
-- **Rewrite rules can be applied to captured sessions**: *Apply Rewrite Rules…* in the
-  session context menu or on a rule. Each session a rule changes gets a changed copy; the
-  original stays and nothing is sent. MCP has `apply_rewrite_rules`, and rules can have a
-  `group`.
-- **Host remapping** (*Capture → Host Remapping…*): connections to a host or `*.domain` go
-  to another host, IP address or port, like a hosts-file entry but only for traffic through
-  Quena.
-  - By default the request keeps its `Host` and TLS name, and only the connection moves,
-    e.g. to test the production URL against a staging server. Without *keep host* it is
-    sent to the target as if addressed there.
-  - Applies to proxied, SOCKS, transparent and reverse proxy traffic and to HTTPS tunnels
-    that are not decrypted. Remapped hosts bypass the upstream proxy.
-  - Entries can be imported from the hosts file. Sessions are marked (`x-quena-remap`).
-  - Also available as `quena-cli reverse --remap` and through MCP tools.
-- **Start a browser or a terminal that uses Quena**, without changing the system proxy: the
-  globe button next to the capture switch, *Capture → Start Browser…* and *Capture → Open
-  Terminal*.
-  - Chrome, Edge, Brave, Vivaldi and Chromium start with their own profile and accept
-    Quena's certificates in it without trusting the root certificate system-wide. Requests
-    to `localhost` are captured as well.
-  - Firefox starts with its own profile and the system's trusted roots.
-  - The terminal sets `HTTP(S)_PROXY` and the root certificate for Node.js, Python, curl,
-    Git, pip, Cargo and the AWS CLI.
-  - Capturing starts if it is off. Agents (MCP) have `launch_browser` and `open_terminal`.
+
+#### Capture and connections
 - **Reverse proxy ports for clients that cannot use a proxy** (*Capture → Reverse Proxy…*).
   Each entry listens on a local port while capturing and forwards every request to one target
-  (`http(s)://host[:port][/base path]`). This suits backends with a fixed API URL, containers,
-  test suites, webhook senders and gRPC. The traffic is recorded like proxied traffic, and
-  breakpoints, Mock Rules, rewrite rules and scripts apply to it.
-  - On the client side, the port accepts HTTPS (certificates from the Quena root
-    certificate), plain HTTP and cleartext HTTP/2 (h2c, gRPC without TLS) on one port.
+  (`http(s)://host[:port][/base path]`): backends with a fixed API URL, containers, test
+  suites, webhook senders, gRPC. Breakpoints, Mock Rules, rewrite rules and scripts apply.
+  - The port accepts HTTPS (certificates from the Quena root certificate), plain HTTP and
+    cleartext HTTP/2 (h2c) on one port; it refuses `CONNECT`, so it never becomes an open
+    proxy, and a target that is Quena itself is refused.
   - Options per entry: keep the client's `Host`, point `Location` redirects back to the port,
-    drop cookie domains, add `X-Forwarded-*` headers.
-  - Entries listen on this machine only unless one allows remote computers.
-  - A port refuses `CONNECT`, so it never becomes an open proxy, and a target that is Quena
-    itself is refused.
-  - The new *Via* column, *Group by → Via* and the filter `via == name` show which
-    entry a request came through; the status bar shows the running entries.
-  - Right-clicking a session offers *Reverse Proxy for this Host…*, and agents (MCP) can
-    manage entries.
-  - **Path routes** send some paths of a port to other targets, e.g. `/auth` to the login
-    server and `/api` to the backend. The longest prefix wins, and the prefix can be removed
-    from the forwarded path. Redirects and `Host` follow the chosen target.
-- **SOCKS5/4 port and transparent port** (*Settings → Connections*, off by default).
-  - SOCKS5 (with or without a password) and SOCKS4/4a clients name their target.
-  - Connections a firewall redirects (iptables, pf) need no client setting at all. Quena
-    takes the target from the original destination (Linux), the TLS server name or the
-    `Host` header.
-  - Both are handled like `CONNECT` tunnels: HTTPS is decrypted when decryption is on,
-    plain HTTP is recorded, anything else is passed through.
-  - The *Via* column shows `SOCKS5` or `transparent`, the status bar shows the open ports,
-    and the manual shows the firewall rules for Linux and macOS.
-- **`quena-cli reverse` (also `quena-cli serve`) runs the reverse proxy without a window**,
-  e.g. in CI or as a Docker sidecar:
-  `quena-cli reverse --route api=8080=https://api.example.com --save run.saz`. `--path`
-  adds path routes, and `--socks` and `--transparent` open those ports (`--decrypt` for
-  HTTPS inside them). It
-  prints an access log, stops on Ctrl-C/SIGTERM, after `--duration` or `--max-sessions`, and
-  saves the sessions as `.saz` or `.har` for `quena-cli diagnose` or `mock`. With
-  `--ca-dir` the root certificate stays the same between runs.
-- **Software bill of materials (SBOM) for every release.** Each build lists what the app and
-  `quena-cli` are made of as a CycloneDX SBOM (JSON) per platform: Rust crates, the npm
-  packages of the user interface and the bundled plugins, with versions, licenses and package
-  URLs. The SBOMs are release assets (`quena-<version>-<platform>.cdx.json`,
-  `quena-cli-<version>-<platform>.cdx.json`), and `sbom.cdx.json` comes with the app
-  (macOS app bundle, Windows installer and portable ZIP, Linux packages), the `quena-cli`
-  archive and the Docker image, which also carries an SBOM and provenance attestation.
+    drop cookie domains, add `X-Forwarded-*` headers; remote computers only when allowed.
+  - **Path routes** send some paths of a port to other targets (`/auth` to the login server,
+    `/api` to the backend); the longest prefix wins and can be removed from the path.
+  - The *Via* column, *Group by → Via* and the filter `via == name` show which entry a
+    request came through; *Reverse Proxy for this Host…* in the session menu; MCP tools.
+- **SOCKS5/4 port and transparent port** (*Settings → Connections*, off by default): SOCKS5
+  (with or without a password) and SOCKS4/4a clients name their target; connections a
+  firewall redirects (iptables, pf) need no client setting. Both are handled like `CONNECT`
+  tunnels; the manual shows the firewall rules for Linux and macOS.
+- **Host remapping** (*Capture → Host Remapping…*): connections to a host or `*.domain` go to
+  another host, IP address or port, like a hosts-file entry but only for traffic through
+  Quena — by default keeping `Host` and TLS name, optionally with a port in the pattern and a
+  forced protocol. Entries can be imported from the hosts file; sessions are marked
+  (`x-quena-remap`); also `quena-cli reverse --remap` and MCP.
+- **Do not capture (bypass Quena)** (*Settings → Connections*, or *Filter Now → Do not capture
+  this Host…*): hosts become exceptions of the system proxy and of started browsers and
+  terminals, and pass Quena undecrypted if a client sends them anyway; optionally the DNS
+  domains of an active VPN.
+- **Start a browser or a terminal that uses Quena**, without changing the system proxy (the
+  globe button, *Capture → Start Browser…*, *Capture → Open Terminal*): Chromium browsers
+  with their own profile that accepts Quena's certificates, Firefox with its own profile; the
+  terminal sets `HTTP(S)_PROXY`, `NO_PROXY` and the root certificate for Node.js, Python,
+  curl, Git, pip, Cargo and the AWS CLI. MCP: `launch_browser`, `open_terminal`.
+- **`quena-cli reverse`** (also `quena-cli serve`) runs the reverse proxy without a window,
+  e.g. in CI or as a Docker sidecar, with `--path`, `--socks`, `--transparent`, `--decrypt`,
+  `--duration`, `--max-sessions`, `--save run.saz|.har` and `--ca-dir`/`--ca-p12`.
+
+#### Inspect
+- **gRPC and Protobuf with a schema**: with `.proto` files (*Settings → Bodies & Storage →
+  Protobuf schemas*) the *gRPC* view shows field names, types, enum values and nested
+  messages; **server reflection** (off by default) fetches the schema from the server.
+  Messages are uncompressed per `grpc-encoding`; gRPC-Web trailers and `grpc-web-text` are read.
+- **MessagePack view** for `application/msgpack` and its variants.
+- **Socket.IO**: the WebSocket view shows event names and arguments, hides ping/pong and
+  searches events; a *Socket.IO* view decodes long-polling bodies (v4 and v3).
+- *Statistics* show median, mean, p90/p95/p99, standard deviation, throughput, header bytes
+  and summed DNS, connect, TLS and waiting times; a **Params** view lists the query
+  parameters; **Decode Value…** opens the *Text Tools* with the likely decoding; the *Auth*
+  view decodes **SAML** requests and responses.
+
+#### Change and replay
+- **Rewrite rules have an editor** in the Mock Rules tab with fields per operation, checks
+  before saving and a preview on the selected session; rules can be sorted, cloned and put
+  into **groups**, exported and imported as JSON. New operations set or remove query
+  parameters and cookies and mark or comment the session; **From template ▾** adds *Bypass
+  CORS*, *Block cookies*, *Disable caching*, *Change User-Agent*, *Mark errors red*, *Block a
+  host* and *Allow only one host*.
+- **Apply Rewrite Rules…** to captured sessions: each changed session gets a changed copy,
+  nothing is sent. MCP: `apply_rewrite_rules`.
+- **Change WebSocket messages on the way**: rewrite rules for WebSocket messages (direction,
+  JSON also inside Socket.IO packets) and `onWebSocketMessage(msg)` in rules scripts; changed
+  and dropped messages are marked in the frame log.
+- **Composer**: request **tabs**, query parameters and headers as **tables**, **Follow
+  redirects**, method `QUERY`, the **HTTP version** per request (automatic, HTTP/1.1, HTTP/2,
+  also h2c), and **collections** saved as `.http` files (JetBrains/VS Code format) with
+  variables, environments, *Run all* and import. MCP: `list_collections`,
+  `collection:NAME` in `run_http_file`.
+- **Advanced Replay** sends up to 100,000 repeats one after the other or 1–100 at a time and
+  can be stopped (MCP `replay_sessions` takes `parallel`).
+
+#### Filters, columns and comparing
+- Filter on request and response headers (`reqheader.NAME`, `resheader.NAME`,
+  `header.NAME`), cookies (`cookie.NAME`), bodies (`reqbody`, `resbody`), TLS version
+  (`tls`), server IP (`ip`) and HTTP version (`http`). **Saved filters** with match counts,
+  **column filters** from the heading's menu, new columns *TLS*, *Server IP*, *HTTP version*
+  and up to three **header columns**.
+- **Compare captures** (*Tools → Compare Captures…*): the live capture and loaded archives
+  side by side, requests paired by method, host and normalised path (content hashes in file
+  names ignored, optionally without the host) and marked new, gone or changed; requests that
+  now fail or get no answer are counted apart. **Compare Groups** pairs chosen sessions by
+  path, exact URL or order with own headers to ignore. Headless: `quena-cli diff before after
+  --fail-on errors|changes --pair-by --ignore-header --ignore-host`. MCP: `compare_captures`.
+
+#### Archives
+- **Snapshot library** (*File → Snapshot Library…*): archives in folders of the data folder,
+  opened as a **source** of their own (*Group by → Source*), so a snapshot can be looked at
+  while capturing goes on.
+- **AutoSave** (*Settings → General*): all sessions (or only those the filters show) saved
+  as `.saz` every few minutes when something changed; the newest are kept.
+- **Password-protected archives** (AES-256, readable by Fiddler, 7-Zip, WinZip): exported
+  with *SAZ Archive with Password…*, asked for when loading.
+- Export as a **WCAT** load test script; import of Internet Explorer **NetXML** captures.
+
+#### Certificates
+- **Use an existing CA** (*Capture → HTTPS Settings… → Import CA…*), e.g. the company's
+  interception CA: a PKCS#12 file or a PEM certificate with its key; Quena checks it and keeps
+  the previous CA's files. An intermediate CA sends its chain along.
+- **Export the CA with its key** as a password-protected `.p12`.
+- **Expiring server certificates** are flagged `x-quena-cert` (within 30 days by default);
+  column *Cert. until*, filter `certdays`, subject, issuer and validity in *Properties*.
+- On Windows, *Trust for all users…* puts the root certificate into the local machine's store.
+
+#### Supply chain
+- **Software bill of materials (SBOM) for every release**: a CycloneDX SBOM per platform for
+  the app and `quena-cli` (Rust crates, npm packages, bundled plugins) as release assets and
+  inside the packages; the Docker image carries an SBOM and provenance attestation.
+
+### Changed
+- Apple services that pin their certificates bypass Quena by default (*Do not capture*), so
+  they keep working while the system proxy points to Quena.
 
 ### Fixed
-- AI agents, after the overall review: Bedrock requests signed with AWS Signature V4 are
-  left unchanged by LLM rewrite operations and refused by the prompt playground with a
-  reason (AWS would refuse a changed copy); errors inside AWS event streams and Bedrock's
-  `{"message"}` errors are shown; prices no longer cut `-v3` off model names such as
-  `deepseek-v3`; agents are recognised by User-Agent tokens only (`notcursor/1` is not
-  Cursor); the agent cache matches requests by what goes out after rewrite rules and
-  ignores what changes with every Claude Code and Codex request (attribution block,
-  `prompt_cache_key`, cache marks, AWS signatures); conversations drop removed sessions and
-  read calls only once they are done; the JSON lines export carries the messages each turn
-  added (`jsonl-full` over the API for whole calls) and is written as it goes; MCP tools
-  `list_conversations`/`get_conversation` take `limit`/`offset` and redact prompts like
-  bodies; *Start agent* runs the agent in an interactive login shell (what `.zshrc` adds
-  to PATH is found) and keeps the shell afterwards; mcp-tap limits its recording to 1 GB
-  and skips over-long lines without holding them in memory; the Agents panel refreshes
-  when calls arrive and is usable from the keyboard.
-- Composer: the request tabs took half of the panel and pushed the form down, and with the
-  query parameter table the request body got a single line. The form keeps its parts in
-  place now; the body takes the remaining height.
+- Loading a password-protected archive loaded no sessions and gave no reason; it now asks
+  for the password.
 - The command field's answers (`filter`, `=404`, errors such as an unknown command) are shown
   in the UI language; an unknown command points to `filter EXPRESSION`.
-- The loop guard (since the previous fix) refused every server on the port number of a
-  wildcard listener: a reverse proxy entry on `0.0.0.0:8080` forwarding to `backend:8080`
-  answered every request with "is Quena itself". Requests to `0.0.0.0:P` reach a listener
-  on `127.0.0.1:P` again.
-- AutoSave removed the oldest archives before writing the new one; when writing failed (a
-  full disk) every interval cost one more archive. Now older archives go only after the new
-  one is written, and a failed save is tried again at the next interval.
-- *Save to collection* replaced a collection it could not read (e.g. a file in another
-  encoding) by one with just this request, and put the request back at its old position
-  even when the collection had been sorted or shortened meanwhile, overwriting another one.
-  It now stops with the error, and appends when the position no longer holds the request.
-- Collections: the first rewrite of a `.http` file written elsewhere keeps the original as
-  `.http.bak` (comments, response handlers and requests the Composer cannot read are not
-  kept). `.rest` files are no longer listed (they could not be opened), names Windows keeps
-  for devices (`NUL`, `COM1` …) are refused, and a collection can be renamed in case only.
-- `quena-cli diff` compared the first capture with itself when the second had no sessions,
-  and passed `--fail-on`; such a file is now an error (exit code 2).
-- Compare captures: a request that now gets no answer (status 0) counts as one that now
-  fails; content hashes in file names (`index-B2x9kQ1a.js`) no longer make every built asset
-  new and gone; captures with many requests to one path compare quickly. New: *Ignore host*
-  (`--ignore-host`, MCP `ignore_host`) pairs staging with production. MCP no longer shows
-  redirect targets with their codes or tokens unless secrets are allowed.
-- Importing a CA moved the current CA's files aside before the new ones were written; a
-  failed write left no usable CA, and the next start made a new one. The new files are now
-  written first, the current ones kept as copies (also two imports in one second).
-- LLM traffic: sessions were parsed on one new thread each, and other apps' endpoints named
-  `/api/chat`, `/responses` or `/embeddings` were marked as LLM calls. One worker now parses
-  them, and only bodies shaped like such a call count. A mark could bring back a session
-  removed meanwhile. Newer models no longer get the list price of an older one with the same
-  prefix (`claude-opus-4-5` was priced as `claude-opus-4`); prices added for Claude Opus 4.1
-  and 4.5, Sonnet 4.5, GPT-5.1, GPT-5 pro, o3-pro and o1-pro.
-- Rewrite rules on large WebSocket messages ran on the proxy's async workers and could
-  stall other connections; their preview used only the first 4 KB of a message.
-- The sanitized export lost the marks of changed and dropped WebSocket messages; v3
-  Socket.IO polling bodies with emoji were split in the wrong places; a damaged protected
-  archive asked for the password again and again; a Composer request with `HTTP/1.0` was
-  recorded as 1.0 but sent as 1.1 (now recorded as sent); a script setting a WebSocket
-  message to text that is no valid Unicode was ignored without a word (now logged).
 - The loop guard took a server for Quena itself when it listened on the same port number at
-  another address (`127.0.0.1:P` while Quena listened on `[::1]:P`), and kept the ports of
-  a stopped proxy engine.
+  another address (`127.0.0.1:P` while Quena listened on `[::1]:P`), and kept the ports of a
+  stopped proxy engine.
 - Hiding the navigator right after choosing a group could leave the list narrowed to it.
-- A session that just finished could briefly not be found (its details vanished for a
-  moment between recording and storage).
+- A session that just finished could briefly not be found (its details vanished for a moment
+  between recording and storage).
 
 ## [0.1.7] — 2026-10-07
 
@@ -882,7 +794,8 @@ Internal test build (not tagged) — an early preview for trying Quena on macOS 
 - Client certificates (mTLS) per host; bandwidth and latency simulation.
 - SAZ (compatible with Fiddler Classic) and HAR 1.2 import/export; copy as cURL.
 
-[Unreleased]: https://github.com/hkiam/quena/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/hkiam/quena/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/hkiam/quena/compare/v0.1.7...v0.2.0
 [0.1.7]: https://github.com/hkiam/quena/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/hkiam/quena/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/hkiam/quena/compare/v0.1.4...v0.1.5

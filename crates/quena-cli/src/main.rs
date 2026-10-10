@@ -39,7 +39,7 @@ static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 #[command(
     name = "quena-cli",
     version,
-    about = "Quena for CI: analyse HAR/SAZ/pcap captures, compare with a baseline, fail the build on regressions; record traffic as a reverse, SOCKS or transparent proxy (reverse)."
+    about = "Quena for CI: analyse HAR/SAZ/pcap captures, compare with a baseline, fail the build on regressions; record traffic as a reverse, SOCKS or transparent proxy (reverse); record stdio MCP servers for the app (mcp-tap)."
 )]
 #[command(
     after_help = "Exit codes: 0 gate passed, 1 gate failed, 2 usage or input error, 3 analysis error.\n\

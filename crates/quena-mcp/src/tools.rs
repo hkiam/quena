@@ -112,7 +112,7 @@ static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "get_llm_call",
-        description: "A call to an LLM API (OpenAI, Anthropic, Gemini, Ollama and OpenAI-compatible) taken apart: provider, model, system prompt, the messages sent, tools, parameters, the answer (assembled from a stream), tool calls, stop reason, token usage and an estimated cost. Find such sessions with the filter `llm ~ claude` or `tokens > 1000`.",
+        description: "A call to an LLM API (OpenAI, Anthropic, Gemini, Claude on Vertex AI, Amazon Bedrock incl. Converse, Ollama and OpenAI-compatible) taken apart: provider, model, system prompt, the messages sent, tools, parameters, the answer (assembled from a stream), tool calls, stop reason, token usage and an estimated cost. Find such sessions with the filter `llm ~ claude` or `tokens > 1000`.",
         write: false,
         destructive: false,
         schema: || req(json!({ "id": { "type": "integer" } }), &["id"]),
@@ -267,7 +267,7 @@ static TOOLS: &[Tool] = &[
     // ----------------------------------------------------------------- write
     Tool {
         name: "cache_llm_calls",
-        description: "Agent cache: cache (`on`: true) or forget the answers of LLM API call sessions `ids`; the next identical request (same URL and JSON body, key order and `user`/`metadata` not counting) is answered by Quena without asking the model. `auto` true/false turns caching of every LLM call on or off.",
+        description: "Agent cache: cache (`on`: true) or forget the answers of LLM API call sessions `ids`; the next identical request (same URL, credentials and JSON body; key order, `user`, `metadata`, Claude Code's attribution block, `prompt_cache_key`, cache marks and AWS signatures not counting; looked up after rewrite rules) is answered by Quena without asking the model. `auto` true/false turns caching of every LLM call on or off.",
         write: true,
         destructive: false,
         schema: || obj(json!({ "ids": { "type": "array", "items": { "type": "integer" } }, "on": { "type": "boolean" }, "auto": { "type": "boolean" } })),

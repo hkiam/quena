@@ -116,6 +116,8 @@ export async function handleMenu(id: string) {
       return actions.showNavigator(!get().layout.navOpen);
     case "view.diagnostics":
       return actions.showTab("diagnostics");
+    case "view.agents":
+      return actions.showTab("agents");
     case "view.group-none":
     case "view.group-connection":
     case "view.group-host":
@@ -124,6 +126,11 @@ export async function handleMenu(id: string) {
     case "view.group-session":
     case "view.group-custom":
     case "view.group-via":
+    case "view.group-llm":
+    case "view.group-conversation":
+    case "view.group-mcpServer":
+    case "view.group-agent":
+    case "view.group-source":
       return actions.setGroup(id.slice("view.group-".length) as GroupBy);
     case "view.groups-collapse":
       return actions.collapseGroups(true);

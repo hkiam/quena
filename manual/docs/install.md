@@ -13,7 +13,7 @@ Download the package for your platform from the
 
 ### Packages are not signed yet
 
-The packages are not signed with a paid certificate or notarized yet, so the operating
+The packages are not signed with a paid certificate or notarised yet, so the operating
 system asks you to confirm the first start:
 
 - **macOS:** after the first launch attempt, open *System Settings → Privacy & Security*
@@ -62,7 +62,7 @@ automatic authentication falls back to NTLM.
 
 Every release lists what Quena is built from as a [CycloneDX](https://cyclonedx.org) SBOM
 (JSON): the Rust crates, the npm packages of the user interface and the bundled plugins,
-with versions, licenses and package URLs. Import it into Dependency-Track, or scan it with
+with versions, licences and package URLs. Import it into Dependency-Track, or scan it with
 Grype or Trivy, to check a version against known vulnerabilities.
 
 | Where | File |
@@ -117,14 +117,85 @@ also carries an SBOM attestation of the whole image, Debian packages included:
   groups or host/path structure; a click narrows the list. See
   [Session list](sessions.md#navigator).
 - **Right pane** — tabs *Inspect*, *Composer*, *Mock Rules*, *Filters*, *Timeline*,
-  *Diagnostics*, *Statistics* and *Log*. A dot on *Filters* or *Mock Rules* tells you they
-  are active.
+  *Diagnostics*, *Statistics*, *Agents* (see [Agent conversations](agents.md)) and *Log*.
+  A dot on *Filters* or *Mock Rules* tells you they are active.
 - **Status bar** — proxy address and state (*system proxy*, *HTTPS decrypt*), the process
   scope (click to change), the number of visible/total sessions (with a *filtered* tag),
   active breakpoints and paused sessions, *Mock Rules* when active, running background
   jobs, and the disk space used by the capture.
 
 `Ctrl/⌘ +`, `Ctrl/⌘ -` and `Ctrl/⌘ 0` zoom the whole window.
+
+## quena-cli
+
+`quena-cli` is Quena without a window, a separate download for the command line. It runs
+the [diagnostics in CI](ci.md) (`diagnose`, `compare`), compares captures (`diff`),
+sanitises them (`sanitize`), turns them into mocks (`mock`), runs `.http` collections
+(`http`), records traffic as a [reverse, SOCKS or transparent proxy](reverse-proxy.md#without-a-window-quena-cli-reverse)
+(`reverse`), and records [MCP servers that talk over stdio](mcp-traffic.md#servers-that-talk-over-stdio)
+for the app (`mcp-tap`). `quena-cli --help` lists the commands.
+
+### Download
+
+| Where | What |
+|---|---|
+| [Releases](https://github.com/hkiam/quena/releases) | `quena-cli-<version>-macos-universal.tar.gz`, `quena-cli-<version>-windows-x64.zip`, `quena-cli-<version>-linux-x64.tar.gz`, `quena-cli-<version>-linux-arm64.tar.gz` |
+| Docker | `ghcr.io/hkiam/quena-cli:<version>` (or `:latest`, the newest release that is not a prerelease), for linux/amd64 and linux/arm64; the entry point is `quena-cli` |
+| GitHub Actions | `hkiam/quena/diagnose@<version>` downloads it for you — see [Diagnostics in CI](ci.md#quick-start) |
+
+Unpack the archive and **keep the `plugins` folder next to the program**: the diagnostics
+plugin lives there. The packages are not signed yet: on macOS, if the program is refused
+after a download in the browser, remove the quarantine flag with
+`xattr -dr com.apple.quarantine quena-cli-<version>-macos-universal`.
+
+### Put it on the PATH
+
+So that `quena-cli` works in any terminal, put its folder on the `PATH`, or link the
+program into a folder that is on it:
+
+=== "macOS / Linux"
+
+    ```bash
+    sudo mv quena-cli-<version>-<platform> /opt/quena-cli
+    sudo ln -s /opt/quena-cli/quena-cli /usr/local/bin/quena-cli
+    quena-cli --version
+    ```
+
+=== "Windows"
+
+    Unpack to `C:\Tools\quena-cli`, then add that folder to the `Path` of your user
+    (*Settings → System → About → Advanced system settings → Environment Variables*), or in
+    PowerShell:
+
+    ```powershell
+    [Environment]::SetEnvironmentVariable("Path", "$env:Path;C:\Tools\quena-cli", "User")
+    ```
+
+    Open a new terminal afterwards.
+
+### In MCP client configurations
+
+Desktop apps and IDEs that start MCP servers (Claude Desktop, VS Code, Cursor …) often do
+not see the `PATH` of your shell. Give the **full path** to the program in their
+configuration, e.g. `/opt/quena-cli/quena-cli` or `C:\Tools\quena-cli\quena-cli.exe`, not just
+`quena-cli`.
+
+### Data folder
+
+`quena-cli mcp-tap` writes its recordings into the `mcp-tap` folder of Quena's
+[data directory](settings.md#data-directory), where the app picks them up. It finds the same
+folder as the app when the app uses its normal location. Pass `--data-dir` when the app
+does not:
+
+- the app runs in [portable mode](settings.md#portable-mode) — then
+  `--data-dir <app folder>/quena-data` (a `quena-cli` placed next to `Quena.exe`, beside
+  `quena-data`, finds the folder by itself);
+- the app was started with `QUENA_DATA_DIR` set, but the MCP client that starts `quena-cli`
+  does not have it — then `--data-dir` with that folder.
+
+```bash
+quena-cli mcp-tap --name jira --data-dir /path/to/quena-data -- npx -y jira-mcp
+```
 
 ## Build from source
 

@@ -127,7 +127,7 @@ comments and response handler scripts of an imported file are not kept when it i
 first time it rewrites a file written elsewhere, the original stays beside it as
 `NAME.http.bak`.
 
-AI agents use them over [MCP](mcp.md) (`list_http_requests`, `run_http_file`,
+AI agents use them over [Quena's MCP server](mcp.md) (`list_http_requests`, `run_http_file`,
 `sessions_to_http_file`; `collection:NAME` names a Composer collection, `list_collections`
 lists them). On the command line:
 
@@ -169,7 +169,8 @@ A command without an argument (e.g. `bpu`) switches that breakpoint off; *Off* (
 switches off the breakpoints before requests, after responses and before LLM requests. While
 an LLM breakpoint is set, requests to LLM APIs are held until their body is complete (the
 conditions need it), and it applies before the agent cache answers. The status bar lists the
-active breakpoints and the number of paused sessions.
+active breakpoints and the number of paused sessions. How the LLM breakpoint helps with
+agents: [Break before LLM requests](optimize-agents.md#break-before-llm-requests).
 
 ### Working with a paused session
 
@@ -330,7 +331,7 @@ Rules are made in the **Mock Rules** tab: *New rewrite rule…* opens the editor
 on a rule edits it, and a right-click offers *Enable/Disable*, *Clone*, *Move Up/Down*,
 *Apply to selected sessions* and *Remove*. The list shows each rule's hit count, the switch
 for all rules and the largest body a rule changes (*max. body*, default 4096 KiB). Rules are
-kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP](mcp.md)
+kept in `rewrite.json` in the data folder. An AI agent can do the same over [Quena's MCP server](mcp.md)
 (`add_rewrite_rule`, `preview_rewrite`, `apply_rewrite_rules` …).
 
 ### The editor
@@ -351,13 +352,16 @@ kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP
       message stays as it is (the session is not marked as changed, and *Apply Rewrite Rules…*
       marks the sessions themselves instead of adding copies).
     - **LLM: remove tool**, **LLM: set model**, **LLM: add to system prompt** (requests to
-      [LLM APIs](llm.md)): take tools out of what an agent offers (`mcp__jira__*` for all
-      tools of a server), send another model, or add an instruction at the end of the system
-      prompt — in the format of the API, known from the URL (Anthropic, OpenAI Chat and
-      Responses, Gemini, Ollama; for Gemini the model is changed in the URL). A tool choice
-      naming a removed tool goes too. Requests to other APIs stay as they are. An agent at work
-      gets the changed requests; its cache prefix changes with them. Choosing an LLM change
-      sets the rule to change requests.
+      [LLM APIs](llm.md#what-is-recognised)): take tools out of what an agent offers
+      (`mcp__jira__*` for all tools of a server), send another model, or add an instruction
+      at the end of the system prompt — in the format of the API, known from the URL
+      (Anthropic, OpenAI Chat Completions and Responses, Gemini, Ollama, the Bedrock Converse
+      API; for Gemini, Claude on Vertex AI and Bedrock the model is changed in the URL). A tool
+      choice naming a removed tool is removed as well. Requests to other APIs stay as they
+      are, and so do requests signed with AWS Signature Version 4 (Bedrock), which a change
+      would break. An agent at work gets the changed requests; its cache prefix changes with
+      them. Choosing an LLM change sets the rule to change requests. Ways to use them:
+      [Change requests while an agent runs](optimize-agents.md#change-requests-while-an-agent-runs).
 - **Preview on #N** tries the rule on the session selected in the list, without sending
   anything: whether its filters take the session, the status and header changes, and the
   body before and after.

@@ -122,7 +122,7 @@ function ReplayDialog({ ids }: { ids: number[] }) {
       <label className="f-check">
         <input type="checkbox" checked={unconditional} onChange={(e) => setUnconditional(e.target.checked)} /> {t("Unconditionally (without If-None-Match / If-Modified-Since)")}
       </label>
-      <p className="muted small">{t("{n} requests in all; Stop in the message or Replay → Stop Replay ends it.", { n: (n * ids.length).toLocaleString() })}</p>
+      <p className="muted small">{t("{n} requests in total; Stop in the message or Replay → Stop Replay ends it.", { n: (n * ids.length).toLocaleString() })}</p>
     </Modal>
   );
 }

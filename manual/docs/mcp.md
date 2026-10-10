@@ -1,8 +1,13 @@
-# AI agents (MCP)
+# Quena's MCP server
 
 Quena can run a [Model Context Protocol](https://modelcontextprotocol.io) server, so an AI
 agent such as Claude Code can read the capture and, if you allow it, control Quena. The agent
-can look at failing requests, set mock rules and breakpoints, send requests and replay them.
+can look at failing requests, read LLM calls and agent conversations, set mock rules and
+breakpoints, send requests and replay them.
+
+This page is about the MCP server Quena offers. How Quena records and shows the MCP traffic of
+your agents (their tool calls to other MCP servers) is on
+[MCP servers and skills](mcp-traffic.md).
 
 ## Turn it on
 
@@ -33,7 +38,7 @@ can look at failing requests, set mock rules and breakpoints, send requests and 
     | Cursor | `mcpServers.quena` in `~/.cursor/mcp.json` |
     | Codex | the table `[mcp_servers.quena]` in `~/.codex/config.toml` (`url`, `http_headers`) |
 
-    Other entries stay as they are; a file that is no valid JSON is left alone. After *New
+    Other entries stay as they are; a file that is not valid JSON is left alone. After *New
     token*, click the button again. Other MCP clients need the same three things: the URL,
     the transport *Streamable HTTP* and the `Authorization` header.
 
@@ -94,51 +99,98 @@ apart from the proxy, so agent calls never slow down forwarding.
 
 ## Tools
 
-| Tool | Needs full control | What it does |
+✓ marks the tools that need full control.
+
+### Sessions and capture
+
+| Tool | Full control | What it does |
 |---|---|---|
-| `status` | | capture state, listen address, upstream, number of sessions, breakpoints |
+| `status` | | capture state, listen address, upstream, number of sessions, breakpoints, the agents' folder |
 | `list_sessions` | | compact rows; `filter` (see [syntax](syntax.md#filter-expressions)), `since_id`, paging |
 | `get_session` | | request and response heads, timers, bodies as text (decoded, cut at 16 KB by default) |
 | `get_body` | | a piece of a body: `offset`, `length`, decoded or raw |
-| `compare_captures` | | two captures in the list compared: changed, new and gone requests ([Compare captures](analyze.md#compare-captures)) |
-| `get_llm_call` | | an [LLM API call](llm.md) taken apart: model, messages, tools, answer, tokens, estimated cost |
-| `list_conversations` | | the [conversations of agents](llm.md#conversations-of-agents) in the capture: title, agent, models, turns, tokens, cached share, cost, cache misses, refused calls, latency, context size; subagents name their parent |
-| `get_conversation` | | one conversation: its turns with the change from the call before and why the cache missed, hints where tokens go to waste, what filled the last request, its subagents |
-| `get_context` | | what fills one LLM call's input by category (system prompt, each tool, instruction files, results by tool …), its turn and the cache's verdict |
-| `get_tool_report` | | [tools and skills](llm.md#tools-and-skills) across all conversations: offered, definition cost, model calls, MCP calls, failures, result sizes; skills listed and loaded |
-| `run_diagnostics` | | runs the [diagnostics](diagnostics.md) over all sessions, a filter or chosen ids (profile, hosts, processes) and returns the findings with severity, evidence, recommendations and session ids; the report also shows in the *Diagnostics* tab |
-| `llm_cache_status` | | the [agent cache](llm.md#agent-cache): kept answers with hits and savings, whether every call is cached, repeated calls worth caching |
-| `cache_llm_calls` | yes | cache or forget the answers of LLM call sessions; turn *Cache every LLM call* on or off |
-| `get_diagnostics_report` | | the last diagnostics report as findings, or the analyzer's profiles when there is none |
 | `search_sessions` | | text or regex in URLs, headers, bodies |
 | `statistics` | | bytes, status codes, content types, hosts |
-| `list_mock_rules`, `get_breakpoints` | | rules with hit counts; breakpoints and paused sessions |
-| `list_rewrite_rules` | | [rewrite rules](change-replay.md#rewrite-rules) with hit counts |
-| `preview_rewrite` | | apply a rewrite rule to a captured body without sending anything |
+| `compare_captures` | | two captures in the list compared: changed, new and gone requests ([Compare captures](analyze.md#compare-captures)) |
 | `set_capture` | ✓ | start or stop capturing |
 | `clear_sessions` | ✓ | remove sessions matching a filter, or all |
+| `export_archive` | ✓ | save sessions as `.har` or `.saz` in the agents' folder (existing files only with `overwrite`) |
+
+### LLM calls and agents
+
+| Tool | Full control | What it does |
+|---|---|---|
+| `get_llm_call` | | an [LLM API call](llm.md) taken apart: model, messages, tools, answer, tokens, estimated cost |
+| `list_conversations` | | the [agent conversations](agents.md) in the capture: title, agent, models, turns, side calls, tokens, cached share, cost, cache misses, refused calls, retries, latency, context size; subagents name their parent. `limit` (default 100) and `offset` |
+| `get_conversation` | | one conversation by key: its turns with the change from the call it continues and why the cache missed, hints where tokens go to waste, what filled the last request, its subagents. `limit` (default 500 turns) and `offset`; the result has `turnsTotal` and `turnsOffset` |
+| `get_context` | | what fills one LLM call's input by category (system prompt, each tool, instruction files, results by tool …), its turn and the cache's verdict |
+| `get_tool_report` | | [tools and skills](mcp-traffic.md#tools-and-skills) across all conversations: offered, definition cost, model calls, MCP calls, failures, result sizes; skills listed and loaded |
+| `llm_cache_status` | | the [agent cache](optimize-agents.md#agent-cache): kept answers with hits and savings, whether every call is cached, repeated calls worth caching |
+| `cache_llm_calls` | ✓ | cache or forget the answers of LLM call sessions; turn *Cache every LLM call* on or off |
+
+Titles of conversations, the text in hints and the changed message of `get_context` are free
+text: unless agents may see secrets, they are redacted with the sanitizer's credentials preset,
+like the bodies.
+
+### Diagnostics
+
+| Tool | Full control | What it does |
+|---|---|---|
+| `run_diagnostics` | | runs the [diagnostics](diagnostics.md) over all sessions, a filter or chosen ids (profile, hosts, processes) and returns the findings with severity, evidence, recommendations and session ids; the report also shows in the *Diagnostics* tab |
+| `get_diagnostics_report` | | the last diagnostics report as findings, or the analyser's profiles when there is none |
+
+### Mock rules
+
+| Tool | Full control | What it does |
+|---|---|---|
+| `list_mock_rules` | | [Mock Rules](change-replay.md#mock-rules) with hit counts |
+| `add_mock_rule`, `update_mock_rule`, `remove_mock_rule`, `set_mock_options` | ✓ | add, change or delete mock rules, and their options |
+| `mock_from_sessions` | ✓ | rules that answer with recorded responses |
+
+### Rewrite rules
+
+| Tool | Full control | What it does |
+|---|---|---|
+| `list_rewrite_rules` | | [rewrite rules](change-replay.md#rewrite-rules) with hit counts |
+| `preview_rewrite` | | apply a rewrite rule to a captured body without sending anything |
+| `add_rewrite_rule`, `update_rewrite_rule`, `remove_rewrite_rule`, `set_rewrite_options` | ✓ | change real requests and responses (JSONPath, regex, headers, query, cookies, status, marks); rules can have a `group`, and `set_rewrite_options` switches groups off. The LLM operations `llmRemoveTool`, `llmSetModel` and `llmAppendSystem` change requests to LLM APIs ([Change requests while an agent runs](optimize-agents.md#change-requests-while-an-agent-runs)) |
+| `apply_rewrite_rules` | ✓ | apply rewrite rules to captured sessions: changed copies, the originals stay |
+
+### Breakpoints
+
+| Tool | Full control | What it does |
+|---|---|---|
+| `get_breakpoints` | | breakpoints and paused sessions |
+| `set_breakpoints` | ✓ | set or clear the [breakpoints](change-replay.md#setting-breakpoints) before requests, after responses, by URL, status or method (not the LLM breakpoint `bpllm`) |
+| `resume_session`, `resume_all` | ✓ | release paused sessions, unchanged or with a new head and body, aborted, or answered |
+
+### Send and replay
+
+| Tool | Full control | What it does |
+|---|---|---|
 | `send_request` | ✓ | send a request through Quena and return the session |
 | `replay_sessions` | ✓ | send captured requests again (`count`, one after the other or `parallel` 1–100 at a time) |
-| `add_mock_rule`, `update_mock_rule`, `remove_mock_rule`, `set_mock_options` | ✓ | [Mock Rules](change-replay.md#mock-rules) |
-| `mock_from_sessions` | ✓ | rules that answer with recorded responses |
-| `add_rewrite_rule`, `update_rewrite_rule`, `remove_rewrite_rule`, `set_rewrite_options` | ✓ | change real requests and responses (JSONPath, regex, headers, status); rules can have a `group`, and `set_rewrite_options` switches groups off |
-| `apply_rewrite_rules` | ✓ | apply rewrite rules to captured sessions: changed copies, the originals stay |
-| `set_breakpoints`, `resume_session`, `resume_all` | ✓ | [breakpoints](change-replay.md) |
 | `list_http_requests` | | the requests of a [`.http` file](change-replay.md#request-collections-http-files), resolved for an environment |
 | `run_http_file` | ✓ | send a `.http` collection (or some of its requests) through Quena |
 | `list_collections` | | the Composer's collections; `collection:NAME` as `path` above names one |
 | `sessions_to_http_file` | ✓ | write captured sessions as a `.http` file with environment files |
-| `export_archive` | ✓ | save sessions as `.har` or `.saz` in the agents' folder (existing files only with `overwrite`) |
+
+### Connections
+
+| Tool | Full control | What it does |
+|---|---|---|
 | `list_host_remaps` | | [host remapping](host-remapping.md) entries |
 | `set_host_remap`, `remove_host_remap` | ✓ | add, change or delete host remapping entries |
-| `launch_browser`, `open_terminal` | ✓ | start a browser with its own profile, or a terminal, that uses Quena ([Start a browser or terminal](capture.md#start-a-browser-or-terminal-with-quena)); `launch_browser` without `kind` lists the browsers |
 | `list_reverse_proxies` | | [reverse proxy](reverse-proxy.md) entries and whether they listen |
 | `set_reverse_proxy`, `remove_reverse_proxy` | ✓ | add, change or delete reverse proxy entries and their path routes (agents cannot open one to remote computers) |
 | `set_listeners` | ✓ | switch the [SOCKS and transparent ports](socks-transparent.md) on or off, or move them (this machine only) |
+| `launch_browser`, `open_terminal` | ✓ | start a browser with its own profile, or a terminal, that uses Quena ([Start a browser or terminal](capture.md#start-a-browser-or-terminal-with-quena)); `launch_browser` without `kind` lists the browsers. `open_terminal` takes no command, so it cannot start an agent |
 
-Lists return at most 200 rows and bodies at most 1 MB per call (reading from up to 8 MB into
-a body), so an agent never pulls a whole capture at once. A tool error comes back as a result with `isError`, so the agent sees
-the message, for example a filter syntax error.
+Session lists return at most 200 rows and bodies at most 1 MB per call (reading from up to
+8 MB into a body), so an agent never pulls a whole capture at once; `list_conversations`
+returns up to 1,000 conversations and `get_conversation` up to 5,000 turns per call. A tool
+error comes back as a result with `isError`, so the agent sees the message, for example a
+filter syntax error.
 
 ## Prompts
 

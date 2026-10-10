@@ -167,7 +167,7 @@ Bluetooth — are reported as unsupported.
 
 ## Command line
 
-`quena-cli` reads captures like HAR and SAZ files — for Diagnostics in CI, sanitized copies,
+`quena-cli` reads captures like HAR and SAZ files — for Diagnostics in CI, sanitised copies,
 mocks and `.http` collections:
 
 ```bash

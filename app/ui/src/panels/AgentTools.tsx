@@ -31,7 +31,7 @@ export function AgentTools({ refresh }: { refresh: string }) {
       <div className="conv-facts small">
         <span>{t("{n} LLM requests", { n: fmtInt(r.requests) })}</span>
         <span>{plural(r.tools.length, "{n} tool", "{n} tools")}</span>
-        {unusedTokens > 0 && <span className="warn">{t("tools never called cost {n} tokens in all", { n: fmtInt(unusedTokens) })}</span>}
+        {unusedTokens > 0 && <span className="warn">{t("tools never called cost {n} tokens in total", { n: fmtInt(unusedTokens) })}</span>}
         <span className="tp-spacer" />
         <label className="f-check">
           <input type="checkbox" checked={onlyUnused} onChange={(e) => setOnlyUnused(e.target.checked)} /> {t("Only tools never called")}
@@ -49,7 +49,7 @@ export function AgentTools({ refresh }: { refresh: string }) {
               {t("Definition")}
             </th>
             <th className="num" title={t("Definition tokens × requests")}>
-              {t("Cost in all")}
+              {t("Cost in total")}
             </th>
             <th className="num" title={t("Calls the model asked for")}>
               {t("Called")}
