@@ -36,6 +36,8 @@ content.
 
 ## The MCP view
 
+![The MCP view of a tools/call over stdio: arguments, the result with the tokens it adds to the agent's next request, and the tool call trail from the LLM call that asked for it to the one that carries the result back](img/mcp-view.png)
+
 Selecting an MCP exchange opens the **MCP** view (when the exchange carries MCP headers or
 comes from `mcp-tap`; otherwise pick *MCP* from the views):
 
@@ -205,6 +207,8 @@ when its own arguments are wrong or the server cannot be started.
 - Recordings read completely are removed after 7 days without new exchanges.
 
 ## Tools and skills
+
+![Tools & skills: each tool with the requests that offer it, what its definition costs, how often it was called, MCP exchanges and result tokens; the Jira tools were offered ten times and never called](img/tools-skills.png)
 
 *Agents → Tools & skills* sums up the tools and skills of all conversations in the capture:
 

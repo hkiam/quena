@@ -7,6 +7,10 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Fixed
+- Exchanges recorded by `quena-cli mcp-tap` had no start time: they sorted as 1970 and the
+  tool call trail never found the LLM call that asked for the tool.
+
 ## [0.2.0] — 2026-10-10
 
 ### Highlights

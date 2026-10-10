@@ -9,6 +9,8 @@ context. How to get an agent's traffic into Quena is on the
 
 ## The Agents panel
 
+![The Agents panel: a Codex run, a Claude Code run with a subagent; for the Claude Code run its hints (a cache miss, a file read three times, tools never called, a recurring reminder) and its turns with a side call, the turn whose cache missed and an MCP tool call](img/agents.png)
+
 *View → Agents*, the tab *Agents* in the right pane or *Show conversation* in the
 [LLM view](llm.md#the-llm-view) opens the panel. Its tab *Conversations* lists the runs, newest first; the tab
 [*Tools & skills*](mcp-traffic.md#tools-and-skills) sums up tools and skills. The panel is

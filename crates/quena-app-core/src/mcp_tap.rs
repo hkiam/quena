@@ -427,6 +427,7 @@ impl AppCore {
         d.summary.state = SessionState::Done;
         // Times from another process's file: never before the epoch, never ending before the start.
         let t0 = x.t0.max(0);
+        d.summary.started_at = t0;
         d.timers.client_begin_request = Some(t0);
         d.timers.client_done_response = Some(x.t1.max(t0));
         if let Some(h) = header {

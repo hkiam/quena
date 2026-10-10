@@ -19,6 +19,8 @@ model call becomes readable, and Quena puts the calls of one agent run together.
 - **[Quena's MCP server](mcp.md)**: the other way round. An agent reads the capture through
   Quena's own MCP server and, if you allow it, controls Quena.
 
+![The Agents panel with a Claude Code run, its subagent, hints where tokens go to waste and the turns](img/agents.png)
+
 ## Terms
 
 The agent pages use these words with one meaning each:

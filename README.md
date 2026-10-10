@@ -216,6 +216,10 @@ a run and replay against it, and compare two runs side by side. OpenAI, Anthropi
 Vertex AI, Amazon Bedrock, Ollama and OpenAI-compatible APIs are recognised; everything stays
 on your machine. Details in the [manual](https://hkiam.github.io/quena/agents-overview/).
 
+<p align="center">
+<img src="docs/screenshots/agents.png" alt="The Agents panel: a Claude Code run with its subagent, hints where tokens go to waste and the turns with a side call, a cache miss and an MCP tool call" width="920">
+</p>
+
 ---
 
 ## Features

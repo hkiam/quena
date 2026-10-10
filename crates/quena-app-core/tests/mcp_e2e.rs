@@ -125,6 +125,7 @@ fn stdio_recordings_become_sessions() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[1].mcp, "tools/call add_note");
     assert_eq!(rows[1].url, "/tools/call");
+    assert_eq!((rows[1].started_at, rows[1].duration_ms), (1791622717627519, Some(27)), "the time of the exchange, not of reading it");
     assert!(std::fs::read_to_string(taps.join("notes-1.jsonl.read")).unwrap().trim().parse::<u64>().unwrap() > 0, "the read position is kept");
     core.shutdown();
 }
