@@ -153,6 +153,10 @@ enum Seg {
 /// Tags agents put around text they add: its kind.
 const TAGS: &[(&str, Seg)] = &[
     ("system-reminder", Seg::Reminder),
+    ("multi_agent_mode", Seg::Reminder),
+    ("recommended_plugins", Seg::Context),
+    ("apps_instructions", Seg::Context),
+    ("plugins_instructions", Seg::Context),
     ("local-command-caveat", Seg::Reminder),
     ("command-message", Seg::Reminder),
     ("current_time_reminder", Seg::Reminder),
@@ -574,7 +578,7 @@ impl Digest {
             request_id: resp.and_then(|r| r.headers.get("request-id").or_else(|| r.headers.get("x-request-id"))).map(str::to_string),
             prev_request: attr("cc_prev_req"),
             response_id: call.response_id.clone(),
-            prev_response: param("previous_response_id"),
+            prev_response: param("previous_response_id").or_else(|| param("previous_message_id")),
             system: call.system.iter().map(|s| hash_text(s)).collect(),
             tools: call.tools.iter().map(|t| (t.name.clone(), t.hash, t.tokens)).collect(),
             settings,
@@ -726,7 +730,7 @@ pub fn breakdown(call: &LlmCall) -> Breakdown {
     let fixed_est: u64 = acc.iter().filter(|((c, _), _)| fixed(c)).map(|(_, (e, _))| e).sum();
     // History the provider keeps (`previous_response_id`): the reported input is far more than
     // the request carries. It shows as a slice of its own instead of inflating the others.
-    let server_side = call.params.iter().any(|(k, _)| k == "previous_response_id");
+    let server_side = call.params.iter().any(|(k, _)| k == "previous_response_id" || k == "previous_message_id");
     let mut server = 0;
     let scale = match actual {
         Some(a) if server_side && a > estimated.saturating_mul(3) / 2 => {
@@ -788,15 +792,22 @@ fn common_prefix(a: &[u64], b: &[u64]) -> usize {
 
 fn diff(prev: Option<&Digest>, cur: &Digest) -> TurnDiff {
     let Some(p) = prev else { return TurnDiff { kind: "first", added: cur.messages.len(), ..Default::default() } };
-    let common = common_prefix(&p.messages, &cur.messages);
-    let kind = if common == p.messages.len() && common == cur.messages.len() {
+    // A call that names the response it continues (OpenAI `previous_response_id`, Claude Code's
+    // thread) carries only what is new: it appends all of its messages, and a system prompt or
+    // tools it leaves out are the ones the provider keeps.
+    let threaded = cur.prev_response.is_some();
+    let common = if threaded { 0 } else { common_prefix(&p.messages, &cur.messages) };
+    let kind = if threaded {
+        if cur.messages.is_empty() { "same" } else { "append" }
+    } else if common == p.messages.len() && common == cur.messages.len() {
         "same"
     } else if common == p.messages.len() {
         "append"
     } else {
         "changed"
     };
-    let pn: Vec<&String> = p.tools.iter().map(|t| &t.0).collect();
+    let keeps_tools = threaded && cur.tools.is_empty();
+    let pn: Vec<&String> = if keeps_tools { vec![] } else { p.tools.iter().map(|t| &t.0).collect() };
     let cn: Vec<&String> = cur.tools.iter().map(|t| &t.0).collect();
     let pset: HashSet<&String> = pn.iter().copied().collect();
     let cset: HashSet<&String> = cn.iter().copied().collect();
@@ -813,8 +824,8 @@ fn diff(prev: Option<&Digest>, cur: &Digest) -> TurnDiff {
         kind,
         at: (kind == "changed").then_some(common),
         added: cur.messages.len() - common,
-        dropped: p.messages.len() - common,
-        system_changed: p.system != cur.system,
+        dropped: if threaded { 0 } else { p.messages.len() - common },
+        system_changed: p.system != cur.system && !(threaded && cur.system.is_empty()),
         tools_added: cn.iter().filter(|n| !pset.contains(*n)).map(|n| n.to_string()).collect(),
         tools_removed: pn.iter().filter(|n| !cset.contains(*n)).map(|n| n.to_string()).collect(),
         tools_changed: cur.tools.iter().filter(|t| phash.get(t.0.as_str()).is_some_and(|h| *h != t.1)).map(|t| t.0.clone()).collect(),
@@ -1302,7 +1313,11 @@ fn summary_of(b: &Built, ci: usize, turns: &[Turn], prices: &llm::PriceList) -> 
     let last_input = main_last.usage.map(|u| u.input).unwrap_or(main_last.est);
     ConvSummary {
         key: key_text(c.key),
-        title: if first.prompt.is_empty() { first.model.clone() } else { snippet(&first.prompt, 100) },
+        // The first prompt of the run (a call that only warms up the cache has none).
+        title: match ds.iter().find(|d| !d.prompt.is_empty() && !d.variant) {
+            Some(d) => snippet(&d.prompt, 100),
+            None => first.model.clone(),
+        },
         agent: first.agent.clone(),
         provider: first.provider.clone(),
         models,
@@ -1641,7 +1656,7 @@ impl AppCore {
         // The newest call of the main line that can be read carries the whole history.
         let mut main: Vec<&Arc<Digest>> = c.digests.iter().filter(|d| !c.side.contains(&d.id)).collect();
         main.sort_by_key(|d| (d.started, d.id));
-        let last = main.iter().rev().find_map(|d| self.llm_peek(d.id).map(|x| x.1));
+        let last = main.iter().rev().find_map(|d| self.full_call(c, d));
         let (hints, breakdown) = match &last {
             Some(call) => (hints(call, c, &turns, summary.window), Some(breakdown(call))),
             None => (vec![], None),
@@ -1649,6 +1664,44 @@ impl AppCore {
         let mut children: Vec<String> = b.parent.iter().filter(|(_, p)| **p == ci).map(|(k, _)| key_text(b.convs[*k].key)).collect();
         children.sort();
         Some(ConvDetail { summary, turns, hints, breakdown, children })
+    }
+
+    /// Call `d` with the whole history it stands on. A call that continues a thread or a
+    /// stored response carries only what is new: the history is put together from the calls
+    /// before it (each one's messages and answer), the system prompt and tools from the latest
+    /// that sent them.
+    fn full_call(&self, c: &Conv, d: &Arc<Digest>) -> Option<LlmCall> {
+        let (_, last) = self.llm_peek(d.id)?;
+        if d.prev_response.is_none() {
+            return Some(last);
+        }
+        let mut chain = vec![d.clone()];
+        while let Some(p) = chain.last().filter(|x| x.prev_response.is_some()).and_then(|x| c.pred_of(x.id)) {
+            if chain.len() >= 500 {
+                break;
+            }
+            chain.push(p.clone());
+        }
+        chain.reverse();
+        let mut full = LlmCall { params: vec![], ..last.clone() };
+        full.messages.clear();
+        let (mut system, mut tools) = (Vec::new(), Vec::new());
+        for x in &chain {
+            let call = if x.id == d.id { last.clone() } else { self.llm_peek(x.id)?.1 };
+            if !call.system.is_empty() {
+                system = call.system.clone();
+            }
+            if !call.tools.is_empty() {
+                tools = call.tools.clone();
+            }
+            full.messages.extend(call.messages);
+            if x.id != d.id && !call.output.is_empty() {
+                full.messages.push(llm::Message { role: "assistant".into(), parts: call.output });
+            }
+        }
+        full.system = system;
+        full.tools = tools;
+        Some(full)
     }
 
     /// Two conversations side by side.
@@ -1712,6 +1765,15 @@ impl AppCore {
         };
         let c = &built.convs[ci];
         let cur = c.get(id)?.clone();
+        // A call in a thread: its context is the whole history it stands on.
+        let (b, window) = match cur.prev_response.is_some().then(|| self.full_call(c, &cur)).flatten() {
+            Some(full) => {
+                let b = breakdown(&full);
+                let window = window_of(&full.model, b.actual.unwrap_or(0), &self.llm_prices());
+                (b, window)
+            }
+            None => (b, window),
+        };
         let pos = c.digests.iter().position(|d| d.id == id).unwrap_or(0);
         let prev = c.pred_of(id).cloned();
         let df = diff(prev.as_deref(), &cur);
@@ -2088,5 +2150,34 @@ mod tests {
         assert!(ch.subagent);
         let b = build(&[p, ch]);
         assert_eq!(b.parent.get(&b.conv_of[&2]), Some(&b.conv_of[&1]));
+    }
+
+    #[test]
+    fn claude_code_threads_are_one_conversation() {
+        // Claude Code's message threads: later calls carry only the new messages and name the
+        // answer they continue; system prompt and tools stay with the provider.
+        let mut c1 = call("You are a Claude agent.", vec![msg("user", vec![text("Read stats.py and find the bug in average().")])], 21_556, 11_054);
+        c1.params.push(("thread".into(), "create".into()));
+        c1.output = vec![use_tool("t1", "Read", "{}")];
+        c1.response_id = Some("msg_1".into());
+        let mut c2 = call("", vec![msg("user", vec![result("t1", "def average(values): ..."), text("Tool loaded.")])], 22_004, 21_554);
+        c2.system.clear();
+        c2.tools.push(tool("mcp__notes__add_note", 90));
+        c2.params = vec![("thread".into(), "continue".into()), ("previous_message_id".into(), "msg_1".into())];
+        c2.output = vec![use_tool("t2", "mcp__notes__add_note", "{}")];
+        c2.response_id = Some("msg_2".into());
+        let mut c3 = call("", vec![msg("user", vec![result("t2", "added")])], 22_170, 22_002);
+        c3.system.clear();
+        c3.tools.clear();
+        c3.params = vec![("thread".into(), "continue".into()), ("previous_message_id".into(), "msg_2".into())];
+        let b = build(&[session(1, 0, "s", &c1), session(2, 5, "s", &c2), session(3, 9, "s", &c3)]);
+        assert_eq!(b.convs.len(), 1, "one run");
+        let turns = turns_of(&b.convs[0]);
+        let kinds: Vec<&str> = turns.iter().map(|t| t.diff.kind).collect();
+        assert_eq!(kinds, ["first", "append", "append"]);
+        assert!(turns.iter().all(|t| !t.diff.system_changed && t.diff.tools_removed.is_empty()), "kept by the provider: {:?}", turns.iter().map(|t| &t.diff).collect::<Vec<_>>());
+        assert_eq!(turns[1].diff.tools_added, ["mcp__notes__add_note"]);
+        assert_eq!(turns[2].diff.added, 1);
+        assert!(turns.iter().all(|t| t.cache.is_empty()), "{:?}", turns.iter().map(|t| &t.cache).collect::<Vec<_>>());
     }
 }

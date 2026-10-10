@@ -7,6 +7,29 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Added
+- LLM calls over a WebSocket: Codex sends OpenAI Responses calls over a WebSocket to
+  `…/responses`; each `response.create` and its events become a session of their own next to
+  the WebSocket (flag `x-quena-ws-call`), read while it is open, so Codex runs show in the
+  Agents panel again.
+- The WebSocket view shows messages compressed with `permessage-deflate` inflated (browsers
+  and most clients negotiate it); before, they showed as bytes.
+- Claude Code's message threads (`thread.previous_message_id`, Claude Code 2.1.2xx): calls
+  that carry only their new messages are linked into one conversation, count as `+n
+  messages`, and hints and the context map use the history put together from the calls
+  before them.
+
+### Fixed
+- WebSocket upgrades to servers that also speak HTTP/2 failed with 405: the upgrade went out
+  over a pooled HTTP/2 connection, where it does not exist. It now always uses HTTP/1.1
+  (Codex fell back to plain requests after several failed attempts).
+- Codex 0.15x: tools offered as an `additional_tools` input item (namespaces of tools) are
+  recognised, and the item no longer pushes Codex's system prompt into the messages; tool
+  calls are read from the stream's items when the final event carries no output; blocks Codex
+  adds (`<recommended_plugins>`, `<apps_instructions>` …) do not count as the user's prompt; a
+  call that only warms the cache no longer names the conversation; chatgpt.com is named
+  *OpenAI (ChatGPT)*.
+
 ## [0.2.0] — 2026-10-10
 
 ### Highlights

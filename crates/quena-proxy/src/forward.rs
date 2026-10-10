@@ -679,9 +679,12 @@ pub(crate) async fn send_upstream_as(
         d.summary.state = SessionState::AwaitingResponse;
     });
     let up = shared.upstream();
+    // An upgrade (WebSocket) exists only in HTTP/1.1: never over a negotiated HTTP/2
+    // connection, where the server would see a plain GET.
     let client = match force_h2 {
         Some(true) => &up.http2,
         Some(false) => &up.http1,
+        None if upgrade => &up.http1,
         None => &up.client,
     };
     let sent = now_us();

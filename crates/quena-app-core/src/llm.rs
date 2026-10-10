@@ -154,7 +154,8 @@ pub struct LlmCall {
     /// `metadata.user_id` as sent (Claude Code: JSON with the session id).
     #[serde(skip)]
     pub user: Option<String>,
-    /// The id the response got (OpenAI Responses), which a later `previous_response_id` names.
+    /// The id the response got (OpenAI Responses, Anthropic's message id), which a later
+    /// `previous_response_id` (Claude Code: `thread.previous_message_id`) names.
     #[serde(skip)]
     pub response_id: Option<String>,
 }
@@ -179,6 +180,8 @@ fn path_of(url: &str) -> String {
 fn provider_of(host: &str, api: Api) -> String {
     let known: &[(&str, &str)] = &[
         ("api.openai.com", "OpenAI"),
+        // Codex signed in with ChatGPT.
+        ("chatgpt.com", "OpenAI (ChatGPT)"),
         ("openai.azure.com", "Azure OpenAI"),
         ("cognitiveservices.azure.com", "Azure OpenAI"),
         ("services.ai.azure.com", "Azure AI"),
@@ -435,6 +438,8 @@ fn responses_request(v: &Value, call: &mut LlmCall) {
                         call.messages.push(Message { role: "tool".into(), parts: vec![p] });
                     }
                     Some("reasoning") => call.messages.push(Message { role: "assistant".into(), parts: vec![Part { kind: "thinking".into(), text: "[reasoning]".into(), ..Default::default() }] }),
+                    // Codex offers its tools as an input item (namespaces of tools).
+                    Some("additional_tools") => responses_tools(it.get("tools"), call),
                     Some("message") | None => {
                         let role = s(it, "role").unwrap_or_else(|| "user".into());
                         let parts = openai_content(it.get("content").unwrap_or(&Value::Null), &mut call.notes);
@@ -455,12 +460,21 @@ fn responses_request(v: &Value, call: &mut LlmCall) {
         }
         _ => {}
     }
-    for t in v.get("tools").and_then(|t| t.as_array()).into_iter().flatten() {
-        call.tools.push(tool_def(s(t, "name").unwrap_or_else(|| s(t, "type").unwrap_or_default()), s(t, "description").unwrap_or_default(), t));
-    }
+    responses_tools(v.get("tools"), call);
     call.params = params(v, &["temperature", "top_p", "max_output_tokens", "tool_choice", "previous_response_id", "store", "prompt_cache_key", "prompt_cache_retention"]);
     if let Some(r) = v.get("reasoning").and_then(|r| r.get("effort")) {
         call.params.push(("reasoning.effort".into(), r.as_str().unwrap_or_default().into()));
+    }
+}
+
+/// Tool definitions of the Responses API; a `namespace` holds tools of its own.
+fn responses_tools(tools: Option<&Value>, call: &mut LlmCall) {
+    for t in tools.and_then(|t| t.as_array()).into_iter().flatten() {
+        if s(t, "type").as_deref() == Some("namespace") && t.get("tools").is_some() {
+            responses_tools(t.get("tools"), call);
+        } else {
+            call.tools.push(tool_def(s(t, "name").unwrap_or_else(|| s(t, "type").unwrap_or_default()), s(t, "description").unwrap_or_default(), t));
+        }
     }
 }
 
@@ -559,6 +573,16 @@ fn anthropic_request(v: &Value, call: &mut LlmCall) {
     }
     call.cache_marks = cache_marks(v);
     call.params = params(v, &["max_tokens", "temperature", "top_p", "top_k", "tool_choice", "stop_sequences"]);
+    // Claude Code's message threads: a call that continues one carries only what is new; the
+    // provider keeps the system prompt, tools and history.
+    if let Some(t) = v.get("thread") {
+        if let Some(ty) = s(t, "type") {
+            call.params.push(("thread".into(), ty));
+        }
+        if let Some(prev) = s(t, "previous_message_id") {
+            call.params.push(("previous_message_id".into(), prev));
+        }
+    }
     if let Some(t) = v.get("thinking").filter(|t| !t.is_null()) {
         call.params.push(("thinking".into(), t.to_string()));
     }
@@ -750,7 +774,17 @@ fn responses_stream(text: &str, call: &mut LlmCall) {
     // The final event carries the whole response.
     if let Some(done) = events.iter().rev().filter_map(|(_, d)| serde_json::from_str::<Value>(d).ok()).find(|v| matches!(s(v, "type").as_deref(), Some("response.completed" | "response.incomplete" | "response.failed"))) {
         if let Some(r) = done.get("response") {
-            responses_response(r, call);
+            // Some backends (Codex's) leave the output out of the final event: the items it
+            // announced one by one stand in.
+            let empty = r.get("output").and_then(|o| o.as_array()).is_none_or(|o| o.is_empty());
+            let items: Vec<Value> = if empty { events.iter().filter_map(|(_, d)| serde_json::from_str::<Value>(d).ok()).filter(|v| s(v, "type").as_deref() == Some("response.output_item.done")).filter_map(|v| v.get("item").cloned()).collect() } else { vec![] };
+            if !items.is_empty() {
+                let mut r = r.clone();
+                r["output"] = Value::Array(items);
+                responses_response(&r, call);
+            } else {
+                responses_response(r, call);
+            }
             if let Some(e) = r.get("error").filter(|e| !e.is_null()) {
                 call.error = Some(pretty(e));
             }
@@ -772,6 +806,7 @@ fn responses_stream(text: &str, call: &mut LlmCall) {
 }
 
 fn anthropic_response(v: &Value, call: &mut LlmCall) {
+    call.response_id = s(v, "id");
     call.output.extend(anthropic_blocks(v.get("content").unwrap_or(&Value::Null), &mut call.notes));
     call.stop_reason = s(v, "stop_reason");
     if let Some(u) = v.get("usage") {
@@ -799,6 +834,7 @@ fn anthropic_stream(text: &str, call: &mut LlmCall) {
             Some("message_start") => {
                 if let Some(m) = v.get("message") {
                     call.model = s(m, "model").unwrap_or_default();
+                    call.response_id = s(m, "id");
                     if let Some(u) = m.get("usage") {
                         call.usage = Some(anthropic_usage(u, None));
                     }
@@ -1996,5 +2032,35 @@ mod tests {
         assert_eq!(c.error.as_deref(), Some("throttlingException: Too many requests"));
         let c = parse("POST", "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-pro-v1%3A0/converse", req, Some((br#"{"message":"The provided model identifier is invalid."}"#, "application/json")), &prices).unwrap();
         assert_eq!(c.error.as_deref(), Some("The provided model identifier is invalid."));
+    }
+
+    #[test]
+    fn codex_tools_as_an_input_item_and_output_items_in_the_stream() {
+        let prices = PriceList::default();
+        let req = br#"{"model":"gpt-5.6-terra","input":[
+            {"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec","description":"Run JavaScript"},{"type":"function","name":"wait","description":"Wait","parameters":{}}]},{"type":"namespace","name":"collaboration","tools":[{"type":"function","name":"spawn_agent","description":"Spawn","parameters":{}}]}]},
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"You are Codex."}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"<recommended_plugins>\n- Dropbox\n</recommended_plugins>"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"What is wrong with median()?"}]}],"stream":true,"store":false}"#;
+        let sse = concat!(
+            "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Checking.\"}]}}\n\n",
+            "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"custom_tool_call\",\"name\":\"exec\",\"call_id\":\"c1\",\"input\":\"await tools.exec_command({})\"}}\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output\":[],\"usage\":{\"input_tokens\":15000,\"output_tokens\":80}}}\n\n",
+        );
+        let c = parse("POST", "https://chatgpt.com/backend-api/codex/responses", req, Some((sse.as_bytes(), "text/event-stream")), &prices).unwrap();
+        assert_eq!(c.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["exec", "wait", "spawn_agent"]);
+        assert_eq!(c.system, ["You are Codex."], "the tools item does not end the system prompt");
+        assert_eq!(c.messages.len(), 2);
+        assert_eq!(c.output.iter().map(|p| (p.kind.as_str(), p.name.as_deref())).collect::<Vec<_>>(), [("text", None), ("toolCall", Some("exec"))]);
+        assert_eq!(c.usage.unwrap().input, 15_000);
+    }
+
+    #[test]
+    fn claude_code_thread_fields() {
+        let req = br#"{"model":"claude-opus-5-5","messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}],"thread":{"type":"continue","previous_message_id":"msg_1"},"stream":true}"#;
+        let sse = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_2\",\"model\":\"claude-opus-5-5\",\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+        let c = parse("POST", "https://api.anthropic.com/v1/messages?beta=true", req, Some((sse.as_bytes(), "text/event-stream")), &PriceList::default()).unwrap();
+        assert_eq!(c.response_id.as_deref(), Some("msg_2"));
+        assert!(c.params.contains(&("previous_message_id".to_string(), "msg_1".to_string())) && c.params.contains(&("thread".to_string(), "continue".to_string())));
     }
 }

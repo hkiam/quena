@@ -160,7 +160,11 @@ Each call is linked to the call it continues:
 
 1. the request Claude Code names as its previous one (in its attribution block), when the
    two share messages or the same group (below);
-2. the response that a `previous_response_id` names (OpenAI Responses);
+2. the response that a `previous_response_id` names (OpenAI Responses), or the message that
+   Claude Code's `thread.previous_message_id` names (its message threads); such a call carries
+   only its new messages, so it counts as `+n messages`, a system prompt or tools it leaves
+   out count as unchanged, and the history for the hints and the context map is put together
+   from the calls before it;
 3. else, among earlier calls of the same **group**, the one whose messages this call carries
    furthest. The latest call it carries whole wins; a call that shares only a start must
    share at least half of that call's messages.

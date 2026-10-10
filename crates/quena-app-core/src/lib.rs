@@ -10,6 +10,7 @@ pub mod bodies;
 pub mod capdiff;
 pub mod collections;
 pub mod ws;
+pub mod ws_llm;
 pub mod compose;
 pub mod conv_export;
 pub mod bypass;
@@ -188,6 +189,8 @@ pub struct AppCore {
     pub(crate) mcp_names: Mutex<mcp_traffic::McpNames>,
     /// What was read of the stdio MCP recordings.
     pub(crate) mcp_taps: Mutex<mcp_tap::TapState>,
+    /// WebSockets read for LLM calls (OpenAI Responses over WebSocket).
+    pub(crate) ws_llm: Mutex<ws_llm::WsLlmState>,
     /// Result tokens and failure of MCP tool calls, by (capture numbering, session).
     pub(crate) mcp_results: Mutex<std::collections::HashMap<(u64, SessionId), (u64, bool)>>,
     /// Sessions looked at for missing MCP flags.
@@ -243,6 +246,7 @@ impl AppCore {
             llm_building: Mutex::new(()),
             mcp_names: Mutex::new(mcp_traffic::McpNames::default()),
             mcp_taps: Mutex::new(mcp_tap::TapState::default()),
+            ws_llm: Mutex::new(ws_llm::WsLlmState::default()),
             mcp_results: Mutex::new(std::collections::HashMap::new()),
             mcp_checked: Mutex::new(HashSet::new()),
             llm_prices: Mutex::new(None),
@@ -426,6 +430,7 @@ impl AppCore {
                         last_trim = Instant::now();
                         core.autosave_tick();
                         core.mcp_tap_tick();
+                        core.ws_llm_tick();
                         let keep = core.settings.read().keep_sessions;
                         if keep > 0 {
                             let ids = cap.index.ids_beyond(keep);

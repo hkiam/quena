@@ -10,7 +10,7 @@ of one agent run fit together is on [Agent conversations](agents.md).
 | API | Recognised by |
 |---|---|
 | OpenAI Chat Completions and every OpenAI-compatible API (Azure OpenAI, Mistral, Groq, OpenRouter, DeepSeek, xAI, Together, Fireworks, LM Studio, vLLM, LiteLLM …) | `POST …/chat/completions` |
-| OpenAI Responses | `POST …/responses` |
+| OpenAI Responses | `POST …/responses`, and over a WebSocket to `…/responses` (Codex): see below |
 | Anthropic Messages | `POST …/v1/messages` |
 | Google Gemini and Vertex AI | `POST …:generateContent`, `…:streamGenerateContent` |
 | Ollama | `POST …/api/chat`, `…/api/generate` |
@@ -18,6 +18,19 @@ of one agent run fit together is on [Agent conversations](agents.md).
 | Claude on Google Vertex AI | `POST …/publishers/anthropic/models/…:rawPredict`, `…:streamRawPredict` (Anthropic's format) |
 | Claude on Amazon Bedrock | `POST bedrock-runtime…/model/…anthropic.…/invoke`, `…/invoke-with-response-stream` (Anthropic's format, streamed in AWS's event stream) |
 | Amazon Bedrock Converse (any model) | `POST bedrock-runtime…/model/…/converse`, `…/converse-stream` |
+
+**Over a WebSocket.** Codex sends its calls over a WebSocket to `…/responses` (OpenAI's
+Responses API with `responses_websockets`): each `response.create` it sends, with the events
+the server answers up to `response.completed`, becomes a session of its own next to the
+WebSocket, a `POST` with the request as body and the events as a stream (comment *Over
+WebSocket #12 (call 3)*, flag `x-quena-ws-call`). They are made while the WebSocket is open,
+so the LLM view, conversations and costs work as for calls over HTTP. Messages compressed with
+`permessage-deflate` are read inflated.
+
+**Threads and stored responses.** A call that continues a server-side thread carries only
+what is new: Claude Code's message threads (`thread` with `previous_message_id`) and OpenAI's
+`previous_response_id`. Quena links it to the call whose answer it names and puts the whole
+history together from the calls before it for hints and the context map.
 
 A request counts only when its JSON body carries what that API needs (`messages`,
 `contents`, `input` …), so another application's `/api/chat` is not taken for Ollama. HTTPS
