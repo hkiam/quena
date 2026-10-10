@@ -505,7 +505,10 @@ impl Capture {
         if let Some(l) = self.live(id) {
             return Some(l.detail());
         }
-        if let Some(d) = self.cache.lock().get(id) {
+        // The cache's guard ends here: the index is asked without it (a list filter reads
+        // details while it holds the index).
+        let hit = self.cache.lock().get(id);
+        if let Some(d) = hit {
             let mut d = (*d).clone();
             if let Some(s) = self.index.get(id) {
                 d.summary = s; // marks/comments live in the index
@@ -528,7 +531,8 @@ impl Capture {
         if let Some(l) = self.live(id) {
             return Some(l.detail());
         }
-        if let Some(d) = self.cache.lock().get(id) {
+        let hit = self.cache.lock().get(id);
+        if let Some(d) = hit {
             return Some((*d).clone());
         }
         let d = Arc::new(self.db.get(id).ok().flatten()?);

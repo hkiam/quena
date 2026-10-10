@@ -514,14 +514,17 @@ impl AppCore {
     }
 
     /// How many sessions each filter would show (saved filters' counters); `Err`: it does not
-    /// compile.
+    /// compile, or it tests headers or bodies (reading every session's details is not done in
+    /// passing).
     pub fn count_filters(&self, list: Vec<FilterSettings>) -> Vec<std::result::Result<usize, String>> {
         let cap = self.capture();
-        let d = details::CaptureDetails::of(&cap);
         list.into_iter()
             .take(50)
             .map(|fs| {
-                let f = Filter::compile(&FilterSettings { enabled: true, ..fs }).map_err(|e| e.to_string())?.with_details(d.clone());
+                if quena_query::expr::parse(&fs.expression).is_ok_and(|e| e.needs_details()) {
+                    return Err("tests headers or bodies: not counted".to_string());
+                }
+                let f = Filter::compile(&FilterSettings { enabled: true, ..fs }).map_err(|e| e.to_string())?;
                 Ok(cap.index.find_all(|s| f.matches(s)).len())
             })
             .collect()
@@ -610,8 +613,7 @@ impl AppCore {
         let cap = self.capture();
         match cmd {
             Command::Select(e) => {
-                let d = details::CaptureDetails::of(&cap);
-                let ids = cap.index.find(|s| e.eval_with(s, Some(&*d)));
+                let ids = details::matching(&cap, &e, true, |_| true);
                 let n = ids.len();
                 QuickExecResult { select: Some(ids), message: Some(format!("{n} session(s) selected")), ..Default::default() }
             }
@@ -628,8 +630,8 @@ impl AppCore {
                 QuickExecResult::msg("All sessions removed")
             }
             Command::KeepOnly(e) => {
-                let d = details::CaptureDetails::of(&cap);
-                let ids: HashSet<SessionId> = cap.index.find_all(|s| !e.eval_with(s, Some(&*d))).into_iter().collect();
+                let keep: HashSet<SessionId> = details::matching(&cap, &e, false, |_| true).into_iter().collect();
+                let ids: HashSet<SessionId> = cap.index.find_all(|s| !keep.contains(&s.id)).into_iter().collect();
                 let n = ids.len();
                 cap.remove(&ids);
                 QuickExecResult::msg(format!("{n} session(s) removed"))
@@ -728,6 +730,10 @@ impl AppCore {
         if let Some(e) = self.engine() {
             e.capture_changed(self);
         }
+        // Stored header column values may name other headers (or none): filled in again.
+        if !quena_model::header_columns().is_empty() || cap.index.find_all(|s| !s.header_values.is_empty()).first().is_some() {
+            self.refresh_header_columns();
+        }
     }
 
     /// Delete all crashed captures (recovery dialog "Discard all").
@@ -791,8 +797,7 @@ impl AppCore {
     pub fn remove_where(&self, expr: &str) -> Result<usize> {
         let e = quena_query::expr::parse(expr).map_err(|e| anyhow!("{e}"))?;
         let cap = self.capture();
-        let d = details::CaptureDetails::of(&cap);
-        let ids: HashSet<SessionId> = cap.index.find_all(|s| cap.live(s.id).is_none() && e.eval_with(s, Some(&*d))).into_iter().collect();
+        let ids: HashSet<SessionId> = details::matching(&cap, &e, false, |s| cap.live(s.id).is_none()).into_iter().collect();
         let n = ids.len();
         cap.remove(&ids);
         Ok(n)

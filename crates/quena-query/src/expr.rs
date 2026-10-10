@@ -111,6 +111,17 @@ pub trait Details: Send + Sync {
     fn headers(&self, id: SessionId, response: bool) -> Option<Vec<(String, String)>>;
     /// The start of the decoded body as text.
     fn body(&self, id: SessionId, response: bool) -> Option<String>;
+    /// Whether the details of `id` are in memory (a session still being recorded): then a list
+    /// filter reads them at once, else in the background.
+    fn at_hand(&self, _id: SessionId) -> bool {
+        true
+    }
+    /// The current summary of `id` (for evaluating in the background).
+    fn summary(&self, _id: SessionId) -> Option<SessionSummary> {
+        None
+    }
+    /// Results for these sessions are ready: the list should look at them again.
+    fn ready(&self, _ids: &[SessionId]) {}
 }
 
 impl Field {
@@ -199,7 +210,11 @@ impl Expr {
             Expr::Not(a) => !a.eval_with(s, d),
             Expr::UrlContains(t) => s.full_url().to_lowercase().contains(t.as_str()),
             Expr::Cmp(f, op, v) => eval_cmp(*f, *op, v, s),
-            Expr::Detail(p, op, v) => d.and_then(|d| part_text(p, s.id, d)).is_some_and(|t| text_cmp(&t, *op, v)),
+            Expr::Detail(p, op, v) => d.and_then(|d| part_values(p, s.id, d)).is_some_and(|vals| {
+                // A repeated header matches when one of its values does (or all of them joined);
+                // `!=` and `!~` when none does.
+                if matches!(op, Op::Ne | Op::NotContains) { vals.iter().all(|t| text_cmp(t, *op, v)) } else { vals.iter().any(|t| text_cmp(t, *op, v)) }
+            }),
         }
     }
 
@@ -214,33 +229,51 @@ impl Expr {
     }
 }
 
-fn header_value(h: &[(String, String)], name: &str) -> Option<String> {
-    let v: Vec<&str> = h.iter().filter(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str()).collect();
-    (!v.is_empty()).then(|| v.join(", "))
+/// The values of header `name` (each occurrence), with all of them joined by `, ` as well
+/// when there are several; empty when it is missing.
+fn header_values(h: &[(String, String)], name: &str) -> Vec<String> {
+    let v: Vec<String> = h.iter().filter(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone()).collect();
+    if v.len() > 1 {
+        let joined = v.join(", ");
+        return v.into_iter().chain([joined]).collect();
+    }
+    v
 }
 
-/// The text of a part; a missing header or cookie is empty (so `!= ""` tests presence).
-fn part_text(p: &Part, id: SessionId, d: &dyn Details) -> Option<String> {
+/// The values of a part to compare; a missing header or cookie is one empty value (so `!= ""`
+/// tests presence).
+fn part_values(p: &Part, id: SessionId, d: &dyn Details) -> Option<Vec<String>> {
+    let or_empty = |v: Vec<String>| if v.is_empty() { vec![String::new()] } else { v };
     Some(match p {
-        Part::ReqHeader(n) => header_value(&d.headers(id, false)?, n).unwrap_or_default(),
-        Part::ResHeader(n) => header_value(&d.headers(id, true).unwrap_or_default(), n).unwrap_or_default(),
-        Part::Header(n) => header_value(&d.headers(id, false).unwrap_or_default(), n).or_else(|| header_value(&d.headers(id, true).unwrap_or_default(), n)).unwrap_or_default(),
-        Part::Cookie(n) => {
-            let sent = header_value(&d.headers(id, false).unwrap_or_default(), "cookie").unwrap_or_default();
-            let found = sent.split(';').filter_map(|c| c.trim().split_once('=')).find(|(k, _)| k.trim() == n).map(|(_, v)| v.trim().to_string());
-            found
-                .or_else(|| {
-                    d.headers(id, true)
-                        .unwrap_or_default()
-                        .iter()
-                        .filter(|(h, _)| h.eq_ignore_ascii_case("set-cookie"))
-                        .filter_map(|(_, v)| v.split(';').next()?.split_once('=').filter(|(k, _)| k.trim() == n).map(|(_, v)| v.trim().to_string()))
-                        .next()
-                })
-                .unwrap_or_default()
+        Part::ReqHeader(n) => or_empty(header_values(&d.headers(id, false)?, n)),
+        Part::ResHeader(n) => or_empty(header_values(&d.headers(id, true).unwrap_or_default(), n)),
+        Part::Header(n) => {
+            let req = header_values(&d.headers(id, false).unwrap_or_default(), n);
+            or_empty(if req.is_empty() { header_values(&d.headers(id, true).unwrap_or_default(), n) } else { req })
         }
-        Part::ReqBody => d.body(id, false).unwrap_or_default(),
-        Part::ResBody => d.body(id, true).unwrap_or_default(),
+        Part::Cookie(n) => {
+            // Each `Cookie` header on its own (HTTP/2 may send several), split at `;`.
+            let sent: Vec<String> = d
+                .headers(id, false)
+                .unwrap_or_default()
+                .iter()
+                .filter(|(h, _)| h.eq_ignore_ascii_case("cookie"))
+                .flat_map(|(_, v)| v.split(';').filter_map(|c| c.trim().split_once('=')).filter(|(k, _)| k.trim() == n).map(|(_, v)| v.trim().to_string()).collect::<Vec<_>>())
+                .collect();
+            let found = if sent.is_empty() {
+                d.headers(id, true)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|(h, _)| h.eq_ignore_ascii_case("set-cookie"))
+                    .filter_map(|(_, v)| v.split(';').next()?.split_once('=').filter(|(k, _)| k.trim() == n).map(|(_, v)| v.trim().to_string()))
+                    .collect()
+            } else {
+                sent
+            };
+            or_empty(found)
+        }
+        Part::ReqBody => vec![d.body(id, false).unwrap_or_default()],
+        Part::ResBody => vec![d.body(id, true).unwrap_or_default()],
     })
 }
 
@@ -634,6 +667,8 @@ mod tests {
         assert!(yes("reqheader.x-api-version == 2"));
         assert!(yes("header.server == nginx"), "either side");
         assert!(yes("reqheader.accept == \"a, b\""), "repeated headers joined");
+        assert!(yes("reqheader.accept == b") && yes("reqheader.accept == a"), "or one of them");
+        assert!(!yes("reqheader.accept != a"), "!= when none is");
         assert!(yes("reqheader.authorization == \"\""), "missing is empty");
         assert!(yes("cookie.Lang == de") && yes("cookie.sid == abc") && !yes("cookie.lang == de"));
         assert!(yes("resbody ~ quota") && yes("reqbody ~= \"user=*\"") && !yes("resbody ~ ok"));

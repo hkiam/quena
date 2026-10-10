@@ -494,7 +494,10 @@ fn ip_of(addr: &str) -> String {
     if let Ok(a) = addr.parse::<std::net::SocketAddr>() {
         return a.ip().to_canonical().to_string();
     }
-    addr.trim_start_matches('[').split(']').next().unwrap_or(addr).rsplit_once(':').filter(|(h, _)| !h.contains(':')).map(|(h, _)| h).unwrap_or(addr).to_string()
+    if let Some(v6) = addr.strip_prefix('[') {
+        return v6.split(']').next().unwrap_or(v6).to_string();
+    }
+    addr.rsplit_once(':').filter(|(h, _)| !h.contains(':')).map(|(h, _)| h).unwrap_or(addr).to_string()
 }
 
 fn protocol_label(url: &str, version: HttpVersion, kind: SessionKind) -> String {
@@ -543,6 +546,15 @@ fn caching_summary(h: &Headers) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ip_of_addresses() {
+        assert_eq!(ip_of("10.0.0.1:443"), "10.0.0.1");
+        assert_eq!(ip_of("[2001:db8::1]:443"), "2001:db8::1");
+        assert_eq!(ip_of("[::1]"), "::1");
+        assert_eq!(ip_of("::1"), "::1");
+        assert_eq!(ip_of("host.example:80"), "host.example");
+    }
 
     #[test]
     fn split() {

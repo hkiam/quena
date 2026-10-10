@@ -42,9 +42,21 @@ fn filters_on_details_and_header_columns() {
     assert_eq!((r.tls.as_str(), r.remote_ip.as_str(), r.http_version.as_str()), ("TLSv1.3", "10.0.0.9", "HTTP/2"));
     assert_eq!(core.capture().index.get(2).unwrap().remote_ip, "2001:db8::1");
 
+    // Details of stored sessions are looked at in the background: the list settles shortly.
     let count = |expr: &str| {
         core.set_filters(FilterSettings { enabled: true, expression: expr.into(), ..Default::default() }).unwrap();
-        visible(&core)
+        // Unchanged over five looks (100 ms) after the worker had its time.
+        let (mut last, mut same) = (usize::MAX, 0);
+        for _ in 0..200 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let n = visible(&core);
+            same = if n == last { same + 1 } else { 0 };
+            last = n;
+            if same >= 5 {
+                break;
+            }
+        }
+        last
     };
     assert_eq!(count("reqheader.x-api-version == 2"), 1);
     assert_eq!(count("resheader.server ~= \"n*\" or resheader.server == envoy"), 2);

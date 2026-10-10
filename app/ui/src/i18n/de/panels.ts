@@ -421,4 +421,7 @@ export const panels: Record<string, string> = {
   "Text": "Text",
   "Header": "Header",
   "Name: value \u2014 a line starting with # is not sent": "Name: Wert \u2014 eine Zeile mit # am Anfang wird nicht gesendet",
+  "Replace filter?": "Filter ersetzen?",
+  "A filter named {name} exists. Replace it?": "Es gibt schon einen Filter {name}. Ersetzen?",
+  "A filter named {name} exists already": "Es gibt schon einen Filter {name}",
 };

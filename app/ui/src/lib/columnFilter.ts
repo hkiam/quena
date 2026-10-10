@@ -1,6 +1,7 @@
 // Column filters: a value typed for a list column becomes a clause of the filter expression
 // (`host ~ example`, `status >= 400`, `resheader.server == nginx`).
 import type { ColumnKey } from "../store";
+import type { FilterSettings } from "../api";
 
 type HeaderColumn = { response: boolean; name: string };
 
@@ -48,10 +49,11 @@ export function clause(field: string, input: string): string | null {
   if (op) v = v.slice(op.length).trim();
   if (!v && op !== "==" && op !== "!=") return null;
   if (op === "=") op = "==";
-  if (!op) op = NUMERIC.has(field) ? "==" : v.includes("*") || v.includes("?") ? "~=" : "~";
+  if (!op) op = NUMERIC.has(field) ? "==" : v.includes("*") ? "~=" : "~";
   const numeric = NUMERIC.has(field) && /^[0-9]+(\.[0-9]+)?([kmg]b?|ms|s|xx)?$/i.test(v);
-  // Typed in quotes: taken as it is (`""` for an empty value).
-  const quoted = v.length >= 2 && v.startsWith('"') && v.endsWith('"');
+  // Typed as one quoted string: taken as it is (`""` for an empty value); anything else in
+  // quotes (`"a" or true`) is quoted as a whole.
+  const quoted = /^"(?:[^"\\]|\\.)*"$/.test(v);
   const value = numeric || quoted ? v : `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   return `${field} ${op} ${value}`;
 }
@@ -68,4 +70,37 @@ export function filtersOn(expr: string, field: string | null): boolean {
   if (!field || !expr) return false;
   const f = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[\\s(!])${f}\\s*(==|!=|~=|=~|!~|<=|>=|<|>|~|=)`, "i").test(expr);
+}
+
+/** `f` with clause `c` added; a filter that is off starts over with only `c` (its other
+ * settings would come back on otherwise). */
+export function withClause(f: FilterSettings, c: string): FilterSettings {
+  if (f.enabled) return { ...f, expression: addClause(f.expression, c) };
+  return {
+    ...f,
+    enabled: true,
+    hostMode: "noFilter",
+    hosts: "",
+    processMode: "all",
+    processOnly: "",
+    hideProcesses: "",
+    urlShowOnly: "",
+    urlHide: "",
+    hideConnects: false,
+    hideSuccess: false,
+    hideNonSuccess: false,
+    hideAuth: false,
+    hideRedirects: false,
+    hideNotModified: false,
+    hideImages: false,
+    hideCss: false,
+    hideScripts: false,
+    hideFonts: false,
+    contentTypeShowOnly: "",
+    contentTypeHide: "",
+    minSize: null,
+    maxSize: null,
+    minDurationMs: null,
+    expression: c,
+  };
 }

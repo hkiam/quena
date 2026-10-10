@@ -43,12 +43,74 @@ pub struct Filter {
     details: Option<DetailsRef>,
 }
 
+/// Details for a filter: results for stored sessions are computed by a background thread and
+/// remembered, so the list (which evaluates its filter while it is locked) never reads storage.
 #[derive(Clone)]
-struct DetailsRef(Arc<dyn expr::Details>);
+struct DetailsRef {
+    d: Arc<dyn expr::Details>,
+    memo: Arc<Memo>,
+}
+
+struct Memo {
+    /// Results by session (also the last one of a session still being recorded).
+    done: std::sync::Mutex<std::collections::HashMap<quena_model::SessionId, bool>>,
+    queued: std::sync::Mutex<std::collections::HashSet<quena_model::SessionId>>,
+    /// To the worker; dropped with the last filter clone, which ends the worker.
+    tx: std::sync::mpsc::Sender<quena_model::SessionId>,
+}
 
 impl std::fmt::Debug for DetailsRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Details(..)")
+    }
+}
+
+impl DetailsRef {
+    fn new(d: Arc<dyn expr::Details>, e: Expr) -> DetailsRef {
+        let (tx, rx) = std::sync::mpsc::channel::<quena_model::SessionId>();
+        let memo = Arc::new(Memo { done: Default::default(), queued: Default::default(), tx });
+        let weak = Arc::downgrade(&memo);
+        let det = d.clone();
+        let _ = std::thread::Builder::new().name("quena-filter".into()).spawn(move || {
+            while let Ok(first) = rx.recv() {
+                // A batch: what is queued now.
+                let mut ids = vec![first];
+                while let Ok(id) = rx.try_recv() {
+                    ids.push(id);
+                    if ids.len() >= 512 {
+                        break;
+                    }
+                }
+                let Some(memo) = weak.upgrade() else { return };
+                let mut ready = Vec::with_capacity(ids.len());
+                for id in ids {
+                    let r = det.summary(id).is_some_and(|s| e.eval_with(&s, Some(&*det)));
+                    memo.done.lock().map(|mut m| m.insert(id, r)).ok();
+                    memo.queued.lock().map(|mut q| q.remove(&id)).ok();
+                    ready.push(id);
+                }
+                drop(memo);
+                det.ready(&ready);
+            }
+        });
+        DetailsRef { d, memo }
+    }
+
+    fn eval(&self, e: &Expr, s: &SessionSummary) -> bool {
+        // Recorded right now: the details are in memory.
+        if self.d.at_hand(s.id) {
+            let r = e.eval_with(s, Some(&*self.d));
+            self.memo.done.lock().map(|mut m| m.insert(s.id, r)).ok();
+            return r;
+        }
+        if let Some(r) = self.memo.done.lock().ok().and_then(|m| m.get(&s.id).copied()) {
+            return r;
+        }
+        // Not known yet: hidden until the worker has looked (the list then asks again).
+        if self.memo.queued.lock().is_ok_and(|mut q| q.insert(s.id)) {
+            let _ = self.memo.tx.send(s.id);
+        }
+        false
     }
 }
 
@@ -74,8 +136,8 @@ impl Filter {
 
     /// This filter, reading session details through `d` where its expression needs them.
     pub fn with_details(mut self, d: Arc<dyn expr::Details>) -> Filter {
-        if self.expr.as_ref().is_some_and(Expr::needs_details) {
-            self.details = Some(DetailsRef(d));
+        if let Some(e) = self.expr.as_ref().filter(|e| e.needs_details()) {
+            self.details = Some(DetailsRef::new(d, e.clone()));
         }
         self
     }
@@ -102,7 +164,11 @@ impl Filter {
             }
         }
         if let Some(e) = &self.expr {
-            if !e.eval_with(s, self.details.as_ref().map(|d| &*d.0)) {
+            let ok = match &self.details {
+                Some(d) => d.eval(e, s),
+                None => e.eval(s),
+            };
+            if !ok {
                 return false;
             }
         }

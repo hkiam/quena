@@ -874,8 +874,7 @@ fn matching_ids(core: &AppCore, filter: Option<&str>, since: SessionId) -> Resul
     let mut ids = match filter.map(str::trim).filter(|f| !f.is_empty()) {
         Some(f) => {
             let e = quena_query::expr::parse(f).map_err(|e| anyhow!("filter: {e}"))?;
-            let d = quena_app_core::details::CaptureDetails::of(&cap);
-            cap.index.find_all(|s| s.id > since && e.eval_with(s, Some(&*d)))
+            quena_app_core::details::matching(&cap, &e, false, |s| s.id > since)
         }
         None => cap.index.find_all(|s| s.id > since),
     };

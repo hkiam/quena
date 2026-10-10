@@ -1,7 +1,7 @@
 // Filters tab. Changes apply live (debounced).
 import { useEffect, useRef, useState } from "react";
 import { api, type FilterSettings } from "../api";
-import { get, promptText, say, set, useStore } from "../store";
+import { confirmAsk, get, promptText, say, set, useStore } from "../store";
 import { actions } from "../actions";
 import { t } from "../i18n";
 
@@ -29,15 +29,23 @@ function SavedFilters({ current, apply }: { current: FilterSettings; apply: (f: 
   const version = useStore((s) => s.listVersion);
   const [counts, setCounts] = useState<(number | string)[]>([]);
   const [pick, setPick] = useState("");
+  // Counted at most every 3 s while traffic changes the list (not only after it stops).
+  const lastCount = useRef(0);
   useEffect(() => {
     if (!saved.length) return setCounts([]);
+    let alive = true;
+    const wait = Math.max(0, 3000 - (Date.now() - lastCount.current));
     const timer = window.setTimeout(() => {
+      lastCount.current = Date.now();
       api.countFilters(saved.map((x) => x.filters)).then(
-        (r) => setCounts(r.map((x) => ("Ok" in x ? x.Ok : x.Err))),
-        () => setCounts([]),
+        (r) => alive && setCounts(r.map((x) => ("Ok" in x ? x.Ok : x.Err))),
+        () => alive && setCounts([]),
       );
-    }, 400);
-    return () => window.clearTimeout(timer);
+    }, wait);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
   }, [saved, version]);
   const store = (list: { name: string; filters: FilterSettings }[]) => {
     set((s) => ({ layout: { ...s.layout, savedFilters: list } }));
@@ -51,7 +59,7 @@ function SavedFilters({ current, apply }: { current: FilterSettings; apply: (f: 
         {saved.map((x, j) => (
           <option key={x.name} value={x.name}>
             {x.name}
-            {typeof counts[j] === "number" ? ` (${counts[j]})` : typeof counts[j] === "string" ? " (!)" : ""}
+            {typeof counts[j] === "number" ? ` (${counts[j]})` : typeof counts[j] === "string" ? (String(counts[j]).includes("not counted") ? " (–)" : " (!)") : ""}
           </option>
         ))}
       </select>
@@ -63,6 +71,7 @@ function SavedFilters({ current, apply }: { current: FilterSettings; apply: (f: 
           const name = (await promptText(t("Save filter"), t("Name of the filter"), pick || ""))?.trim();
           if (!name) return;
           const list = get().layout.savedFilters ?? [];
+          if (name !== pick && list.some((x) => x.name === name) && !(await confirmAsk(t("Replace filter?"), t("A filter named {name} exists. Replace it?", { name }), t("Replace")))) return;
           const rest = list.filter((x) => x.name !== name);
           store([...rest, { name, filters: { ...current } }].sort((a, b) => a.name.localeCompare(b.name)));
           setPick(name);
@@ -77,6 +86,7 @@ function SavedFilters({ current, apply }: { current: FilterSettings; apply: (f: 
           if (i < 0) return;
           const name = (await promptText(t("Rename filter"), t("Name of the filter"), saved[i].name))?.trim();
           if (!name || name === saved[i].name) return;
+          if (saved.some((x) => x.name === name)) return say(t("A filter named {name} exists already", { name }), "error");
           store(saved.map((x, j) => (j === i ? { ...x, name } : x)).filter((x, j) => j === i || x.name !== name));
           setPick(name);
         }}

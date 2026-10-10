@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type SessionSummary } from "../api";
 import { fmtDate, fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
 import { columnTitle, get, promptText, say, set, useStore, type ColumnConf, type ColumnKey } from "../store";
-import { addClause, clause, fieldOf, filtersOn } from "../lib/columnFilter";
+import { clause, fieldOf, filtersOn, withClause } from "../lib/columnFilter";
 import { isHeaderColumn, removeHeaderColumn } from "../headerColumns";
 import { RowCache } from "./rowCache";
 import { methodPill, readPalette, rowStyle, stateMark, statusPill, type Palette, type Pill } from "./style";
@@ -588,7 +588,7 @@ function Header({ scrollX }: { scrollX: number }) {
     const c = clause(field, input);
     const f = get().filters;
     if (!c || !f) return;
-    const next = { ...f, enabled: true, expression: addClause(f.enabled ? f.expression : "", c) };
+    const next = withClause(f, c);
     try {
       await api.setFilters(next);
       set({ filters: next });

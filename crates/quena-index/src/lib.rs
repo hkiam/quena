@@ -471,6 +471,17 @@ impl SessionIndex {
         true
     }
 
+    /// Have the filter look at these sessions again at the next tick (their filter result
+    /// became known).
+    pub fn touch(&self, ids: &[SessionId]) {
+        let mut g = self.inner.write();
+        for id in ids {
+            if let Some(&p) = g.pos.get(id) {
+                g.pending_upd.insert(p);
+            }
+        }
+    }
+
     pub fn get(&self, id: SessionId) -> Option<SessionSummary> {
         let g = self.inner.read();
         g.pos.get(&id).map(|&p| g.rows[p as usize].clone())

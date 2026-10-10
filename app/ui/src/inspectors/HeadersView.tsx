@@ -12,14 +12,14 @@ import { copyItem } from "./inspectMenus";
 import { addHeaderColumn } from "../headerColumns";
 import { api } from "../api";
 import { get, say, set } from "../store";
-import { addClause, clause } from "../lib/columnFilter";
+import { clause, withClause } from "../lib/columnFilter";
 
 /** Narrow the list to sessions with the same header value. */
 async function filterByHeader(response: boolean, name: string, value: string) {
   const f = get().filters;
   const c = clause(`${response ? "resheader" : "reqheader"}.${name.toLowerCase()}`, `== ${JSON.stringify(value)}`);
   if (!f || !c) return;
-  const next = { ...f, enabled: true, expression: addClause(f.enabled ? f.expression : "", c) };
+  const next = withClause(f, c);
   try {
     await api.setFilters(next);
     set({ filters: next });
