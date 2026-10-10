@@ -166,6 +166,8 @@ first request differs, the new run gets no answer from the recording at all.
 
 ## Compare two runs
 
+![Two runs side by side: turns, tokens, cached share, cost, duration, cache misses and hints, then the context of the last request by category, with the differences coloured by which way is better](img/compare.png)
+
 *Compare with* in a conversation sets it side by side with another one: an A/B test of a
 prompt, a skill, a model or an MCP server. For each side, with the difference coloured by
 which way is better:
