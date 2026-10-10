@@ -164,6 +164,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &item(app, "tools.host-remap", "Host Remapping…", None)?,
             &item(app, "tools.launch-browser", "Start Browser…", None)?,
             &item(app, "tools.open-terminal", "Open Terminal", None)?,
+            &item(app, "tools.start-agent", "Start Agent…", None)?,
             &sep()?,
             &Submenu::with_items(
                 app,

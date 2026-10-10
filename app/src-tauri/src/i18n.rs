@@ -82,6 +82,7 @@ fn de(en: &str) -> Option<&'static str> {
         "Start Browser…" => "Browser starten…",
         "Host Remapping…" => "Host-Umleitung…",
         "Open Terminal" => "Terminal öffnen",
+        "Start Agent…" => "Agent starten…",
         "Before Requests" => "Vor Requests",
         "Before LLM Requests" => "Vor LLM-Requests",
         "After Responses" => "Nach Responses",

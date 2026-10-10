@@ -480,9 +480,12 @@ impl AppCore {
         let Some(mut ex) = Self::mcp_from(&d, &req, &resp) else { return };
         self.answer_from_stream(&d, &req, &mut ex);
         let server = self.mcp_server(&d, &ex);
-        let flags = flags_of(&ex, &server);
+        let mut flags = flags_of(&ex, &server);
+        if let Some(a) = d.request.headers.get("user-agent").and_then(crate::agent::agent_name) {
+            flags.push((crate::agent::AGENT_FLAG.into(), a));
+        }
         let set = |det: &mut SessionDetail| {
-            det.extra_flags.retain(|(k, _)| !k.starts_with(MCP_FLAG));
+            det.extra_flags.retain(|(k, _)| !k.starts_with(MCP_FLAG) && k != crate::agent::AGENT_FLAG);
             det.extra_flags.extend(flags.iter().cloned());
         };
         if let Some(live) = cap.live(id) {

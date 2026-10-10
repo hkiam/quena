@@ -126,6 +126,12 @@ pub fn launch_detached(exe: &Path, args: &[String], env: &[(String, String)]) ->
 
 /// Open a terminal window whose shell has `env` set. `dir` is a folder for the start script.
 pub fn open_terminal(env: &[(String, String)], dir: &Path) -> Result<()> {
+    open_terminal_with(env, dir, None)
+}
+
+/// [`open_terminal`] that runs `command` in it first (an AI agent, say); the shell stays open
+/// after it.
+pub fn open_terminal_with(env: &[(String, String)], dir: &Path, command: Option<&str>) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     #[cfg(target_os = "macos")]
     {
@@ -136,7 +142,11 @@ pub fn open_terminal(env: &[(String, String)], dir: &Path) -> Result<()> {
             s.push_str(&format!("export {k}={}\n", sh_quote(v)));
         }
         s.push_str(BANNER_SH);
-        s.push_str("cd \"$HOME\"\nexec \"${SHELL:-/bin/zsh}\" -l\n");
+        match command {
+            // In a login shell, so the user's PATH finds the agent.
+            Some(c) => s.push_str(&format!("cd \"$HOME\"\nexec \"${{SHELL:-/bin/zsh}}\" -l -c {}\n", sh_quote(&format!("{c}; exec \"${{SHELL:-/bin/zsh}}\" -l")))),
+            None => s.push_str("cd \"$HOME\"\nexec \"${SHELL:-/bin/zsh}\" -l\n"),
+        }
         std::fs::write(&script, s)?;
         set_executable(&script)?;
         let out = Command::new("/usr/bin/open").args(["-a", "Terminal"]).arg(&script).output()?;
@@ -153,6 +163,9 @@ pub fn open_terminal(env: &[(String, String)], dir: &Path) -> Result<()> {
             s.push_str(&format!("set \"{k}={v}\"\r\n"));
         }
         s.push_str("echo Quena: HTTP(S)_PROXY and the root certificate are set for this window.\r\ncd /d \"%USERPROFILE%\"\r\n");
+        if let Some(c) = command {
+            s.push_str(&format!("call {c}\r\n"));
+        }
         std::fs::write(&script, s)?;
         let script_s = script.display().to_string();
         let args: Vec<String> = match which_windows("wt.exe") {
@@ -168,7 +181,18 @@ pub fn open_terminal(env: &[(String, String)], dir: &Path) -> Result<()> {
         // The terminal inherits the environment; its shell starts with it.
         for term in ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "alacritty", "kitty", "xterm"] {
             if let Some(exe) = which(term) {
-                return launch_detached(&exe, &[], env);
+                let args: Vec<String> = match command {
+                    None => vec![],
+                    Some(c) => {
+                        let script = format!("{c}; exec \"${{SHELL:-/bin/sh}}\" -l");
+                        match term {
+                            "gnome-terminal" => vec!["--".into(), "sh".into(), "-c".into(), script],
+                            "kitty" => vec!["sh".into(), "-c".into(), script],
+                            _ => vec!["-e".into(), "sh".into(), "-c".into(), script],
+                        }
+                    }
+                };
+                return launch_detached(&exe, &args, env);
             }
         }
         Err(PlatformError::Command("no terminal program found (x-terminal-emulator, gnome-terminal, konsole, xterm …)".into()))

@@ -38,6 +38,8 @@ pub enum Api {
     OllamaChat,
     OllamaGenerate,
     Embeddings,
+    /// Amazon Bedrock's Converse API.
+    Converse,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -192,6 +194,7 @@ fn provider_of(host: &str, api: Api) -> String {
         ("api.fireworks.ai", "Fireworks"),
         ("api.perplexity.ai", "Perplexity"),
         ("api.cohere.com", "Cohere"),
+        ("amazonaws.com", "Amazon Bedrock"),
     ];
     if let Some((_, n)) = known.iter().find(|(h, _)| host == *h || host.ends_with(&format!(".{h}"))) {
         return n.to_string();
@@ -209,6 +212,20 @@ pub fn api_of(method: &str, url: &str) -> Option<Api> {
     }
     let path = path_of(url);
     let p = path.trim_end_matches('/');
+    // Amazon Bedrock: Claude through invoke takes Anthropic's format; Converse its own.
+    if host_of(url).contains("bedrock-runtime") {
+        return if p.ends_with("/converse") || p.ends_with("/converse-stream") {
+            Some(Api::Converse)
+        } else if (p.ends_with("/invoke") || p.ends_with("/invoke-with-response-stream")) && p.to_ascii_lowercase().contains("anthropic.") {
+            Some(Api::Messages)
+        } else {
+            None
+        };
+    }
+    // Google Vertex AI: Claude through rawPredict takes Anthropic's format.
+    if p.contains("/publishers/anthropic/models/") && (p.ends_with(":rawPredict") || p.ends_with(":streamRawPredict")) {
+        return Some(Api::Messages);
+    }
     Some(if p.ends_with("/chat/completions") {
         Api::Chat
     } else if p.ends_with("/responses") {
@@ -896,6 +913,191 @@ fn ollama_response(objs: &[Value], call: &mut LlmCall) {
     }
 }
 
+// ------------------------------------------------------------------ Amazon Bedrock
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%'
+            && let Some(v) = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok())
+        {
+            out.push(v);
+            i += 3;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether the API names the model in the URL (Gemini, Vertex AI, Bedrock), not in the body.
+pub fn model_in_url(url: &str) -> bool {
+    let p = path_of(url);
+    p.contains(":generateContent") || p.contains(":streamGenerateContent") || p.contains("/publishers/") || (host_of(url).contains("bedrock-runtime") && p.contains("/model/"))
+}
+
+/// The messages of an AWS event stream (`application/vnd.amazon.eventstream`): event type and
+/// JSON payload. Frames: total length, headers length, prelude CRC, headers, payload, CRC.
+fn aws_event_stream(b: &[u8]) -> Vec<(String, Value)> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    let be = |x: &[u8]| u32::from_be_bytes([x[0], x[1], x[2], x[3]]) as usize;
+    while at + 16 <= b.len() {
+        let total = be(&b[at..]);
+        let hlen = be(&b[at + 4..]);
+        if total < 16 + hlen || at + total > b.len() {
+            break;
+        }
+        let headers = &b[at + 12..at + 12 + hlen];
+        let payload = &b[at + 12 + hlen..at + total - 4];
+        let mut event = String::new();
+        let mut h = 0usize;
+        while h < headers.len() {
+            let nlen = headers[h] as usize;
+            let Some(name) = headers.get(h + 1..h + 1 + nlen) else { break };
+            h += 1 + nlen;
+            let Some(&ty) = headers.get(h) else { break };
+            h += 1;
+            // Type 7: a string (2-byte length); others are skipped by their size.
+            let size = match ty {
+                0 | 1 => 0,
+                2 => 1,
+                3 => 2,
+                4 => 4,
+                5 | 8 => 8,
+                9 => 16,
+                6 | 7 => match headers.get(h..h + 2) {
+                    Some(l) => 2 + u16::from_be_bytes([l[0], l[1]]) as usize,
+                    None => break,
+                },
+                _ => break,
+            };
+            if ty == 7 && name == b":event-type" {
+                event = String::from_utf8_lossy(headers.get(h + 2..h + size).unwrap_or(&[])).into_owned();
+            }
+            h += size;
+        }
+        if let Ok(v) = serde_json::from_slice::<Value>(payload) {
+            out.push((event, v));
+        }
+        at += total;
+    }
+    out
+}
+
+fn converse_blocks(c: &Value, notes: &mut Vec<String>) -> Vec<Part> {
+    c.as_array()
+        .into_iter()
+        .flatten()
+        .map(|b| {
+            if let Some(t) = s(b, "text") {
+                text_part(&t, notes)
+            } else if let Some(u) = b.get("toolUse") {
+                Part { kind: "toolCall".into(), name: s(u, "name"), id: s(u, "toolUseId"), text: cut(&pretty(u.get("input").unwrap_or(&Value::Null)), notes) }
+            } else if let Some(r) = b.get("toolResult") {
+                let text = r.get("content").and_then(|c| c.as_array()).map(|a| a.iter().map(|x| s(x, "text").unwrap_or_else(|| pretty(x.get("json").unwrap_or(x)))).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+                Part { kind: "toolResult".into(), id: s(r, "toolUseId"), text: cut(&text, notes), ..Default::default() }
+            } else if b.get("image").is_some() || b.get("document").is_some() {
+                Part { kind: "image".into(), text: "[media]".into(), ..Default::default() }
+            } else if let Some(r) = b.get("reasoningContent") {
+                Part { kind: "thinking".into(), text: cut(&r.get("reasoningText").and_then(|t| s(t, "text")).unwrap_or_default(), notes), ..Default::default() }
+            } else {
+                Part { kind: "other".into(), text: cut(&pretty(b), notes), ..Default::default() }
+            }
+        })
+        .collect()
+}
+
+fn converse_request(v: &Value, call: &mut LlmCall) {
+    for b in v.get("system").and_then(|x| x.as_array()).into_iter().flatten() {
+        if let Some(t) = s(b, "text") {
+            call.system.push(cut(&t, &mut call.notes));
+        }
+    }
+    for m in v.get("messages").and_then(|m| m.as_array()).into_iter().flatten() {
+        let parts = converse_blocks(m.get("content").unwrap_or(&Value::Null), &mut call.notes);
+        call.messages.push(Message { role: s(m, "role").unwrap_or_default(), parts });
+    }
+    for t in v.get("toolConfig").and_then(|c| c.get("tools")).and_then(|t| t.as_array()).into_iter().flatten() {
+        if let Some(spec) = t.get("toolSpec") {
+            call.tools.push(tool_def(s(spec, "name").unwrap_or_default(), s(spec, "description").unwrap_or_default(), t));
+        }
+    }
+    if let Some(i) = v.get("inferenceConfig") {
+        call.params = params(i, &["maxTokens", "temperature", "topP", "stopSequences"]);
+    }
+}
+
+fn converse_usage(u: &Value) -> Usage {
+    let read = n(u, "cacheReadInputTokens");
+    let write = n(u, "cacheWriteInputTokens");
+    Usage { input: n(u, "inputTokens") + read + write, output: n(u, "outputTokens"), cache_read: read, cache_write: write, reasoning: 0 }
+}
+
+fn converse_response(v: &Value, call: &mut LlmCall) {
+    if let Some(m) = v.get("output").and_then(|o| o.get("message")) {
+        call.output.extend(converse_blocks(m.get("content").unwrap_or(&Value::Null), &mut call.notes));
+    }
+    call.stop_reason = s(v, "stopReason");
+    if let Some(u) = v.get("usage") {
+        call.usage = Some(converse_usage(u));
+    }
+    if let Some(m) = s(v, "message").filter(|_| v.get("output").is_none()) {
+        call.error = Some(m);
+    }
+}
+
+fn converse_stream(events: &[(String, Value)], call: &mut LlmCall) {
+    let mut blocks: BTreeMap<u64, Part> = BTreeMap::new();
+    let mut complete = false;
+    for (ev, v) in events {
+        match ev.as_str() {
+            "contentBlockStart" => {
+                if let Some(u) = v.get("start").and_then(|x| x.get("toolUse")) {
+                    blocks.insert(n(v, "contentBlockIndex"), Part { kind: "toolCall".into(), name: s(u, "name"), id: s(u, "toolUseId"), text: String::new() });
+                }
+            }
+            "contentBlockDelta" => {
+                let i = n(v, "contentBlockIndex");
+                let d = v.get("delta").unwrap_or(&Value::Null);
+                let p = blocks.entry(i).or_insert_with(|| Part { kind: "text".into(), ..Default::default() });
+                if let Some(t) = s(d, "text") {
+                    p.text.push_str(&t);
+                } else if let Some(t) = d.get("toolUse").and_then(|u| s(u, "input")) {
+                    p.text.push_str(&t);
+                } else if let Some(t) = d.get("reasoningContent").and_then(|r| s(r, "text")) {
+                    p.kind = "thinking".into();
+                    p.text.push_str(&t);
+                }
+            }
+            "messageStop" => {
+                call.stop_reason = s(v, "stopReason");
+                complete = true;
+            }
+            "metadata" => {
+                if let Some(u) = v.get("usage") {
+                    call.usage = Some(converse_usage(u));
+                }
+            }
+            e if e.ends_with("Exception") => call.error = Some(format!("{e}: {}", s(v, "message").unwrap_or_default())),
+            _ => {}
+        }
+    }
+    for (_, mut p) in blocks {
+        if p.kind == "toolCall" {
+            p.text = pretty(&Value::String(std::mem::take(&mut p.text)));
+        }
+        p.text = cut(&p.text, &mut call.notes);
+        call.output.push(p);
+    }
+    if !complete && call.error.is_none() {
+        call.notes.push("the stream did not complete".into());
+    }
+}
+
 // ------------------------------------------------------------------ prices
 
 /// USD per million tokens.
@@ -1052,7 +1254,7 @@ fn same_model(rest: &str) -> bool {
 /// The price for `model`: from `llm-prices.json` (its own longest prefix), else from the
 /// fetched list, else built in (both: that model, with a date or release tag at most).
 pub fn price_of(model: &str, prices: &PriceList) -> Option<(String, Price)> {
-    let m = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+    let m = model_key(model);
     if let Some((k, p)) = prices.custom.iter().filter(|(k, _)| m.starts_with(&k.to_ascii_lowercase())).max_by_key(|(k, _)| k.len()) {
         return Some((format!("{k} ({PRICES_FILE})"), *p));
     }
@@ -1087,9 +1289,26 @@ fn builtin_context(model: &str) -> Option<u64> {
     CONTEXT.iter().filter(|(k, _)| model.starts_with(k)).max_by_key(|(k, _)| k.len()).map(|(_, c)| *c)
 }
 
+/// A model name as price lists name it: without a provider path (`openai/gpt-4o`), a
+/// Bedrock region and vendor prefix and version (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`
+/// → `claude-sonnet-4-5-20250929`), a Vertex date (`claude-sonnet-4-5@20250929` stays for
+/// the date rule).
+pub fn model_key(model: &str) -> String {
+    let mut m = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+    if let Some(i) = m.find("anthropic.") {
+        m = m[i + "anthropic.".len()..].to_string();
+    }
+    if let Some(i) = m.rfind("-v")
+        && m[i + 2..].split(':').next().is_some_and(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()))
+    {
+        m.truncate(i);
+    }
+    m
+}
+
 /// The context window of `model`: from the price that applies, else by its family.
 pub fn context_of(model: &str, prices: &PriceList) -> Option<u64> {
-    let m = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+    let m = model_key(model);
     price_of(model, prices).and_then(|(_, p)| p.context).or_else(|| builtin_context(&m))
 }
 
@@ -1113,14 +1332,17 @@ pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &
         Api::Gemini => carries(&["contents"]),
         Api::OllamaGenerate => carries(&["prompt"]) && carries(&["model"]),
         Api::Embeddings => carries(&["input", "content", "requests"]),
+        Api::Converse => carries(&["messages"]),
     };
     if !req.is_object() || !fits {
         return None;
     }
     let host = host_of(url);
     let path = path_of(url);
-    // Gemini and Azure name the model in the path.
-    let path_model = if api == Api::Gemini || path.contains(":embedContent") {
+    // Gemini, Vertex, Bedrock and Azure name the model in the path.
+    let path_model = if let Some(m) = path.split("/model/").nth(1).filter(|_| host.contains("bedrock-runtime")) {
+        Some(percent_decode(m.split('/').next().unwrap_or(m)))
+    } else if api == Api::Gemini || path.contains(":embedContent") || path.contains("/publishers/") {
         path.split("/models/").nth(1).map(|m| m.split(':').next().unwrap_or(m).to_string())
     } else {
         path.split("/deployments/").nth(1).map(|m| m.split('/').next().unwrap_or(m).to_string())
@@ -1151,6 +1373,7 @@ pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &
         Api::Messages => anthropic_request(&req, &mut call),
         Api::Gemini => gemini_request(&req, &mut call),
         Api::OllamaChat | Api::OllamaGenerate => ollama_request(&req, &mut call),
+        Api::Converse => converse_request(&req, &mut call),
         Api::Embeddings => {
             let inputs = match req.get("input").or_else(|| req.get("content")) {
                 Some(Value::Array(a)) => a.len(),
@@ -1163,12 +1386,21 @@ pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &
     }
     if let Some((body, content_type)) = response {
         let text = String::from_utf8_lossy(body);
-        let streamed = content_type.contains("event-stream") || content_type.contains("ndjson") || content_type.contains("x-ndjson");
+        let streamed = content_type.contains("event-stream") || content_type.contains("ndjson") || content_type.contains("x-ndjson") || content_type.contains("amazon.eventstream");
+        // Bedrock streams in AWS's binary event stream: its events as JSON.
+        let aws_events = content_type.contains("amazon.eventstream").then(|| aws_event_stream(body));
         let json: Option<Value> = if streamed { None } else { serde_json::from_str(&text).ok() };
         if let Some(e) = json.as_ref().and_then(error_of) {
             call.error = Some(e);
         }
         match (api, &json) {
+            (Api::Messages, None) if aws_events.is_some() => {
+                // invoke-with-response-stream: Anthropic's events inside `{"bytes": base64}`.
+                let sse: String = aws_events.iter().flatten().filter_map(|(_, v)| s(v, "bytes")).filter_map(|b| base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b).ok()).map(|j| format!("data: {}\n\n", String::from_utf8_lossy(&j))).collect();
+                anthropic_stream(&sse, &mut call);
+            }
+            (Api::Converse, Some(v)) => converse_response(v, &mut call),
+            (Api::Converse, None) => converse_stream(aws_events.as_deref().unwrap_or(&[]), &mut call),
             (Api::Chat, Some(v)) => chat_response(v, &mut call),
             (Api::Chat, None) => chat_stream(&stream_objects(&text), &mut call),
             (Api::Responses, Some(v)) => responses_response(v, &mut call),
@@ -1359,6 +1591,9 @@ impl AppCore {
         let Some(call) = self.llm(id) else { return };
         let Some(detail) = cap.detail(id) else { return };
         let mut flags = flags_of(&call);
+        if let Some(a) = detail.request.headers.get("user-agent").and_then(crate::agent::agent_name) {
+            flags.push((crate::agent::AGENT_FLAG.into(), a));
+        }
         // The conversation it belongs to (kept for the Agents panel as well).
         self.keep_digest(numbering, id, Some(crate::agent::Digest::new(id, &detail, &call)));
         if let Some(k) = self.conv_key(id) {
@@ -1370,7 +1605,7 @@ impl AppCore {
             flags.retain(|(k, _)| k != LLM_TOKENS_FLAG && k != LLM_COST_FLAG);
         }
         let set = |d: &mut SessionDetail| {
-            d.extra_flags.retain(|(k, _)| !k.starts_with(LLM_FLAG));
+            d.extra_flags.retain(|(k, _)| !k.starts_with(LLM_FLAG) && k != crate::agent::AGENT_FLAG);
             d.extra_flags.extend(flags.iter().cloned());
         };
         // Still being written (bodies pending): change the live session, it persists itself.
@@ -1641,5 +1876,72 @@ mod tests {
         // DeepSeek reports cache hits at the top level.
         let c = call("https://api.deepseek.com/chat/completions", r#"{"model":"deepseek-chat","messages":[{"role":"user","content":"hi"}]}"#, r#"{"choices":[{"message":{"content":"x"}}],"usage":{"prompt_tokens":100,"completion_tokens":1,"prompt_cache_hit_tokens":64}}"#, "application/json");
         assert_eq!(c.usage.unwrap().cache_read, 64);
+    }
+
+    /// An AWS event stream frame (CRCs are not checked).
+    fn aws_frame(event: &str, payload: &str) -> Vec<u8> {
+        let mut headers = Vec::new();
+        for (k, v) in [(":event-type", event), (":content-type", "application/json"), (":message-type", "event")] {
+            headers.push(k.len() as u8);
+            headers.extend_from_slice(k.as_bytes());
+            headers.push(7);
+            headers.extend_from_slice(&(v.len() as u16).to_be_bytes());
+            headers.extend_from_slice(v.as_bytes());
+        }
+        let total = 12 + headers.len() + payload.len() + 4;
+        let mut f = Vec::new();
+        f.extend_from_slice(&(total as u32).to_be_bytes());
+        f.extend_from_slice(&(headers.len() as u32).to_be_bytes());
+        f.extend_from_slice(&[0; 4]);
+        f.extend_from_slice(&headers);
+        f.extend_from_slice(payload.as_bytes());
+        f.extend_from_slice(&[0; 4]);
+        f
+    }
+
+    #[test]
+    fn bedrock_and_vertex() {
+        let prices = PriceList::default();
+        // Vertex AI: Claude through rawPredict, the model in the path.
+        let vertex = "https://us-east5-aiplatform.googleapis.com/v1/projects/p/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-5@20250929:rawPredict";
+        assert_eq!(api_of("POST", vertex), Some(Api::Messages));
+        let c = parse("POST", vertex, br#"{"anthropic_version":"vertex-2023-10-16","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}"#, Some((br#"{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":2}}"#, "application/json")), &prices).unwrap();
+        assert_eq!(c.model, "claude-sonnet-4-5@20250929");
+        assert!(c.cost.is_some(), "priced as claude-sonnet-4-5");
+        // Bedrock invoke: Anthropic's format, the model id (URL-encoded) in the path.
+        let invoke = "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/invoke-with-response-stream";
+        assert_eq!(api_of("POST", invoke), Some(Api::Messages));
+        let b64 = |s: &str| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, s);
+        let mut stream = Vec::new();
+        for ev in [
+            r#"{"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":20,"output_tokens":1}}}"#,
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}"#,
+            r#"{"type":"message_stop"}"#,
+        ] {
+            stream.extend(aws_frame("chunk", &format!(r#"{{"bytes":"{}"}}"#, b64(ev))));
+        }
+        let c = parse("POST", invoke, br#"{"anthropic_version":"bedrock-2023-05-31","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}"#, Some((&stream, "application/vnd.amazon.eventstream")), &prices).unwrap();
+        assert_eq!((c.provider.as_str(), c.output[0].text.as_str(), c.usage.unwrap().output), ("Amazon Bedrock", "Hello", 4));
+        assert!(c.notes.is_empty(), "{:?}", c.notes);
+        assert_eq!(model_key("us.anthropic.claude-sonnet-4-5-20250929-v1:0"), "claude-sonnet-4-5-20250929");
+        // Converse, answered as JSON and as a stream.
+        let converse = "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-pro-v1%3A0/converse";
+        assert_eq!(api_of("POST", converse), Some(Api::Converse));
+        let req = br#"{"system":[{"text":"Be brief."}],"messages":[{"role":"user","content":[{"text":"weather?"}]}],"toolConfig":{"tools":[{"toolSpec":{"name":"get_weather","description":"w","inputSchema":{"json":{}}}}]},"inferenceConfig":{"maxTokens":100}}"#;
+        let c = parse("POST", converse, req, Some((br#"{"output":{"message":{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"get_weather","input":{"city":"Berlin"}}}]}},"stopReason":"tool_use","usage":{"inputTokens":30,"outputTokens":12,"cacheReadInputTokens":10}}"#, "application/json")), &prices).unwrap();
+        assert_eq!((c.model.as_str(), c.system[0].as_str(), c.tools[0].name.as_str()), ("amazon.nova-pro-v1:0", "Be brief.", "get_weather"));
+        assert_eq!((c.output[0].kind.as_str(), c.usage.unwrap().input, c.usage.unwrap().cache_read), ("toolCall", 40, 10));
+        let mut cs = Vec::new();
+        cs.extend(aws_frame("messageStart", r#"{"role":"assistant"}"#));
+        cs.extend(aws_frame("contentBlockDelta", r#"{"contentBlockIndex":0,"delta":{"text":"Sun"}}"#));
+        cs.extend(aws_frame("contentBlockDelta", r#"{"contentBlockIndex":0,"delta":{"text":"ny"}}"#));
+        cs.extend(aws_frame("messageStop", r#"{"stopReason":"end_turn"}"#));
+        cs.extend(aws_frame("metadata", r#"{"usage":{"inputTokens":30,"outputTokens":2}}"#));
+        let c = parse("POST", "https://bedrock-runtime.us-east-1.amazonaws.com/model/amazon.nova-pro-v1%3A0/converse-stream", req, Some((&cs, "application/vnd.amazon.eventstream")), &prices).unwrap();
+        assert_eq!((c.output[0].text.as_str(), c.stop_reason.as_deref(), c.usage.unwrap().output), ("Sunny", Some("end_turn"), 2));
+        // Other Bedrock models through invoke are not taken apart (their formats differ).
+        assert_eq!(api_of("POST", "https://bedrock-runtime.us-east-1.amazonaws.com/model/meta.llama3-70b-instruct-v1%3A0/invoke"), None);
     }
 }

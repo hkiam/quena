@@ -68,8 +68,9 @@ pub fn terminal_env(port: u16, quena_ca: &Path, bundle: Option<&Path>, bypass: &
     env.push(("NO_PROXY".into(), no_proxy.clone()));
     env.push(("no_proxy".into(), no_proxy));
     env.push(("QUENA_PROXY".into(), proxy));
-    // Node.js adds these roots to its own.
+    // Node.js (Claude Code, Gemini CLI …) and Codex add these roots to their own.
     env.push(("NODE_EXTRA_CA_CERTS".into(), quena_ca.display().to_string()));
+    env.push(("CODEX_CA_CERTIFICATE".into(), quena_ca.display().to_string()));
     if let Some(b) = bundle {
         let b = b.display().to_string();
         for k in ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "AWS_CA_BUNDLE", "PIP_CERT", "CARGO_HTTP_CAINFO"] {
@@ -119,6 +120,20 @@ impl AppCore {
 
     /// Open a terminal whose tools use Quena (proxy variables and root certificate).
     pub fn open_terminal(self: &Arc<Self>) -> Result<()> {
+        self.open_terminal_with(None)
+    }
+
+    /// Start an AI agent (`claude`, `codex`, `gemini` …) in a terminal that uses Quena: its
+    /// calls to the model and to MCP servers over HTTP show in the capture.
+    pub fn start_agent(self: &Arc<Self>, command: &str) -> Result<()> {
+        let c = command.trim();
+        if c.is_empty() || c.contains(['\n', '\r']) {
+            return Err(anyhow!("enter the agent's command, e.g. claude"));
+        }
+        self.open_terminal_with(Some(c))
+    }
+
+    fn open_terminal_with(self: &Arc<Self>, command: Option<&str>) -> Result<()> {
         let port = self.capture_port()?;
         let ca = self.proxy_engine()?.ensure_ca()?;
         let ca_path = ca.cert_path();
@@ -129,8 +144,11 @@ impl AppCore {
         });
         let bundle = bundle.transpose()?;
         let env = terminal_env(port, &ca_path, bundle.as_deref(), &crate::bypass::hosts(&self.settings()));
-        quena_platform::launch::open_terminal(&env, &self.paths.data.join("terminal")).map_err(|e| anyhow!("{e}"))?;
-        tracing::info!(target: "quena", "opened a terminal that uses Quena (port {port})");
+        quena_platform::launch::open_terminal_with(&env, &self.paths.data.join("terminal"), command).map_err(|e| anyhow!("{e}"))?;
+        match command {
+            Some(c) => tracing::info!(target: "quena", "started {c} in a terminal that uses Quena (port {port})"),
+            None => tracing::info!(target: "quena", "opened a terminal that uses Quena (port {port})"),
+        }
         Ok(())
     }
 }
@@ -168,6 +186,7 @@ mod tests {
         assert_eq!(get(&e, "HTTPS_PROXY").as_deref(), Some("http://127.0.0.1:8866"));
         assert_eq!(get(&e, "https_proxy").as_deref(), Some("http://127.0.0.1:8866"));
         assert_eq!(get(&e, "NODE_EXTRA_CA_CERTS").as_deref(), Some("/d/quena-root-ca.pem"));
+        assert_eq!(get(&e, "CODEX_CA_CERTIFICATE").as_deref(), Some("/d/quena-root-ca.pem"));
         assert_eq!(get(&e, "SSL_CERT_FILE"), None);
         let e = terminal_env(8866, ca, Some(Path::new("/d/bundle.pem")), &[]);
         assert_eq!(get(&e, "SSL_CERT_FILE").as_deref(), Some("/d/bundle.pem"));

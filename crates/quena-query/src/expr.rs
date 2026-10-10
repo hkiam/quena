@@ -64,6 +64,8 @@ pub enum Field {
     /// MCP exchange (`mcp ~ "tools/call"`) and its server (`mcpserver == jira`).
     Mcp,
     McpServer,
+    /// The AI agent or SDK (`agent ~ "claude code"`).
+    Agent,
     /// TLS version (`tls == TLSv1.2`).
     Tls,
     /// The server's IP address.
@@ -160,6 +162,7 @@ impl Field {
             "conv" | "conversation" => Field::Conv,
             "mcp" => Field::Mcp,
             "mcpserver" => Field::McpServer,
+            "agent" => Field::Agent,
             "tls" | "tlsversion" => Field::Tls,
             "ip" | "remoteip" | "serverip" => Field::RemoteIp,
             "http" | "httpversion" | "version" => Field::Http,
@@ -315,6 +318,7 @@ fn text_of(f: Field, s: &SessionSummary) -> String {
         Field::Conv => s.llm_conv.clone(),
         Field::Mcp => s.mcp.clone(),
         Field::McpServer => s.mcp_server.clone(),
+        Field::Agent => s.agent.clone(),
         Field::Tls => s.tls.clone(),
         Field::RemoteIp => s.remote_ip.clone(),
         Field::Http => s.http_version.clone(),

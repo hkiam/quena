@@ -119,6 +119,38 @@ static TOOLS: &[Tool] = &[
         run: get_llm_call,
     },
     Tool {
+        name: "list_conversations",
+        description: "The conversations of AI agents in the capture: each run of Claude Code, Codex or an app put together from its LLM calls (subagents name their parent). Per conversation: title (the first prompt), agent, models, turns, side calls, tokens (in, out, cached), estimated cost, turns where the prompt cache missed, refused calls, retries, median latency and tokens per second, the last request's size and the model's context window.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({})),
+        run: list_conversations,
+    },
+    Tool {
+        name: "get_conversation",
+        description: "One conversation (key from list_conversations) with its turns — each with model, usage, cost, the change from the call it continues (messages added, an earlier message changed, system prompt, tools, settings, model), why the prompt cache missed, refused calls and rate limits — hints where tokens go to waste (repeated tool results and calls, large results, recurring reminders, tools never called, a context near the window, cache misses), what filled the last request by category, and its subagents. Use it to find what makes an agent run expensive and how to change it.",
+        write: false,
+        destructive: false,
+        schema: || req(json!({ "key": { "type": "string" } }), &["key"]),
+        run: get_conversation,
+    },
+    Tool {
+        name: "get_context",
+        description: "What fills one LLM call's input (session id): slices by category (system prompt, each tool definition, instruction files like CLAUDE.md/AGENTS.md, skills list, reminders, messages, tool results by tool, images) with tokens scaled to the reported usage; its turn in the conversation, the change from the call before (with the message that changed) and the prompt cache's verdict.",
+        write: false,
+        destructive: false,
+        schema: || req(json!({ "id": { "type": "integer" } }), &["id"]),
+        run: get_context,
+    },
+    Tool {
+        name: "get_tool_report",
+        description: "Tools and skills across all conversations: per tool the LLM requests that offer it and the tokens its definition costs in each, how often the model called it, the MCP server's exchanges, failures and result sizes (tools offered but never called cost tokens in every request); per skill where it is listed and how often it was loaded.",
+        write: false,
+        destructive: false,
+        schema: || obj(json!({})),
+        run: get_tool_report,
+    },
+    Tool {
         name: "llm_cache_status",
         description: "The agent cache: LLM API answers Quena serves again for the same request (entries with model, hits, saved tokens/cost/time), whether every call is cached, and repeated calls in the capture worth caching.",
         write: false,
@@ -1273,6 +1305,48 @@ fn cache_llm_calls(core: &Arc<AppCore>, a: Value) -> Result<Value> {
         v["failed"] = json!(failed);
         v
     })
+}
+
+fn list_conversations(core: &Arc<AppCore>, _: Value) -> Result<Value> {
+    let mut view = View::new(core, 0);
+    let mut list = core.llm_conversations();
+    // First prompts are free text: redacted like other text unless secrets may be seen.
+    for c in &mut list {
+        c.title = view.text(&c.title);
+    }
+    Ok(json!({ "conversations": list }))
+}
+
+#[derive(Deserialize)]
+struct KeyArgs {
+    key: String,
+}
+
+fn get_conversation(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: KeyArgs = args(a)?;
+    let mut d = core.llm_conversation(&a.key).ok_or_else(|| anyhow!("no conversation {} (see list_conversations)", a.key))?;
+    let mut view = View::new(core, 0);
+    d.summary.title = view.text(&d.summary.title);
+    for h in &mut d.hints {
+        for v in h.args.values_mut() {
+            *v = view.text(v);
+        }
+    }
+    Ok(serde_json::to_value(d)?)
+}
+
+fn get_context(core: &Arc<AppCore>, a: Value) -> Result<Value> {
+    let a: IdArgs = args(a)?;
+    let mut c = core.llm_context(a.id).ok_or_else(|| anyhow!("session #{} is not a call to an LLM API", a.id))?;
+    let mut view = View::new(core, 0);
+    if let Some((before, after)) = c.changed.take() {
+        c.changed = Some((view.text(&before), view.text(&after)));
+    }
+    Ok(serde_json::to_value(c)?)
+}
+
+fn get_tool_report(core: &Arc<AppCore>, _: Value) -> Result<Value> {
+    Ok(serde_json::to_value(core.tool_report())?)
 }
 
 fn get_llm_call(core: &Arc<AppCore>, a: Value) -> Result<Value> {

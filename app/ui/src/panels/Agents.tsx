@@ -3,6 +3,7 @@
 // hints where tokens go to waste.
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { api, type CallContext, type ConvDetail, type ConvSide, type ConvSummary, type SessionId } from "../api";
 import { actions } from "../actions";
 import { fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
@@ -153,6 +154,18 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
   const span = Math.max(1, s.ended - s.started);
   const titleOf = (k: string) => list.find((c) => c.key === k)?.title ?? k;
   const turnAt = d.turns.findIndex((x) => x.id === turnId);
+  const exportAs = async (format: "markdown" | "jsonl" | "otel") => {
+    const ext = format === "markdown" ? "md" : format === "jsonl" ? "jsonl" : "otel.json";
+    const name = format === "markdown" ? t("Markdown") : format === "jsonl" ? t("JSON lines") : t("OpenTelemetry (OTLP JSON)");
+    const path = await save({ defaultPath: `conversation-${convKey}.${ext}`, filters: [{ name, extensions: [ext.split(".").pop() ?? ext] }] });
+    if (!path) return;
+    try {
+      const n = await api.llmExport(convKey, format, path);
+      say(plural(n, "{n} turn exported", "{n} turns exported"));
+    } catch (e) {
+      say(String(e), "error");
+    }
+  };
   const freeze = async () => {
     if (!(await confirmAsk(t("Freeze this conversation?"), t("Its answered turns and those of the subagents it started go into the agent cache: the agent run again gets the same answers from Quena without asking the model, until it asks something else. The new run then shows where it left the recording."), t("Freeze")))) return;
     try {
@@ -198,6 +211,20 @@ function Conversation({ convKey, refresh, list }: { convKey: string; refresh: st
         <button type="button" className="linklike" onClick={() => void freeze()} title={t("Put the answered turns into the agent cache, to run the agent again against them")}>
           {t("Freeze for replays…")}
         </button>
+        <span>
+          {t("Export:")}{" "}
+          <button type="button" className="linklike" onClick={() => void exportAs("markdown")} title={t("Each turn with what it added and the answer, to read or share")}>
+            Markdown
+          </button>{" "}
+          ·{" "}
+          <button type="button" className="linklike" onClick={() => void exportAs("jsonl")} title={t("One call per line, as the LLM view takes it apart: for evaluations")}>
+            JSONL
+          </button>{" "}
+          ·{" "}
+          <button type="button" className="linklike" onClick={() => void exportAs("otel")} title={t("Spans after the OpenTelemetry GenAI conventions (models, tokens, no content), for Langfuse, Phoenix and other tracing tools")}>
+            OpenTelemetry
+          </button>
+        </span>
         <label>
           {t("Compare with")}{" "}
           <select value={other ?? ""} onChange={(e) => setOther(e.target.value || null)}>

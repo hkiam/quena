@@ -368,6 +368,49 @@ pub fn agent_of(user_agent: &str) -> String {
     user_agent.split_whitespace().next().unwrap_or("").to_string()
 }
 
+/// Flag naming the AI agent or SDK that sent an LLM or MCP request (kept in archives).
+pub const AGENT_FLAG: &str = "x-quena-agent";
+
+/// The AI agent or SDK by its User-Agent, as people call it (`Claude Code 2.0.14`, `Codex
+/// 0.46.0`, `OpenAI SDK (Python)`); `None` for clients it does not know.
+pub fn agent_name(user_agent: &str) -> Option<String> {
+    let ua = user_agent.trim();
+    let lower = ua.to_ascii_lowercase();
+    let version = |prefix: &str| lower.find(prefix).map(|i| ua[i + prefix.len()..].split([' ', ';', ')', '(']).next().unwrap_or("").to_string()).filter(|v| !v.is_empty());
+    let named = |name: &str, prefix: &str| Some(match version(prefix) {
+        Some(v) => format!("{name} {v}"),
+        None => name.to_string(),
+    });
+    if lower.starts_with("claude-cli/") || lower.starts_with("claude-code/") {
+        return named("Claude Code", if lower.starts_with("claude-cli/") { "claude-cli/" } else { "claude-code/" });
+    }
+    if lower.starts_with("codex_cli_rs/") || lower.starts_with("codex_exec/") || lower.starts_with("codex-") {
+        return named("Codex", if lower.starts_with("codex_exec/") { "codex_exec/" } else { "codex_cli_rs/" });
+    }
+    let known: &[(&str, &str, &str)] = &[
+        ("geminicli/", "Gemini CLI", "geminicli/"),
+        ("gemini-cli", "Gemini CLI", "gemini-cli/"),
+        ("cursor/", "Cursor", "cursor/"),
+        ("githubcopilotchat/", "GitHub Copilot", "githubcopilotchat/"),
+        ("copilot", "GitHub Copilot", "copilot/"),
+        ("cline/", "Cline", "cline/"),
+        ("roo-code", "Roo Code", "roo-code/"),
+        ("aider/", "aider", "aider/"),
+        ("opencode/", "opencode", "opencode/"),
+        ("windsurf", "Windsurf", "windsurf/"),
+        ("zed/", "Zed", "zed/"),
+        ("anthropic/python", "Anthropic SDK (Python)", "anthropic/python "),
+        ("anthropic/js", "Anthropic SDK (JS)", "anthropic/js "),
+        ("openai/python", "OpenAI SDK (Python)", "openai/python "),
+        ("openai/js", "OpenAI SDK (JS)", "openai/js "),
+        ("google-genai-sdk", "Google GenAI SDK", "google-genai-sdk/"),
+        ("langchain", "LangChain", "langchain/"),
+        ("litellm", "LiteLLM", "litellm/"),
+        ("ollama", "Ollama client", "ollama/"),
+    ];
+    known.iter().find(|(k, _, _)| lower.contains(k)).and_then(|(_, name, prefix)| named(name, prefix))
+}
+
 /// Settings that are part of what a provider caches (a change makes the cache miss).
 const CACHED_SETTINGS: &[&str] = &["thinking", "tool_choice", "reasoning.effort", "reasoning_effort", "output_config"];
 
@@ -519,7 +562,7 @@ impl Digest {
             provider: call.provider.clone(),
             api: call.api,
             model: call.model.clone(),
-            agent: agent_of(header(d, "user-agent").unwrap_or("")),
+            agent: header(d, "user-agent").map(|ua| agent_name(ua).unwrap_or_else(|| agent_of(ua))).unwrap_or_default(),
             group,
             session,
             parent_session,
@@ -1954,6 +1997,17 @@ mod tests {
         let b = build(&[hit(1, 0, &c1), hit(2, 5, &c2), digest(3, 9, &c3)]);
         let turns = turns_of(&b.convs[0]);
         assert_eq!(summary_of(&b, 0, &turns, &llm::PriceList::default()).diverged_at, Some(3));
+    }
+
+    #[test]
+    fn agents_by_their_user_agent() {
+        assert_eq!(agent_name("claude-cli/2.0.14 (external, cli)").as_deref(), Some("Claude Code 2.0.14"));
+        assert_eq!(agent_name("codex_cli_rs/0.46.0 (Mac OS 26.0; arm64) iTerm.app").as_deref(), Some("Codex 0.46.0"));
+        assert_eq!(agent_name("OpenAI/Python 1.51.0").as_deref(), Some("OpenAI SDK (Python) 1.51.0"));
+        assert_eq!(agent_name("GeminiCLI/0.8.2 (darwin; arm64)").as_deref(), Some("Gemini CLI 0.8.2"));
+        assert_eq!(agent_name("curl/8.7.1"), None);
+        assert_eq!(quena_index::agent_family("Claude Code 2.0.14"), "Claude Code");
+        assert_eq!(quena_index::agent_family("Cursor"), "Cursor");
     }
 
     #[test]

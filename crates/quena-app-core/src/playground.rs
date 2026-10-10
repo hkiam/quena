@@ -47,8 +47,8 @@ pub fn variant_body(url: &str, api: Api, body: &str, var: &Variant) -> Result<(S
     }
     let mut url = url.to_string();
     if let Some(m) = var.model.as_ref().map(|m| m.trim()).filter(|m| !m.is_empty()) {
-        if api == Api::Gemini {
-            if let Some(u) = llm_edit::gemini_model_url(&url, m) {
+        if crate::llm::model_in_url(&url) {
+            if let Some(u) = llm_edit::model_url(&url, m) {
                 url = u;
             }
         } else {

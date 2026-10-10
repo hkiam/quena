@@ -251,6 +251,10 @@ in the [manual](https://hkiam.github.io/quena/ci/).
   model), freeze a run in the agent cache and replay against it, change requests on the fly
   (remove tools, set the model, add to the system prompt) or break before matching LLM
   requests; latency, tokens per second and rate limits per turn
+- **Agents end to end**: start Claude Code, Codex or any agent in a terminal that uses Quena,
+  see which agent sent what (Agent column), export a run as Markdown, JSONL or OpenTelemetry
+  spans; Claude on Amazon Bedrock and Google Vertex AI and Bedrock Converse recognised; the
+  conversations, context, tool report also for AI agents over MCP
 - Auto-detected inspectors: **WebSocket**, **SSE**, **gRPC / gRPC-Web / Protobuf**
   (field names from `.proto` files or server reflection, schemaless otherwise),
   **MessagePack**, **Multipart / MTOM**, **SOAP**, **Atom / OData**

@@ -2,7 +2,7 @@
 // without the system proxy (own browser profile; proxy and certificate variables).
 import { useEffect, useState } from "react";
 import { api, type BrowserInfo } from "../api";
-import { say, set } from "../store";
+import { promptText, say, set } from "../store";
 import { showContextMenu } from "./ContextMenu";
 import { t } from "../i18n";
 
@@ -24,6 +24,18 @@ export async function openTerminal() {
   }
 }
 
+/** Start an AI agent (Claude Code, Codex, Gemini CLI …) in a terminal that uses Quena. */
+export async function startAgent(command?: string) {
+  const c = command ?? (await promptText(t("Start Agent"), t("Command of the agent, e.g. claude, codex, gemini — it starts in a terminal whose proxy and root certificate are Quena's"), "claude"));
+  if (!c?.trim()) return;
+  try {
+    await api.startAgent(c.trim());
+    say(t("{name} started in a terminal that uses Quena; its calls show in the Agents panel", { name: c.trim() }));
+  } catch (e) {
+    say(String(e), "error");
+  }
+}
+
 /** The toolbar's menu: one entry per installed browser, then the terminal. */
 export async function launchMenu(x: number, y: number) {
   const browsers = await api.browsersList().catch(() => [] as BrowserInfo[]);
@@ -33,6 +45,10 @@ export async function launchMenu(x: number, y: number) {
       : [{ label: t("No supported browser found"), disabled: true }]),
     { separator: true },
     { label: t("Open Terminal"), action: () => void openTerminal() },
+    { label: t("Start Claude Code"), action: () => void startAgent("claude") },
+    { label: t("Start Codex"), action: () => void startAgent("codex") },
+    { label: t("Start Agent…"), action: () => void startAgent() },
+    { separator: true },
     { label: t("Start with URL…"), action: () => set({ dialog: { kind: "launch" } }) },
   ]);
 }

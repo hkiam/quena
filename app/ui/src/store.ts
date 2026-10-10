@@ -28,6 +28,7 @@ export type ColumnKey =
   | "conversation"
   | "mcp"
   | "mcpServer"
+  | "agent"
   | "tls"
   | "remoteIp"
   | "http"
@@ -69,6 +70,7 @@ export const COLUMN_TITLES: Record<ColumnKey, string> = {
   conversation: t("Conversation"),
   mcp: "MCP",
   mcpServer: t("MCP server"),
+  agent: t("Agent"),
   tls: "TLS",
   remoteIp: t("Server IP"),
   http: t("HTTP version"),
@@ -117,6 +119,7 @@ export const DEFAULT_COLUMNS: ColumnConf[] = [
   col("conversation", 90, false),
   col("mcp", 140, false),
   col("mcpServer", 90, false),
+  col("agent", 110, false),
   col("tls", 64, false),
   col("remoteIp", 110, false),
   col("http", 70, false),
@@ -149,6 +152,7 @@ export const CLASSIC_COLUMNS: ColumnConf[] = [
   col("conversation", 90, false),
   col("mcp", 140, false),
   col("mcpServer", 90, false),
+  col("agent", 110, false),
   col("tls", 64, false),
   col("remoteIp", 110, false),
   col("http", 70, false),

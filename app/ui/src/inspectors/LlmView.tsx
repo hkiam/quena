@@ -19,7 +19,7 @@ export function llmCandidate(detail: Detail): boolean {
   } catch {
     return false;
   }
-  return /\/chat\/completions$|\/responses$|\/v1\/messages$|:(stream)?generateContent|\/api\/(chat|generate)$/i.test(path);
+  return /\/chat\/completions$|\/responses$|\/v1\/messages$|:(stream)?generateContent|:(stream)?rawPredict$|\/api\/(chat|generate)$|\/model\/[^/]+\/(invoke|invoke-with-response-stream|converse|converse-stream)$/i.test(path);
 }
 
 const ROLE: Record<string, string> = { system: t("System"), user: t("User"), assistant: t("Assistant"), tool: t("Tool"), developer: t("System") };

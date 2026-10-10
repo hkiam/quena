@@ -29,6 +29,7 @@ const COMMANDS: Cmd[] = [
   { id: "tools.launch-browser", label: t("Start a browser that uses Quena"), group: t("Capture") },
   { id: "tools.host-remap", label: t("Host remapping (host → other address)"), group: t("Capture") },
   { id: "tools.open-terminal", label: t("Open a terminal that uses Quena"), group: t("Capture") },
+  { id: "tools.start-agent", label: t("Start an AI agent (Claude Code, Codex …) through Quena"), group: t("Capture") },
   { id: "rules.auto-auth", label: t("Toggle automatic authentication"), group: t("Capture") },
   { id: "rules.customize", label: t("Edit rules script"), group: t("Capture") },
   { id: "file.load", label: t("Open archive"), group: t("File") },

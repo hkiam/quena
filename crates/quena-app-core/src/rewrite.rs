@@ -259,9 +259,9 @@ fn edit_cookie(h: &mut Headers, name: &str, value: Option<&str>) {
 fn request_op(op: &COp, r: &mut RequestHead, meta: &mut Meta) -> bool {
     let before = (r.url.clone(), r.headers.clone());
     match op {
-        // Gemini names the model in the URL.
-        COp::LlmSetModel(m) if crate::llm::api_of(&r.method, &r.url) == Some(crate::llm::Api::Gemini) => {
-            if let Some(u) = crate::llm_edit::gemini_model_url(&r.url, m) {
+        // Gemini, Vertex AI and Bedrock name the model in the URL.
+        COp::LlmSetModel(m) if crate::llm::api_of(&r.method, &r.url).is_some() && crate::llm::model_in_url(&r.url) => {
+            if let Some(u) = crate::llm_edit::model_url(&r.url, m) {
                 r.url = u;
             }
         }
@@ -1057,14 +1057,19 @@ fn pointers(path: &JsonPath, v: &Value) -> Vec<String> {
 thread_local! {
     /// The LLM API of the request whose body is being changed (`None`: no LLM request).
     static LLM_API: std::cell::Cell<Option<crate::llm::Api>> = const { std::cell::Cell::new(None) };
+    /// That API names the model in the URL (changed there, not in the body).
+    static LLM_MODEL_IN_URL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Run `f` with the LLM API of request `head` known to the body operations.
 fn with_llm_api<R>(head: Option<&RequestHead>, f: impl FnOnce() -> R) -> R {
     let api = head.and_then(|h| crate::llm::api_of(&h.method, &h.url));
+    let in_url = head.is_some_and(|h| crate::llm::model_in_url(&h.url));
     let before = LLM_API.with(|a| a.replace(api));
+    let before_url = LLM_MODEL_IN_URL.with(|a| a.replace(in_url));
     let r = f();
     LLM_API.with(|a| a.set(before));
+    LLM_MODEL_IN_URL.with(|a| a.set(before_url));
     r
 }
 
@@ -1111,7 +1116,7 @@ fn apply_json(op: &COp, v: &mut Value) -> bool {
         COp::JsonAppendAll(value) => append_all(v, value),
         // LLM changes only for requests to an LLM API (in its format).
         COp::LlmRemoveTool(name) => LLM_API.with(|a| a.get()).is_some_and(|api| crate::llm_edit::remove_tool(v, api, name)),
-        COp::LlmSetModel(model) => LLM_API.with(|a| a.get()).is_some_and(|api| crate::llm_edit::set_model(v, api, model)),
+        COp::LlmSetModel(model) => LLM_API.with(|a| a.get()).filter(|_| !LLM_MODEL_IN_URL.with(|m| m.get())).is_some_and(|api| crate::llm_edit::set_model(v, api, model)),
         COp::LlmAppendSystem(text) => LLM_API.with(|a| a.get()).is_some_and(|api| crate::llm_edit::append_system(v, api, text)),
         _ => false,
     }

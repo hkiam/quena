@@ -1155,6 +1155,20 @@ async fn llm_freeze(core: State<'_, Core>, key: String) -> R<quena_app_core::age
     blocking(move || core.llm_freeze(&key).map_err(e)).await
 }
 
+/// Write a conversation as Markdown, JSON lines or OpenTelemetry spans.
+#[tauri::command]
+async fn llm_export(core: State<'_, Core>, key: String, format: String, path: String) -> R<usize> {
+    let core = core.inner().clone();
+    blocking(move || core.llm_export(&key, &format, std::path::Path::new(&path)).map_err(e)).await
+}
+
+/// Start an AI agent in a terminal that uses Quena.
+#[tauri::command]
+async fn start_agent(core: State<'_, Core>, command: String) -> R<()> {
+    let core = core.inner().clone();
+    blocking(move || core.start_agent(&command).map_err(e)).await
+}
+
 /// A session as an MCP exchange (`None`: it is not one).
 #[tauri::command]
 async fn mcp_exchange(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_core::mcp_traffic::McpExchange>> {
@@ -1414,6 +1428,8 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         llm_conversation,
         llm_context,
         mcp_exchange,
+        start_agent,
+        llm_export,
         llm_variant,
         llm_compare,
         llm_freeze,

@@ -16,8 +16,8 @@ server (or to the next proxy) and records both directions.
 ## Start a browser or terminal with Quena
 
 Without changing the system proxy, Quena can start programs whose traffic goes through it:
-the **globe button** next to the capture switch, *Capture → Start Browser…* and
-*Capture → Open Terminal*. Capturing starts if it is off.
+the **globe button** next to the capture switch, *Capture → Start Browser…*,
+*Capture → Open Terminal* and *Capture → Start Agent…*. Capturing starts if it is off.
 
 - **Browsers.** Quena finds Chrome, Edge, Brave, Vivaldi, Chromium and Firefox and starts the
   chosen one with **its own profile** (kept in Quena's data folder, so logins stay) and Quena as
@@ -33,7 +33,8 @@ the **globe button** next to the capture switch, *Capture → Start Browser…* 
 - **Terminal.** A new terminal window (Terminal.app, Windows Terminal or `cmd`, or the Linux
   terminal found) whose shell has:
     - `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` (also in lower case) pointing to Quena;
-    - `NODE_EXTRA_CA_CERTS` with Quena's root certificate;
+    - `NODE_EXTRA_CA_CERTS` and `CODEX_CA_CERTIFICATE` with Quena's root certificate (Node.js
+      programs such as Claude Code and Gemini CLI, and Codex, add it to their own roots);
     - on macOS and Linux also `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
       `GIT_SSL_CAINFO`, `AWS_CA_BUNDLE`, `PIP_CERT` and `CARGO_HTTP_CAINFO` with a bundle of
       the system's roots plus Quena's (`quena-ca-bundle.pem` in the data folder).
@@ -41,6 +42,12 @@ the **globe button** next to the capture switch, *Capture → Start Browser…* 
     On Windows, curl, Git and Python use the system store: trust the Quena root certificate
     there. Java has its own trust store; import the certificate with
     `keytool -importcert -cacerts -alias quena -file quena-root-ca.pem`.
+
+- **AI agent.** *Start Agent…* (or *Start Claude Code* / *Start Codex* in the globe button's
+  menu) opens such a terminal and runs the agent's command in it (`claude`, `codex`, `gemini`
+  …, in your login shell, so its `PATH` finds it); the shell stays open after it. Its calls to
+  the model and to MCP servers over HTTP go through Quena and show in the [Agents
+  panel](llm.md#conversations-of-agents). HTTPS decryption must be on.
 
 Agents can do the same with the MCP tools `launch_browser` and `open_terminal`.
 

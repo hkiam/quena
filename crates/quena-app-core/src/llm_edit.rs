@@ -31,6 +31,25 @@ fn gemini_si_key(o: &serde_json::Map<String, Value>) -> &'static str {
 pub fn remove_tool(v: &mut Value, api: Api, pattern: &str) -> bool {
     let Some(obj) = v.as_object_mut() else { return false };
     let mut removed: Vec<String> = Vec::new();
+    // Bedrock Converse: toolConfig.tools[].toolSpec.
+    if api == Api::Converse {
+        let Some(Value::Array(tools)) = obj.get_mut("toolConfig").and_then(|c| c.get_mut("tools")) else { return false };
+        tools.retain(|t| match t.get("toolSpec").and_then(name_of) {
+            Some(n) if tool_matches(pattern, n) => {
+                removed.push(n.to_string());
+                false
+            }
+            _ => true,
+        });
+        let empty = tools.is_empty();
+        let choice_named = obj.get("toolConfig").and_then(|c| c.get("toolChoice")).and_then(|c| c.get("tool")).and_then(name_of).is_some_and(|n| removed.iter().any(|r| r == n));
+        if empty {
+            obj.remove("toolConfig");
+        } else if choice_named && let Some(c) = obj.get_mut("toolConfig").and_then(|c| c.as_object_mut()) {
+            c.remove("toolChoice");
+        }
+        return !removed.is_empty();
+    }
     if let Some(Value::Array(tools)) = obj.get_mut("tools") {
         tools.retain(|t| match name_of(t) {
             Some(n) if tool_matches(pattern, n) => {
@@ -112,6 +131,12 @@ pub fn append_system(v: &mut Value, api: Api, text: &str) -> bool {
                 None => msgs.insert(0, json!({"role": "system", "content": text})),
             }
         }
+        Api::Converse => match obj.get_mut("system") {
+            Some(Value::Array(blocks)) => blocks.push(json!({"text": text})),
+            _ => {
+                obj.insert("system".into(), json!([{"text": text}]));
+            }
+        },
         Api::Embeddings => return false,
     }
     true
@@ -147,21 +172,34 @@ pub fn set_system(v: &mut Value, api: Api, text: &str) {
                 }
             }
         }
+        Api::Converse => {
+            obj.remove("system");
+            if !text.is_empty() {
+                obj.insert("system".into(), json!([{"text": text}]));
+            }
+        }
         Api::Embeddings => {}
     }
 }
 
-/// Set the model in the body (Gemini names it in the URL: see [`gemini_model_url`]).
+/// Set the model in the body (APIs that name it in the URL — Gemini, Vertex AI, Bedrock —
+/// are changed with [`model_url`]).
 pub fn set_model(v: &mut Value, api: Api, model: &str) -> bool {
-    if api == Api::Gemini || !v.is_object() || v.get("model").and_then(|m| m.as_str()) == Some(model) {
+    if matches!(api, Api::Gemini | Api::Converse) || !v.is_object() || v.get("model").and_then(|m| m.as_str()) == Some(model) {
         return false;
     }
     v["model"] = Value::String(model.into());
     true
 }
 
-/// A Gemini URL with another model (`…/models/{model}:generateContent`).
-pub fn gemini_model_url(url: &str, model: &str) -> Option<String> {
+/// A URL with another model where the API names it there: Gemini and Vertex AI
+/// (`…/models/{model}:generateContent`), Bedrock (`…/model/{model}/invoke`).
+pub fn model_url(url: &str, model: &str) -> Option<String> {
+    if let Some(i) = url.find("/model/").map(|i| i + "/model/".len()).filter(|_| url.contains("bedrock-runtime")) {
+        let end = url[i..].find('/').map(|e| i + e).unwrap_or(url.len());
+        let enc = model.replace(':', "%3A");
+        return (url[i..end] != enc && url[i..end] != *model).then(|| format!("{}{}{}", &url[..i], enc, &url[end..]));
+    }
     let i = url.find("/models/")? + "/models/".len();
     let end = url[i..].find(':').map(|e| i + e)?;
     (url[i..end] != *model).then(|| format!("{}{}{}", &url[..i], model, &url[end..]))
@@ -189,6 +227,10 @@ pub fn set_max_tokens(v: &mut Value, api: Api, n: u64) {
         Api::OllamaChat | Api::OllamaGenerate => {
             let o = obj.entry("options").or_insert_with(|| json!({}));
             o["num_predict"] = n.into();
+        }
+        Api::Converse => {
+            let o = obj.entry("inferenceConfig").or_insert_with(|| json!({}));
+            o["maxTokens"] = n.into();
         }
         Api::Embeddings => {}
     }
@@ -241,8 +283,15 @@ mod tests {
 
     #[test]
     fn model_and_limit() {
-        assert_eq!(gemini_model_url("https://g/v1beta/models/gemini-2.5-pro:generateContent?alt=sse", "gemini-2.5-flash").as_deref(), Some("https://g/v1beta/models/gemini-2.5-flash:generateContent?alt=sse"));
+        assert_eq!(model_url("https://g/v1beta/models/gemini-2.5-pro:generateContent?alt=sse", "gemini-2.5-flash").as_deref(), Some("https://g/v1beta/models/gemini-2.5-flash:generateContent?alt=sse"));
         assert!(!set_model(&mut v(r#"{"contents":[]}"#), Api::Gemini, "x"));
+        assert_eq!(model_url("https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-5-20250929-v1%3A0/invoke", "anthropic.claude-haiku-4-5-20251001-v1:0").as_deref(), Some("https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-haiku-4-5-20251001-v1%3A0/invoke"));
+        let mut c = v(r#"{"messages":[],"toolConfig":{"tools":[{"toolSpec":{"name":"a"}},{"toolSpec":{"name":"b"}}],"toolChoice":{"tool":{"name":"a"}}}}"#);
+        assert!(remove_tool(&mut c, Api::Converse, "a"));
+        assert!(c["toolConfig"].get("toolChoice").is_none());
+        append_system(&mut c, Api::Converse, "x");
+        set_max_tokens(&mut c, Api::Converse, 5);
+        assert_eq!((c["system"][0]["text"].as_str(), c["inferenceConfig"]["maxTokens"].as_u64()), (Some("x"), Some(5)));
         let mut c = v(r#"{"model":"gpt-5","messages":[]}"#);
         set_max_tokens(&mut c, Api::Chat, 100);
         assert_eq!(c["max_completion_tokens"], 100);

@@ -25,6 +25,7 @@ const FIELDS: Partial<Record<ColumnKey, string>> = {
   conversation: "conv",
   mcp: "mcp",
   mcpServer: "mcpserver",
+  agent: "agent",
   tls: "tls",
   remoteIp: "ip",
   http: "http",

@@ -52,6 +52,8 @@ function groupLabel(r: SessionSummary, first: number): string {
       return t("Conversation {key}", { key: r.llmConv ?? "" });
     case "mcpServer":
       return t("MCP server {name}", { name: r.mcpServer ?? "" });
+    case "agent":
+      return (r.agent ?? "").replace(/ \d[\w.-]*$/, "");
     default:
       return "";
   }
@@ -120,6 +122,8 @@ function cellText(r: SessionSummary, key: ColumnKey): string {
       return r.mcp ?? "";
     case "mcpServer":
       return r.mcpServer ?? "";
+    case "agent":
+      return r.agent ?? "";
     case "tls":
       return r.tls ?? "";
     case "remoteIp":

@@ -75,6 +75,8 @@ export interface SessionSummary {
   /** An exchange with an MCP server (`tools/call get_issue`) and the server. */
   mcp?: string;
   mcpServer?: string;
+  /** The AI agent or SDK of an LLM or MCP request (`Claude Code 2.0.14`). */
+  agent?: string;
   /** TLS version, the server's IP address, the request's HTTP version. */
   tls?: string;
   remoteIp?: string;
@@ -84,7 +86,7 @@ export interface SessionSummary {
 }
 
 /** "Group by" of the session list (crates/quena-index). */
-export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via" | "llm" | "conversation" | "mcpServer" | "source";
+export type GroupBy = "none" | "connection" | "host" | "process" | "trace" | "session" | "custom" | "via" | "llm" | "conversation" | "mcpServer" | "agent" | "source";
 
 /** An archive or folder of the snapshot library (crates/quena-app-core/src/library.rs). */
 export interface LibraryEntry {
@@ -439,6 +441,7 @@ export type Column =
   | "conversation"
   | "mcp"
   | "mcpServer"
+  | "agent"
   | "tls"
   | "remoteIp"
   | "http"
@@ -542,7 +545,7 @@ export interface LlmPart {
 }
 export interface LlmCall {
   provider: string;
-  api: "chat" | "responses" | "messages" | "gemini" | "ollamaChat" | "ollamaGenerate" | "embeddings";
+  api: "chat" | "responses" | "messages" | "gemini" | "ollamaChat" | "ollamaGenerate" | "embeddings" | "converse";
   model: string;
   stream: boolean;
   system: string[];
@@ -1417,6 +1420,8 @@ export const api = {
   hostsFileImport: () => invoke<HostRemapEntry[]>("hosts_file_import"),
   launchBrowser: (kind: string, url?: string) => invoke<string>("launch_browser", { kind, url }),
   openTerminal: () => invoke<void>("open_terminal"),
+  startAgent: (command: string) => invoke<void>("start_agent", { command }),
+  llmExport: (key: string, format: "markdown" | "jsonl" | "otel", path: string) => invoke<number>("llm_export", { key, format, path }),
   settingsGet: () => invoke<Settings>("settings_get"),
   settingsSet: (settings: Settings) => invoke<void>("settings_set", { settings }),
   mcpStatus: () => invoke<McpStatus>("mcp_status"),

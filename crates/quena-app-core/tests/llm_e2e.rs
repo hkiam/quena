@@ -138,7 +138,8 @@ fn turns_of_an_agent_run_make_a_conversation() {
     assert_eq!(convs.len(), 2);
     let run = convs.iter().find(|c| c.turns == 2).unwrap();
     assert_eq!(run.title, "Fix the parser");
-    assert_eq!(run.agent, "claude-cli/2.0.14");
+    assert_eq!(run.agent, "Claude Code 2.0.14");
+    assert_eq!(core.capture().index.find_all(|s| s.agent == "Claude Code 2.0.14").len(), 3, "the agent column");
     assert_eq!(run.input, 2000);
     let d = core.llm_conversation(&run.key).unwrap();
     assert_eq!(d.turns[1].diff.kind, "append");
@@ -235,5 +236,54 @@ fn a_variant_is_sent_with_its_changes() {
     let (req, _) = core.capture().bodies_of(new).unwrap();
     let sent: serde_json::Value = serde_json::from_slice(&req.read_range(0, req.len() as usize).unwrap()).unwrap();
     assert_eq!(sent["model"], "claude-haiku-4-5");
+    core.shutdown();
+}
+
+/// A conversation exported as Markdown, JSON lines and OpenTelemetry spans.
+#[test]
+fn conversations_export() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("settings.json"), r#"{"proxy":{"port":0,"actAsSystemProxy":false,"captureOnStartup":false,"useSystemUpstream":false}}"#).unwrap();
+    let core = AppCore::new(Paths::at(dir.path().to_path_buf()), quena_app_core::logbuf::LogBuffer::new(100)).unwrap();
+    let engine = quena_app_core::engine::ProxyEngine::new(&core).unwrap();
+    core.set_proxy_engine(engine.clone());
+    core.start_capture().unwrap();
+    let addr = engine.proxy.listen_addrs().into_iter().find(|a| a.is_ipv4()).unwrap();
+    let port = fake_llm();
+    for body in [
+        r#"{"model":"claude-sonnet-4-20250514","max_tokens":10,"system":"S","messages":[{"role":"user","content":"Explain the parser"}]}"#,
+        r#"{"model":"claude-sonnet-4-20250514","max_tokens":10,"system":"S","messages":[{"role":"user","content":"Explain the parser"},{"role":"assistant","content":"Hello"},{"role":"user","content":"Shorter"}]}"#,
+    ] {
+        let o = Command::new("curl").args(["-sS", "--max-time", "20", "-x", &format!("http://{addr}"), "-H", "Content-Type: application/json", "--data-binary", body, &format!("http://127.0.0.1:{port}/v1/messages")]).output().unwrap();
+        assert!(o.status.success());
+    }
+    let t = Instant::now();
+    let key = loop {
+        core.capture().index.tick();
+        let ids = core.capture().index.find_all(|s| !s.llm_conv.is_empty());
+        if ids.len() == 2 {
+            break core.capture().index.get(ids[0]).unwrap().llm_conv;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20));
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let md = dir.path().join("run.md");
+    assert_eq!(core.llm_export(&key, "markdown", &md).unwrap(), 2);
+    let text = std::fs::read_to_string(&md).unwrap();
+    assert!(text.starts_with("# Explain the parser"), "{text}");
+    assert!(text.contains("## Turn 2") && text.contains("Shorter") && text.contains("### Answer"));
+    assert_eq!(text.matches("Explain the parser").count(), 2, "turn 2 shows only what it added (title + turn 1)");
+    let jl = dir.path().join("run.jsonl");
+    core.llm_export(&key, "jsonl", &jl).unwrap();
+    let lines: Vec<serde_json::Value> = std::fs::read_to_string(&jl).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[1]["call"]["messages"].as_array().unwrap().len(), 3);
+    let ot = dir.path().join("run.otel.json");
+    core.llm_export(&key, "otel", &ot).unwrap();
+    let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&ot).unwrap()).unwrap();
+    let spans = doc["resourceSpans"][0]["scopeSpans"][0]["spans"].as_array().unwrap();
+    assert_eq!(spans.len(), 3, "the run and its two calls");
+    assert_eq!(spans[1]["parentSpanId"], spans[0]["spanId"]);
+    assert!(core.llm_export(&key, "pdf", &ot).is_err());
     core.shutdown();
 }

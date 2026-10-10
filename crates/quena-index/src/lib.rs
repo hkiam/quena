@@ -45,6 +45,8 @@ pub enum Column {
     /// MCP exchange (method and tool) and its server.
     Mcp,
     McpServer,
+    /// The AI agent or SDK of LLM and MCP requests.
+    Agent,
     /// TLS version, the server's IP address, the request's HTTP version.
     Tls,
     RemoteIp,
@@ -100,6 +102,8 @@ pub enum GroupBy {
     Conversation,
     /// The MCP server.
     McpServer,
+    /// The AI agent (without its version).
+    Agent,
     /// Where the session comes from: recorded live, or the archive it was loaded from.
     Source,
 }
@@ -122,6 +126,14 @@ pub struct RowGroup {
 fn hash_str(s: &str, fold_case: bool) -> u64 {
     // FNV-1a; equal keys only need equal hashes (a collision merges two groups).
     s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ if fold_case { b.to_ascii_lowercase() } else { b } as u64).wrapping_mul(0x0000_0100_0000_01b3))
+}
+
+/// An agent without its version (`Claude Code 2.0.14` → `Claude Code`), for grouping.
+pub fn agent_family(agent: &str) -> &str {
+    match agent.rsplit_once(' ') {
+        Some((name, v)) if v.chars().next().is_some_and(|c| c.is_ascii_digit()) => name,
+        _ => agent,
+    }
 }
 
 /// The source of a session for grouping: the archive's name, else `live`.
@@ -149,6 +161,7 @@ fn group_key(r: &SessionSummary, by: GroupBy) -> Option<u64> {
         GroupBy::Llm => text(&r.llm, false),
         GroupBy::Conversation => text(&r.llm_conv, false),
         GroupBy::McpServer => text(&r.mcp_server, false),
+        GroupBy::Agent => text(agent_family(&r.agent), false),
         GroupBy::Source => Some(hash_str(source_of(r), false)),
     }
 }
@@ -184,6 +197,7 @@ fn compare(a: &SessionSummary, b: &SessionSummary, c: Column) -> Ordering {
         Column::Conversation => a.llm_conv.cmp(&b.llm_conv),
         Column::Mcp => a.mcp.cmp(&b.mcp),
         Column::McpServer => a.mcp_server.cmp(&b.mcp_server),
+        Column::Agent => a.agent.cmp(&b.agent),
         Column::Tls => a.tls.cmp(&b.tls),
         Column::RemoteIp => ip_key(&a.remote_ip).cmp(&ip_key(&b.remote_ip)),
         Column::Http => a.http_version.cmp(&b.http_version),

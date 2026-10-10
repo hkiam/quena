@@ -87,6 +87,8 @@ export async function handleMenu(id: string) {
       return set({ dialog: { kind: "launch" } });
     case "tools.open-terminal":
       return import("./components/LaunchDialog").then((m) => m.openTerminal());
+    case "tools.start-agent":
+      return import("./components/LaunchDialog").then((m) => m.startAgent());
     case "tools.textwizard":
       return set({ dialog: { kind: "textwizard" } });
     case "tools.composer":

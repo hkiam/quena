@@ -344,6 +344,9 @@ pub struct SessionSummary {
     pub mcp: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub mcp_server: String,
+    /// The AI agent or SDK that sent an LLM or MCP request (`Claude Code 2.0.14`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub agent: String,
     /// TLS version towards the server (else towards the client), e.g. `TLSv1.3`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub tls: String,
@@ -462,6 +465,7 @@ impl SessionDetail {
         s.llm_conv = flag("x-quena-llm-conv").unwrap_or_default().to_string();
         s.mcp = flag("x-quena-mcp").unwrap_or_default().to_string();
         s.mcp_server = flag("x-quena-mcp-server").unwrap_or_default().to_string();
+        s.agent = flag("x-quena-agent").unwrap_or_default().to_string();
         s.llm_cost_micros = flag("x-quena-llm-cost").and_then(|v| v.parse::<f64>().ok()).map(|c| (c * 1_000_000.0).round() as u64);
         s.request_body_len = self.request_body.wire_len();
         if let Some(resp) = &self.response {

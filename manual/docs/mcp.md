@@ -102,6 +102,10 @@ apart from the proxy, so agent calls never slow down forwarding.
 | `get_body` | | a piece of a body: `offset`, `length`, decoded or raw |
 | `compare_captures` | | two captures in the list compared: changed, new and gone requests ([Compare captures](analyze.md#compare-captures)) |
 | `get_llm_call` | | an [LLM API call](llm.md) taken apart: model, messages, tools, answer, tokens, estimated cost |
+| `list_conversations` | | the [conversations of agents](llm.md#conversations-of-agents) in the capture: title, agent, models, turns, tokens, cached share, cost, cache misses, refused calls, latency, context size; subagents name their parent |
+| `get_conversation` | | one conversation: its turns with the change from the call before and why the cache missed, hints where tokens go to waste, what filled the last request, its subagents |
+| `get_context` | | what fills one LLM call's input by category (system prompt, each tool, instruction files, results by tool …), its turn and the cache's verdict |
+| `get_tool_report` | | [tools and skills](llm.md#tools-and-skills) across all conversations: offered, definition cost, model calls, MCP calls, failures, result sizes; skills listed and loaded |
 | `run_diagnostics` | | runs the [diagnostics](diagnostics.md) over all sessions, a filter or chosen ids (profile, hosts, processes) and returns the findings with severity, evidence, recommendations and session ids; the report also shows in the *Diagnostics* tab |
 | `llm_cache_status` | | the [agent cache](llm.md#agent-cache): kept answers with hits and savings, whether every call is cached, repeated calls worth caching |
 | `cache_llm_calls` | yes | cache or forget the answers of LLM call sessions; turn *Cache every LLM call* on or off |

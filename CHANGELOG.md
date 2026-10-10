@@ -8,6 +8,20 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **Start Agent…** (*Capture* menu and the globe button: *Start Claude Code*, *Start
+  Codex*): runs an AI agent in a terminal that uses Quena (proxy, `NODE_EXTRA_CA_CERTS`, now
+  also `CODEX_CA_CERTIFICATE`), so its calls show in the Agents panel.
+- **Agent** column, *Group by → Agent* and filter `agent`: the AI agent or SDK that sent an
+  LLM or MCP request, by its User-Agent (Claude Code, Codex, Gemini CLI, Cursor, GitHub
+  Copilot, Cline, aider, the OpenAI/Anthropic SDKs …; flag `x-quena-agent`).
+- **Export a conversation** as Markdown (turns with what each added and the answer), JSONL
+  (one call per line, for evaluations) or OpenTelemetry GenAI spans (OTLP JSON, no content).
+- MCP tools for AI agents: `list_conversations`, `get_conversation`, `get_context`,
+  `get_tool_report`.
+- LLM traffic of **Claude on Google Vertex AI** (`rawPredict`) and **Amazon Bedrock**
+  (`invoke`, streamed in AWS's binary event stream) and of the **Bedrock Converse API** is
+  recognised; model ids like `us.anthropic.claude-sonnet-4-5-20250929-v1:0` are priced; LLM
+  changes (rewrite rules, playground) set the model in the URL where these APIs name it.
 - **Optimising agents** (Agents panel and LLM view): *Compare with* sets two conversations
   side by side (turns, tokens, cached share, cost, duration, last request, cache misses,
   errors, hints, context by category, tool calls by tool, with the differences); *Try a

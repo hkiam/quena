@@ -14,10 +14,15 @@ a model, its tools, the answer and what it cost — also when the answer came as
 | Google Gemini and Vertex AI | `POST …:generateContent`, `…:streamGenerateContent` |
 | Ollama | `POST …/api/chat`, `…/api/generate` |
 | Embeddings | `POST …/embeddings`, `…/api/embed`, `…:embedContent` |
+| Claude on Google Vertex AI | `POST …/publishers/anthropic/models/…:rawPredict`, `…:streamRawPredict` (Anthropic's format) |
+| Claude on Amazon Bedrock | `POST bedrock-runtime…/model/…anthropic.…/invoke`, `…/invoke-with-response-stream` (Anthropic's format, streamed in AWS's event stream) |
+| Amazon Bedrock Converse (any model) | `POST bedrock-runtime…/model/…/converse`, `…/converse-stream` |
 
-The provider is named by the API's host (`OpenAI`, `Anthropic`, `Google Gemini`, …); other
-hosts — a company gateway, a local server — keep their host name. HTTPS decryption must be
-on, as for any HTTPS content.
+The provider is named by the API's host (`OpenAI`, `Anthropic`, `Google Gemini`, `Google
+Vertex AI`, `Amazon Bedrock`, …); other hosts — a company gateway, a local server — keep their
+host name. Models named in the URL (Gemini, Vertex AI, Bedrock — `us.anthropic.claude-…-v1:0`)
+are taken from there and priced like the provider's own. HTTPS decryption must be on, as for
+any HTTPS content.
 
 ## The LLM view
 
@@ -82,6 +87,9 @@ before.
 
 Each call gets the flag `x-quena-llm-conv` with the conversation's key: column
 **Conversation**, *Group by → Conversation (agent run)* and the filter `conv == 22480fee4e`.
+LLM and MCP requests also get the agent that sent them, by its User-Agent (`x-quena-agent`:
+`Claude Code 2.0.14`, `Codex 0.46.0`, `Gemini CLI`, `Cursor`, `OpenAI SDK (Python)` …):
+column **Agent**, *Group by → Agent* (without the version), filter `agent ~ "claude code"`.
 LLM calls in archives from other tools (no Quena flags) are found by their URL when the panel
 opens and get all LLM flags.
 
@@ -230,6 +238,15 @@ goes to the model, and the conversation says at which turn the run *left the fro
 request is the same when its URL, model, messages, tools and settings are (key order,
 `user` and `metadata` do not count); when the first request already differs — a date in a
 reminder, say — the new run gets no answer from the recording.
+
+### Export a conversation
+
+*Export:* in a conversation writes it as **Markdown** (each turn with what it added — new
+messages, tool calls and results — and the answer, to read or share), **JSONL** (one call per
+line as the LLM view takes it apart, with turn, change and cache notes: for evaluations), or
+**OpenTelemetry** spans after the GenAI semantic conventions (OTLP JSON: a span for the run,
+one per call with model, tokens and finish reason, no content) to load into Langfuse, Phoenix
+or another tracing tool.
 
 ### Compare two runs
 
