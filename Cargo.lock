@@ -4020,7 +4020,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "quena-app"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -4051,7 +4051,7 @@ dependencies = [
 
 [[package]]
 name = "quena-app-core"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4103,7 +4103,7 @@ dependencies = [
 
 [[package]]
 name = "quena-auth"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "libloading 0.8.9",
@@ -4113,7 +4113,7 @@ dependencies = [
 
 [[package]]
 name = "quena-body"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "brotli 8.0.4",
  "encoding_rs",
@@ -4131,7 +4131,7 @@ dependencies = [
 
 [[package]]
 name = "quena-cli"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4149,7 +4149,7 @@ dependencies = [
 
 [[package]]
 name = "quena-formats"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -4176,7 +4176,7 @@ dependencies = [
 
 [[package]]
 name = "quena-index"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "parking_lot",
  "quena-model",
@@ -4187,7 +4187,7 @@ dependencies = [
 
 [[package]]
 name = "quena-jobs"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "parking_lot",
@@ -4197,7 +4197,7 @@ dependencies = [
 
 [[package]]
 name = "quena-mcp"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4223,7 +4223,7 @@ dependencies = [
 
 [[package]]
 name = "quena-model"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_bytes",
@@ -4231,7 +4231,7 @@ dependencies = [
 
 [[package]]
 name = "quena-platform"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "libc",
  "libproc",
@@ -4246,7 +4246,7 @@ dependencies = [
 
 [[package]]
 name = "quena-plugin-host"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "hex",
@@ -4264,7 +4264,7 @@ dependencies = [
 
 [[package]]
 name = "quena-proxy"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4300,7 +4300,7 @@ dependencies = [
 
 [[package]]
 name = "quena-query"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "quena-model",
  "regex",
@@ -4310,7 +4310,7 @@ dependencies = [
 
 [[package]]
 name = "quena-report"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4318,7 +4318,7 @@ dependencies = [
 
 [[package]]
 name = "quena-script"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "parking_lot",
  "rquickjs",
@@ -4330,7 +4330,7 @@ dependencies = [
 
 [[package]]
 name = "quena-store"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "crossbeam-channel",
  "parking_lot",
@@ -4347,7 +4347,7 @@ dependencies = [
 
 [[package]]
 name = "quena-tls"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "hex",
