@@ -121,6 +121,11 @@ fn groups_by_order_and_ignored_headers() {
     let o = CompareOptions { pair_by: PairBy::Order, ignore_headers: vec!["X-Build".into()], ..Default::default() };
     let d = core.compare_captures_with(&a, &b, &o).unwrap();
     assert_eq!(d.counts.same, 1, "{:#?}", d.entries);
+    // Overlapping groups: on side B a session has its B position.
+    let (oa, ob) = (Source::Ids(ids[..3].to_vec()), Source::Ids(ids[2..].to_vec()));
+    let d = core.compare_captures_with(&oa, &ob, &CompareOptions { pair_by: PairBy::Order, ..Default::default() }).unwrap();
+    let first = d.entries.iter().find(|e| e.id_b == Some(ids[2])).unwrap();
+    assert_eq!(first.id_a, Some(ids[0]), "{:#?}", d.entries);
     // By exact URL nothing pairs.
     let d = core.compare_captures_with(&a, &b, &CompareOptions { pair_by: PairBy::Url, ..Default::default() }).unwrap();
     assert_eq!((d.counts.added, d.counts.removed), (2, 2));

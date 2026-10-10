@@ -96,9 +96,13 @@ once.
   same request is answered by Quena from the kept answer, streamed answers as recorded.
 - *Settings → Bodies & Storage → Agent cache → Cache every LLM call* caches each successful
   call by itself.
-- "The same request" means the same method and URL (an API key in `?key=` does not count)
-  and the same JSON body; key order, spacing and the fields `user` and `metadata` do not
-  count. Headers and credentials do not count either.
+- "The same request" means the same method and URL, the same credentials (`Authorization`,
+  `x-api-key`, `?key=` … — kept only as a hash: another key never gets these answers) and API
+  version headers (`anthropic-version`, `anthropic-beta`, `openai-beta` …), and the same JSON
+  body; key order, spacing and the fields `user` and `metadata` do not count.
+- The answer is kept decoded (any client can read it) and without headers that name the
+  account (`set-cookie`, `openai-organization`, request ids). At most 2000 answers or 1 GB are
+  kept; the least recently used go first. A breakpoint on the request wins over the cache.
 - A session answered from the cache shows *Answered by Quena from the agent cache* with the
   tokens, estimated cost and time saved (flag `x-quena-cache`); its tokens and cost are not
   added up in the columns and *Statistics*, as nothing was spent.

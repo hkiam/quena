@@ -283,6 +283,10 @@ impl ProxyEngine {
         if let Some(ca) = self.ca.read().clone() {
             quena_platform::remove_root_ca(&ca.cert_path(), &ca.sha1_fingerprint()).map_err(|e| anyhow!("{e}"))?;
             tracing::info!(target: "quena", "root certificate removed from the trust store");
+            // Trusted for all users too (Windows): that store needs its own removal.
+            if cfg!(windows) && quena_platform::is_root_ca_trusted(&ca.cert_path()) {
+                return Err(anyhow!("removed for this user, but it is still trusted for all users of this computer: right-click \"Trust for all users…\" to remove it from there"));
+            }
         }
         Ok(self.ca_info())
     }

@@ -49,6 +49,9 @@ fn snapshots_in_the_library() {
 
     let to = core.library_rename(&rel, "login flow").unwrap();
     assert_eq!(to, "Release 1.4/login flow.saz");
+    assert_eq!(core.library_rename(&to, "Login Flow.har").unwrap(), "Release 1.4/Login Flow.saz", "a .saz stays a .saz; case only is fine");
+    let to = "Release 1.4/Login Flow.saz".to_string();
+    assert!(core.library_rename(&to, "../x").is_err());
     assert!(core.library_delete("Release 1.4").is_err(), "a folder with archives stays");
     core.library_delete(&to).unwrap();
     core.library_delete("Release 1.4").unwrap();

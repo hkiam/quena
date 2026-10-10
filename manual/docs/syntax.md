@@ -72,7 +72,8 @@ not kind == tunnel
 | `http` | `httpversion`, `version` | HTTP version of the request: `HTTP/1.1`, `HTTP/2` … |
 
 Parts of a session's headers and bodies (slower on large captures: each session's details
-are read):
+are read — in the list in the background, so recorded sessions appear a moment after the
+filter is set; sessions being recorded are tested at once):
 
 | Field | Meaning |
 |---|---|

@@ -60,12 +60,18 @@ pub fn export(cap: &Arc<Capture>, ids: &[SessionId], path: &Path, p: &dyn Progre
             continue;
         }
         let Some((secure, host, port, url)) = parts(&d.request.url) else { continue };
+        // The verb goes in as a word: a method of other characters (from an imported file)
+        // would break the script.
+        let verb = d.request.method.to_ascii_uppercase();
+        if verb.is_empty() || !verb.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_') {
+            continue;
+        }
         n += 1;
         out.push_str(&format!("\n        request\n        {{\n            server     = {};\n            port       = {port};\n", lit(&host)));
         if secure {
             out.push_str("            secure     = true;\n");
         }
-        out.push_str(&format!("            url        = {};\n            verb       = {};\n", lit(&url), d.request.method.to_ascii_uppercase()));
+        out.push_str(&format!("            url        = {};\n            verb       = {};\n", lit(&url), verb));
         if d.summary.status != 0 {
             out.push_str(&format!("            statuscode = {};\n", d.summary.status));
         }

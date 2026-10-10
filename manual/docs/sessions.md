@@ -212,7 +212,8 @@ The **Filters** tab hides sessions from the list (they are still recorded). Chec
 
 **Saved filters** keep filter settings under a name: *Save as…* stores the current ones,
 pick one and *Apply*, *Rename…* or *Delete*. The list shows how many sessions each would
-show (`(!)`: its expression has an error). They are kept with the layout.
+show (`(!)`: its expression has an error; `(–)`: it tests headers or bodies, which is not
+counted in passing). They are kept with the layout.
 
 Quick ways to filter:
 

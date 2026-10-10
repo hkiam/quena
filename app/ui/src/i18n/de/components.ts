@@ -676,4 +676,7 @@ export const components: Record<string, string> = {
   "Adding {n} session to {name}": "{n} Session wird zu {name} hinzugef\u00fcgt",
   "Adding {n} sessions to {name}": "{n} Sessions werden zu {name} hinzugef\u00fcgt",
   "Click OK first: the server's settings are not saved yet": "Zuerst OK klicken: Die Einstellungen des Servers sind noch nicht gespeichert",
+  "Delete {name}?": "{name} l\u00f6schen?",
+  "The folder is deleted (only an empty one can be).": "Der Ordner wird gel\u00f6scht (nur ein leerer).",
+  "The snapshot file is deleted for good (it does not go to the trash).": "Die Snapshot-Datei wird endg\u00fcltig gel\u00f6scht (nicht in den Papierkorb).",
 };

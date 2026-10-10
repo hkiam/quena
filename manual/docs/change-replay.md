@@ -8,7 +8,7 @@ Select one or more sessions and replay their requests:
 |---|---|---|
 | *Replay Requests* | `R` | Send the requests again. |
 | *Replay Unconditionally* | `U` | Send them again without conditional headers (`If-Modified-Since`, `If-None-Match`, `If-Match`, `If-Unmodified-Since`, `If-Range`), so the server sends a full response. |
-| *Advanced Replay…* | `Shift R` | Send the requests up to 100,000 times each, one after the other or in parallel with at most 1–100 at a time, optionally unconditionally. *Stop* in the message or *Stop Replay* ends a running replay (requests on the way finish). |
+| *Advanced Replay…* | `Shift R` | Send the requests up to 100,000 times each, one after the other or in parallel with at most 1–100 at a time, optionally unconditionally. *Stop* in the message or *Stop Replay* ends the running replays, also those an agent started (requests on the way finish). |
 | *Replay and Edit* | | Send the request with a breakpoint, so you can change it before it goes out. |
 | *Replay from Composer* | | Load the request into the Composer. |
 
@@ -340,8 +340,11 @@ kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP
       is there keeps its place.
     - **Cookie: set / remove**: in a request the `Cookie` header, in a response a
       `Set-Cookie` (added with `Path=/`, or removed; `*` removes all).
+    - **Header: set if missing** — only where the message has none (the server's own value
+      stays).
     - **Session: mark** with a colour, **Session: comment** — for the session in the list; the
-      message stays as it is (the session is not marked as changed).
+      message stays as it is (the session is not marked as changed, and *Apply Rewrite Rules…*
+      marks the sessions themselves instead of adding copies).
 - **Preview on #N** tries the rule on the session selected in the list, without sending
   anything: whether its filters take the session, the status and header changes, and the
   body before and after.
@@ -352,7 +355,7 @@ kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP
 
 | Template | Adds |
 |---|---|
-| *Bypass CORS* | `Access-Control-Allow-*` headers on every response, and a mock rule answering preflight `OPTIONS` requests |
+| *Bypass CORS* | `Access-Control-Allow-*` headers on responses that have none (an origin the server sends stays, so requests with credentials keep working), and a mock rule answering preflight `OPTIONS` requests (those with `Access-Control-Request-Method`) |
 | *Block cookies* | removes `Cookie` from requests and every `Set-Cookie` from responses |
 | *Disable caching* | removes conditional headers from requests, adds `Cache-Control: no-cache`; `no-store` on responses without `ETag`, `Last-Modified`, `Expires` |
 | *Change User-Agent…* | sends the `User-Agent` you enter |
@@ -360,8 +363,8 @@ kept in `rewrite.json` in the data folder. An AI agent can do the same over [MCP
 | *Block a host…* | a mock rule answering requests to that host (and its subdomains) with 404 |
 | *Allow only one host…* | a mock rule dropping every request whose URL does not contain the host |
 
-Templates with a mock rule need Mock Rules on; Quena asks before turning them on when other
-mock rules would become active too.
+Templates need rewrite rules (and, with a mock rule, Mock Rules) on; Quena asks before turning
+them on when other rules would become active too.
 
 ### WebSocket messages
 

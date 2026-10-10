@@ -609,8 +609,13 @@ impl<'de> Visitor<'de> for EntriesV<'_> {
 }
 
 pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<SessionId>> {
+    import_reader(cap, File::open(path)?, p)
+}
+
+/// [`import`] from any reader (e.g. a HAR built in memory).
+pub fn import_reader(cap: &Arc<Capture>, r: impl std::io::Read, p: &dyn Progress) -> Result<Vec<SessionId>> {
     use std::io::BufRead;
-    let mut f = BufReader::with_capacity(1 << 20, File::open(path)?);
+    let mut f = BufReader::with_capacity(1 << 20, r);
     // Tolerate a UTF-8 byte order mark (common for files saved on Windows).
     if f.fill_buf()?.starts_with(b"\xef\xbb\xbf") {
         f.consume(3);

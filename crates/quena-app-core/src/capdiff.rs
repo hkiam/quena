@@ -326,7 +326,8 @@ impl AppCore {
         // The pairing key: by order the position on its side (the label is still shown).
         let pos_a: HashMap<SessionId, usize> = ra.iter().enumerate().map(|(i, s)| (s.id, i)).collect();
         let pos_b: HashMap<SessionId, usize> = rb.iter().enumerate().map(|(i, s)| (s.id, i)).collect();
-        let key = |s: &SessionSummary| -> (String, String) {
+        // A session on both sides (overlapping groups) has a position on each.
+        let key = |s: &SessionSummary, side_b: bool| -> (String, String) {
             match o.pair_by {
                 PairBy::Path => label(s),
                 PairBy::Url => {
@@ -334,18 +335,18 @@ impl AppCore {
                     let u = if o.ignore_host { u.split_once("://").and_then(|(_, r)| r.find('/').map(|i| r[i..].to_string())).unwrap_or(u) } else { u };
                     (s.method.to_ascii_uppercase(), u)
                 }
-                PairBy::Order => (String::new(), pos_a.get(&s.id).or(pos_b.get(&s.id)).copied().unwrap_or(0).to_string()),
+                PairBy::Order => (String::new(), if side_b { pos_b.get(&s.id) } else { pos_a.get(&s.id) }.copied().unwrap_or(0).to_string()),
             }
         };
         // Occurrences of each key on side A, in order.
         let mut by_key: HashMap<(String, String), std::collections::VecDeque<&SessionSummary>> = HashMap::new();
         for s in &ra {
-            by_key.entry(key(s)).or_default().push_back(s);
+            by_key.entry(key(s, false)).or_default().push_back(s);
         }
         let mut entries = Vec::new();
         let mut counts = DiffCounts::default();
         for sb in &rb {
-            let sa = by_key.get_mut(&key(sb)).and_then(|q| q.pop_front());
+            let sa = by_key.get_mut(&key(sb, true)).and_then(|q| q.pop_front());
             let k = label(sb);
             let mut e = DiffEntry {
                 kind: DiffKind::Added,

@@ -2,7 +2,7 @@
 // a source of its own in the navigator), save sessions as a new snapshot or add them to one.
 import { useEffect, useState } from "react";
 import { api, type LibraryEntry } from "../api";
-import { get, promptText, say, set } from "../store";
+import { confirmAsk, get, promptText, say, set } from "../store";
 import { actions } from "../actions";
 import { importWithPassword, newPassword } from "../fileActions";
 import { prepareImport } from "../lib/importPrep";
@@ -112,7 +112,14 @@ export function LibraryPanel() {
         >
           {t("Rename…")}
         </button>
-        <button disabled={!entry} onClick={() => entry && void act(() => api.libraryDelete(entry.path), t("Deleted {name}", { name: entry.name }))}>
+        <button
+          disabled={!entry}
+          onClick={async () => {
+            if (!entry) return;
+            if (!(await confirmAsk(t("Delete {name}?", { name: entry.name }), entry.folder ? t("The folder is deleted (only an empty one can be).") : t("The snapshot file is deleted for good (it does not go to the trash)."), t("Delete")))) return;
+            await act(() => api.libraryDelete(entry.path), t("Deleted {name}", { name: entry.name }));
+          }}
+        >
           {t("Delete")}
         </button>
         <button className="linklike" onClick={() => void api.libraryReveal().catch((e) => say(String(e), "error"))}>

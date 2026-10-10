@@ -167,7 +167,8 @@ pub fn remove_root_ca(_cert: &Path, sha1: &str) -> Result<()> {
 pub fn machine_root_ca(cert: &Path, sha1: &str, trust: bool) -> Result<()> {
     let target = if trust { cert.to_string_lossy().replace('\'', "''") } else { sha1.replace('\'', "") };
     let verb = if trust { "-addstore" } else { "-delstore" };
-    let script = format!("$p = Start-Process -FilePath certutil -ArgumentList '{verb}','Root','\"{target}\"' -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode");
+    // A declined UAC prompt is an error (1223), not a success.
+    let script = format!("try {{ $p = Start-Process -FilePath certutil -ArgumentList '{verb}','Root','\"{target}\"' -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop }} catch {{ exit 1223 }}; if (-not $p) {{ exit 1223 }}; exit $p.ExitCode");
     run("powershell", &["-NoProfile", "-NonInteractive", "-Command", &script]).map(|_| ())
 }
 

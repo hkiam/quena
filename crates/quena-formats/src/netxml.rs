@@ -11,6 +11,9 @@ use std::sync::Arc;
 
 /// Elements whose children form a list.
 const LISTS: &[&str] = &["entries", "pages", "headers", "cookies", "queryString", "params"];
+/// Larger files and deeper nesting are refused (a NetXML capture is flat).
+const MAX_FILE: u64 = 512 << 20;
+const MAX_DEPTH: usize = 64;
 /// Leaves that are numbers in HAR.
 const NUMBERS: &[&str] = &["status", "time", "size", "bodySize", "headersSize", "send", "wait", "receive", "blocked", "dns", "connect", "ssl", "compression", "onContentLoad", "onLoad"];
 
@@ -48,7 +51,12 @@ pub fn to_har(xml: &str) -> Result<Value> {
     let mut stack: Vec<Node> = vec![Node { name: String::new(), text: String::new(), children: vec![] }];
     loop {
         match r.read_event().map_err(|e| FormatError::Invalid(format!("NetXML: {e}")))? {
-            Event::Start(e) => stack.push(Node { name: String::from_utf8_lossy(e.local_name().as_ref()).into_owned(), text: String::new(), children: vec![] }),
+            Event::Start(e) => {
+                if stack.len() > MAX_DEPTH {
+                    return Err(FormatError::Invalid(format!("NetXML: nested deeper than {MAX_DEPTH} levels")));
+                }
+                stack.push(Node { name: String::from_utf8_lossy(e.local_name().as_ref()).into_owned(), text: String::new(), children: vec![] })
+            }
             Event::Empty(e) => {
                 let n = Node { name: String::from_utf8_lossy(e.local_name().as_ref()).into_owned(), text: String::new(), children: vec![] };
                 if let Some(top) = stack.last_mut() {
@@ -97,14 +105,14 @@ pub fn to_har(xml: &str) -> Result<Value> {
 
 /// Import an IE NetXML capture.
 pub fn import(cap: &Arc<Capture>, path: &Path, p: &dyn Progress) -> Result<Vec<SessionId>> {
+    if std::fs::metadata(path)?.len() > MAX_FILE {
+        return Err(FormatError::Invalid(format!("NetXML files over {} MB are not loaded", MAX_FILE >> 20)));
+    }
     let xml = std::fs::read_to_string(path)?;
-    let har = to_har(xml.trim_start_matches('\u{feff}'))?;
-    let tmp = path.with_extension("netxml-har.part");
-    let tmp = std::env::temp_dir().join(tmp.file_name().unwrap_or_default());
-    std::fs::write(&tmp, serde_json::to_vec(&har)?)?;
-    let r = crate::har::import(cap, &tmp, p);
-    let _ = std::fs::remove_file(&tmp);
-    r
+    let har = serde_json::to_vec(&to_har(xml.trim_start_matches('\u{feff}'))?)?;
+    drop(xml);
+    // From memory: no temporary file (it would hold cookies and tokens where others can read).
+    crate::har::import_reader(cap, &har[..], p)
 }
 
 #[cfg(test)]
@@ -131,5 +139,7 @@ mod tests {
         assert_eq!(e["response"]["content"]["text"], "<p>Hi</p>");
         assert_eq!(e["timings"]["wait"], 150);
         assert!(to_har("<html/>").is_err());
+        let deep = format!("<log>{}{}</log>", "<a>".repeat(200), "</a>".repeat(200));
+        assert!(to_har(&deep).is_err(), "too deep");
     }
 }

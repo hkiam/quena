@@ -150,11 +150,20 @@ pub fn rescheme_url(url: &str, r: &Remapped) -> Option<String> {
     let (scheme, rest) = url.split_once("://")?;
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..end];
-    let host = match authority.rsplit_once(':') {
-        Some((h, p)) if p.bytes().all(|c| c.is_ascii_digit()) && (!h.contains(':') || h.ends_with(']')) => h,
-        _ => authority,
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) if p.bytes().all(|c| c.is_ascii_digit()) && (!h.contains(':') || h.ends_with(']')) => (h, p.parse::<u16>().ok()),
+        _ => (authority, None),
     };
-    Some(format!("{}://{host}{}", new_scheme(scheme, r), &rest[end..]))
+    let old_https = scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("wss");
+    let new = new_scheme(scheme, r);
+    let new_https = new.eq_ignore_ascii_case("https") || new.eq_ignore_ascii_case("wss");
+    // The old scheme's default port gives way to the new one's; another port stays (the
+    // connector looks the rule up again with it and must reach the same target).
+    let port = match port {
+        Some(p) if p != if old_https { 443 } else { 80 } && p != if new_https { 443 } else { 80 } => format!(":{p}"),
+        _ => String::new(),
+    };
+    Some(format!("{new}://{host}{port}{}", &rest[end..]))
 }
 
 #[cfg(test)]
@@ -201,7 +210,8 @@ mod tests {
         assert_eq!((r.port, r.scheme.as_deref()), (3000, Some("http")));
         assert_eq!(rescheme_url("https://api.example.com/v1?a=1", &r).unwrap(), "http://api.example.com/v1?a=1");
         assert_eq!(rescheme_url("wss://api.example.com:443/ws", &r).unwrap(), "ws://api.example.com/ws");
-        assert_eq!(rescheme_url("https://[::1]:8443/x", &r).unwrap(), "http://[::1]/x");
+        assert_eq!(rescheme_url("https://[::1]:8443/x", &r).unwrap(), "http://[::1]:8443/x", "a port of its own stays");
+        assert_eq!(rescheme_url("https://api.example.com:443/x", &r).unwrap(), "http://api.example.com/x");
         assert_eq!(rewrite_url("https://api.example.com/v1", &r).unwrap(), "http://localhost:3000/v1");
         // Without a target port: the other scheme's default port.
         let plain = HostRemap::parse("api.example.com", "staging.example.com", true).unwrap().with_scheme("http").unwrap();

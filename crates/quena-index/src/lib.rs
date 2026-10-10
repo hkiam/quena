@@ -755,6 +755,17 @@ impl SessionIndex {
         g.view.iter().map(|&p| &g.rows[p as usize]).filter(|r| pred(r)).map(|r| r.id).collect()
     }
 
+    /// The sessions the filters let through, in list order, also those inside collapsed groups.
+    pub fn matching(&self) -> Vec<SessionId> {
+        let g = self.inner.read();
+        if g.group == GroupBy::None {
+            return g.view.iter().map(|&p| g.rows[p as usize].id).collect();
+        }
+        let mut pos: Vec<u32> = g.members.iter().copied().collect();
+        pos.sort_unstable_by(|&a, &b| g.cmp_pos(a, b));
+        pos.into_iter().map(|p| g.rows[p as usize].id).collect()
+    }
+
     /// All ids (any order) matching a predicate, including hidden rows.
     pub fn find_all(&self, pred: impl Fn(&SessionSummary) -> bool) -> Vec<SessionId> {
         let g = self.inner.read();

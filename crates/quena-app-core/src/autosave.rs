@@ -62,7 +62,7 @@ impl AppCore {
         let name = format!("{PREFIX}{:04}{:02}{:02}-{:02}{:02}{:02}Z.saz", t.year(), t.month() as u8, t.day(), t.hour(), t.minute(), t.second());
         let path = dir.join(name);
         // All sessions, also those a filter hides, unless only the visible ones are wanted.
-        let ids = if self.settings().autosave.only_visible { cap.index.find(|_| true) } else { cap.index.find_all(|_| true) };
+        let ids = if self.settings().autosave.only_visible { cap.index.matching() } else { cap.index.find_all(|_| true) };
         if ids.is_empty() {
             self.autosave.lock().token = None;
             return Ok(None);

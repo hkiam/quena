@@ -37,7 +37,10 @@ fn safe_rel(rel: &str) -> Result<PathBuf> {
         match c {
             Component::Normal(n) => {
                 let n = n.to_string_lossy();
-                if n.starts_with('.') || n.contains(['\\', ':', '*', '?', '"', '<', '>', '|']) {
+                // Also what Windows cannot store: device names, a trailing dot or space.
+                let stem = n.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+                let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") || ((stem.starts_with("COM") || stem.starts_with("LPT")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit());
+                if n.starts_with('.') || n.ends_with(['.', ' ']) || device || n.contains(['\\', ':', '*', '?', '"', '<', '>', '|']) || n.chars().any(char::is_control) {
                     bail!("invalid name in the library: {n}");
                 }
                 out.push(&*n);
@@ -102,7 +105,8 @@ impl AppCore {
         let file = if is_archive(Path::new(name)) { name.to_string() } else { format!("{name}.saz") };
         let rel = if folder.trim().is_empty() { file } else { format!("{}/{file}", folder.trim().trim_matches('/')) };
         let path = self.library_path(&rel)?;
-        if path.exists() {
+        // Also one being written right now (its `.part`).
+        if path.exists() || path.with_extension("saz.part").exists() || path.with_extension("har.part").exists() {
             bail!("{rel} exists already in the library; choose another name or add the sessions to it");
         }
         if let Some(dir) = path.parent() {
@@ -120,9 +124,16 @@ impl AppCore {
         if ids.is_empty() {
             bail!("select the sessions to add");
         }
+        // One addition per snapshot at a time (two would write the same copy); another one is
+        // refused instead of merged into the running job.
+        let canon = safe_rel(rel)?.to_string_lossy().replace('\\', "/");
+        let key = format!("library-add:{canon}");
+        if self.jobs.by_key(&key).is_some_and(|j| matches!(j.status(), quena_jobs::JobStatus::Queued | quena_jobs::JobStatus::Running)) {
+            bail!("sessions are being added to {rel} already; try again when that is done");
+        }
         let cap = self.capture();
         let title = format!("Adding {} session(s) to {rel}", ids.len());
-        Ok(self.jobs.submit(format!("library-add:{rel}"), title, quena_jobs::Priority::Background, true, move |ctx| {
+        Ok(self.jobs.submit(key, title, quena_jobs::Priority::Background, true, move |ctx| {
             struct P<'a>(&'a quena_jobs::JobCtx);
             impl quena_formats::Progress for P<'_> {
                 fn cancelled(&self) -> bool {
@@ -152,13 +163,23 @@ impl AppCore {
             bail!("{rel} is not in the library");
         }
         let mut name = name.trim().to_string();
-        if from.is_file() && !is_archive(Path::new(&name)) {
-            name.push_str(&from.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default());
+        if name.contains(['/', '\\']) {
+            bail!("a name without folders (move archives in the file manager: Open folder)");
+        }
+        // An archive keeps its kind: `.saz` stays `.saz`.
+        if from.is_file() {
+            let ext = from.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+            let lower = name.to_ascii_lowercase();
+            if let Some(stripped) = [".saz", ".har"].iter().find_map(|e| lower.ends_with(e).then(|| name[..name.len() - e.len()].to_string())) {
+                name = stripped;
+            }
+            name = format!("{name}.{ext}");
         }
         let parent = Path::new(rel.trim_matches('/')).parent().map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
         let to_rel = if parent.is_empty() { name.clone() } else { format!("{parent}/{name}") };
         let to = self.library_path(&to_rel)?;
-        if to.exists() && to != from {
+        // Only the case changes (one file on macOS and Windows): no clash.
+        if to.exists() && to != from && to_rel.to_lowercase() != rel.trim_matches('/').to_lowercase() {
             bail!("{to_rel} exists already");
         }
         std::fs::rename(from, to)?;
@@ -193,5 +214,7 @@ mod tests {
         assert!(safe_rel("a/.hidden").is_err());
         assert!(safe_rel("C:/x").is_err());
         assert!(safe_rel("1/2/3/4/5/6.saz").is_err());
+        assert!(safe_rel("NUL.saz").is_err() && safe_rel("a/com1").is_err() && safe_rel("x. ").is_err() && safe_rel("x.").is_err());
+        assert!(safe_rel("Console.saz").is_ok());
     }
 }
