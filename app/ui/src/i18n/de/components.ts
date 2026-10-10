@@ -641,4 +641,8 @@ export const components: Record<string, string> = {
   "Talk to the target over HTTP or HTTPS, whatever the client used (e.g. HTTPS to a local HTTP dev server)": "Mit dem Ziel \u00fcber HTTP oder HTTPS sprechen, egal was der Client nutzte (z. B. HTTPS auf einen lokalen HTTP-Dev-Server)",
   "as sent": "wie gesendet",
   "Only the sessions the filters show": "Nur die Sessions, die die Filter zeigen",
+  "Adds the certificate to the local machine's trusted roots, for every user of this computer (Windows asks for administrator rights). Right-click to remove it from there.": "Tr\u00e4gt das Zertifikat in die vertrauensw\u00fcrdigen Stammzertifikate des Computers ein, f\u00fcr alle Benutzer (Windows fragt nach Administratorrechten). Rechtsklick entfernt es dort wieder.",
+  "Root certificate trusted for all users": "Stammzertifikat f\u00fcr alle Benutzer vertrauensw\u00fcrdig",
+  "Root certificate removed for all users": "Stammzertifikat f\u00fcr alle Benutzer entfernt",
+  "Trust for all users\u2026": "F\u00fcr alle Benutzer vertrauen\u2026",
 };

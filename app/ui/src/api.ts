@@ -1233,6 +1233,8 @@ export const api = {
   authRemoveCredential: (host: string) => invoke<void>("auth_remove_credential", { host }),
   caInfo: () => invoke<CaInfo>("ca_info"),
   caTrust: () => invoke<CaInfo>("ca_trust"),
+  /** Windows: trust for all users of the machine (or remove from there; administrator rights). */
+  caMachine: (trust: boolean) => invoke<CaInfo>("ca_machine", { trust }),
   caRemove: () => invoke<CaInfo>("ca_remove"),
   caRegenerate: () => invoke<CaInfo>("ca_regenerate"),
   caExport: (path: string, format: "pem" | "der" | "p12", password?: string) => invoke<void>("ca_export", { path, format, password: password ?? null }),

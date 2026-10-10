@@ -443,3 +443,7 @@ mod tests {
 pub fn vpn_domains() -> Vec<String> {
     run("/usr/sbin/scutil", &["--dns"]).map(|t| crate::parse_scutil_dns(&format!("\n{t}"))).unwrap_or_default()
 }
+
+pub fn machine_root_ca(_cert: &Path, _sha1: &str, _trust: bool) -> Result<()> {
+    Err(crate::PlatformError::Command("trusting a root certificate for all users is offered on Windows only".into()))
+}

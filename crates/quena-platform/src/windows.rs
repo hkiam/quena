@@ -163,8 +163,21 @@ pub fn remove_root_ca(_cert: &Path, sha1: &str) -> Result<()> {
     run("certutil", &["-user", "-delstore", "Root", sha1]).map(|_| ())
 }
 
+/// The local machine's Root store, through an elevated certutil (UAC prompt).
+pub fn machine_root_ca(cert: &Path, sha1: &str, trust: bool) -> Result<()> {
+    let target = if trust { cert.to_string_lossy().replace('\'', "''") } else { sha1.replace('\'', "") };
+    let verb = if trust { "-addstore" } else { "-delstore" };
+    let script = format!("$p = Start-Process -FilePath certutil -ArgumentList '{verb}','Root','\"{target}\"' -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode");
+    run("powershell", &["-NoProfile", "-NonInteractive", "-Command", &script]).map(|_| ())
+}
+
 pub fn is_root_ca_trusted(cert: &Path) -> bool {
-    run("certutil", &["-user", "-verifystore", "Root"]).map(|out| {
+    machine_or_user_trusted(cert, true) || machine_or_user_trusted(cert, false)
+}
+
+fn machine_or_user_trusted(cert: &Path, user: bool) -> bool {
+    let args: &[&str] = if user { &["-user", "-verifystore", "Root"] } else { &["-verifystore", "Root"] };
+    run("certutil", args).map(|out| {
         // Match by fingerprint of the given certificate file.
         let hash = run("certutil", &["-hashfile", &cert.to_string_lossy(), "SHA1"]).unwrap_or_default();
         let fp: String = hash.lines().nth(1).unwrap_or("").chars().filter(|c| c.is_ascii_hexdigit()).collect::<String>().to_ascii_lowercase();

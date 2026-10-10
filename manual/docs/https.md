@@ -20,7 +20,7 @@ it yourself (*Export with key (.p12)…*). Instead of Quena's own certificate yo
 | Platform | Where *Trust* adds the certificate |
 |---|---|
 | macOS | Keychain |
-| Windows | the current user's certificate store |
+| Windows | the current user's certificate store; **Trust for all users…** puts it into the local machine's store instead, for every user and service (administrator rights; right-click that button to remove it from there) |
 | Linux | Chrome's and Firefox's certificate databases (NSS, via `certutil`) and — after asking for your password (`pkexec`) — the system store used by curl and other tools |
 
 !!! warning

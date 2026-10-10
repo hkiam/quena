@@ -400,6 +400,13 @@ async fn ca_info(engine: State<'_, Engine>) -> R<CaInfo> {
     blocking(move || Ok(e.ca_info())).await
 }
 
+/// Windows: trust the root certificate for all users (or remove it from there).
+#[tauri::command]
+async fn ca_machine(engine: State<'_, Engine>, trust: bool) -> R<CaInfo> {
+    let e = engine.inner().clone();
+    blocking(move || e.ca_machine(trust).map_err(|x| x.to_string())).await
+}
+
 #[tauri::command]
 async fn ca_trust(engine: State<'_, Engine>) -> R<CaInfo> {
     let e = engine.inner().clone();
@@ -1260,6 +1267,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Syn
         grpc,
         ca_info,
         ca_trust,
+        ca_machine,
         ca_remove,
         ca_regenerate,
         ca_export,

@@ -270,6 +270,15 @@ impl ProxyEngine {
         Ok(self.ca_info())
     }
 
+    /// Windows: trust the root CA for all users of the machine, or remove it from there
+    /// (administrator rights; Windows asks).
+    pub fn ca_machine(&self, trust: bool) -> Result<CaInfo> {
+        let ca = self.ensure_ca()?;
+        quena_platform::machine_root_ca(&ca.cert_path(), &ca.sha1_fingerprint(), trust).map_err(|e| anyhow!("{e}"))?;
+        tracing::info!(target: "quena", "root certificate {} the local machine's store", if trust { "added to" } else { "removed from" });
+        Ok(self.ca_info())
+    }
+
     pub fn ca_remove(&self) -> Result<CaInfo> {
         if let Some(ca) = self.ca.read().clone() {
             quena_platform::remove_root_ca(&ca.cert_path(), &ca.sha1_fingerprint()).map_err(|e| anyhow!("{e}"))?;

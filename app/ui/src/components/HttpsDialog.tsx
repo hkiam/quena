@@ -4,7 +4,7 @@ import { save, open } from "@tauri-apps/plugin-dialog";
 import { api, type CaImport, type CaInfo } from "../api";
 import { say, set, useStore } from "../store";
 import { patchSettings } from "../settingsActions";
-import { fmtDate, osNames } from "../lib/format";
+import { fmtDate, isWindows, osNames } from "../lib/format";
 import { t } from "../i18n";
 import { baseName, keyLogFilters } from "../lib/importFormats";
 
@@ -253,6 +253,19 @@ export function HttpsPanel() {
           <button disabled={busy || !ca?.exists} onClick={() => run(api.caRemove, t("Root certificate removed from the trust store"))}>
             {t("Remove from trust store")}
           </button>
+          {isWindows && (
+            <button
+              disabled={busy}
+              title={t("Adds the certificate to the local machine's trusted roots, for every user of this computer (Windows asks for administrator rights). Right-click to remove it from there.")}
+              onClick={() => run(() => api.caMachine(true), t("Root certificate trusted for all users"))}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                run(() => api.caMachine(false), t("Root certificate removed for all users"));
+              }}
+            >
+              {t("Trust for all users…")}
+            </button>
+          )}
           <button
             disabled={busy || !ca?.exists}
             onClick={async () => {

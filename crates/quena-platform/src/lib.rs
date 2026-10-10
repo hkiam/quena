@@ -74,6 +74,13 @@ pub fn set_system_proxy(port: u16, bypass: &[String], backup: &Path) -> Result<(
     imp::set_system_proxy(port, bypass, backup)
 }
 
+/// Windows: trust (`true`) or no longer trust the root certificate for all users of the
+/// machine (the local machine's store; Windows asks for administrator rights). Elsewhere an
+/// error: the user store already serves every program.
+pub fn machine_root_ca(cert: &Path, sha1: &str, trust: bool) -> Result<()> {
+    imp::machine_root_ca(cert, sha1, trust)
+}
+
 /// DNS domains of the VPN connections that are up (e.g. `corp.example`): requests to them
 /// can be kept away from Quena. Empty when none is up or this cannot be told.
 pub fn vpn_domains() -> Vec<String> {
