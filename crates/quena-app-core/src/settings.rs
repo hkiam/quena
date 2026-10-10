@@ -218,11 +218,13 @@ pub struct AutoSaveSettings {
     pub folder: String,
     /// Archives kept; older ones are removed.
     pub keep: u32,
+    /// Only the sessions the filters show (else all).
+    pub only_visible: bool,
 }
 
 impl Default for AutoSaveSettings {
     fn default() -> Self {
-        AutoSaveSettings { enabled: false, interval_min: 10, folder: String::new(), keep: 10 }
+        AutoSaveSettings { enabled: false, interval_min: 10, folder: String::new(), keep: 10, only_visible: false }
     }
 }
 

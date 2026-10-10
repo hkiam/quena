@@ -8,6 +8,9 @@ contain breaking changes (settings, file formats, plugin API).
 ## [Unreleased]
 
 ### Added
+- **More of Fiddler's odds and ends**: host remapping with a port in the pattern and a forced
+  protocol (HTTP or HTTPS to the target); rewrite rules exported and imported as JSON (also one
+  group); AutoSave of only the sessions the filters show.
 - **Do not capture (bypass Quena)** (*Settings → Connections*, or *Filter Now → Do not capture
   this Host…*): hosts become exceptions of the system proxy and of started browsers and
   terminals, and pass Quena undecrypted if a client sends them anyway; Apple services that pin

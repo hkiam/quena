@@ -594,7 +594,7 @@ export interface Settings {
   losslessRecording: boolean;
   keepCaptures: boolean;
   /** Save the capture to an archive every few minutes (only when it changed). */
-  autosave: { enabled: boolean; intervalMin: number; folder: string; keep: number };
+  autosave: { enabled: boolean; intervalMin: number; folder: string; keep: number; onlyVisible?: boolean };
   offerRecovery: boolean;
   auth: AuthSettings;
   scriptingEnabled: boolean;

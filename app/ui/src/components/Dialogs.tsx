@@ -514,7 +514,7 @@ function AuthOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) =>
 /** MCP server: lets AI agents (Claude Code …) read and, if allowed, control Quena. */
 /** Settings → General → AutoSave. */
 function AutoSaveOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void) => void }) {
-  const a = s.autosave ?? { enabled: false, intervalMin: 10, folder: "", keep: 10 };
+  const a = s.autosave ?? { enabled: false, intervalMin: 10, folder: "", keep: 10, onlyVisible: false };
   const set = (p: Partial<typeof a>) => up((x) => (x.autosave = { ...a, ...p }));
   return (
     <div className="autosave">
@@ -522,6 +522,9 @@ function AutoSaveOptions({ s, up }: { s: Settings; up: (f: (x: Settings) => void
         <input type="checkbox" checked={a.enabled} onChange={(e) => set({ enabled: e.target.checked })} /> {t("AutoSave the sessions every")}{" "}
         <input type="number" className="num-small" min={1} max={1440} value={a.intervalMin} onChange={(e) => set({ intervalMin: Math.max(1, Number(e.target.value) || 10) })} /> {t("minutes (when something changed), keep the last")}{" "}
         <input type="number" className="num-small" min={1} max={1000} value={a.keep} onChange={(e) => set({ keep: Math.max(1, Number(e.target.value) || 10) })} /> {t("archives")}
+      </label>
+      <label className="f-check">
+        <input type="checkbox" checked={!!a.onlyVisible} disabled={!a.enabled} onChange={(e) => set({ onlyVisible: e.target.checked })} /> {t("Only the sessions the filters show")}
       </label>
       <div className="f-inline small">
         <span className="muted mono pb-path" title={a.folder}>

@@ -40,7 +40,9 @@ those a filter hides — as `autosave-<date>-<time>Z.saz` (UTC) into the folder 
 the data folder or one you choose, but only when something changed since the last save. The
 newest archives are kept (10 by default), older ones removed. *Save now* saves at once,
 *Open folder* shows them; load one with *File → Load Archive…*. AutoSave archives are not
-encrypted.
+encrypted. With *Only the sessions the filters show* an archive holds just those (nothing is
+saved while the filters show none). A newer archive is written only after it is complete;
+older ones are removed after that, so a failed save (a full disk) costs none of them.
 
 ### Loading
 

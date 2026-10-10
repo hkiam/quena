@@ -104,3 +104,26 @@ fn autosave_failure_keeps_older_archives() {
     assert!(old.exists(), "the older archive stays when the new one could not be written");
     assert!(core.autosave_now(false).unwrap().is_some(), "tried again although nothing changed");
 }
+
+/// Only the sessions the filters show, when chosen.
+#[test]
+fn autosave_only_visible() {
+    let (_dir, core) = core();
+    let mut s = core.settings();
+    s.autosave.enabled = true;
+    s.autosave.only_visible = true;
+    core.update_settings(s).unwrap();
+    add(&core, "http://example.com/keep");
+    add(&core, "http://other.example/hide");
+    core.set_filters(quena_query::FilterSettings { enabled: true, expression: "host == example.com".into(), ..Default::default() }).unwrap();
+    core.capture().index.tick();
+    let p = core.autosave_now(true).unwrap().expect("saved");
+    wait_file(&p);
+    std::thread::sleep(Duration::from_millis(200));
+    core.set_filters(quena_query::FilterSettings::default()).unwrap();
+    core.capture().clear();
+    let job = core.import_archive(p).unwrap();
+    core.jobs.wait(job, Duration::from_secs(20)).unwrap();
+    core.capture().index.tick();
+    assert_eq!(core.capture().index.len(), 1);
+}

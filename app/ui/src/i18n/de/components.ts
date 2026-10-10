@@ -640,4 +640,5 @@ export const components: Record<string, string> = {
   "Protocol": "Protokoll",
   "Talk to the target over HTTP or HTTPS, whatever the client used (e.g. HTTPS to a local HTTP dev server)": "Mit dem Ziel \u00fcber HTTP oder HTTPS sprechen, egal was der Client nutzte (z. B. HTTPS auf einen lokalen HTTP-Dev-Server)",
   "as sent": "wie gesendet",
+  "Only the sessions the filters show": "Nur die Sessions, die die Filter zeigen",
 };
