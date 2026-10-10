@@ -309,10 +309,10 @@ function SamlSection({ detail, part }: { detail: Detail; part: Part }) {
               <div className="err small">{t("Could not decode: {error}", { error: xml.message })}</div>
             ) : xml ? (
               <>
-                <Table rows={[...samlFacts(xml), ...(m.relay ? [["RelayState", m.relay]] : [])]} />
+                <Table rows={[...samlFacts(xml.slice(0, 1 << 20)), ...(m.relay ? [["RelayState", m.relay]] : [])]} />
                 <details>
                   <summary className="small">XML</summary>
-                  <pre className="mono small saml-xml">{xml}</pre>
+                  <pre className="mono small saml-xml">{xml.length > 256 * 1024 ? `${xml.slice(0, 256 * 1024)}\n…` : xml}</pre>
                 </details>
               </>
             ) : (

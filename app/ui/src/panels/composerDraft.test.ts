@@ -34,13 +34,14 @@ describe("composer draft", () => {
     const rows = headerRows("Accept: */*\n# X-Debug: 1\nX-Empty:");
     expect(rows).toEqual([{ on: true, name: "Accept", value: "*/*" }, { on: false, name: "X-Debug", value: "1" }, { on: true, name: "X-Empty", value: "" }]);
     expect(headerText([...rows, { on: true, name: "", value: "" }])).toBe("Accept: */*\n# X-Debug: 1\nX-Empty: ");
+    expect(headerRows("Authorization: Bearer ")[0].value).toBe("Bearer ");
     expect(activeHeaders("A: 1\n# B: 2")).toBe("A: 1");
     expect(toRaw({ ...EMPTY, url: "https://x/", headers: "A: 1\n# B: 2" })).not.toContain("B: 2");
     expect(toCollectionRequest({ ...EMPTY, headers: "A: 1\n# B: 2" }, "n").headers).toBe("A: 1");
   });
   it("edits query parameters as a table", () => {
     const rows = queryRows("https://x/s?q=a+b&lang=de&flag#top", ["debug=1"]);
-    expect(rows).toEqual([
+    expect(rows.map(({ on, name, value }) => ({ on, name, value }))).toEqual([
       { on: true, name: "q", value: "a b" },
       { on: true, name: "lang", value: "de" },
       { on: true, name: "flag", value: "" },
@@ -50,5 +51,10 @@ describe("composer draft", () => {
     expect(next).toEqual({ url: "https://x/s?q=a+b&flag&debug=1#top", offParams: ["lang=de"] });
     expect(withQuery("https://x/s?a=1", []).url).toBe("https://x/s");
     expect(withQuery("https://x/s", [{ on: true, name: "a&b", value: "ä" }]).url).toBe("https://x/s?a%26b=%C3%A4");
+    // Unchanged pairs keep their encoding; variables stay.
+    const signed = "https://b.s3/x?X-Amz-Signature=ab%2Fc&q=a%20b&t={{token}}";
+    const r2 = queryRows(signed);
+    expect(withQuery(signed, r2.map((r) => (r.name === "q" ? { ...r, on: false } : r))).url).toBe("https://b.s3/x?X-Amz-Signature=ab%2Fc&t={{token}}");
+    expect(withQuery("https://x/s", [{ on: true, name: "t", value: "{{token}}x y" }]).url).toBe("https://x/s?t={{token}}x+y");
   });
 });

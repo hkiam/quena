@@ -70,8 +70,10 @@ pub struct Phases {
     pub sampled: usize,
 }
 
-/// Sessions whose details are read for the phases and header sizes.
-const PHASE_SAMPLE: usize = 20_000;
+/// Sessions whose details are read for the phases and header sizes: a selection up to this
+/// many; without a selection only a capture this small (the tab refreshes while traffic flows).
+const PHASE_SAMPLE: usize = 5_000;
+const PHASE_ALL: usize = 2_000;
 
 /// Nearest-rank percentile of sorted values.
 fn pct(v: &[u64], p: f64) -> u64 {
@@ -139,7 +141,7 @@ impl AppCore {
             if s.status != 0 {
                 *st.status_codes.entry(s.status).or_default() += 1;
             }
-            if s.state.is_final() && finished.len() < PHASE_SAMPLE {
+            if s.state.is_final() {
                 finished.push(s.id);
             }
             match s.state {
@@ -172,8 +174,10 @@ impl AppCore {
                 st.bytes_per_s = Some(st.response_bytes as f64 / secs);
             }
         }
-        if !finished.is_empty() {
-            let mut ph = Phases { sampled: finished.len(), ..Default::default() };
+        let all_finished = finished.len();
+        finished.truncate(PHASE_SAMPLE);
+        if !finished.is_empty() && (!set.is_empty() || all_finished <= PHASE_ALL) {
+            let mut ph = Phases::default();
             let add = |total: &mut u64, count: &mut usize, v: Option<u32>| {
                 if let Some(v) = v {
                     *total += u64::from(v);
@@ -182,7 +186,7 @@ impl AppCore {
             };
             let len = |h: &quena_model::Headers| h.0.iter().map(|(n, v)| (n.len() + v.len() + 4) as u64).sum::<u64>();
             for id in &finished {
-                let Some(d) = cap.detail_stored(*id) else { continue };
+                let Some(d) = cap.detail_peek(*id) else { continue };
                 let t = &d.timers;
                 add(&mut ph.dns_ms, &mut ph.dns_count, t.dns_ms);
                 add(&mut ph.connect_ms, &mut ph.connect_count, t.tcp_connect_ms);
@@ -192,7 +196,7 @@ impl AppCore {
                 st.request_header_bytes += len(&d.request.headers);
                 st.response_header_bytes += d.response.as_ref().map(|r| len(&r.headers)).unwrap_or(0);
             }
-            ph.sampled = if st.sessions > PHASE_SAMPLE { finished.len() } else { 0 };
+            ph.sampled = if all_finished > finished.len() { finished.len() } else { 0 };
             st.phases = Some(ph);
         }
         st.llm_tokens = models.values().fold(0u64, |a, m| a.saturating_add(m.1));

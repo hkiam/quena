@@ -5,7 +5,7 @@ import { api, type Collection, type ComposeRequest } from "../api";
 import { CodeView } from "../inspectors/CodeView";
 import { loadBody, sameCharset } from "../lib/bodytext";
 import { fmtBytes, latin1ToUtf8 } from "../lib/format";
-import { promptText, say, useStore } from "../store";
+import { confirmAsk, promptText, say, useStore } from "../store";
 import { actions } from "../actions";
 import { t } from "../i18n";
 import { CollectionsView } from "./Collections";
@@ -128,25 +128,42 @@ export default function ComposerPanel() {
   // The session whose body the text shows: sent byte for byte as long as the text is unchanged.
   const loaded = useRef<{ id: number; text: string } | null>(null);
 
+  // Saved a moment after typing stops; bodies over 64 KB and drafts beyond 2 MB in all are not
+  // kept (the browser storage holds about 5 MB for everything).
   useEffect(() => {
-    keep("quena.composer.drafts", drafts.map((x) => ({ ...x, body: x.body.length < 256 * 1024 ? x.body : "" })));
-    keep("quena.composer.active", cur);
+    const timer = window.setTimeout(() => {
+      let total = 0;
+      const list = drafts.map((x) => {
+        const body = x.body.length < 64 * 1024 && total + x.body.length < 2 << 20 ? x.body : "";
+        total += body.length;
+        return { ...x, body };
+      });
+      keep("quena.composer.drafts", list);
+      keep("quena.composer.active", cur);
+    }, 500);
+    return () => window.clearTimeout(timer);
   }, [drafts, cur]);
 
-  const switchTo = (i: number) => {
+  const switchTo = async (i: number) => {
+    if (i === cur) return;
+    // Raw text not applied yet would be lost.
+    if (tab === "raw" && raw !== toRaw(d) && !(await confirmAsk(t("Discard the raw text?"), t("The raw request was changed but not sent; switching tabs discards it."), t("Discard")))) return;
     loaded.current = null;
     setActiveTab(i);
     if (tab === "raw") setRaw(toRaw(drafts[i]));
   };
   const addTab = (nd: Draft = EMPTY) => {
+    // An untouched tab is reused; beyond the limit nothing is thrown away silently.
+    const pristine = drafts.length > 0 && JSON.stringify(drafts[cur]) === JSON.stringify(EMPTY);
+    if (!pristine && drafts.length >= MAX_TABS) {
+      say(t("At most {n} request tabs; close one first", { n: MAX_TABS }), "error");
+      return false;
+    }
     loaded.current = null;
-    setDrafts((list) => {
-      // An untouched tab is reused.
-      const pristine = list.length > 0 && JSON.stringify(list[cur]) === JSON.stringify(EMPTY);
-      const next = pristine ? list.map((v, i) => (i === cur ? nd : v)) : [...list, nd].slice(-MAX_TABS);
-      setActiveTab(pristine ? cur : next.length - 1);
-      return next;
-    });
+    const next = pristine ? drafts.map((v, i) => (i === cur ? nd : v)) : [...drafts, nd];
+    setDrafts(next);
+    setActiveTab(pristine ? cur : next.length - 1);
+    return true;
   };
   const closeTab = (i: number) => {
     loaded.current = null;
@@ -161,7 +178,7 @@ export default function ComposerPanel() {
     const big = det.requestBody.len > INLINE_BODY_LIMIT || !det.requestBody.isText;
     const b = big || det.requestBody.len === 0 ? null : await loadBody(id, "request", det.requestBody, INLINE_BODY_LIMIT, "raw");
     const body = b?.text ?? "";
-    addTab({
+    const added = addTab({
       version: "",
       coll: null,
       method: det.request.method,
@@ -174,6 +191,7 @@ export default function ComposerPanel() {
       // Transcoded text (UTF-16) came as UTF-8; edits go back in the body's own charset.
       bodyCharset: b ? (det.requestBody.charset?.name ?? b.charset) : null,
     });
+    if (!added) return;
     loaded.current = b ? { id, text: body } : null;
     setTab("parsed");
     say(t("Loaded #{id} into the Composer", { id }));
@@ -343,7 +361,7 @@ export default function ComposerPanel() {
               key={i}
               className={`cmp-tab ${i === cur ? "active" : ""}`}
               title={`${x.method} ${x.url}`}
-              onClick={() => switchTo(i)}
+              onClick={() => void switchTo(i)}
               onAuxClick={(e) => e.button === 1 && closeTab(i)}
             >
               {tabTitle(x)}
@@ -495,8 +513,7 @@ export default function ComposerPanel() {
           setEnv={setEnv}
           nonce={collNonce}
           onLoad={(nd) => {
-            addTab(nd);
-            setTab("parsed");
+            if (addTab(nd)) setTab("parsed");
           }}
         />
       )}

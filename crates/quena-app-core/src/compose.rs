@@ -27,29 +27,93 @@ pub struct ReplayOptions {
 /// Most redirects the Composer follows.
 pub const MAX_REDIRECTS: usize = 10;
 
-/// `location` of a response to `base` as an absolute URL.
+/// `location` of a response to `base` as an absolute `http(s)` URL (`None`: empty, or another
+/// scheme such as `ftp:` or `javascript:`). Dot segments are resolved, a fragment-only
+/// location stays on the page, credentials in it are dropped.
 pub fn resolve_location(base: &str, location: &str) -> Option<String> {
     let loc = location.trim();
     if loc.is_empty() {
         return None;
     }
-    if loc.starts_with("http://") || loc.starts_with("https://") {
-        return Some(loc.to_string());
-    }
     let (scheme, rest) = base.split_once("://")?;
-    let (authority, path) = rest.find('/').map(|i| (&rest[..i], &rest[i..])).unwrap_or((rest, "/"));
-    let path = path.split('#').next().unwrap_or(path);
-    Some(if let Some(l) = loc.strip_prefix("//") {
-        format!("{scheme}://{l}")
-    } else if loc.starts_with('/') {
-        format!("{scheme}://{authority}{loc}")
-    } else if loc.starts_with('?') {
-        format!("{scheme}://{authority}{}{loc}", path.split('?').next().unwrap_or(path))
+    let scheme = scheme.to_ascii_lowercase();
+    let lower = loc.to_ascii_lowercase();
+    let (scheme, authority, path) = if let Some(i) = lower.find("://").filter(|i| loc[..*i].chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))) {
+        let s = lower[..i].to_string();
+        if s != "http" && s != "https" {
+            return None;
+        }
+        let r = &loc[i + 3..];
+        let end = r.find(['/', '?', '#']).unwrap_or(r.len());
+        (s, r[..end].to_string(), r[end..].to_string())
+    } else if lower.split_once(':').is_some_and(|(s, _)| !s.is_empty() && !s.contains(['/', '?', '#']) && s.chars().all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))) {
+        // `mailto:`, `javascript:` …: not followed.
+        return None;
     } else {
-        let dir = path.split('?').next().unwrap_or(path);
-        let dir = &dir[..dir.rfind('/').map_or(0, |i| i + 1)];
-        format!("{scheme}://{authority}{}{loc}", if dir.is_empty() { "/" } else { dir })
-    })
+        let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+        let (authority, base_path) = (&rest[..end], &rest[end..]);
+        let base_path = base_path.split('#').next().unwrap_or("");
+        let base_no_query = base_path.split('?').next().unwrap_or("");
+        let path = if let Some(l) = loc.strip_prefix("//") {
+            let e = l.find(['/', '?', '#']).unwrap_or(l.len());
+            return finish(&scheme, &l[..e], &l[e..]);
+        } else if loc.starts_with('/') {
+            loc.to_string()
+        } else if loc.starts_with('?') {
+            format!("{base_no_query}{loc}")
+        } else if loc.starts_with('#') {
+            format!("{base_path}{loc}")
+        } else {
+            let dir = &base_no_query[..base_no_query.rfind('/').map_or(0, |i| i + 1)];
+            format!("{}{loc}", if dir.is_empty() { "/" } else { dir })
+        };
+        (scheme, authority.to_string(), path)
+    };
+    finish(&scheme, &authority, &path)
+}
+
+/// `scheme://authority/path` with credentials dropped from the authority and dot segments of
+/// the path resolved.
+fn finish(scheme: &str, authority: &str, path: &str) -> Option<String> {
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    if authority.is_empty() {
+        return None;
+    }
+    let (p, tail) = match path.find(['?', '#']) {
+        Some(i) => (&path[..i], &path[i..]),
+        None => (path, ""),
+    };
+    let mut out: Vec<&str> = Vec::new();
+    let segs: Vec<&str> = p.split('/').collect();
+    for (i, seg) in segs.iter().enumerate().skip(1) {
+        match *seg {
+            "." => {}
+            ".." => {
+                out.pop();
+            }
+            s => out.push(s),
+        }
+        // A trailing `.` or `..` still ends in a directory.
+        if i == segs.len() - 1 && (*seg == "." || *seg == "..") {
+            out.push("");
+        }
+    }
+    Some(format!("{scheme}://{authority}/{}{tail}", out.join("/")))
+}
+
+/// Scheme, host and port of a URL (default ports filled in): credentials only go where all
+/// three are the same.
+fn origin_of(url: &str) -> Option<(String, String, u16)> {
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h).to_ascii_lowercase();
+    let default = if scheme == "https" || scheme == "wss" { 443 } else { 80 };
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) if !h.contains(':') || h.ends_with(']') => (h.to_string(), p.parse().ok()?),
+        _ => (authority, default),
+    };
+    Some((scheme, host, port))
 }
 
 /// Most repeats of one replay, and most requests in flight at once.
@@ -216,6 +280,10 @@ impl AppCore {
                         break 'rounds;
                     }
                     let Ok(permit) = slots.clone().acquire_owned().await else { break 'rounds };
+                    // Stopped while waiting for a free slot.
+                    if !current() {
+                        break 'rounds;
+                    }
                     let opts = ExecuteOptions {
                         flags: flags::REPLAYED | if o.breakpoint { flags::BREAKPOINTED } else { 0 },
                         comment: Some(format!("Replay of #{orig}")),
@@ -305,7 +373,6 @@ impl AppCore {
         let follow = r.follow_redirects;
         let core = Arc::downgrade(self);
         rt.spawn(async move {
-            let first = head.clone();
             let mut id = quena_proxy::execute_with(shared.clone(), head, body, opts, move |id| {
                 let _ = tx.send(id);
             })
@@ -313,16 +380,17 @@ impl AppCore {
             if !follow {
                 return;
             }
-            let mut req = first;
             for hop in 1..=MAX_REDIRECTS {
                 let Some(core) = core.upgrade() else { return };
                 let Some(d) = core.capture().detail(id) else { return };
+                // What was sent (after rules, scripts and breakpoint edits).
+                let req = d.request.clone();
                 let Some(resp) = d.response else { return };
                 if !matches!(resp.status, 301 | 302 | 303 | 307 | 308) {
                     return;
                 }
                 let Some(next) = resp.headers.get("location").and_then(|l| resolve_location(&req.url, l)) else { return };
-                let same_host = authority_of(&next) == authority_of(&req.url);
+                let same_host = origin_of(&next).is_some() && origin_of(&next) == origin_of(&req.url);
                 // 303 (except for HEAD), and 301/302 after a POST, become a GET without a body
                 // (as browsers do); otherwise method and body stay.
                 let keep_body = match resp.status {
@@ -348,10 +416,10 @@ impl AppCore {
                 if let Some(a) = authority_of(&next) {
                     headers.0.insert(0, ("Host".into(), a));
                 }
-                req = RequestHead { method: if keep_body { req.method.clone() } else { "GET".into() }, url: next, version: req.version, headers };
+                let next_req = RequestHead { method: if keep_body { req.method.clone() } else { "GET".into() }, url: next, version: req.version, headers };
                 let opts = ExecuteOptions { flags: flags::COMPOSED, comment: Some(format!("Redirect {hop} from #{id}")), hooks: true, force_h2 };
                 drop(core);
-                id = quena_proxy::execute_with(shared.clone(), req.clone(), body, opts, |_| {}).await;
+                id = quena_proxy::execute_with(shared.clone(), next_req, body, opts, |_| {}).await;
             }
         });
         rx.recv_timeout(std::time::Duration::from_secs(5)).map_err(|_| anyhow!("composer request did not start"))
@@ -422,6 +490,13 @@ mod tests {
         assert_eq!(resolve_location(b, "?page=2").unwrap(), "https://a.example.com/x/y/z?page=2");
         assert_eq!(resolve_location("http://h:8080", "a").unwrap(), "http://h:8080/a");
         assert!(resolve_location(b, " ").is_none());
+        assert_eq!(resolve_location(b, "HTTP://Other.example/x").unwrap(), "http://Other.example/x");
+        assert!(resolve_location(b, "javascript:alert(1)").is_none() && resolve_location(b, "ftp://f/x").is_none());
+        assert_eq!(resolve_location(b, "../a/./b").unwrap(), "https://a.example.com/x/a/b");
+        assert_eq!(resolve_location(b, "#frag").unwrap(), "https://a.example.com/x/y/z?q=1#frag");
+        assert_eq!(resolve_location(b, "https://user:pw@c.example/p").unwrap(), "https://c.example/p");
+        assert_eq!(origin_of("https://A.example/x"), origin_of("https://a.example:443/y"));
+        assert_ne!(origin_of("https://a.example/"), origin_of("http://a.example/"), "https → http is another origin");
         assert_eq!(parse_header_lines("A: 1\n# B: 2\n  #C: 3\nD: 4").0.len(), 2, "`#` lines are off");
     }
 }

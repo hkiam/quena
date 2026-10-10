@@ -227,30 +227,30 @@ fn fmt_size(n: u64) -> String {
 }
 
 impl AppCore {
+    /// The name an import of `name` shows in the list (the file name; `(2)` … when that is
+    /// loaded already).
+    pub(crate) fn import_label(&self, name: &str) -> String {
+        let numbering = self.capture().numbering();
+        let file = std::path::Path::new(name).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| name.to_string());
+        let imports = self.imports.lock();
+        let mut label = file.clone();
+        let mut n = 2;
+        while imports.iter().any(|(f, num, _)| *f == label && *num == numbering) {
+            label = format!("{file} ({n})");
+            n += 1;
+        }
+        label
+    }
+
     /// Remember which sessions an archive import brought (for comparing captures).
-    pub(crate) fn note_import(&self, name: &str, ids: &[SessionId]) {
+    pub(crate) fn note_import(&self, label: &str, ids: &[SessionId]) {
         if ids.is_empty() {
             return;
         }
         let numbering = self.capture().numbering();
-        let file = std::path::Path::new(name).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| name.to_string());
         let mut imports = self.imports.lock();
         imports.retain(|(_, n, _)| *n == numbering);
-        // A name loaded before (the same file again, or another with that name): numbered.
-        let mut label = file.clone();
-        let mut n = 2;
-        while imports.iter().any(|(f, _, _)| *f == label) {
-            label = format!("{file} ({n})");
-            n += 1;
-        }
-        imports.push((label.clone(), numbering, ids.to_vec()));
-        drop(imports);
-        // The list knows each session's source (navigator: group by source).
-        let cap = self.capture();
-        for id in ids {
-            cap.index.update(*id, |s| s.archive = label.clone());
-        }
-        cap.index.tick();
+        imports.push((label.to_string(), numbering, ids.to_vec()));
     }
 
     /// The sides one can compare: live sessions and each archive in the list.

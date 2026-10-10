@@ -11,8 +11,13 @@ export function StatisticsPanel() {
   const version = useStore((s) => s.listVersion);
   const [st, setSt] = useState<Statistics | null>(null);
   useEffect(() => {
-    const t = setTimeout(() => api.statistics([...selection]).then(setSt), 150);
-    return () => clearTimeout(t);
+    // An answer that comes after a newer request was made is dropped.
+    let alive = true;
+    const t = setTimeout(() => api.statistics([...selection]).then((r) => alive && setSt(r)), 150);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
   }, [selection, Math.floor(version / 30)]);
   if (!st) return <div className="placeholder">{t("Computing…")}</div>;
   const maxCt = Math.max(1, ...st.contentTypes.map((c) => c[2]));

@@ -232,9 +232,11 @@ impl AppCore {
         // A temporary copy goes away with the job: after the import, when it fails or panics,
         // and also when the job is cancelled before it starts (the closure is then dropped).
         let remove = remove_after.then(|| RemoveOnDrop(Some(path.clone())));
+        let label = self.import_label(&name);
         Ok(self.jobs.submit(format!("import:{}", path.display()), title, Priority::Background, true, move |ctx| {
             let mut remove = remove;
-            let ids = match format {
+            // Sessions are inserted with their source (the navigator's Source groups).
+            let ids = quena_store::with_import_label(&label, || match format {
                 ArchiveFormat::Saz => quena_formats::saz::import_encrypted(&cap, &path, password.as_deref(), &P(ctx)),
                 ArchiveFormat::Har => quena_formats::har::import(&cap, &path, &P(ctx)),
                 ArchiveFormat::Curl => Err(quena_formats::FormatError::Invalid("cannot import cURL scripts".into())),
@@ -267,9 +269,9 @@ impl AppCore {
                     );
                     r.ids
                 }),
-            };
+            });
             let ids = ids.map_err(|e| e.to_string())?;
-            core.note_import(&name, &ids);
+            core.note_import(&label, &ids);
             tracing::info!(target: "quena", "loaded {} session(s) from {name}", ids.len());
             Ok(())
         }))

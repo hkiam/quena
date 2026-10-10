@@ -325,6 +325,19 @@ pub struct RecoverableCapture {
     pub modified: Option<i64>,
 }
 
+thread_local! {
+    /// The archive an import on this thread loads (its sessions' source).
+    static IMPORT_LABEL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` with sessions inserted on this thread marked as loaded from `label`.
+pub fn with_import_label<R>(label: &str, f: impl FnOnce() -> R) -> R {
+    let before = IMPORT_LABEL.with(|l| l.replace(Some(label.to_string())));
+    let r = f();
+    IMPORT_LABEL.with(|l| *l.borrow_mut() = before);
+    r
+}
+
 impl Capture {
     /// Open (or create) a capture directory.
     pub fn open(dir: impl Into<PathBuf>, body_cfg: BodyConfig, temporary: bool) -> Result<Arc<Capture>> {
@@ -431,6 +444,9 @@ impl Capture {
     pub fn insert(self: &Arc<Self>, mut d: SessionDetail, req: Body, resp: Body) -> SessionId {
         let id = self.next_id();
         d.summary.id = id;
+        if let Some(label) = IMPORT_LABEL.with(|l| l.borrow().clone()) {
+            d.summary.archive = label;
+        }
         d.request_body = req.to_ref();
         d.response_body = resp.to_ref();
         let mut sum_req = d.request_body.wire_len();
@@ -538,6 +554,19 @@ impl Capture {
         let d = Arc::new(self.db.get(id).ok().flatten()?);
         self.cache.lock().put(d.clone());
         Some((*d).clone())
+    }
+
+    /// [`Capture::detail_stored`] that leaves the detail cache as it is (reading many sessions
+    /// once, e.g. for statistics, would push out the ones the inspector needs).
+    pub fn detail_peek(&self, id: SessionId) -> Option<SessionDetail> {
+        if let Some(l) = self.live(id) {
+            return Some(l.detail());
+        }
+        let hit = self.cache.lock().get(id);
+        if let Some(d) = hit {
+            return Some((*d).clone());
+        }
+        self.db.get(id).ok().flatten()
     }
 
     /// [`Capture::bodies_of`] without the index (see [`Capture::detail_stored`]).

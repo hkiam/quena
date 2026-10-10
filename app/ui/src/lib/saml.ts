@@ -31,7 +31,9 @@ const attr = (tag: string, name: string) => new RegExp(`\\b${name}\\s*=\\s*"([^"
 /** SAML fields of an HTML form that posts them on (an identity provider's answer). */
 export function findSamlInHtml(html: string): SamlMessage[] {
   const out: SamlMessage[] = [];
-  const inputs = html.match(/<input\b[^>]*>/gi) ?? [];
+  // An identity provider's form is small; huge pages are not searched (the regex would crawl).
+  if (html.length > 2 << 20 || !/SAMLRe(sponse|quest)/.test(html)) return out;
+  const inputs = html.match(/<input\b[^>]{0,65536}>/gi) ?? [];
   const unescape = (v: string) => v.replace(/&#x?[0-9a-f]+;|&[a-z]+;/gi, (e) => entity(e));
   const raw = inputs.map((t) => (attr(t, "name") === "RelayState" ? attr(t, "value") : undefined)).find((x) => x != null);
   const relay = raw == null ? undefined : unescape(raw);
@@ -57,15 +59,38 @@ function base64Bytes(s: string): Uint8Array {
 }
 
 /** The XML of a message (Redirect binding: raw deflate inflated). */
+/** Inflated XML larger than this is cut (a crafted message could inflate to gigabytes). */
+export const MAX_SAML = 4 << 20;
+
 export async function decodeSaml(m: SamlMessage): Promise<string> {
   const bytes = base64Bytes(m.value);
-  if (m.binding === "post") return new TextDecoder().decode(bytes);
+  if (m.binding === "post") return new TextDecoder().decode(bytes.subarray(0, MAX_SAML));
   try {
-    const stream = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-    return await new Response(stream).text();
+    const reader = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw")).getReader();
+    const parts: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      size += value.length;
+      if (size > MAX_SAML) {
+        await reader.cancel();
+        break;
+      }
+    }
+    const all = new Uint8Array(Math.min(size, MAX_SAML));
+    let at = 0;
+    for (const p of parts) {
+      const n = Math.min(p.length, all.length - at);
+      all.set(p.subarray(0, n), at);
+      at += n;
+      if (at >= all.length) break;
+    }
+    return new TextDecoder().decode(all);
   } catch {
     // Some senders do not deflate.
-    return new TextDecoder().decode(bytes);
+    return new TextDecoder().decode(bytes.subarray(0, MAX_SAML));
   }
 }
 

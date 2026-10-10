@@ -424,4 +424,8 @@ export const panels: Record<string, string> = {
   "Replace filter?": "Filter ersetzen?",
   "A filter named {name} exists. Replace it?": "Es gibt schon einen Filter {name}. Ersetzen?",
   "A filter named {name} exists already": "Es gibt schon einen Filter {name}",
+  "Discard the raw text?": "Raw-Text verwerfen?",
+  "The raw request was changed but not sent; switching tabs discards it.": "Der Raw-Request wurde ge\u00e4ndert, aber nicht gesendet; ein Tab-Wechsel verwirft ihn.",
+  "Discard": "Verwerfen",
+  "At most {n} request tabs; close one first": "H\u00f6chstens {n} Request-Tabs; zuerst einen schlie\u00dfen",
 };

@@ -106,6 +106,8 @@ export interface Row {
   on: boolean;
   name: string;
   value: string;
+  /** Query parameters: the pair as written in the URL, sent unchanged while name and value are. */
+  raw?: string;
 }
 
 /** Header lines that are on (`#` turns one off). */
@@ -125,7 +127,8 @@ export function headerRows(text: string): Row[] {
       const off = l.trimStart().startsWith("#");
       const line = off ? l.trimStart().replace(/^#\s?/, "") : l;
       const i = line.indexOf(":");
-      return { on: !off, name: (i < 0 ? line : line.slice(0, i)).trim(), value: i < 0 ? "" : line.slice(i + 1).trim() };
+      // The value keeps trailing spaces (typed one after the other in the table).
+      return { on: !off, name: (i < 0 ? line : line.slice(0, i)).trim(), value: i < 0 ? "" : line.slice(i + 1).trimStart() };
     });
 }
 
@@ -137,7 +140,12 @@ export function headerText(rows: Row[]): string {
     .join("\n");
 }
 
-const enc = (s: string) => encodeURIComponent(s).replace(/%20/g, "+");
+/** Percent-encoded, `{{variables}}` left as they are (a collection substitutes them). */
+const enc = (s: string) =>
+  s
+    .split(/(\{\{[^}]*\}\})/)
+    .map((part) => (part.startsWith("{{") && part.endsWith("}}") ? part : encodeURIComponent(part).replace(/%20/g, "+")))
+    .join("");
 const dec = (s: string) => {
   try {
     return decodeURIComponent(s.replace(/\+/g, " "));
@@ -151,7 +159,7 @@ export function queryRows(url: string, off: string[] = []): Row[] {
   const q = url.split("#")[0].split("?").slice(1).join("?");
   const pair = (p: string, on: boolean): Row => {
     const i = p.indexOf("=");
-    return { on, name: dec(i < 0 ? p : p.slice(0, i)), value: i < 0 ? "" : dec(p.slice(i + 1)) };
+    return { on, name: dec(i < 0 ? p : p.slice(0, i)), value: i < 0 ? "" : dec(p.slice(i + 1)), raw: p };
   };
   return [...q.split("&").filter(Boolean).map((p) => pair(p, true)), ...off.map((p) => pair(p, false))];
 }
@@ -160,7 +168,15 @@ export function queryRows(url: string, off: string[] = []): Row[] {
 export function withQuery(url: string, rows: Row[]): { url: string; offParams: string[] } {
   const [beforeHash, ...hash] = url.split("#");
   const base = beforeHash.split("?")[0];
-  const encode = (r: Row) => (r.value === "" && !r.name.includes("=") ? enc(r.name) : `${enc(r.name)}=${enc(r.value)}`);
+  // A pair as it was written while unchanged (its encoding stays: `%20`, `%7E`, signatures).
+  const encode = (r: Row) => {
+    if (r.raw != null) {
+      const i = r.raw.indexOf("=");
+      const same = dec(i < 0 ? r.raw : r.raw.slice(0, i)) === r.name && (i < 0 ? "" : dec(r.raw.slice(i + 1))) === r.value;
+      if (same) return r.raw;
+    }
+    return r.value === "" && !r.name.includes("=") ? enc(r.name) : `${enc(r.name)}=${enc(r.value)}`;
+  };
   const used = rows.filter((r) => r.name.trim() || r.value.trim());
   const on = used.filter((r) => r.on).map(encode);
   return { url: `${base}${on.length ? `?${on.join("&")}` : ""}${hash.length ? `#${hash.join("#")}` : ""}`, offParams: used.filter((r) => !r.on).map(encode) };
