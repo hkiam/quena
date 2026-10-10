@@ -102,13 +102,38 @@ struct McpTapArgs {
     command: Vec<String>,
 }
 
-/// The MCP server `mcp-tap` runs (ended with it on Ctrl-C / SIGTERM).
-static TAP_CHILD: std::sync::Mutex<Option<std::process::Child>> = std::sync::Mutex::new(None);
+/// The process id of the MCP server `mcp-tap` runs (signals are passed on to it).
+static TAP_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn mcp_tap(a: McpTapArgs) -> Result<i32> {
+    if a.name.trim().is_empty() {
+        return Err(usage("--name must not be empty"));
+    }
     let data = a.data_dir.unwrap_or_else(|| Paths::default_paths().data);
     let (cmd, args) = a.command.split_first().ok_or_else(|| usage("the server's command is missing after --"))?;
-    quena_app_core::mcp_tap::run(&data, &a.name, cmd, args, &TAP_CHILD)
+    quena_app_core::mcp_tap::run(&data, &a.name, cmd, args, &TAP_PID)
+}
+
+/// Ctrl-C, SIGTERM, SIGHUP: ask the server to end (SIGTERM) and give it 5 seconds before it is
+/// killed; `mcp-tap` then ends with it. (On Windows the console sends Ctrl-C to the server too.)
+fn end_tap_server() {
+    let pid = TAP_PID.load(std::sync::atomic::Ordering::SeqCst);
+    #[cfg(unix)]
+    if pid != 0 {
+        let pid = pid as libc::pid_t;
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(100));
+            if unsafe { libc::kill(pid, 0) } != 0 {
+                return;
+            }
+        }
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+        return;
+    }
+    let _ = pid;
+    std::thread::sleep(Duration::from_secs(5));
+    std::process::exit(EXIT_INTERRUPTED);
 }
 
 #[derive(Args)]
@@ -573,13 +598,7 @@ fn main() -> ExitCode {
     // the captured traffic. Best effort; without a handler the OS would just kill us.
     if let Command::McpTap(_) = &cli.command {
         // Stdout belongs to the MCP protocol; a signal ends the server with us.
-        let _ = ctrlc::set_handler(|| {
-            if let Some(c) = TAP_CHILD.lock().ok().and_then(|mut g| g.take()) {
-                let mut c = c;
-                let _ = c.kill();
-            }
-            std::process::exit(EXIT_INTERRUPTED);
-        });
+        let _ = ctrlc::set_handler(end_tap_server);
     }
     let r = match cli.command {
         Command::McpTap(a) => {

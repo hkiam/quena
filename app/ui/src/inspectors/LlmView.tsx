@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, type CallContext, type Detail, type LlmCall, type LlmPart, type ToolTrail } from "../api";
 import { actions } from "../actions";
+import { useListVersion } from "../lib/useSettled";
 import { fmtInt, fmtUsd } from "../lib/format";
 import { t } from "../i18n";
 import { say, set } from "../store";
@@ -159,14 +160,16 @@ function ContextBar({ id, state }: { id: number; state: string }) {
 /** The MCP exchanges that ran the tool calls of the answer. */
 function ToolTrails({ id, state }: { id: number; state: string }) {
   const [trails, setTrails] = useState<ToolTrail[]>([]);
+  // The MCP exchanges come after the answer: look again as sessions arrive.
+  const version = useListVersion();
+  useEffect(() => setTrails([]), [id]);
   useEffect(() => {
     let alive = true;
-    setTrails([]);
-    if (state === "done") api.llmToolTrails(id).then((r) => alive && setTrails(r), () => {});
+    if (state === "done" || state === "aborted") api.llmToolTrails(id).then((r) => alive && setTrails(r), () => {});
     return () => {
       alive = false;
     };
-  }, [id, state]);
+  }, [id, state, version]);
   const ran = trails.filter((x) => x.mcp != null);
   if (!ran.length) return null;
   return (

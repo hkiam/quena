@@ -314,6 +314,8 @@ export interface AppState {
   activeTab: RightTab;
   /** The conversation the Agents panel shows (its key). */
   agentConv: string | null;
+  /** What the Agents panel shows. */
+  agentView: "convs" | "tools";
   /** The navigator narrows the list to this group or path (with what to call it). */
   scope: { scope: import("./api").NavScope; label: string } | null;
   jobs: JobInfo[];
@@ -355,6 +357,7 @@ export const useStore = create<AppState>(() => ({
   anchorIndex: null,
   activeTab: "inspectors",
   agentConv: null,
+  agentView: "convs",
   scope: null,
   jobs: [],
   log: [],

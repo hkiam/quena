@@ -18,8 +18,11 @@ contain breaking changes (settings, file formats, plugin API).
   Flags `x-quena-mcp` and `x-quena-mcp-server`; columns *MCP* and *MCP server*, *Group by →
   MCP server*, filters `mcp` and `mcpserver`.
 - `quena-cli mcp-tap --name NAME -- COMMAND …` records MCP servers that talk over stdio:
-  it passes everything through and writes the exchanges to Quena's data folder, where the app
-  picks them up while capturing (`stdio://NAME/tools/call`).
+  it passes everything through and writes the exchanges to Quena's data folder (`--data-dir`
+  for a portable app; files only for the user), where the app picks them up while capturing
+  (`stdio://NAME/tools/call`). The server runs even when recording fails; signals are passed
+  on to it; on Windows `.cmd` launchers such as `npx` work; requests never answered are
+  recorded too.
 - *Agents → Tools & skills*: every tool across the conversations with the requests that
   offer it, what its definition costs in each and in all, model calls, MCP exchanges,
   failures and result sizes, tools never called; every skill with where it is listed and

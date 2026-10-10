@@ -321,7 +321,8 @@ an error (exit code 2), not an empty side.
 
 `quena-cli mcp-tap --name NAME -- COMMAND ARGS…` runs an MCP server that talks over stdio,
 passes its input and output through unchanged and records the exchanges for the Quena app;
-see [MCP servers](llm.md#servers-that-talk-over-stdio). It exits with the server's exit code.
+see [MCP servers](llm.md#servers-that-talk-over-stdio). It exits with the server's exit code
+(128 + the signal when a signal ended the server), with 2 when the server cannot be started.
 
 ## Exit codes
 

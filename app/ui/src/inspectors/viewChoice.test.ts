@@ -131,7 +131,15 @@ describe("LLM calls", () => {
     const d = call("https://api.openai.com/v1/chat/completions");
     expect(viewFamily(d, "response", ["llm", "sse"], [])).toBe("llm");
     expect(defaultView("llm", "request", [...REQUEST, "llm"])).toBe("llm");
-    expect(viewFamily(d, "request", ["mcp"], [])).toBe("mcp");
+  });
+  it("open in the MCP view only when surely MCP", () => {
+    const marked = { ...call("http://localhost:3000/mcp"), summary: { mcp: "tools/list" } } as unknown as Detail;
+    expect(viewFamily(marked, "request", ["mcp"], [])).toBe("mcp");
     expect(defaultView("mcp", "response", [...REQUEST, "mcp"])).toBe("mcp");
+    // A mail API's /messages only offers the view.
+    const mail = call("https://graph.microsoft.com/v1.0/me/messages", "GET");
+    expect(viewFamily(mail, "response", ["mcp", "sse"], [])).toBe("sse");
+    const withHeader = { ...call("https://x.example/api"), request: { method: "POST", url: "https://x.example/api", headers: [["Mcp-Session-Id", "s"]] } } as unknown as Detail;
+    expect(viewFamily(withHeader, "request", ["mcp"], [])).toBe("mcp");
   });
 });

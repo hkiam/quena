@@ -2,7 +2,7 @@
 // every request, how often the model calls it, what the MCP server answers; which skills are
 // offered and which loaded.
 import { useEffect, useState } from "react";
-import { api, type ToolReport } from "../api";
+import { api, type ToolReport, type ToolStat } from "../api";
 import { fmtInt } from "../lib/format";
 import { t } from "../i18n";
 
@@ -22,8 +22,9 @@ export function AgentTools({ refresh }: { refresh: string }) {
   }, [refresh]);
   if (!r) return <div className="placeholder">{error ?? t("Computing…")}</div>;
   if (!r.tools.length && !r.skills.length) return <div className="placeholder">{t("No tools in the LLM calls or MCP exchanges of the capture.")}</div>;
-  const tools = onlyUnused ? r.tools.filter((x) => x.offered > 0 && x.modelCalls === 0) : r.tools;
-  const unusedTokens = r.tools.filter((x) => x.offered > 0 && x.modelCalls === 0).reduce((a, x) => a + x.defTokens * x.offered, 0);
+  const unused = (x: ToolStat) => x.offered > 0 && x.modelCalls === 0 && x.mcpCalls === 0;
+  const tools = onlyUnused ? r.tools.filter(unused) : r.tools;
+  const unusedTokens = r.tools.filter(unused).reduce((a, x) => a + x.defTokens * x.offered, 0);
   return (
     <div className="scroll pad agent-tools">
       {error && <div className="mocks-error small">{error}</div>}
@@ -57,14 +58,14 @@ export function AgentTools({ refresh }: { refresh: string }) {
               MCP
             </th>
             <th className="num">{t("Errors")}</th>
-            <th className="num" title={t("Average and largest result, in tokens")}>
+            <th className="num" title={t("Average and largest result of the calls that did not fail, in tokens")}>
               {t("Result")}
             </th>
           </tr>
         </thead>
         <tbody>
           {tools.map((x) => (
-            <tr key={x.name} className={x.offered > 0 && x.modelCalls === 0 && x.mcpCalls === 0 ? "side" : ""}>
+            <tr key={x.name} className={unused(x) ? "side" : ""}>
               <td className="mono" title={x.name}>
                 {x.name}
               </td>
@@ -75,7 +76,7 @@ export function AgentTools({ refresh }: { refresh: string }) {
               <td className="num">{x.modelCalls || ""}</td>
               <td className="num">{x.mcpCalls || ""}</td>
               <td className={`num ${x.errors ? "warn" : ""}`}>{x.errors || ""}</td>
-              <td className="num">{x.mcpCalls ? `${fmtInt(Math.round(x.resultTokens / x.mcpCalls))} / ${fmtInt(x.maxResultTokens)}` : ""}</td>
+              <td className="num">{x.mcpCalls > x.errors ? `${fmtInt(Math.round(x.resultTokens / (x.mcpCalls - x.errors)))} / ${fmtInt(x.maxResultTokens)}` : ""}</td>
             </tr>
           ))}
         </tbody>
@@ -88,7 +89,7 @@ export function AgentTools({ refresh }: { refresh: string }) {
               <tr>
                 <th>{t("Skill")}</th>
                 <th className="num" title={t("Conversations whose requests list the skill")}>
-                  {t("Offered")}
+                  {t("Listed in")}
                 </th>
                 <th className="num" title={t("Times the model loaded it (Skill tool or reading SKILL.md)")}>
                   {t("Loaded")}

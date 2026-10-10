@@ -1,7 +1,7 @@
 // Agents: the conversations of AI agents in the capture (each run of Claude Code, Codex, an
 // app), with their turns, what fills the context, where the prompt cache missed and why, and
 // hints where tokens go to waste.
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { api, type CallContext, type ConvDetail, type ConvSummary, type SessionId } from "../api";
 import { actions } from "../actions";
@@ -9,38 +9,24 @@ import { fmtInt, fmtMs, fmtTime, fmtUsd } from "../lib/format";
 import { breaksCache, cacheText, convTree, diffText, hintText, hintTokens } from "../lib/agentText";
 import { CallContextView } from "./CallContext";
 import { AgentTools } from "./AgentTools";
+import { useListVersion } from "../lib/useSettled";
 import { set, useStore } from "../store";
 import { plural, t } from "../i18n";
 import { ContextMap } from "./ContextMap";
 
 const tokens = (c: { input: number; output: number }) => c.input + c.output;
-
-/** `value` once it has not changed for `quiet` ms, and at least every `most` ms while it keeps
- * changing (an agent at work changes the list all the time). */
-function useSettled<T>(value: T, quiet = 400, most = 3000): T {
-  const [settled, setSettled] = useState(value);
-  const since = useRef(Date.now());
-  useEffect(() => {
-    if (Object.is(value, settled)) return;
-    const wait = Math.max(0, Math.min(quiet, most - (Date.now() - since.current)));
-    const timer = setTimeout(() => {
-      since.current = Date.now();
-      setSettled(value);
-    }, wait);
-    return () => clearTimeout(timer);
-  }, [value, settled, quiet, most]);
-  return settled;
-}
 const cacheShare = (read: number, input: number) => (input > 0 ? Math.round((read * 100) / input) : 0);
 
 export default function AgentsPanel() {
-  const version = useSettled(useStore((s) => s.listVersion));
+  const version = useListVersion();
+  const view = useStore((s) => s.agentView);
   const sel = useStore((s) => s.agentConv);
   const [list, setList] = useState<ConvSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-  const [view, setView] = useState<"convs" | "tools">("convs");
   useEffect(() => {
+    // The tools view asks for its own report.
+    if (view === "tools") return;
     let alive = true;
     const timer = setTimeout(
       () =>
@@ -54,26 +40,16 @@ export default function AgentsPanel() {
       alive = false;
       clearTimeout(timer);
     };
-  }, [version, tick]);
+  }, [version, tick, view]);
   const tree = useMemo(() => convTree(list ?? []), [list]);
-  if (error && !list) return <div className="placeholder">{error}</div>;
-  if (!list) return <div className="placeholder">{t("Computing…")}</div>;
-  if (!list.length)
-    return (
-      <div className="placeholder">
-        {t("No LLM calls in the capture. Start an agent (Claude Code, Codex …) through Quena; each of its runs shows here as a conversation.")}
-      </div>
-    );
-  // A conversation opened from the LLM view may not be in the list yet: it loads on its own.
-  const shown = sel;
   const switcher = (
-    <span className="tabs-inline">
-      <span className={`insp-tab ${view === "convs" ? "active" : ""}`} onClick={() => setView("convs")}>
+    <span className="tabs-inline agents-switch" role="tablist">
+      <button type="button" role="tab" aria-selected={view === "convs"} className={`insp-tab ${view === "convs" ? "active" : ""}`} onClick={() => set({ agentView: "convs" })}>
         {t("Conversations")}
-      </span>
-      <span className={`insp-tab ${view === "tools" ? "active" : ""}`} onClick={() => setView("tools")}>
+      </button>
+      <button type="button" role="tab" aria-selected={view === "tools"} className={`insp-tab ${view === "tools" ? "active" : ""}`} onClick={() => set({ agentView: "tools" })}>
         {t("Tools & skills")}
-      </span>
+      </button>
     </span>
   );
   if (view === "tools")
@@ -89,6 +65,17 @@ export default function AgentsPanel() {
         <AgentTools refresh={`${version}:${tick}`} />
       </div>
     );
+  if (error && !list) return <div className="placeholder">{error}</div>;
+  if (!list) return <div className="placeholder">{t("Computing…")}</div>;
+  if (!list.length)
+    return (
+      <div className="agents-tools-wrap">
+        <div className="lt-bar">{switcher}</div>
+        <div className="placeholder">{t("No LLM calls in the capture. Start an agent (Claude Code, Codex …) through Quena; each of its runs shows here as a conversation.")}</div>
+      </div>
+    );
+  // A conversation opened from the LLM view may not be in the list yet: it loads on its own.
+  const shown = sel;
   return (
     <div className="agents">
       <div className="agents-list scroll">

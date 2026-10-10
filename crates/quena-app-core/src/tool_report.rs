@@ -92,23 +92,69 @@ fn matches(llm_name: &str, mcp_tool: &str) -> bool {
     llm_name == mcp_tool || split_tool(llm_name).1 == mcp_tool
 }
 
-/// MCP tool calls of the capture: id, start, tool, server, result tokens, failed.
+/// A server's name reduced for comparing: `claude_ai_Jira`, `Jira MCP`, `mcp.jira.example`
+/// and `jira-mcp` all become `jira…`.
+fn norm_server(s: &str) -> String {
+    let s = s.to_ascii_lowercase();
+    let s = s.strip_prefix("claude_ai_").unwrap_or(&s).to_string();
+    s.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty() && *w != "mcp" && *w != "server" && *w != "www" && *w != "com" && *w != "io").collect::<Vec<_>>().join("")
+}
+
+/// Whether the server part of an LLM tool name (`mcp__jira__…`) may name the MCP server
+/// `server` (its name from initialize, or its host); unknown on either side counts as may.
+fn same_server(llm_server: Option<&str>, server: &str) -> bool {
+    let (Some(a), false) = (llm_server, server.is_empty()) else { return true };
+    let (a, b) = (norm_server(a), norm_server(server));
+    a.is_empty() || b.is_empty() || a.contains(&b) || b.contains(&a)
+}
+
+/// Whether LLM tool `llm_name` is the tool `tool` of MCP server `server`.
+fn is_tool(llm_name: &str, tool: &str, server: &str) -> bool {
+    matches(llm_name, tool) && same_server(split_tool(llm_name).0, server)
+}
+
+/// MCP tool calls of the capture.
 struct McpCall {
     id: SessionId,
     started: i64,
     tool: String,
     server: String,
+    process: String,
 }
 
 impl AppCore {
     fn mcp_calls(&self) -> Vec<McpCall> {
+        self.mcp_flag_missing();
         let mut out = Vec::new();
         self.capture().index.for_each(|s| {
             if let Some(tool) = s.mcp.strip_prefix("tools/call ") {
-                out.push(McpCall { id: s.id, started: s.started_at, tool: tool.to_string(), server: s.mcp_server.clone() });
+                // A batch's label names its first call and how many more.
+                let tool = tool.split(" +").next().unwrap_or(tool);
+                out.push(McpCall { id: s.id, started: s.started_at, tool: tool.to_string(), server: s.mcp_server.clone(), process: s.process.clone() });
             }
         });
         out
+    }
+
+    /// Sessions that may be MCP exchanges but have no flag (archives, sessions from before):
+    /// look at each once.
+    fn mcp_flag_missing(&self) {
+        let cap = self.capture();
+        let numbering = cap.numbering();
+        let mut todo = Vec::new();
+        {
+            let seen = self.mcp_checked.lock();
+            cap.index.for_each(|s| {
+                if s.mcp.is_empty() && crate::mcp_traffic::candidate(&s.method, &s.full_url(), Default::default()) && !seen.contains(&(numbering, s.id)) {
+                    todo.push(s.id);
+                }
+            });
+        }
+        for id in todo {
+            self.mcp_mark(numbering, id);
+            self.mcp_checked.lock().insert((numbering, id));
+        }
+        cap.index.tick();
     }
 
     /// Result tokens and failure of MCP exchange `id` (kept once read).
@@ -162,8 +208,16 @@ impl AppCore {
         // MCP exchanges: to the tool the model knows by that name, else a tool of their own.
         for m in self.mcp_calls() {
             let (tokens, failed) = self.mcp_result(m.id);
-            let key = tools.keys().find(|k| matches(k, &m.tool) && split_tool(k).0.is_none_or(|s| m.server.is_empty() || s.eq_ignore_ascii_case(&m.server) || s.contains(&m.server.to_ascii_lowercase()))).cloned().or_else(|| tools.keys().find(|k| matches(k, &m.tool)).cloned()).unwrap_or_else(|| m.tool.clone());
-            let t = tools.entry(key.clone()).or_insert_with(|| ToolStat { name: key, server: (!m.server.is_empty()).then(|| m.server.clone()), ..Default::default() });
+            // The tool of that server; else the only tool of that name.
+            let same: Vec<&String> = tools.keys().filter(|k| is_tool(k, &m.tool, &m.server)).collect();
+            let named: Vec<&String> = tools.keys().filter(|k| matches(k, &m.tool)).collect();
+            let key = match (same.as_slice(), named.as_slice()) {
+                ([k], _) => (*k).clone(),
+                (_, [k]) => (*k).clone(),
+                // A tool the model never saw (another client, an archive): by server and name.
+                _ => format!("{}\u{0}{}", m.tool, m.server),
+            };
+            let t = tools.entry(key).or_insert_with(|| ToolStat { name: m.tool.clone(), server: (!m.server.is_empty()).then(|| m.server.clone()), ..Default::default() });
             t.mcp_calls += 1;
             t.errors += failed as u32;
             t.result_tokens += tokens;
@@ -195,20 +249,25 @@ impl AppCore {
 
     /// The way of the tool call of MCP exchange `id` (a `tools/call`).
     pub fn mcp_trail(&self, id: SessionId) -> Option<ToolTrail> {
+        self.mcp_flag_missing();
         let s = self.capture().index.get(id)?;
-        let tool = s.mcp.strip_prefix("tools/call ")?.to_string();
+        let tool = s.mcp.strip_prefix("tools/call ")?.split(" +").next()?.to_string();
         let built = self.all_built();
-        // The latest LLM call before it whose answer asked for the tool.
-        let asked = built.convs.iter().enumerate().flat_map(|(ci, c)| c.digests.iter().map(move |d| (ci, d))).filter(|(_, d)| d.started <= s.started_at && s.started_at - d.started <= LINK_US && d.calls.iter().any(|n| matches(n, &tool))).max_by_key(|(_, d)| d.started);
+        // The latest LLM call shortly before whose answer asked for this server's tool; one of
+        // the same client process first (parallel agents call the same tools).
+        let asks = |d: &Digest| d.started <= s.started_at && s.started_at - d.started <= LINK_US && d.calls.iter().any(|n| is_tool(n, &tool, &s.mcp_server));
+        let cands: Vec<(usize, &Arc<Digest>)> = built.convs.iter().enumerate().flat_map(|(ci, c)| c.digests.iter().map(move |d| (ci, d))).filter(|(_, d)| asks(d)).collect();
+        let asked = cands.iter().filter(|(_, d)| !s.process.is_empty() && d.process == s.process).max_by_key(|(_, d)| d.started).or_else(|| cands.iter().max_by_key(|(_, d)| d.started)).copied();
         let result_in = asked.and_then(|(ci, d)| next_in(&built.convs[ci].pred, &built.convs[ci].digests, d.id));
-        let offering: Vec<&Arc<Digest>> = built.convs.iter().flat_map(|c| &c.digests).filter(|d| d.tools.iter().any(|t| matches(&t.0, &tool))).collect();
+        let mut offering: Vec<&Arc<Digest>> = built.convs.iter().flat_map(|c| &c.digests).filter(|d| d.tools.iter().any(|t| is_tool(&t.0, &tool, &s.mcp_server))).collect();
+        offering.sort_by_key(|d| d.started);
         Some(ToolTrail {
-            tool,
             requested_by: asked.map(|(_, d)| d.id),
             mcp: Some(id),
             result_in,
             offered: offering.len() as u32,
-            def_tokens: offering.last().and_then(|d| d.tools.iter().find(|t| matches(&t.0, &s.mcp["tools/call ".len()..]))).map(|t| t.2).unwrap_or(0),
+            def_tokens: offering.last().and_then(|d| d.tools.iter().find(|t| is_tool(&t.0, &tool, &s.mcp_server))).map(|t| t.2).unwrap_or(0),
+            tool,
         })
     }
 
@@ -222,10 +281,14 @@ impl AppCore {
         let calls = self.mcp_calls();
         let mut used: HashSet<SessionId> = HashSet::new();
         let result_in = next_in(&c.pred, &c.digests, id);
+        // Before the conversation's next turn, of this server, the same client process first.
+        let until = result_in.and_then(|n| c.digests.iter().find(|x| x.id == n)).map(|x| x.started).unwrap_or(end + LINK_US);
         d.calls
             .iter()
             .map(|name| {
-                let mcp = calls.iter().filter(|m| m.started >= end && m.started - end <= LINK_US && matches(name, &m.tool) && !used.contains(&m.id)).min_by_key(|m| m.started).map(|m| m.id);
+                let fits = |m: &&McpCall| m.started >= end && m.started <= until && is_tool(name, &m.tool, &m.server) && !used.contains(&m.id);
+                let same_proc = calls.iter().filter(fits).filter(|m| !d.process.is_empty() && m.process == d.process).min_by_key(|m| m.started);
+                let mcp = same_proc.or_else(|| calls.iter().filter(fits).min_by_key(|m| m.started)).map(|m| m.id);
                 if let Some(m) = mcp {
                     used.insert(m);
                 }
@@ -251,5 +314,9 @@ mod tests {
         assert_eq!(split_tool("Read"), (None, "Read"));
         assert!(matches("mcp__jira__get_issue", "get_issue"));
         assert!(!matches("mcp__jira__get_issue", "get"));
+        assert!(is_tool("mcp__claude_ai_Notion__search", "search", "Notion MCP"));
+        assert!(is_tool("mcp__jira__get_issue", "get_issue", "mcp.jira.example:443"));
+        assert!(!is_tool("mcp__github__search", "search", "notion"));
+        assert!(is_tool("search", "search", "notion"), "no server in the name: any");
     }
 }

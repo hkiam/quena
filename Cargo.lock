@@ -4137,6 +4137,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "dirs 6.0.0",
+ "libc",
  "quena-app-core",
  "quena-formats",
  "quena-report",

@@ -4103,3 +4103,13 @@ tr.capdiff-changed td:first-child {
 .llm-trails {
   margin-top: 4px;
 }
+.agents-switch button.insp-tab {
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.agents-switch button.insp-tab.active {
+  background: var(--panel-bg);
+}

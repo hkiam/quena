@@ -136,6 +136,11 @@ impl LiveSession {
         self.detail.read().summary.clone()
     }
 
+    /// Look at the heads without copying them (`f` must not call back into the session).
+    pub fn with_detail<R>(&self, f: impl FnOnce(&SessionDetail) -> R) -> R {
+        f(&self.detail.read())
+    }
+
     pub fn state(&self) -> SessionState {
         self.detail.read().summary.state
     }

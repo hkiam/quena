@@ -18,8 +18,12 @@ use std::sync::{Arc, Mutex};
 pub const TAP_DIR: &str = "mcp-tap";
 /// Recordings read completely and not written for this long are removed.
 const KEEP_SECS: u64 = 7 * 24 * 3600;
-/// Longest line read (a message larger than this is skipped).
+/// Longest line recorded (a larger message is passed on but not recorded).
 const MAX_LINE: usize = 32 << 20;
+/// Bytes of recordings the app reads per second (the rest follows in the next seconds).
+const READ_BUDGET: u64 = 4 << 20;
+/// Requests waiting for an answer that are kept (the oldest are written without one).
+const MAX_PENDING: usize = 10_000;
 
 /// The first line of a recording.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -27,6 +31,9 @@ const MAX_LINE: usize = 32 << 20;
 pub struct TapHeader {
     pub name: String,
     pub command: String,
+    /// The program run (`npx`, `C:\\Program Files\\nodejs\\npx.cmd`).
+    #[serde(default)]
+    pub program: String,
     pub pid: u32,
     pub started: i64,
 }
@@ -65,15 +72,46 @@ struct Pairing {
     /// Requests waiting for their response, by (sender, id).
     pending: HashMap<(String, String), (i64, Value)>,
     out: Box<dyn Write + Send>,
+    /// The recording (opened again when it was removed, e.g. after a week without exchanges),
+    /// and its first line.
+    path: Option<PathBuf>,
+    header: Option<TapHeader>,
 }
 
 impl Pairing {
     fn write(&mut self, l: &Line) {
+        if let Some(p) = &self.path
+            && !p.exists()
+            && let Ok(f) = open_recording(p)
+        {
+            self.out = Box::new(f);
+            if let Some(h) = self.header.clone() {
+                self.write_line(&Line::Tap(h));
+            }
+        }
+        self.write_line(l);
+    }
+
+    fn write_line(&mut self, l: &Line) {
         if let Ok(mut s) = serde_json::to_string(l) {
             s.push('\n');
             let _ = self.out.write_all(s.as_bytes());
             let _ = self.out.flush();
         }
+    }
+
+    /// Requests still without an answer (the server ended, or they were cancelled).
+    fn flush_pending(&mut self, keep: usize) {
+        if self.pending.len() <= keep {
+            return;
+        }
+        let mut all: Vec<((String, String), (i64, Value))> = self.pending.drain().collect();
+        all.sort_by_key(|(_, (t, _))| *t);
+        let rest = all.split_off(all.len().saturating_sub(keep));
+        for ((from, _), (t0, req)) in all {
+            self.write(&Line::Exchange(TapExchange { t0, t1: now_us(), from, request: req, response: None }));
+        }
+        self.pending.extend(rest);
     }
 
     /// A line `from` sent (`client` or `server`).
@@ -89,8 +127,20 @@ impl Pairing {
             match (has_method, id_key(&m)) {
                 (true, Some(id)) => {
                     self.pending.insert((from.to_string(), id), (t, m));
+                    if self.pending.len() > MAX_PENDING {
+                        self.flush_pending(MAX_PENDING / 2);
+                    }
                 }
-                (true, None) => self.write(&Line::Exchange(TapExchange { t0: t, t1: t, from: from.into(), request: m, response: None })),
+                (true, None) => {
+                    // A cancelled request is written without its answer.
+                    if m.get("method").and_then(|x| x.as_str()) == Some("notifications/cancelled")
+                        && let Some(id) = m.get("params").and_then(|p| p.get("requestId")).filter(|i| !i.is_null()).map(|i| i.to_string())
+                        && let Some((t0, req)) = self.pending.remove(&(from.to_string(), id))
+                    {
+                        self.write(&Line::Exchange(TapExchange { t0, t1: t, from: from.into(), request: req, response: None }));
+                    }
+                    self.write(&Line::Exchange(TapExchange { t0: t, t1: t, from: from.into(), request: m, response: None }));
+                }
                 (false, Some(id)) => {
                     // A response answers a request of the other side.
                     let other = if from == "client" { "server" } else { "client" };
@@ -124,31 +174,97 @@ fn pump(from: impl Read, mut to: impl Write, mut seen: impl FnMut(&[u8])) {
     }
 }
 
+/// Open a recording for appending (only for the user on Unix: it holds tool results).
+fn open_recording(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut o = std::fs::OpenOptions::new();
+    o.create(true).append(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    o.open(path)
+}
+
+fn make_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(())
+}
+
+/// The program to start and the arguments before the user's: on Windows, a command without
+/// extension is looked up with PATHEXT, and `.cmd`/`.bat` files (npx, uvx shims) run through
+/// cmd.exe, which `Command` does not do by itself.
+fn program(command: &str) -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        let p = Path::new(command);
+        let found = if p.extension().is_some() || p.components().count() > 1 {
+            Some(p.to_path_buf())
+        } else {
+            let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+            std::env::var_os("PATH").and_then(|path| std::env::split_paths(&path).flat_map(|d| exts.split(';').filter(|e| !e.is_empty()).map(move |e| d.join(format!("{command}{e}")))).find(|c| c.is_file()))
+        };
+        if let Some(f) = found {
+            let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            if ext == "cmd" || ext == "bat" {
+                return ("cmd.exe".into(), vec!["/d".into(), "/s".into(), "/c".into(), f.display().to_string()]);
+            }
+            return (f.display().to_string(), vec![]);
+        }
+    }
+    (command.to_string(), vec![])
+}
+
 /// Run `command` with `args` as an MCP server between our stdin/stdout and record its
-/// exchanges under `data/mcp-tap`. Returns the server's exit code.
-pub fn run(data: &Path, name: &str, command: &str, args: &[String], child_slot: &Mutex<Option<std::process::Child>>) -> anyhow::Result<i32> {
+/// exchanges under `data/mcp-tap`. Recording never stops the server: when the folder cannot be
+/// written, it runs without. `pid` gets the server's process id (to pass signals on). Returns
+/// the server's exit code (128 + signal when a signal ended it).
+pub fn run(data: &Path, name: &str, command: &str, args: &[String], pid: &std::sync::atomic::AtomicU32) -> anyhow::Result<i32> {
     let dir = data.join(TAP_DIR);
-    std::fs::create_dir_all(&dir)?;
     let safe: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
     let path = dir.join(format!("{safe}-{}.jsonl", std::process::id()));
-    let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
-    let mut child = std::process::Command::new(command).args(args).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::inherit()).spawn().map_err(|e| anyhow::anyhow!("{command}: {e}"))?;
+    let file = match make_dir(&dir).and_then(|_| open_recording(&path)) {
+        Ok(f) => Some(f),
+        Err(e) => {
+            eprintln!("quena-cli mcp-tap: not recording, {} cannot be written: {e}", path.display());
+            None
+        }
+    };
+    let (prog, mut pre) = program(command);
+    pre.extend(args.iter().cloned());
+    let mut child = std::process::Command::new(&prog).args(&pre).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::inherit()).spawn().map_err(|e| anyhow::anyhow!("{command}: {e}"))?;
+    pid.store(child.id(), std::sync::atomic::Ordering::SeqCst);
     let (child_in, child_out) = (child.stdin.take().expect("piped"), child.stdout.take().expect("piped"));
-    let pairing = Arc::new(Mutex::new(Pairing { pending: HashMap::new(), out: Box::new(file) }));
-    let cmdline = std::iter::once(command.to_string()).chain(args.iter().cloned()).collect::<Vec<_>>().join(" ");
-    pairing.lock().unwrap().write(&Line::Tap(TapHeader { name: name.into(), command: cmdline, pid: child.id(), started: now_us() }));
-    *child_slot.lock().unwrap() = Some(child);
+    let recording = file.is_some();
+    let header = TapHeader { name: name.into(), command: std::iter::once(command.to_string()).chain(args.iter().cloned()).collect::<Vec<_>>().join(" "), program: command.to_string(), pid: child.id(), started: now_us() };
+    let pairing = Arc::new(Mutex::new(Pairing { pending: HashMap::new(), out: file.map(|f| Box::new(f) as Box<dyn Write + Send>).unwrap_or_else(|| Box::new(std::io::sink())), path: recording.then(|| path.clone()), header: Some(header.clone()) }));
+    if recording {
+        pairing.lock().unwrap().write(&Line::Tap(header));
+    }
     let p = pairing.clone();
     // Client → server; at the end of our input the server's input closes too.
-    let up = std::thread::spawn(move || pump(std::io::stdin(), child_in, |l| p.lock().unwrap().message("client", l)));
+    let up = std::thread::spawn(move || pump(std::io::stdin(), child_in, |l| if recording { p.lock().unwrap().message("client", l) }));
     let p = pairing.clone();
-    pump(child_out, std::io::stdout(), |l| p.lock().unwrap().message("server", l));
+    pump(child_out, std::io::stdout(), |l| if recording { p.lock().unwrap().message("server", l) });
     drop(up);
-    let status = child_slot.lock().unwrap().take().map(|mut c| c.wait());
+    let status = child.wait();
+    if recording {
+        pairing.lock().unwrap().flush_pending(0);
+    }
     Ok(match status {
-        Some(Ok(s)) => s.code().unwrap_or(1),
-        _ => 1,
+        Ok(s) => exit_code(&s),
+        Err(_) => 1,
     })
+}
+
+fn exit_code(s: &std::process::ExitStatus) -> i32 {
+    #[cfg(unix)]
+    if let Some(sig) = std::os::unix::process::ExitStatusExt::signal(s) {
+        return 128 + sig;
+    }
+    s.code().unwrap_or(1)
 }
 
 /// What the app has read of the recordings.
@@ -167,43 +283,71 @@ fn mark_path(p: &Path) -> PathBuf {
     p.with_extension("jsonl.read")
 }
 
+fn save_mark(p: &Path, offset: u64) {
+    let (mark, tmp) = (mark_path(p), p.with_extension("jsonl.read.tmp"));
+    if std::fs::write(&tmp, offset.to_string()).is_ok() {
+        let _ = std::fs::rename(&tmp, &mark);
+    }
+}
+
 impl AppCore {
     /// Read new exchanges of stdio MCP servers recorded by `quena-cli mcp-tap` (called every
     /// second). They become sessions while capturing; otherwise they are skipped.
     pub fn mcp_tap_tick(&self) {
+        // Exchanges are kept in the files until Quena captures (then they show).
+        if !self.engine().is_some_and(|e| e.status().capturing) {
+            return;
+        }
         let dir = self.paths.data.join(TAP_DIR);
         let Ok(entries) = std::fs::read_dir(&dir) else { return };
-        let capturing = self.engine().is_some_and(|e| e.status().capturing);
         let mut st = self.mcp_taps.lock();
+        let mut budget = READ_BUDGET;
+        let mut marks = Vec::new();
         for e in entries.flatten() {
             let path = e.path();
-            if path.extension().and_then(|x| x.to_str()) != Some("jsonl") {
+            let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+            // A read position whose recording is gone.
+            if ext == "read" && !path.with_extension("").exists() {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+            if ext != "jsonl" {
                 continue;
             }
             let Ok(meta) = e.metadata() else { continue };
             let reading = st.files.entry(path.clone()).or_insert_with(|| Reading { offset: std::fs::read_to_string(mark_path(&path)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0), header: None });
-            if meta.len() > reading.offset {
+            // Shorter than what was read: another file of that name.
+            if meta.len() < reading.offset {
+                *reading = Reading { offset: 0, header: None };
+            }
+            if meta.len() > reading.offset && budget > 0 {
                 let before = reading.offset;
-                self.tap_read(&path, reading, capturing);
+                budget = budget.saturating_sub(self.tap_read(&path, reading, budget));
                 if reading.offset != before {
-                    let _ = std::fs::write(mark_path(&path), reading.offset.to_string());
+                    save_mark(&path, reading.offset);
                 }
             } else if meta.len() == reading.offset && meta.modified().ok().and_then(|m| m.elapsed().ok()).is_some_and(|age| age.as_secs() > KEEP_SECS) {
-                let _ = std::fs::remove_file(&path);
-                let _ = std::fs::remove_file(mark_path(&path));
-                st.files.remove(&path);
+                marks.push(path);
             }
         }
+        for path in marks {
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(mark_path(&path));
+            st.files.remove(&path);
+        }
+        st.files.retain(|p, _| p.exists());
     }
 
-    fn tap_read(&self, path: &Path, reading: &mut Reading, capturing: bool) {
-        let Ok(mut f) = std::fs::File::open(path) else { return };
+    /// Read complete lines of a recording up to `budget` bytes; returns the bytes read.
+    fn tap_read(&self, path: &Path, reading: &mut Reading, budget: u64) -> u64 {
+        let Ok(mut f) = std::fs::File::open(path) else { return 0 };
         if f.seek(SeekFrom::Start(reading.offset)).is_err() {
-            return;
+            return 0;
         }
         let mut r = BufReader::new(f);
         let mut line = Vec::new();
-        loop {
+        let mut read = 0u64;
+        while read < budget {
             line.clear();
             let Ok(n) = r.read_until(b'\n', &mut line) else { break };
             // Only complete lines (the writer may be in the middle of one).
@@ -211,9 +355,10 @@ impl AppCore {
                 break;
             }
             reading.offset += n as u64;
+            read += n as u64;
             match serde_json::from_slice::<Line>(line.trim_ascii()) {
                 Ok(Line::Tap(h)) => reading.header = Some(h),
-                Ok(Line::Exchange(x)) if capturing => {
+                Ok(Line::Exchange(x)) => {
                     if reading.header.is_none() {
                         reading.header = first_header(path);
                     }
@@ -222,6 +367,7 @@ impl AppCore {
                 _ => {}
             }
         }
+        read
     }
 
     fn tap_insert(&self, header: Option<&TapHeader>, path: &Path, x: TapExchange) {
@@ -238,7 +384,8 @@ impl AppCore {
         d.timers.client_begin_request = Some(x.t0);
         d.timers.client_done_response = Some(x.t1.max(x.t0));
         if let Some(h) = header {
-            let exe = h.command.split_whitespace().next().unwrap_or("").rsplit(['/', '\\']).next().unwrap_or("").to_string();
+            let prog = if h.program.is_empty() { h.command.split_whitespace().next().unwrap_or("") } else { h.program.as_str() };
+            let exe = prog.rsplit(['/', '\\']).next().unwrap_or("").to_string();
             d.process = Some(ProcessInfo { pid: h.pid, name: exe });
         }
         let cap = self.capture();
@@ -249,7 +396,8 @@ impl AppCore {
         if let Some(ex) = mcp_traffic::decode(&d.request.url, &d.request.headers, req_text.as_bytes(), d.response.as_ref().map(|r| &r.headers), resp_text.as_bytes()) {
             let label = if side.is_empty() { ex.label.clone() } else { format!("server: {}", ex.label) };
             d.extra_flags.push((mcp_traffic::MCP_FLAG.into(), label));
-            d.extra_flags.push((mcp_traffic::MCP_SERVER_FLAG.into(), ex.server.map(|s| s.0).filter(|n| !n.is_empty()).unwrap_or(name)));
+            // The name it was given (what the client calls it), for every exchange alike.
+            d.extra_flags.push((mcp_traffic::MCP_SERVER_FLAG.into(), name));
         }
         cap.insert(d, req, resp);
     }
@@ -285,7 +433,7 @@ mod tests {
     #[test]
     fn requests_pair_with_their_responses() {
         let buf = Buf::default();
-        let mut p = Pairing { pending: HashMap::new(), out: Box::new(buf.clone()) };
+        let mut p = Pairing { pending: HashMap::new(), out: Box::new(buf.clone()), path: None, header: None };
         p.message("client", br#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
         p.message("client", br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
         // The server asks the client (sampling) before it answers.
@@ -293,10 +441,14 @@ mod tests {
         p.message("client", br#"{"jsonrpc":"2.0","id":1,"result":{"roots":[]}}"#);
         p.message("server", br#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}"#);
         p.message("server", b"not json");
+        // A request never answered is written when the tap ends.
+        p.message("client", br#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"slow"}}"#);
+        p.flush_pending(0);
         let text = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
         let lines: Vec<Line> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         let ex: Vec<&TapExchange> = lines.iter().filter_map(|l| if let Line::Exchange(x) = l { Some(x) } else { None }).collect();
-        assert_eq!(ex.len(), 3);
+        assert_eq!(ex.len(), 4);
+        assert!(ex[3].response.is_none() && ex[3].request["id"] == 9);
         assert_eq!((ex[0].from.as_str(), ex[0].response.is_none()), ("client", true), "the notification");
         assert_eq!((ex[1].from.as_str(), ex[1].request["method"].as_str()), ("server", Some("roots/list")));
         assert_eq!((ex[2].from.as_str(), ex[2].request["method"].as_str()), ("client", Some("tools/list")));

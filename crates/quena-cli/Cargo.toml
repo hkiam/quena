@@ -24,6 +24,9 @@ tempfile.workspace = true
 dirs.workspace = true
 ctrlc = { version = "3", features = ["termination"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile.workspace = true
 serde_json.workspace = true

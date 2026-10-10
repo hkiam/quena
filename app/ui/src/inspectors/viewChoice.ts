@@ -8,10 +8,18 @@ import type { Detail, Part } from "../api";
 /** Views that only make sense for particular content, shown right after Headers. */
 export const SPECIAL = ["llm", "mcp", "socketio", "websocket", "sse", "grpc", "msgpack", "multipart", "soap", "atom"];
 
+/** Surely an MCP exchange: marked by the core, or with MCP headers (a path like /messages
+ * alone only offers the view). */
+export function mcpSure(detail: Detail): boolean {
+  if (detail.summary.mcp) return true;
+  const has = (h: [string, string][] | undefined) => (h ?? []).some(([n]) => /^mcp-(session-id|protocol-version)$/i.test(n));
+  return has(detail.request.headers) || has(detail.response?.headers) || detail.request.url.startsWith("stdio://");
+}
+
 /** Kind of content a message carries, as far as picking a view is concerned. */
 export function viewFamily(detail: Detail, part: Part, special: string[], pluginKeys: string[]): string {
   if (special.includes("llm")) return "llm";
-  if (special.includes("mcp")) return "mcp";
+  if (special.includes("mcp") && mcpSure(detail)) return "mcp";
   if (special.includes("socketio")) return "socketio";
   if (special.includes("websocket")) return "websocket";
   if (special.includes("sse")) return "sse";

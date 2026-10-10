@@ -223,3 +223,93 @@ fn a_tool_call_is_followed_from_the_model_to_the_server_and_back() {
     assert_eq!(r.skills.iter().find(|s| s.name == "xlsx").unwrap().used, 0);
     core.shutdown();
 }
+
+/// The older HTTP+SSE transport: the POST is answered with 202, the result comes on the stream.
+#[test]
+fn old_sse_transport_results_come_from_the_stream() {
+    let dir = tempfile::tempdir().unwrap();
+    let (core, addr) = core_at(dir.path());
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            let mut first = String::new();
+            r.read_line(&mut first).unwrap();
+            let mut len = 0usize;
+            loop {
+                let mut line = String::new();
+                if r.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; len];
+            r.read_exact(&mut body).unwrap();
+            let mut s = s;
+            if first.starts_with("GET") {
+                let out = "event: endpoint\ndata: /messages?sessionId=abc\n\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"serverInfo\":{\"name\":\"notes\",\"version\":\"1\"}}}\n\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"saved\"}]}}\n\n";
+                let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{out}", out.len());
+            } else {
+                let _ = write!(s, "HTTP/1.1 202 Accepted\r\nContent-Length: 8\r\nConnection: close\r\n\r\nAccepted");
+            }
+        }
+    });
+    let curl = |args: &[&str]| {
+        let mut a = vec!["-sS", "--max-time", "20"];
+        let proxy = format!("http://{addr}");
+        a.extend(["-x", proxy.as_str()]);
+        a.extend(args);
+        let o = Command::new("curl").args(&a).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    };
+    curl(&[&format!("http://127.0.0.1:{port}/sse")]);
+    std::thread::sleep(Duration::from_millis(20));
+    curl(&["-H", "Content-Type: application/json", "--data-binary", r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"save","arguments":{}}}"#, &format!("http://127.0.0.1:{port}/messages?sessionId=abc")]);
+    let t = Instant::now();
+    let rows = loop {
+        core.capture().index.tick();
+        let rows: Vec<_> = core.capture().index.find_all(|s| !s.mcp.is_empty()).into_iter().filter_map(|id| core.capture().index.get(id)).collect();
+        if rows.len() == 2 {
+            break rows;
+        }
+        assert!(t.elapsed() < Duration::from_secs(20), "not marked: {rows:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(rows[0].mcp, "stream");
+    assert_eq!(rows[1].mcp, "tools/call save");
+    let ex = core.mcp_exchange(rows[1].id).unwrap();
+    assert_eq!((ex.transport, ex.session.as_deref()), ("sse", Some("abc")));
+    assert_eq!(ex.call.unwrap().content[0].text, "saved", "the result from the stream");
+    core.shutdown();
+}
+
+/// MCP exchanges in an archive from elsewhere get their flags when the report asks.
+#[test]
+fn archived_mcp_exchanges_get_their_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    let (core, _) = core_at(dir.path());
+    let entry = |body: &str, resp: &str| {
+        serde_json::json!({
+            "startedDateTime": "2026-10-10T10:00:00.000Z", "time": 10,
+            "request": {"method": "POST", "url": "https://mcp.example.com/mcp", "httpVersion": "HTTP/1.1", "headers": [{"name": "Content-Type", "value": "application/json"}], "queryString": [], "cookies": [], "headersSize": -1, "bodySize": body.len(), "postData": {"mimeType": "application/json", "text": body}},
+            "response": {"status": 200, "statusText": "OK", "httpVersion": "HTTP/1.1", "headers": [{"name": "Content-Type", "value": "application/json"}], "cookies": [], "content": {"size": resp.len(), "mimeType": "application/json", "text": resp}, "redirectURL": "", "headersSize": -1, "bodySize": resp.len()},
+            "cache": {}, "timings": {"send": 0, "wait": 10, "receive": 0}
+        })
+    };
+    let har = serde_json::json!({"log": {"version": "1.2", "creator": {"name": "other", "version": "1"}, "entries": [
+        entry(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_issue","arguments":{}}}"#, r#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"x"}],"isError":true}}"#)
+    ]}});
+    let f = dir.path().join("mcp.har");
+    std::fs::write(&f, serde_json::to_vec(&har).unwrap()).unwrap();
+    let job = core.import_archive(f).unwrap();
+    core.jobs.wait(job, Duration::from_secs(20)).unwrap();
+    let r = core.tool_report();
+    let t = r.tools.iter().find(|t| t.name == "get_issue").unwrap();
+    assert_eq!((t.mcp_calls, t.errors, t.server.as_deref()), (1, 1, Some("mcp.example.com")));
+    core.capture().index.tick();
+    assert_eq!(core.capture().index.find_all(|s| s.mcp == "tools/call get_issue").len(), 1);
+    core.shutdown();
+}

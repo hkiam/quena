@@ -185,6 +185,8 @@ pub struct AppCore {
     pub(crate) mcp_taps: Mutex<mcp_tap::TapState>,
     /// Result tokens and failure of MCP tool calls, by (capture numbering, session).
     pub(crate) mcp_results: Mutex<std::collections::HashMap<(u64, SessionId), (u64, bool)>>,
+    /// Sessions looked at for missing MCP flags.
+    pub(crate) mcp_checked: Mutex<HashSet<(u64, SessionId)>>,
     /// LLM prices with the stamps (time, size) of their files.
     #[allow(clippy::type_complexity)]
     pub(crate) llm_prices: Mutex<Option<((Option<(Option<std::time::SystemTime>, u64)>, Option<(Option<std::time::SystemTime>, u64)>), Arc<llm::PriceList>)>>,
@@ -236,6 +238,7 @@ impl AppCore {
             mcp_names: Mutex::new(mcp_traffic::McpNames::default()),
             mcp_taps: Mutex::new(mcp_tap::TapState::default()),
             mcp_results: Mutex::new(std::collections::HashMap::new()),
+            mcp_checked: Mutex::new(HashSet::new()),
             llm_prices: Mutex::new(None),
             imports: Mutex::new(Vec::new()),
             replay_generation: std::sync::atomic::AtomicU64::new(0),

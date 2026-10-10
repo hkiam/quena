@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { api, type Detail, type McpExchange, type SessionId, type ToolTrail } from "../api";
 import { actions } from "../actions";
 import { fmtInt } from "../lib/format";
+import { useListVersion } from "../lib/useSettled";
 import { t } from "../i18n";
 
 /** Whether a session may be an MCP exchange (mirrors the core's cheap check). */
@@ -63,21 +64,27 @@ export function McpView({ detail }: { detail: Detail }) {
   const state = detail.summary.state;
   const [ex, setEx] = useState<McpExchange | null | undefined>(undefined);
   const [trail, setTrail] = useState<ToolTrail | null>(null);
+  // The mark and the request that carries the result come later: look again as sessions arrive.
+  const version = useListVersion();
+  const mark = detail.summary.mcp ?? "";
+  useEffect(() => {
+    setEx(undefined);
+    setTrail(null);
+  }, [id]);
   useEffect(() => {
     let alive = true;
-    setTrail(null);
-    api.mcpExchange(id).then(
-      (r) => {
-        if (!alive) return;
-        setEx(r);
-        if (r?.call) api.mcpTrail(id).then((x) => alive && setTrail(x), () => {});
-      },
-      () => alive && setEx(null),
-    );
+    api.mcpExchange(id).then((r) => alive && setEx(r), () => alive && setEx(null));
     return () => {
       alive = false;
     };
   }, [id, state]);
+  useEffect(() => {
+    let alive = true;
+    if (mark.startsWith("tools/call")) api.mcpTrail(id).then((x) => alive && setTrail(x), () => {});
+    return () => {
+      alive = false;
+    };
+  }, [id, mark, version]);
   if (ex === undefined) return <div className="placeholder">{t("Decoding…")}</div>;
   if (ex === null) return <div className="placeholder">{t("Not an exchange with an MCP server.")}</div>;
   const toolTokens = (ex.tools ?? []).reduce((a, x) => a + x.tokens, 0);
@@ -86,14 +93,14 @@ export function McpView({ detail }: { detail: Detail }) {
       <div className="llm-head">
         <span className="pill pill-violet">{ex.transport === "stdio" ? "stdio" : ex.transport === "sse" ? "HTTP+SSE" : "Streamable HTTP"}</span>
         <b className="mono">{ex.label}</b>
-        {ex.server && (
+        {(ex.server?.[0] || detail.summary.mcpServer) && (
           <span>
-            {ex.server[0]} <span className="muted small">{ex.server[1]}</span>
+            {ex.server?.[0] || detail.summary.mcpServer} {ex.server?.[1] && <span className="muted small">{ex.server[1]}</span>}
           </span>
         )}
         <span className="tp-spacer" />
-        {ex.protocol && <span className="muted small">{t("protocol {v}", { v: ex.protocol })}</span>}
-        {ex.session && <span className="muted small mono" title={t("MCP session")}>{ex.session}</span>}
+        {ex.protocol && <span className="muted small">{t("protocol version {v}", { v: ex.protocol })}</span>}
+        {ex.session && <span className="muted small mono" title={t("MCP session id")}>{ex.session}</span>}
       </div>
       {ex.error && <div className="mocks-error">{ex.error}</div>}
       {ex.call && (

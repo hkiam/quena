@@ -211,21 +211,28 @@ shows them in the **MCP** view:
 - for `tools/list`: the tools offered with the tokens each definition costs;
 - all JSON-RPC messages sent and received.
 
-The LLM view lists, under the answer, the MCP exchanges that ran its tool calls. Exchanges
-get the flags `x-quena-mcp` (`tools/call get_issue`) and `x-quena-mcp-server` (the name from
-`initialize`, else the host): columns **MCP** and **MCP server**, *Group by → MCP server*,
-filters `mcp ~ "tools/call"` and `mcpserver == jira`.
+The LLM view lists, under the answer, the MCP exchanges that ran its tool calls (of the same
+server, the same client process first). Over the older SSE transport a tool call's result
+arrives on the server's event stream, not in the answer to the POST; Quena takes it from
+there. A stream stays open for the whole run and is marked when it closes.
+
+Exchanges get the flags `x-quena-mcp` (`tools/call get_issue`) and `x-quena-mcp-server` (the
+name from `initialize`, else the host): columns **MCP** and **MCP server**, *Group by → MCP
+server*, filters `mcp ~ "tools/call"` and `mcpserver == jira`. Exchanges in archives from
+elsewhere get them when the tools report or the way of a call is asked for.
 
 ### Servers that talk over stdio
 
 Most MCP servers run as a local process and talk over stdin and stdout; no proxy sees that.
-Put `quena-cli mcp-tap` in front of the server's command in the MCP client's configuration:
+Put `quena-cli mcp-tap` in front of the server's command in the MCP client's configuration.
+`quena-cli` is a download of its own (see [CI](ci.md#quick-start)); give its full path, as
+apps started from the dock or the start menu do not see the shell's `PATH`:
 
 ```json
 {
   "mcpServers": {
     "jira": {
-      "command": "quena-cli",
+      "command": "/usr/local/bin/quena-cli",
       "args": ["mcp-tap", "--name", "jira", "--", "npx", "-y", "jira-mcp-server"]
     }
   }
@@ -233,11 +240,21 @@ Put `quena-cli mcp-tap` in front of the server's command in the MCP client's con
 ```
 
 `mcp-tap` runs the server and passes everything through unchanged; it pairs the requests with
-their responses and writes each exchange to `mcp-tap/` in Quena's data folder (`--data-dir`
-names another one; `QUENA_DATA_DIR` and the portable folder count as for the app). While
-Quena captures, the exchanges appear as sessions `stdio://jira/tools/call`, with the server's
-process; requests of the server to the client (sampling, roots) as
-`stdio://jira/server/…`. Recordings that were read completely are removed after a week.
+their responses and writes each exchange to `mcp-tap/` in Quena's data folder (only for the
+user: the recordings hold tool arguments and results). It finds that folder as the app does
+— unless the app is portable or started with `QUENA_DATA_DIR`: then add `"--data-dir",
+"<the app's data folder>"` before `--` (*About Quena* shows it). On
+Windows, commands like `npx` or `uvx` that are `.cmd` files are run through `cmd.exe`. When
+the folder cannot be written, the server still runs, without recording. A signal (Ctrl-C,
+the client ending the server) is passed on to the server, which gets five seconds to end;
+`mcp-tap` exits with the server's exit code.
+
+While Quena captures, the exchanges appear as sessions `stdio://jira/tools/call`, with the
+server's process and the name given with `--name` as MCP server; requests of the server to
+the client (sampling, roots) as `stdio://jira/server/…`, requests never answered (the server
+ended, the client cancelled) without a response. Exchanges recorded while Quena does not
+capture wait in the folder and appear when it captures. Recordings read completely are
+removed after a week without new exchanges.
 
 ## Tools and skills
 

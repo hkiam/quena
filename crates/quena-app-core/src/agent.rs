@@ -316,14 +316,29 @@ fn skills_offered(call: &LlmCall) -> Vec<String> {
             }
             for line in t.lines() {
                 let Some(rest) = line.trim_start().strip_prefix("- ") else { continue };
-                let name = rest.split(':').next().unwrap_or("").trim();
-                if !name.is_empty() && name.len() <= 80 && !name.contains(' ') && !out.iter().any(|x| x == name) {
-                    out.push(name.to_string());
-                }
+                // `- name: description`; plugin skills carry a scope (`anthropic-skills:docx: …`).
+                let name = rest.split(": ").next().unwrap_or("").trim().trim_end_matches(':');
+                push_skill(&mut out, name);
             }
         }
     }
+    // Older Claude Code lists them in the Skill tool's description.
+    for t in call.tools.iter().filter(|t| t.description.contains("<available_skills>")) {
+        for part in t.description.split("<name>").skip(1) {
+            push_skill(&mut out, part.split("</name>").next().unwrap_or("").trim());
+        }
+    }
     out
+}
+
+fn skill_name_ok(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 80 && name.chars().all(|c| c.is_ascii_alphanumeric() || "._:-/".contains(c))
+}
+
+fn push_skill(out: &mut Vec<String>, name: &str) {
+    if skill_name_ok(name) && !out.iter().any(|x| x == name) {
+        out.push(name.to_string());
+    }
 }
 
 /// The skill a tool call loads: Claude Code's Skill tool, or reading a `SKILL.md`.
@@ -333,10 +348,18 @@ pub fn skill_used(p: &Part) -> Option<String> {
         let a = args.as_ref()?;
         return ["skill", "command", "name"].iter().find_map(|k| a.get(*k).and_then(|v| v.as_str())).map(|s| s.trim_start_matches('/').to_string());
     }
-    let i = p.text.find("SKILL.md")?;
+    // Reading a skill's SKILL.md: with a tool that reads files, or `cat`/`sed`/`head` in a shell.
+    let tool = p.name.as_deref().unwrap_or("").to_ascii_lowercase();
+    let reads = matches!(tool.as_str(), "read" | "read_file" | "readfile" | "view" | "open_file");
+    let shell = matches!(tool.as_str(), "bash" | "shell" | "local_shell" | "exec_command" | "run_terminal_cmd") && ["cat ", "sed ", "head ", "less "].iter().any(|c| p.text.contains(c));
+    if !reads && !shell {
+        return None;
+    }
+    let lower = p.text.to_ascii_lowercase();
+    let i = lower.find("/skill.md").or_else(|| lower.find("\\skill.md"))?;
     let before = p.text[..i].trim_end_matches(['/', '\\']);
     let name = before.rsplit(['/', '\\', '"', ' ', '\'']).next().unwrap_or("");
-    (!name.is_empty()).then(|| name.to_string())
+    skill_name_ok(name).then(|| name.to_string())
 }
 
 /// The agent that sent a request, by its User-Agent (`claude-cli/2.0.14 (external, cli)` →
@@ -393,6 +416,8 @@ pub struct Digest {
     pub calls: Vec<String>,
     /// Starts of the string values of those calls' arguments.
     pub call_heads: Vec<String>,
+    /// The client process (`name:pid`).
+    pub process: String,
     /// Skills the request offers (listed by the agent) and skills the answer loads.
     pub skills_offered: Vec<String>,
     pub skills_used: Vec<String>,
@@ -472,6 +497,7 @@ impl Digest {
             prompt_full: prompt.chars().take(HEAD * 2).collect(),
             calls: call.output.iter().filter(|p| p.kind == "toolCall").map(|p| p.name.clone().unwrap_or_default()).collect(),
             call_heads: heads,
+            process: d.summary.process.clone(),
             skills_offered: skills_offered(call),
             skills_used: call.output.iter().filter(|p| p.kind == "toolCall").filter_map(skill_used).collect(),
             stop: call.stop_reason.clone(),
@@ -1663,6 +1689,22 @@ mod tests {
         assert_eq!(dups[0].args["tool"], "Grep");
         assert_eq!(h.iter().find(|h| h.code == "unusedTools").unwrap().args["names"], "Bash");
         assert_eq!(h.iter().filter(|h| h.code == "bigResult").count(), 0, "no result is that large here");
+    }
+
+    #[test]
+    fn skills_are_listed_and_loaded() {
+        let list = "<system-reminder>The following skills are available for use with the Skill tool:\n- pdf: work with PDFs\n- anthropic-skills:docx: Word files\n</system-reminder>";
+        let mut c = call("sys", vec![msg("user", vec![text(list), text("go")])], 1_000, 0);
+        c.tools.push(ToolDef { name: "Skill".into(), description: "Load a skill. <available_skills><skill><name>xlsx</name></skill></available_skills>".into(), size: 10, tokens: 3, hash: 1 });
+        assert_eq!(skills_offered(&c), ["pdf", "anthropic-skills:docx", "xlsx"]);
+        let used = |name: &str, args: &str| skill_used(&use_tool("x", name, args));
+        assert_eq!(used("Skill", r#"{"skill":"anthropic-skills:docx"}"#).as_deref(), Some("anthropic-skills:docx"));
+        assert_eq!(used("Read", r#"{"file_path":"/Users/u/.claude/skills/pdf/SKILL.md"}"#).as_deref(), Some("pdf"));
+        assert_eq!(used("Read", r#"{"file_path":"C:\\Users\\u\\skills\\deploy\\SKILL.md"}"#).as_deref(), Some("deploy"));
+        assert_eq!(used("shell", r#"{"command":["bash","-lc","cat ~/.codex/skills/review/SKILL.md"]}"#).as_deref(), Some("review"));
+        assert_eq!(used("Glob", r#"{"pattern":"**/SKILL.md"}"#), None, "searching for skills loads none");
+        assert_eq!(used("Write", r#"{"file_path":"/s/new/SKILL.md"}"#), None, "writing a skill loads none");
+        assert_eq!(used("Read", r#"{"file_path":"/docs/MY_SKILL.md"}"#), None);
     }
 
     #[test]
