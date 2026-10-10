@@ -13,6 +13,7 @@ export const OP_KINDS: [OpKind, string][] = [
   ["jsonAppendAll", t("JSON: append to every array")],
   ["regexReplace", t("Text: replace (regex)")],
   ["setHeader", t("Header: set")],
+  ["defaultHeader", t("Header: set if missing")],
   ["removeHeader", t("Header: remove")],
   ["setStatus", t("Status: set")],
   ["setQuery", t("Query: set parameter")],
@@ -57,6 +58,7 @@ export function toDraft(o: RwOp): OpDraft {
     case "regexReplace":
       return { ...d, pattern: o.pattern, replacement: o.replacement };
     case "setHeader":
+    case "defaultHeader":
       return { ...d, name: o.name, headerValue: o.value };
     case "removeHeader":
       return { ...d, name: o.name };
@@ -119,8 +121,9 @@ export function fromDraft(d: OpDraft): { op: RwOp } | { error: string } {
       if (!d.pattern) return { error: t("Enter a regular expression") };
       return { op: { op: "regexReplace", pattern: d.pattern, replacement: d.replacement } };
     case "setHeader":
+    case "defaultHeader":
       if (!d.name.trim()) return { error: t("Enter a header name") };
-      return { op: { op: "setHeader", name: d.name.trim(), value: d.headerValue } };
+      return { op: { op: d.op, name: d.name.trim(), value: d.headerValue } };
     case "removeHeader":
       if (!d.name.trim()) return { error: t("Enter a header name") };
       return { op: { op: "removeHeader", name: d.name.trim() } };
@@ -160,6 +163,8 @@ export function describeOp(o: RwOp): string {
       return `s/${o.pattern}/${o.replacement}/`;
     case "setHeader":
       return `${o.name}: ${o.value}`;
+    case "defaultHeader":
+      return `${o.name}: ${o.value} (if missing)`;
     case "removeHeader":
       return `− ${o.name}:`;
     case "setStatus":

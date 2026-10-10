@@ -75,7 +75,7 @@ function RewriteRules({ version }: { version: number }) {
         disabled: selected.length === 0,
         action: () =>
           void api.rwApply(selected, [r.id]).then(
-            (out) => say(out.created.length ? t("{n} changed copies added to the list", { n: out.created.length }) : t("No rule changed the selected sessions")),
+            (out) => say(out.created.length ? t("{n} changed copies added to the list", { n: out.created.length }) : out.marked ? t("{n} sessions marked or commented", { n: out.marked }) : t("No rule changed the selected sessions")),
             (err) => say(String(err), "error"),
           ),
       },

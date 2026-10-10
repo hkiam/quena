@@ -646,6 +646,7 @@ export type RwOp =
   | { op: "jsonAppendAll"; value?: unknown }
   | { op: "regexReplace"; pattern: string; replacement: string }
   | { op: "setHeader"; name: string; value: string }
+  | { op: "defaultHeader"; name: string; value: string }
   | { op: "removeHeader"; name: string }
   | { op: "setStatus"; code: number }
   | { op: "setQuery"; name: string; value: string }
@@ -1310,7 +1311,7 @@ export const api = {
   rwImport: (path: string) => invoke<RwState>("rw_import", { path }),
   rwUpdate: (rule: RwRule) => invoke<RwState>("rw_update", { rule }),
   rwPreview: (rule: RwRule, id: SessionId) => invoke<RwPreview>("rw_preview", { rule, id }),
-  rwApply: (ids: SessionId[], ruleIds?: number[], group?: string) => invoke<{ created: SessionId[]; unchanged: number }>("rw_apply", { ids, ruleIds, group }),
+  rwApply: (ids: SessionId[], ruleIds?: number[], group?: string) => invoke<{ created: SessionId[]; unchanged: number; marked: number }>("rw_apply", { ids, ruleIds, group }),
   arSet: (state: ArState) => invoke<void>("ar_set", { state }),
   arAddSessions: (ids: SessionId[], exact: boolean) => invoke<number>("ar_add_sessions", { ids, exact }),
   arImportFarx: (path: string) => invoke<ArState>("ar_import_farx", { path }),

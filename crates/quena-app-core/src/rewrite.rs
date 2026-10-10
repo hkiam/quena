@@ -65,6 +65,8 @@ pub enum Op {
     /// Replace regex matches in the body text (`$1`, `${name}` refer to groups).
     RegexReplace { pattern: String, replacement: String },
     SetHeader { name: String, value: String },
+    /// Set a header only where the message has none (e.g. a CORS header the server forgot).
+    DefaultHeader { name: String, value: String },
     RemoveHeader { name: String },
     /// Response status (responses only).
     SetStatus { code: u16 },
@@ -171,6 +173,7 @@ enum COp {
     JsonAppendAll(Option<Value>),
     Regex(Regex, String),
     SetHeader(String, String),
+    DefaultHeader(String, String),
     RemoveHeader(String),
     SetStatus(u16),
     SetQuery(String, String),
@@ -244,48 +247,66 @@ fn edit_cookie(h: &mut Headers, name: &str, value: Option<&str>) {
 
 /// Apply a header-level operation to a request; whether the message changed.
 fn request_op(op: &COp, r: &mut RequestHead, meta: &mut Meta) -> bool {
+    let before = (r.url.clone(), r.headers.clone());
     match op {
         COp::SetHeader(n, v) => r.headers.set(n, v.clone()),
+        COp::DefaultHeader(n, v) => {
+            if r.headers.get(n).is_none() {
+                r.headers.set(n, v.clone());
+            }
+        }
         COp::RemoveHeader(n) => r.headers.remove(n),
         COp::SetQuery(n, v) => r.url = edit_query(&r.url, n, Some(v)),
-        COp::RemoveQuery(n) => r.url = edit_query(&r.url, n, None),
+        COp::RemoveQuery(n) => {
+            // Only where the parameter is (an untouched URL keeps its spelling).
+            let has = r.url.split('#').next().unwrap_or("").split_once('?').is_some_and(|(_, q)| q.split('&').any(|p| query_name(p) == *n));
+            if has {
+                r.url = edit_query(&r.url, n, None);
+            }
+        }
         COp::SetCookie(n, v) => edit_cookie(&mut r.headers, n, Some(v)),
-        COp::RemoveCookie(n) => edit_cookie(&mut r.headers, n, None),
-        COp::Mark(c) => {
-            meta.mark = Some(*c);
-            return false;
+        COp::RemoveCookie(n) => {
+            let has = r.headers.0.iter().filter(|(k, _)| k.eq_ignore_ascii_case("cookie")).any(|(_, v)| v.split(';').any(|c| n == "*" || c.trim().split('=').next().unwrap_or("").trim() == n));
+            if has {
+                edit_cookie(&mut r.headers, n, None);
+            }
         }
-        COp::Comment(t) => {
-            meta.comments.push(t.clone());
-            return false;
-        }
-        _ => return false,
+        COp::Mark(c) => meta.mark = Some(*c),
+        COp::Comment(t) => meta.comments.push(t.clone()),
+        _ => {}
     }
-    true
+    (r.url.clone(), r.headers.clone()) != before
 }
 
 /// Apply a header-level operation to a response; whether the message changed.
 fn response_op(op: &COp, r: &mut ResponseHead, meta: &mut Meta) -> bool {
+    let before = (r.status, r.headers.clone());
+    let named = |v: &str, n: &str| n == "*" || v.split(';').next().unwrap_or("").split('=').next().unwrap_or("").trim() == n;
     match op {
         COp::SetHeader(n, v) => r.headers.set(n, v.clone()),
+        COp::DefaultHeader(n, v) => {
+            if r.headers.get(n).is_none() {
+                r.headers.set(n, v.clone());
+            }
+        }
         COp::RemoveHeader(n) => r.headers.remove(n),
         COp::SetStatus(st) => {
-            r.status = *st;
-            r.reason = crate::mock::reason(*st).to_string();
+            if r.status != *st {
+                r.status = *st;
+                r.reason = crate::mock::reason(*st).to_string();
+            }
         }
-        COp::SetCookie(n, v) => r.headers.push("Set-Cookie", &format!("{n}={v}; Path=/")),
-        COp::RemoveCookie(n) => r.headers.0.retain(|(k, v)| !(k.eq_ignore_ascii_case("set-cookie") && (n == "*" || v.split('=').next().unwrap_or("").trim() == n))),
-        COp::Mark(c) => {
-            meta.mark = Some(*c);
-            return false;
+        // The server's cookie of that name goes (another Domain or Path would keep both).
+        COp::SetCookie(n, v) => {
+            r.headers.0.retain(|(k, x)| !(k.eq_ignore_ascii_case("set-cookie") && named(x, n)));
+            r.headers.push("Set-Cookie", &format!("{n}={v}; Path=/"));
         }
-        COp::Comment(t) => {
-            meta.comments.push(t.clone());
-            return false;
-        }
-        _ => return false,
+        COp::RemoveCookie(n) => r.headers.0.retain(|(k, x)| !(k.eq_ignore_ascii_case("set-cookie") && named(x, n))),
+        COp::Mark(c) => meta.mark = Some(*c),
+        COp::Comment(t) => meta.comments.push(t.clone()),
+        _ => {}
     }
-    true
+    (r.status, r.headers.clone()) != before
 }
 
 struct Compiled {
@@ -296,6 +317,8 @@ struct Compiled {
     ops: Vec<COp>,
     body_ops: bool,
     head_ops: bool,
+    /// Marks or comments the session.
+    meta_ops: bool,
     /// Only JSON operations on the body: without content types, only JSON bodies apply.
     json_only: bool,
     hits: AtomicU64,
@@ -354,16 +377,17 @@ fn compile(r: &RewriteRule) -> Result<Compiled> {
     let mut ops = Vec::new();
     for op in &r.ops {
         ops.push(match op {
-            Op::SetHeader { .. } | Op::RemoveHeader { .. } | Op::SetStatus { .. } if r.phase == Phase::WebSocket => bail!("WebSocket messages have no headers or status; use JSON or regex changes"),
+            Op::SetHeader { .. } | Op::DefaultHeader { .. } | Op::RemoveHeader { .. } | Op::SetStatus { .. } if r.phase == Phase::WebSocket => bail!("WebSocket messages have no headers or status; use JSON or regex changes"),
             Op::JsonSet { path: p, value } => COp::JsonSet(path(p)?, plain_members(p), value.clone()),
             Op::JsonRemove { path: p } => COp::JsonRemove(path(p)?),
             Op::JsonAppend { path: p, value } => COp::JsonAppend(path(p)?, value.clone()),
             Op::JsonAppendAll { value } => COp::JsonAppendAll(value.clone()),
             Op::RegexReplace { pattern, replacement } => COp::Regex(Regex::new(pattern).map_err(|e| anyhow!("regex: {e}"))?, replacement.clone()),
-            Op::SetHeader { name, .. } | Op::RemoveHeader { name } if FRAMING.contains(&name.trim().to_ascii_lowercase().as_str()) => {
+            Op::SetHeader { name, .. } | Op::DefaultHeader { name, .. } | Op::RemoveHeader { name } if FRAMING.contains(&name.trim().to_ascii_lowercase().as_str()) => {
                 bail!("{name} is set by Quena (message framing)")
             }
             Op::SetHeader { name, value } => COp::SetHeader(name.trim().to_string(), value.clone()),
+            Op::DefaultHeader { name, value } => COp::DefaultHeader(name.trim().to_string(), value.clone()),
             Op::RemoveHeader { name } => COp::RemoveHeader(name.trim().to_string()),
             Op::SetStatus { code } if r.phase == Phase::Request => bail!("setStatus applies to responses (status {code})"),
             Op::SetStatus { code } if !(100..=999).contains(code) || *code == 101 => bail!("status {code} is not allowed"),
@@ -374,7 +398,10 @@ fn compile(r: &RewriteRule) -> Result<Compiled> {
             Op::SetQuery { name, .. } | Op::RemoveQuery { name } if r.phase != Phase::Request => bail!("query parameters are changed in requests ({name})"),
             Op::SetQuery { name, .. } | Op::RemoveQuery { name } | Op::SetCookie { name, .. } | Op::RemoveCookie { name } if name.trim().is_empty() => bail!("a name is needed"),
             Op::SetCookie { name, .. } if name.trim() == "*" => bail!("a cookie name is needed"),
-            Op::SetCookie { name, value } if value.contains([';', '\r', '\n']) || name.contains(['=', ';', ' ']) => bail!("cookie {name}: no `;`, `=` in the name or line breaks"),
+            Op::SetCookie { name, value } if value.contains([';', '\r', '\n']) || name.contains(['=', ';', ' ', ',']) || name.chars().chain(value.chars()).any(char::is_control) => {
+                bail!("cookie {}: no `;`, `=`, `,` or spaces in the name, no line breaks or control characters", name.escape_debug())
+            }
+            Op::RemoveCookie { name } if name.chars().any(char::is_control) => bail!("cookie {}: no control characters", name.escape_debug()),
             Op::SetQuery { name, value } => COp::SetQuery(name.trim().to_string(), value.clone()),
             Op::RemoveQuery { name } => COp::RemoveQuery(name.trim().to_string()),
             Op::SetCookie { name, value } => COp::SetCookie(name.trim().to_string(), value.clone()),
@@ -393,6 +420,7 @@ fn compile(r: &RewriteRule) -> Result<Compiled> {
         status: parse_status(&r.status)?,
         types,
         body_ops: r.ops.iter().any(Op::on_body),
+        meta_ops: r.ops.iter().any(|o| matches!(o, Op::Mark { .. } | Op::Comment { .. })),
         head_ops: r.ops.iter().any(|o| !o.on_body()),
         json_only: r.ops.iter().filter(|o| o.on_body()).all(|o| !matches!(o, Op::RegexReplace { .. })),
         ops,
@@ -586,7 +614,9 @@ impl Rewriter {
         c.iter()
             .enumerate()
             .filter(|(_, x)| x.rule.phase == phase && status.is_none_or(|s| x.status_ok(s)) && x.matcher.matches_head(req))
-            .filter(|(_, x)| !x.body_ops || x.head_ops || x.type_ok(ct))
+            // Body changes need a matching type; so do marks and comments when the rule names
+            // types (a rule marking JSON errors leaves images alone).
+            .filter(|(_, x)| if x.body_ops && !x.head_ops { x.type_ok(ct) } else { x.types.is_empty() || x.type_ok(ct) || !x.meta_ops })
             .map(|(i, _)| i)
             .collect()
     }
@@ -788,11 +818,14 @@ pub struct Offline {
     /// Mark and comments for the session.
     pub mark: Option<quena_model::MarkColor>,
     pub comments: Vec<String>,
+    /// The message itself changed (not only marked or commented).
+    pub edited: bool,
 }
 
 impl Offline {
+    /// The request or response changed (a copy is made).
     pub fn changed(&self) -> bool {
-        !self.names.is_empty()
+        self.edited
     }
 }
 
@@ -801,7 +834,7 @@ impl Offline {
 pub fn apply_offline(rules: &[RewriteRule], max_body_kb: u64, req: &RequestHead, resp: Option<&ResponseHead>, req_body: &Body, resp_body: &Body) -> Result<Offline> {
     let compiled: Vec<Compiled> = rules.iter().map(|r| compile(r).map_err(|e| anyhow!("rewrite rule {} ('{}'): {e}", r.id, r.match_))).collect::<Result<_>>()?;
     let max = (max_body_kb.clamp(1, MAX_BODY_KB) as usize) << 10;
-    let mut out = Offline { request: req.clone(), response: resp.cloned(), request_body: None, response_body: None, names: vec![], notes: vec![], mark: None, comments: vec![] };
+    let mut out = Offline { request: req.clone(), response: resp.cloned(), request_body: None, response_body: None, names: vec![], notes: vec![], mark: None, comments: vec![], edited: false };
     let mut meta = Meta::default();
     let note = |names: &mut Vec<String>, x: &Compiled| {
         let n = name_of(&x.rule);
@@ -818,6 +851,7 @@ pub fn apply_offline(rules: &[RewriteRule], max_body_kb: u64, req: &RequestHead,
         for op in &x.ops {
             touched |= request_op(op, &mut out.request, &mut meta);
         }
+        out.edited |= touched;
         if touched || meta != before {
             note(&mut out.names, x);
         }
@@ -830,6 +864,7 @@ pub fn apply_offline(rules: &[RewriteRule], max_body_kb: u64, req: &RequestHead,
             out.request.headers = h;
             out.request.headers.set("Content-Length", bytes.len().to_string());
             out.request_body = Some(bytes);
+            out.edited = true;
             body_rules.iter().for_each(|x| note(&mut out.names, x));
         }
     }
@@ -844,6 +879,7 @@ pub fn apply_offline(rules: &[RewriteRule], max_body_kb: u64, req: &RequestHead,
             for op in &x.ops {
                 touched |= response_op(op, &mut head, &mut meta);
             }
+            out.edited |= touched;
             if touched || meta != before {
                 note(&mut out.names, x);
             }
@@ -859,6 +895,7 @@ pub fn apply_offline(rules: &[RewriteRule], max_body_kb: u64, req: &RequestHead,
                 }
                 head.headers.remove("transfer-encoding");
                 out.response_body = Some(bytes);
+                out.edited = true;
                 body_rules.iter().for_each(|x| note(&mut out.names, x));
             }
         }
@@ -1124,6 +1161,19 @@ mod tests {
         let set: Vec<&str> = off.response.as_ref().unwrap().headers.0.iter().filter(|(k, _)| k == "Set-Cookie").map(|(_, v)| v.as_str()).collect();
         assert_eq!(set, ["sid=2"]);
         assert_eq!((off.mark, off.comments.as_slice()), (Some(quena_model::MarkColor::Red), &["tracking removed".to_string()][..]));
+        assert!(off.changed());
+        // Only marking: no change of the message; removing what is not there neither.
+        let mark = [RewriteRule { id: 3, phase: Phase::Response, ops: vec![Op::Mark { color: quena_model::MarkColor::Blue }, Op::RemoveCookie { name: "none".into() }, Op::DefaultHeader { name: "X-Has".into(), value: "1".into() }], ..Default::default() }];
+        let with = ResponseHead { status: 200, headers: Headers(vec![("X-Has".into(), "0".into())]), ..Default::default() };
+        let off = apply_offline(&mark, 64, &req, Some(&with), &empty, &empty).unwrap();
+        assert!(!off.changed() && off.mark == Some(quena_model::MarkColor::Blue), "{:?}", off.response);
+        assert_eq!(off.response.unwrap().headers.get("x-has"), Some("0"), "a default header leaves one that is there");
+        // A cookie set by a rule replaces the server's of that name.
+        let set = [RewriteRule { id: 4, phase: Phase::Response, ops: vec![Op::SetCookie { name: "sid".into(), value: "test".into() }], ..Default::default() }];
+        let off = apply_offline(&set, 64, &req, Some(&resp), &empty, &empty).unwrap();
+        let cookies: Vec<&str> = off.response.as_ref().unwrap().headers.0.iter().filter(|(k, _)| k == "Set-Cookie").map(|(_, v)| v.as_str()).collect();
+        assert_eq!(cookies, ["track=1; Path=/", "sid=test; Path=/"]);
+        assert!(compile(&RewriteRule { phase: Phase::Request, ops: vec![Op::SetCookie { name: "a\r\nX".into(), value: "1".into() }], ..Default::default() }).is_err());
         // Checked when compiled.
         assert!(compile(&RewriteRule { phase: Phase::Response, ops: vec![Op::SetQuery { name: "a".into(), value: "1".into() }], ..Default::default() }).is_err());
         assert!(compile(&RewriteRule { phase: Phase::Request, ops: vec![Op::SetCookie { name: "*".into(), value: "1".into() }], ..Default::default() }).is_err());
@@ -1269,6 +1319,8 @@ pub struct RewriteApplied {
     pub created: Vec<SessionId>,
     /// Sessions no rule changed.
     pub unchanged: usize,
+    /// Sessions rules only marked or commented (in place).
+    pub marked: usize,
 }
 
 fn body_text(bytes: &[u8], headers: &Headers) -> String {
@@ -1438,7 +1490,23 @@ impl crate::AppCore {
             }
             let off = apply_offline(&rules, state.max_body_kb, &d.request, d.response.as_ref(), &req_body, &resp_body)?;
             if !off.changed() {
-                out.unchanged += 1;
+                // Only marked or commented: the session itself, no copy.
+                if off.mark.is_some() || !off.comments.is_empty() {
+                    let (mark, comments) = (off.mark, off.comments.clone());
+                    cap.update_summary(id, move |s| {
+                        if let Some(c) = mark {
+                            s.color = Some(c);
+                        }
+                        for c in &comments {
+                            if !s.comment.contains(c.as_str()) {
+                                s.comment = if s.comment.is_empty() { c.clone() } else { format!("{}; {c}", s.comment) };
+                            }
+                        }
+                    });
+                    out.marked += 1;
+                } else {
+                    out.unchanged += 1;
+                }
                 continue;
             }
             let mut nd = d.clone();

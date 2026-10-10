@@ -46,7 +46,8 @@ impl Default for ProxySettings {
             use_system_pac: true,
             pac_url: String::new(),
             bypass_hosts: String::new(),
-            bypass_apple: true,
+            // Pinned Apple services matter on Apple systems.
+            bypass_apple: cfg!(target_os = "macos"),
             bypass_vpn: false,
         }
     }

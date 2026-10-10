@@ -48,8 +48,8 @@ function OpRow({ d, onChange, onRemove, onMove }: { d: OpDraft; onChange: (d: Op
           <input {...plain} className="mono rw-value" value={d.replacement} placeholder={t("replacement ($1, ${name})")} onChange={(e) => up({ replacement: e.target.value })} />
         </>
       )}
-      {(d.op === "setHeader" || d.op === "removeHeader") && <input {...plain} className="mono rw-path" value={d.name} placeholder="X-Header" onChange={(e) => up({ name: e.target.value })} />}
-      {d.op === "setHeader" && <input {...plain} className="mono rw-value" value={d.headerValue} placeholder={t("value")} onChange={(e) => up({ headerValue: e.target.value })} />}
+      {(d.op === "setHeader" || d.op === "defaultHeader" || d.op === "removeHeader") && <input {...plain} className="mono rw-path" value={d.name} placeholder="X-Header" onChange={(e) => up({ name: e.target.value })} />}
+      {(d.op === "setHeader" || d.op === "defaultHeader") && <input {...plain} className="mono rw-value" value={d.headerValue} placeholder={t("value")} onChange={(e) => up({ headerValue: e.target.value })} />}
       {d.op === "setStatus" && <input type="number" min={100} max={999} className="rw-code" value={d.code} onChange={(e) => up({ code: e.target.value })} />}
       {(d.op === "setQuery" || d.op === "removeQuery" || d.op === "setCookie" || d.op === "removeCookie") && (
         <input {...plain} className="mono rw-path" value={d.name} placeholder={d.op.endsWith("Cookie") ? "session_id" : "lang"} onChange={(e) => up({ name: e.target.value })} />
@@ -262,7 +262,7 @@ export function RewriteApply({ ids }: { ids: SessionId[] }) {
     try {
       const out = await api.rwApply(ids, ruleIds, group);
       set({ dialog: null });
-      say(out.created.length ? t("{n} changed copies added to the list", { n: out.created.length }) : t("No rule changed the selected sessions"));
+      say(out.created.length ? t("{n} changed copies added to the list", { n: out.created.length }) : out.marked ? t("{n} sessions marked or commented", { n: out.marked }) : t("No rule changed the selected sessions"));
     } catch (e) {
       say(String(e), "error");
     }

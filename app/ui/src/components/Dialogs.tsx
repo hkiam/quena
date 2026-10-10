@@ -981,7 +981,7 @@ function OptionsDialog() {
               <input placeholder="login.example.com; *.bank.example" value={s.proxy.bypassHosts ?? ""} onChange={(e) => up((x) => (x.proxy.bypassHosts = e.target.value))} />
             </div>
             <label className="f-check" title={t("Push, iMessage, iCloud and App Store hosts that pin their certificates and fail behind an intercepting proxy")}>
-              <input type="checkbox" checked={s.proxy.bypassApple ?? true} onChange={(e) => up((x) => (x.proxy.bypassApple = e.target.checked))} /> {t("Also bypass Apple services that pin their certificates")}
+              <input type="checkbox" checked={s.proxy.bypassApple ?? isMac} onChange={(e) => up((x) => (x.proxy.bypassApple = e.target.checked))} /> {t("Also bypass Apple services that pin their certificates")}
             </label>
             <label className="f-check" title={t("The DNS domains of a VPN connected when capturing starts (e.g. the company's), so company traffic keeps its direct way")}>
               <input type="checkbox" checked={s.proxy.bypassVpn ?? false} onChange={(e) => up((x) => (x.proxy.bypassVpn = e.target.checked))} /> {t("Also bypass the domains of an active VPN")}

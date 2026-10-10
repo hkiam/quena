@@ -463,6 +463,9 @@ fn detect_upstream(own_port: u16) -> (Option<(String, u16)>, Option<String>, Vec
 
 impl CaptureEngine for ProxyEngine {
     fn start(&self, core: &Arc<AppCore>) -> Result<()> {
+        if core.settings().proxy.bypass_vpn {
+            crate::bypass::refresh_vpn();
+        }
         self.apply(core)?;
         let addrs = match self.proxy.start() {
             Ok(a) => a,

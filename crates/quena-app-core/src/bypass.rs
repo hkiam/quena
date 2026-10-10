@@ -5,12 +5,25 @@
 
 use crate::settings::Settings;
 
-/// Apple services known to pin their certificates.
-pub const APPLE_PINNED: &[&str] = &["*.push.apple.com", "*.ess.apple.com", "gs.apple.com", "albert.apple.com", "identity.apple.com", "*.apple-cloudkit.com", "*.icloud.com", "*.mzstatic.com", "itunes.apple.com"];
+/// Apple services known to pin their certificates (push, iMessage/FaceTime, activation,
+/// signing, Apple ID, CloudKit).
+pub const APPLE_PINNED: &[&str] = &["*.push.apple.com", "*.ess.apple.com", "gs.apple.com", "albert.apple.com", "identity.apple.com", "*.apple-cloudkit.com"];
+
+/// The VPN domains found when capturing started ([`refresh_vpn`]); asking the system is slow,
+/// so it is not done on every settings change.
+static VPN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Look up the domains of the VPNs that are up now (when capturing starts).
+pub fn refresh_vpn() {
+    let found = quena_platform::vpn_domains();
+    if let Ok(mut v) = VPN.lock() {
+        *v = found;
+    }
+}
 
 /// The hosts to keep away from Quena (`host`, `*.domain`), for these settings.
 pub fn hosts(s: &Settings) -> Vec<String> {
-    hosts_with(s, quena_platform::vpn_domains)
+    hosts_with(s, || VPN.lock().map(|v| v.clone()).unwrap_or_default())
 }
 
 pub fn hosts_with(s: &Settings, vpn: impl FnOnce() -> Vec<String>) -> Vec<String> {

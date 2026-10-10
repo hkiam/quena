@@ -1445,7 +1445,9 @@ fn httpdate_now() -> String {
 
 /// Name the rewrite rules that applied (or why they changed nothing) in the session comment.
 fn note_rewrite(s: &SessionView, applied: &[crate::rewrite::Applied], changed: bool) {
-    let names: Vec<String> = applied.iter().flat_map(|a| a.names.iter().cloned()).collect();
+    // Named in the comment: the rules that changed the message (or left a note), not those
+    // that only marked or commented it.
+    let names: Vec<String> = applied.iter().filter(|a| a.changed || !a.notes.is_empty()).flat_map(|a| a.names.iter().cloned()).collect();
     let notes: Vec<String> = applied.iter().flat_map(|a| a.notes.iter().cloned()).collect();
     // Marks and comments the rules give the session (also when the message stays as it is).
     let mark = applied.iter().rev().find_map(|a| a.meta.mark);

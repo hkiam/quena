@@ -195,4 +195,9 @@ export const mocks: Record<string, string> = {
   "Save the rewrite rules to a file to share (right-click a group chip for one group)": "Die Rewrite-Regeln zum Weitergeben in eine Datei speichern (Rechtsklick auf eine Gruppe f\u00fcr nur diese)",
   "{n} rewrite rule saved": "{n} Rewrite-Regel gespeichert",
   "{n} rewrite rules saved": "{n} Rewrite-Regeln gespeichert",
+  "{n} sessions marked or commented": "{n} Sessions markiert oder kommentiert",
+  "Header: set if missing": "Header: setzen, falls fehlend",
+  "Turn on rewrite rules?": "Rewrite-Regeln einschalten?",
+  "The template needs rewrite rules on; this also turns on the {n} other active rewrite rule(s).": "Die Vorlage braucht eingeschaltete Rewrite-Regeln; damit werden auch die {n} anderen aktiven Rewrite-Regel(n) wirksam.",
+  "Added; rewrite rules stay off until they are turned on": "Hinzugef\u00fcgt; Rewrite-Regeln bleiben aus, bis sie eingeschaltet werden",
 };

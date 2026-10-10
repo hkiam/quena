@@ -84,7 +84,12 @@ pub fn machine_root_ca(cert: &Path, sha1: &str, trust: bool) -> Result<()> {
 /// DNS domains of the VPN connections that are up (e.g. `corp.example`): requests to them
 /// can be kept away from Quena. Empty when none is up or this cannot be told.
 pub fn vpn_domains() -> Vec<String> {
-    imp::vpn_domains()
+    // The tools asked (scutil, resolvectl, PowerShell) can hang: at most 5 s.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _ = std::thread::Builder::new().name("quena-vpn".into()).spawn(move || {
+        let _ = tx.send(imp::vpn_domains());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap_or_default()
 }
 
 fn is_vpn_interface(name: &str) -> bool {
@@ -124,6 +129,7 @@ pub fn parse_scutil_dns(text: &str) -> Vec<String> {
 pub fn parse_resolvectl(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut vpn = false;
+    let mut domains = false;
     for l in text.lines() {
         let t = l.trim();
         if t.starts_with("Link ") {
@@ -131,9 +137,17 @@ pub fn parse_resolvectl(text: &str) -> Vec<String> {
         } else if t.starts_with("Global") {
             vpn = false;
         } else if vpn && let Some(v) = t.strip_prefix("DNS Domain:") {
+            domains = true;
             for d in v.split_whitespace() {
                 keep_domain(d, &mut out);
             }
+        } else if vpn && domains && !t.is_empty() && !t.contains(':') {
+            // A long list wraps onto lines of its own.
+            for d in t.split_whitespace() {
+                keep_domain(d, &mut out);
+            }
+        } else {
+            domains = false;
         }
     }
     out
@@ -264,8 +278,8 @@ mod vpn_tests {
     fn vpn_domains_from_scutil_and_resolvectl() {
         let scutil = "DNS configuration\n\nresolver #1\n  search domain[0] : home.lan\n  nameserver[0] : 192.168.1.1\n  if_index : 15 (en0)\n\nresolver #2\n  domain   : corp.example\n  search domain[0] : corp.example\n  search domain[1] : eu.corp.example\n  nameserver[0] : 10.1.1.1\n  if_index : 22 (utun4)\n\nresolver #3\n  domain   : 10.in-addr.arpa\n  if_index : 22 (utun4)\n";
         assert_eq!(parse_scutil_dns(scutil), ["corp.example", "eu.corp.example"]);
-        let resolvectl = "Global\n       Protocols: +LLMNR\n\nLink 2 (eth0)\n    DNS Domain: home.lan\n\nLink 7 (tun0)\n Current DNS Server: 10.8.0.1\n    DNS Domain: ~corp.example ~.\n";
-        assert_eq!(parse_resolvectl(resolvectl), ["corp.example"]);
+        let resolvectl = "Global\n       Protocols: +LLMNR\n\nLink 2 (eth0)\n    DNS Domain: home.lan\n\nLink 7 (tun0)\n Current DNS Server: 10.8.0.1\n    DNS Domain: ~corp.example ~.\n                ~eu.corp.example\n";
+        assert_eq!(parse_resolvectl(resolvectl), ["corp.example", "eu.corp.example"]);
         assert!(parse_scutil_dns("resolver #1\n  domain : x.example\n  if_index : 4 (en1)\n").is_empty());
     }
 }

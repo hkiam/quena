@@ -21,15 +21,17 @@ export const TEMPLATES: Template[] = [
       {
         match: "*",
         phase: "response",
+        // Only where the server sent none: an origin it answers with (and credentials) stays.
         ops: [
-          { op: "setHeader", name: "Access-Control-Allow-Origin", value: "*" },
-          { op: "setHeader", name: "Access-Control-Allow-Methods", value: "*" },
-          { op: "setHeader", name: "Access-Control-Allow-Headers", value: "*" },
-          { op: "setHeader", name: "Access-Control-Expose-Headers", value: "*" },
+          { op: "defaultHeader", name: "Access-Control-Allow-Origin", value: "*" },
+          { op: "defaultHeader", name: "Access-Control-Allow-Methods", value: "*" },
+          { op: "defaultHeader", name: "Access-Control-Allow-Headers", value: "*" },
+          { op: "defaultHeader", name: "Access-Control-Expose-Headers", value: "*" },
         ],
       },
     ],
-    mock: () => [{ match: "METHOD:OPTIONS *", action: "*CORSPreflightAllow" }],
+    // Preflights only (other OPTIONS requests, e.g. WebDAV, still reach the server).
+    mock: () => [{ match: "METHOD:OPTIONS HEADER:Access-Control-Request-Method", action: "*CORSPreflightAllow" }],
   },
   {
     key: "no-cookies",
@@ -107,7 +109,12 @@ export async function addTemplate(tpl: Template) {
     if (rw.length) {
       const state = await api.rwGet();
       const rules: RwRule[] = rw.map((r) => ({ id: 0, enabled: true, match: r.match, phase: r.phase, status: r.status ?? "", contentType: "", ops: r.ops, comment: group, group, hits: 0 }));
-      await api.rwSet({ ...state, enabled: true, rules: [...state.rules, ...rules] });
+      // Rewriting that is off would leave the template without effect; turning it on also
+      // turns on the other rules.
+      const others = state.rules.filter((r) => r.enabled).length;
+      const on = state.enabled || !others || (await confirmAsk(t("Turn on rewrite rules?"), t("The template needs rewrite rules on; this also turns on the {n} other active rewrite rule(s).", { n: others }), t("Turn on")));
+      await api.rwSet({ ...state, enabled: on, rules: [...state.rules, ...rules], disabledGroups: state.disabledGroups.filter((g) => g !== group) });
+      if (!on) say(t("Added; rewrite rules stay off until they are turned on"));
     }
     const mocks = tpl.mock?.(arg) ?? [];
     if (mocks.length) {
