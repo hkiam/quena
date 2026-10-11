@@ -21,10 +21,7 @@ function viaProxy(proxyPort, path) {
   });
 }
 
-async function fill(el, text) {
-  await d.cmd("POST", d.s(`/element/${el}/clear`), {});
-  await d.type(el, text);
-}
+const fill = (el, text) => d.fill(el, text);
 
 before(async () => {
   server = http.createServer((req, res) => {

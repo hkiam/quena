@@ -82,6 +82,26 @@ export class Driver {
     }
   }
 
+  /** Replace the value of an input with `text` and check it arrived: typed keys are now and
+   *  then lost while React renders (the field then misses characters or stays empty). After
+   *  three tries the value is set the way React reads it (native setter and an input event). */
+  async fill(el, text) {
+    const value = () => this.exec("return arguments[0].value", [{ [ELEMENT]: el }]);
+    for (let i = 0; i < 3; i++) {
+      await this.cmd("POST", this.s(`/element/${el}/clear`), {});
+      await this.type(el, text);
+      if ((await value()) === text) return;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    await this.exec(
+      `const el = arguments[0];
+       Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value").set.call(el, arguments[1]);
+       el.dispatchEvent(new Event("input", { bubbles: true }));`,
+      [{ [ELEMENT]: el }, text],
+    );
+    if ((await value()) !== text) throw new Error(`could not fill the field with ${JSON.stringify(text)} (has ${JSON.stringify(await value())})`);
+  }
+
   /** Wait for an enabled `css` (with `text`) and click it: a click on a button React has not
    *  enabled yet (state from the last keystrokes not rendered) is silently lost. */
   async clickEnabled(css, { timeout = 10000, text } = {}) {

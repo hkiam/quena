@@ -51,11 +51,9 @@ test("Capture → Reverse Proxy…: add an entry, it forwards and records", asyn
   await d.waitFor(".rp-editor input");
   const inputs = await d.findAll(".rp-editor input");
   // Name, local port, target.
-  await d.cmd("POST", d.s(`/element/${inputs[0]}/clear`), {});
-  await d.type(inputs[0], "api");
-  await d.cmd("POST", d.s(`/element/${inputs[1]}/clear`), {});
-  await d.type(inputs[1], String(port));
-  await d.type(inputs[2], `http://127.0.0.1:${targetPort}/base`);
+  await d.fill(inputs[0], "api");
+  await d.fill(inputs[1], String(port));
+  await d.fill(inputs[2], `http://127.0.0.1:${targetPort}/base`);
   await d.clickEnabled(".rp-buttons .primary", { text: "Add" });
   await d.waitFor(".rp-list", { text: "api", timeout: 15000 });
 
