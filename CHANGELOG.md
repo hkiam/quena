@@ -7,6 +7,8 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-11
+
 ### Changed
 - **LLM view: prompt parts you can tell apart.** The system prompt and user messages are
   taken apart into sections with a title (base prompt, skills, permissions, environment,
@@ -16,7 +18,6 @@ contain breaking changes (settings, file formats, plugin API).
   The view scrolls as one (no scroll box per text; role and section heads stay at the top,
   long texts end in *Show all*), *Go to* jumps to system prompt, history, answer or tools, roles
   have colours and icons, and Codex's `developer` role is shown as *System (developer)*.
-
 - **Prices of current models:** Claude Opus 5.5, Sonnet 5.5 and Fable 5.1, GPT-5.6 Terra and
   Sol (with GPT-5.6's context window), taken from the providers' pages in October 2026. Each
   built-in price names the month it was taken instead of "2025" for all of them.
@@ -828,7 +829,8 @@ Internal test build (not tagged) — an early preview for trying Quena on macOS 
 - Client certificates (mTLS) per host; bandwidth and latency simulation.
 - SAZ (compatible with Fiddler Classic) and HAR 1.2 import/export; copy as cURL.
 
-[Unreleased]: https://github.com/hkiam/quena/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/hkiam/quena/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/hkiam/quena/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/hkiam/quena/compare/v0.1.7...v0.2.0
 [0.1.7]: https://github.com/hkiam/quena/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/hkiam/quena/compare/v0.1.5...v0.1.6
