@@ -1263,53 +1263,58 @@ pub fn parse_litellm(json: &[u8]) -> Result<BTreeMap<String, Price>, String> {
     Ok(out)
 }
 
-/// List prices (USD per 1M tokens) as published by the providers in 2025, by model name
-/// prefix (the longest prefix wins). They change; `llm-prices.json` in the data folder
-/// adds or overrides entries.
-const PRICES: &[(&str, f64, f64, f64)] = &[
+/// List prices (USD per 1M tokens) as published by the providers, by model name prefix (the
+/// longest prefix wins), with the month they were taken from the provider's price page. They
+/// change; `llm-prices.json` in the data folder adds or overrides entries.
+const PRICES: &[(&str, f64, f64, f64, &str)] = &[
     // OpenAI (input, output, cached input)
-    ("gpt-4o-mini", 0.15, 0.60, 0.075),
-    ("gpt-4o", 2.50, 10.0, 1.25),
-    ("gpt-4.1-nano", 0.10, 0.40, 0.025),
-    ("gpt-4.1-mini", 0.40, 1.60, 0.10),
-    ("gpt-4.1", 2.0, 8.0, 0.50),
-    ("gpt-5-nano", 0.05, 0.40, 0.005),
-    ("gpt-5-mini", 0.25, 2.0, 0.025),
-    ("gpt-5", 1.25, 10.0, 0.125),
-    ("gpt-5-codex", 1.25, 10.0, 0.125),
-    ("gpt-5.1", 1.25, 10.0, 0.125),
-    ("gpt-5-pro", 15.0, 120.0, 15.0),
-    ("o3-pro", 20.0, 80.0, 20.0),
-    ("o1-pro", 150.0, 600.0, 150.0),
-    ("o4-mini", 1.10, 4.40, 0.275),
-    ("o3-mini", 1.10, 4.40, 0.55),
-    ("o3", 2.0, 8.0, 0.50),
-    ("o1-mini", 1.10, 4.40, 0.55),
-    ("o1", 15.0, 60.0, 7.50),
-    ("text-embedding-3-small", 0.02, 0.0, 0.02),
-    ("text-embedding-3-large", 0.13, 0.0, 0.13),
+    ("gpt-4o-mini", 0.15, 0.60, 0.075, "2025"),
+    ("gpt-4o", 2.50, 10.0, 1.25, "2025"),
+    ("gpt-4.1-nano", 0.10, 0.40, 0.025, "2025"),
+    ("gpt-4.1-mini", 0.40, 1.60, 0.10, "2025"),
+    ("gpt-4.1", 2.0, 8.0, 0.50, "2025"),
+    ("gpt-5-nano", 0.05, 0.40, 0.005, "2025"),
+    ("gpt-5-mini", 0.25, 2.0, 0.025, "2025"),
+    ("gpt-5", 1.25, 10.0, 0.125, "2025"),
+    ("gpt-5-codex", 1.25, 10.0, 0.125, "2025"),
+    ("gpt-5.1", 1.25, 10.0, 0.125, "2025"),
+    ("gpt-5-pro", 15.0, 120.0, 15.0, "2025"),
+    ("gpt-5.6-sol", 4.0, 20.0, 0.40, "2026-10"),
+    ("gpt-5.6-terra", 2.0, 12.0, 0.20, "2026-10"),
+    ("o3-pro", 20.0, 80.0, 20.0, "2025"),
+    ("o1-pro", 150.0, 600.0, 150.0, "2025"),
+    ("o4-mini", 1.10, 4.40, 0.275, "2025"),
+    ("o3-mini", 1.10, 4.40, 0.55, "2025"),
+    ("o3", 2.0, 8.0, 0.50, "2025"),
+    ("o1-mini", 1.10, 4.40, 0.55, "2025"),
+    ("o1", 15.0, 60.0, 7.50, "2025"),
+    ("text-embedding-3-small", 0.02, 0.0, 0.02, "2025"),
+    ("text-embedding-3-large", 0.13, 0.0, 0.13, "2025"),
     // Anthropic (cache read 10 % of input; cache write 125 %)
-    ("claude-opus-4", 15.0, 75.0, 1.50),
-    ("claude-opus-4-1", 15.0, 75.0, 1.50),
-    ("claude-opus-4-5", 5.0, 25.0, 0.50),
-    ("claude-sonnet-4-5", 3.0, 15.0, 0.30),
-    ("claude-sonnet-4", 3.0, 15.0, 0.30),
-    ("claude-3-7-sonnet", 3.0, 15.0, 0.30),
-    ("claude-3-5-sonnet", 3.0, 15.0, 0.30),
-    ("claude-3-5-haiku", 0.80, 4.0, 0.08),
-    ("claude-haiku-4-5", 1.0, 5.0, 0.10),
-    ("claude-3-haiku", 0.25, 1.25, 0.03),
+    ("claude-opus-4", 15.0, 75.0, 1.50, "2025"),
+    ("claude-opus-4-1", 15.0, 75.0, 1.50, "2025"),
+    ("claude-opus-4-5", 5.0, 25.0, 0.50, "2025"),
+    ("claude-opus-5-5", 4.0, 20.0, 0.20, "2026-10"),
+    ("claude-sonnet-5-5", 2.0, 10.0, 0.10, "2026-10"),
+    ("claude-fable-5-1", 10.0, 50.0, 0.25, "2026-10"),
+    ("claude-sonnet-4-5", 3.0, 15.0, 0.30, "2025"),
+    ("claude-sonnet-4", 3.0, 15.0, 0.30, "2025"),
+    ("claude-3-7-sonnet", 3.0, 15.0, 0.30, "2025"),
+    ("claude-3-5-sonnet", 3.0, 15.0, 0.30, "2025"),
+    ("claude-3-5-haiku", 0.80, 4.0, 0.08, "2025"),
+    ("claude-haiku-4-5", 1.0, 5.0, 0.10, "2025"),
+    ("claude-3-haiku", 0.25, 1.25, 0.03, "2025"),
     // Google
-    ("gemini-2.5-pro", 1.25, 10.0, 0.31),
-    ("gemini-2.5-flash-lite", 0.10, 0.40, 0.025),
-    ("gemini-2.5-flash", 0.30, 2.50, 0.075),
-    ("gemini-2.0-flash-lite", 0.075, 0.30, 0.075),
-    ("gemini-2.0-flash", 0.10, 0.40, 0.025),
+    ("gemini-2.5-pro", 1.25, 10.0, 0.31, "2025"),
+    ("gemini-2.5-flash-lite", 0.10, 0.40, 0.025, "2025"),
+    ("gemini-2.5-flash", 0.30, 2.50, 0.075, "2025"),
+    ("gemini-2.0-flash-lite", 0.075, 0.30, 0.075, "2025"),
+    ("gemini-2.0-flash", 0.10, 0.40, 0.025, "2025"),
     // Others
-    ("mistral-large", 2.0, 6.0, 2.0),
-    ("mistral-small", 0.10, 0.30, 0.10),
-    ("deepseek-chat", 0.27, 1.10, 0.07),
-    ("deepseek-reasoner", 0.55, 2.19, 0.14),
+    ("mistral-large", 2.0, 6.0, 2.0, "2025"),
+    ("mistral-small", 0.10, 0.30, 0.10, "2025"),
+    ("deepseek-chat", 0.27, 1.10, 0.07, "2025"),
+    ("deepseek-reasoner", 0.55, 2.19, 0.14, "2025"),
 ];
 
 /// Whether what follows a name in the price list still names that model: nothing, a date or
@@ -1332,9 +1337,9 @@ pub fn price_of(model: &str, prices: &PriceList) -> Option<(String, Price)> {
         let when = prices.fetched_at.map(|t| format!(", fetched {}", quena_tls::date(t))).unwrap_or_default();
         return Some((format!("{k} (LiteLLM price list{when})"), *p));
     }
-    PRICES.iter().filter(|(k, ..)| m.strip_prefix(k).is_some_and(same_model)).max_by_key(|(k, ..)| k.len()).map(|(k, i, o, c)| {
+    PRICES.iter().filter(|(k, ..)| m.strip_prefix(k).is_some_and(same_model)).max_by_key(|(k, ..)| k.len()).map(|(k, i, o, c, asof)| {
         let write = if k.starts_with("claude") { Some(i * 1.25) } else { None };
-        (format!("{k} (built-in list prices, 2025)"), Price { input: *i, output: *o, cache_read: Some(*c), cache_write: write, context: builtin_context(&m) })
+        (format!("{k} (built-in list prices, {asof})"), Price { input: *i, output: *o, cache_read: Some(*c), cache_write: write, context: builtin_context(&m) })
     })
 }
 
@@ -1344,6 +1349,7 @@ const CONTEXT: &[(&str, u64)] = &[
     ("gpt-4o", 128_000),
     ("gpt-4.1", 1_047_576),
     ("gpt-5", 272_000),
+    ("gpt-5.6", 1_050_000),
     ("o1", 200_000),
     ("o1-mini", 128_000),
     ("o3", 200_000),
@@ -1751,6 +1757,15 @@ mod tests {
         assert_eq!(p("gpt-5-codex").as_deref(), Some("gpt-5-codex"));
         assert_eq!(p("gpt-5.2"), None);
         assert_eq!(p("o3-deep-research"), None);
+        // Models of 2026, with the month their price was taken.
+        assert_eq!(p("claude-opus-5-5").as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(p("gpt-5.6-terra").as_deref(), Some("gpt-5.6-terra"));
+        assert_eq!(p("gpt-5.6-luna"), None, "no price taken from OpenAI's page");
+        let (name, price) = price_of("claude-opus-5-5", &PriceList::default()).unwrap();
+        assert_eq!(name, "claude-opus-5-5 (built-in list prices, 2026-10)");
+        assert_eq!((price.input, price.output, price.cache_read, price.cache_write), (4.0, 20.0, Some(0.20), Some(5.0)));
+        assert_eq!(price_of("gpt-5.6-terra", &PriceList::default()).unwrap().1.context, Some(1_050_000));
+        assert!(price_of("gpt-4o", &PriceList::default()).unwrap().0.ends_with("(built-in list prices, 2025)"));
     }
 
     #[test]

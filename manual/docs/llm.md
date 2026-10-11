@@ -158,8 +158,10 @@ Prices come from three places, and the first that knows the model wins
    by its name with a date or release tag at most (`gpt-4o-2024-08-06` → `gpt-4o`).
 
 3. **Built-in list prices** of common OpenAI, Anthropic, Google, Mistral and DeepSeek models
-   as published in 2025, matched like the fetched list (a newer `claude-opus-4-7` does not
-   get the price of `claude-opus-4`).
+   as their providers published them, each with the month it was taken (the cost's tooltip
+   says *built-in list prices, 2025* or *2026-10*), matched like the fetched list (a newer
+   `claude-opus-4-7` does not get the price of `claude-opus-4`). Prices change: for current
+   ones fetch the price list or add your own.
 
 Model names are compared without a provider path (`openai/gpt-4o`) and without Bedrock's
 region, vendor and version (`us.anthropic.claude-sonnet-4-5-20250929-v1:0` →

@@ -17,6 +17,10 @@ contain breaking changes (settings, file formats, plugin API).
   long texts end in *Show all*), *Go to* jumps to system prompt, history, answer or tools, roles
   have colours and icons, and Codex's `developer` role is shown as *System (developer)*.
 
+- **Prices of current models:** Claude Opus 5.5, Sonnet 5.5 and Fable 5.1, GPT-5.6 Terra and
+  Sol (with GPT-5.6's context window), taken from the providers' pages in October 2026. Each
+  built-in price names the month it was taken instead of "2025" for all of them.
+
 ### Fixed
 - A tag an agent names inside its own block (Codex: `<collaboration_mode>`) no longer ends the
   block early, and one named in a sentence without a closing tag (Claude Code's system prompt:
