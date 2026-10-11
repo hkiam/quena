@@ -78,7 +78,20 @@ function SectionView({ s, force }: { s: LlmSection; force: Force }) {
   if (s.kind === "text") return <LongText text={s.text} />;
   return (
     <div className={`llm-sec llm-sec-${s.kind}`}>
-      <div className="llm-sec-head" onClick={() => setOpen(!open)} title={open ? t("Collapse") : t("Expand")}>
+      <div
+        className="llm-sec-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen(!open);
+          }
+        }}
+        title={open ? t("Collapse") : t("Expand")}
+      >
         <span className="llm-sec-arrow">{open ? "▾" : "▸"}</span>
         <b className="llm-sec-title">{title}</b>
         <span className={`llm-kind llm-kind-${s.kind}`}>{KIND[s.kind]}</span>

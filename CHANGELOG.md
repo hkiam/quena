@@ -19,7 +19,9 @@ contain breaking changes (settings, file formats, plugin API).
 
 ### Fixed
 - A tag an agent names inside its own block (Codex: `<collaboration_mode>`) no longer ends the
-  block early, in the LLM view and in the context breakdown.
+  block early, and one named in a sentence without a closing tag (Claude Code's system prompt:
+  "may include `<system-reminder>` tags") no longer turns the rest of the text into that
+  block, in the LLM view and in the context breakdown.
 
 ## [0.2.0] — 2026-10-10
 

@@ -198,18 +198,31 @@ fn segments(text: &str) -> Vec<(Seg, String, &str)> {
     }
     let mut out = Vec::new();
     let mut rest = text;
+    // Where to look for the next tag in `rest` (past tags that are only named in the text).
+    let mut from = 0;
     loop {
         // The first tag in what is left (one pass over it, `<` by `<`).
-        let next = rest.match_indices('<').find_map(|(i, _)| {
+        let next = rest[from..].match_indices('<').find_map(|(i, _)| {
+            let i = from + i;
             let after = &rest[i + 1..];
             TAGS.iter().find(|(tag, _)| after.starts_with(tag) && after[tag.len()..].starts_with('>')).map(|(tag, seg)| (i, *tag, *seg))
         });
         let Some((i, tag, seg)) = next else { break };
+        let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
+        let end = match closing(rest, i + open.len(), &open, &close) {
+            Some(end) => end,
+            // Not closed: a block cut off at the end when it starts a line; named in a sentence
+            // otherwise (Claude Code's system prompt: "may include <system-reminder> tags").
+            None if i == 0 || rest[..i].ends_with('\n') => rest.len(),
+            None => {
+                from = i + open.len();
+                continue;
+            }
+        };
         if i > 0 {
             out.push((Seg::Text, String::new(), &rest[..i]));
         }
-        let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
-        let end = closing(rest, i + open.len(), &open, &close);
+        from = 0;
         let block = &rest[i..end];
         if tag == "system-reminder" {
             out.extend(reminder_parts(block));
@@ -226,19 +239,22 @@ fn segments(text: &str) -> Vec<(Seg, String, &str)> {
 
 /// End of the block whose opening tag ends at `from`: after its closing tag, counting the tag
 /// where the text names it inside (Codex: "a different `<collaboration_mode>...
-/// </collaboration_mode>`"); the end of the text when it is not closed.
-fn closing(text: &str, from: usize, open: &str, close: &str) -> usize {
+/// </collaboration_mode>`"); after the last closing tag when they do not pair up; `None` when
+/// there is none.
+fn closing(text: &str, from: usize, open: &str, close: &str) -> Option<usize> {
     let mut depth = 1;
     let mut at = from;
+    let mut last = None;
     while let Some(c) = text[at..].find(close).map(|c| at + c) {
         depth += text[at..c].matches(open).count();
         depth -= 1;
         at = c + close.len();
+        last = Some(at);
         if depth == 0 {
-            return at;
+            break;
         }
     }
-    text.len()
+    last
 }
 
 /// A `<system-reminder>` block: instruction files it carries (Claude Code: "Contents of
@@ -2256,8 +2272,19 @@ mod tests {
         assert_eq!(s.len(), 2, "{s:?}");
         assert_eq!((s[0].0, s[0].2.ends_with("block.\n</collaboration_mode>")), (Seg::Context, true));
         assert_eq!(s[1].2, "\nWrite a poem");
-        // Not closed: up to the end.
+        // Not closed: up to the end when it starts a line.
         assert_eq!(segments("<environment_context>\n<cwd>/r</cwd>").len(), 1);
+        assert_eq!(segments("Hi\n<environment_context>\n<cwd>/r</cwd>")[1].0, Seg::Context);
+        // Named in a sentence (Claude Code's system prompt): text, and a real block after it
+        // is still one.
+        let t = "Messages may include <system-reminder> tags. They are not the user's.\n<env>x</env>";
+        assert_eq!(segments(t).iter().map(|s| s.0).collect::<Vec<_>>(), [Seg::Text]);
+        let t = "Results may include <system-reminder> tags.\n<environment_context>cwd</environment_context>\nGo";
+        let s = segments(t);
+        assert_eq!(s.iter().map(|s| (s.0, s.2)).collect::<Vec<_>>(), [(Seg::Text, "Results may include <system-reminder> tags.\n"), (Seg::Context, "<environment_context>cwd</environment_context>"), (Seg::Text, "\nGo")]);
+        // An extra opening tag named inside: up to the last closing one.
+        let s = segments("<collaboration_mode>use <collaboration_mode> to switch</collaboration_mode>\nWrite");
+        assert_eq!((s[0].0, s[1].2), (Seg::Context, "\nWrite"));
     }
 
     #[test]
