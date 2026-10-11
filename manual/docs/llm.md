@@ -56,7 +56,7 @@ provider's own model.
 
 ## The LLM view
 
-![The LLM view of a Claude Code call: model, tokens and estimated cost, the context map (three Read results fill two thirds of it), and the answer with its MCP tool call, run by the MCP server in session 14](img/llm-view.png)
+![The LLM view of a Claude Code call: model, tokens and estimated cost, links to its parts, the system prompt and the first message taken apart into titled parts (base prompt, reminder, instruction files, skills), and the answer with its MCP tool call](img/llm-view.png)
 
 Selecting such a session opens the **LLM** view (on both the request and the response
 side):
