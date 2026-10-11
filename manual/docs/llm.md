@@ -25,7 +25,9 @@ the server answers up to `response.completed`, becomes a session of its own next
 WebSocket, a `POST` with the request as body and the events as a stream (comment *Over
 WebSocket #12 (call 3)*, flag `x-quena-ws-call`). They are made while the WebSocket is open,
 so the LLM view, conversations and costs work as for calls over HTTP. Messages compressed with
-`permessage-deflate` are read inflated.
+`permessage-deflate` are read inflated. An opened archive that holds only the WebSocket (a
+capture of `quena-cli reverse`, for example) gets its calls the same way; one saved by the app
+holds them already.
 
 **Threads and stored responses.** A call that continues a server-side thread carries only
 what is new: Claude Code's message threads (`thread` with `previous_message_id`) and OpenAI's

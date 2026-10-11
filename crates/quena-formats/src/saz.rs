@@ -463,6 +463,10 @@ fn read_session<R: Read + io::Seek>(cap: &Arc<Capture>, zip: &mut zip::ZipArchiv
         match open_entry(zip, si, password).map_err(FormatError::from).and_then(|f| read_message(cap, f, p)) {
             Ok(Some((first, headers, body))) => {
                 let (v, status, reason) = raw::parse_status_line(&first);
+                // A WebSocket: its messages are the response body (Quena's log of them).
+                if status == 101 && d.request.headers.get("upgrade").is_some_and(|u| u.eq_ignore_ascii_case("websocket")) {
+                    d.summary.kind = SessionKind::WebSocket;
+                }
                 d.response = Some(ResponseHead { status, reason, version: v, headers });
                 resp_body = body;
             }
@@ -599,6 +603,30 @@ mod tests {
         assert!(matches!(import(&dst, &enc, &NoProgress), Err(FormatError::PasswordRequired)));
         let got = import_encrypted(&dst, &enc, Some("s3cret"), &NoProgress).unwrap();
         assert_eq!(dst.detail(got[0]).unwrap().request.url, "http://a/one");
+    }
+
+    #[test]
+    fn websockets_stay_websockets() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = Capture::open(dir.path().join("src"), BodyConfig::default(), true).unwrap();
+        let mut d = SessionDetail::default();
+        d.summary.kind = SessionKind::WebSocket;
+        let mut h = Headers::default();
+        h.push("Host", "chatgpt.com");
+        h.push("Upgrade", "websocket");
+        h.push("Connection", "Upgrade");
+        d.request = RequestHead { method: "GET".into(), url: "https://chatgpt.com/backend-api/codex/responses".into(), version: HttpVersion::Http11, headers: h };
+        let mut rh = Headers::default();
+        rh.push("Upgrade", "websocket");
+        d.response = Some(ResponseHead { status: 101, reason: "Switching Protocols".into(), version: HttpVersion::Http11, headers: rh });
+        let id = src.insert(d, src.bodies.store_bytes(&[]), src.bodies.store_bytes(b"frames"));
+        let path = dir.path().join("ws.saz");
+        export(&src, &[id], &path, &NoProgress).unwrap();
+        let dst = Capture::open(dir.path().join("dst"), BodyConfig::default(), true).unwrap();
+        let ids = import(&dst, &path, &NoProgress).unwrap();
+        let got = dst.detail(ids[0]).unwrap();
+        assert_eq!(got.summary.kind, SessionKind::WebSocket);
+        assert_eq!(dst.bodies_of(ids[0]).unwrap().1.read_range(0, 100).unwrap(), b"frames", "the messages stay its body");
     }
 
     #[test]

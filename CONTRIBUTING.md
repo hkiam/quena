@@ -68,6 +68,23 @@ docker run --rm -e HOME=/tmp/h -v "$PWD":/src -v quena-target:/src/target -w /sr
 
 The tests use an isolated data directory and never touch the system proxy.
 
+## Real agent runs
+
+Claude Code and Codex change their request formats between versions (threads, WebSocket calls,
+new tags around what they add). `tools/agent-check/run.sh` records a short real run of each in
+a sample project and checks what Quena makes of it: every LLM call read with model, tokens and
+price, one conversation per run, the system prompt taken apart.
+
+```bash
+tools/agent-check/run.sh            # both; or: claude, codex; --keep keeps the captures
+```
+
+The agents must be installed and logged in, and a run costs a few cents. Quena runs as
+`quena-cli reverse` (no window, no system proxy, no keychain); the agents are pointed at it
+with `ANTHROPIC_BASE_URL` and Codex's `chatgpt_base_url` / `openai_base_url`. The captures hold
+your credentials and are deleted at the end unless `--keep` is given. A model without a price
+is printed as a note: add it to `PRICES` in `crates/quena-app-core/src/llm.rs`.
+
 ## Checks
 
 Please make sure these pass before opening a pull request (CI runs the tests, the UI build and

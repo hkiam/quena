@@ -22,6 +22,10 @@ contain breaking changes (settings, file formats, plugin API).
   built-in price names the month it was taken instead of "2025" for all of them.
 
 ### Fixed
+- **WebSockets in SAZ archives** are WebSockets again when the archive is opened (they came
+  back as HTTP sessions with status 101, without the WebSocket view), and **LLM calls over a
+  WebSocket** (Codex) are read from an opened archive too when it holds only the WebSocket,
+  as captures of `quena-cli reverse` or other tools do.
 - A tag an agent names inside its own block (Codex: `<collaboration_mode>`) no longer ends the
   block early, and one named in a sentence without a closing tag (Claude Code's system prompt:
   "may include `<system-reminder>` tags") no longer turns the rest of the text into that

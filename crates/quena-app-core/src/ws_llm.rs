@@ -9,7 +9,7 @@ use crate::ws::{Assembler, Deflate};
 use quena_model::wslog::{self, RECORD_HEAD};
 use quena_model::{Headers, HttpVersion, RequestHead, ResponseHead, SessionDetail, SessionId, SessionKind, SessionState};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Flag of a session made from a WebSocket: `#ws-session call n`.
 pub const WS_CALL_FLAG: &str = "x-quena-ws-call";
@@ -90,17 +90,22 @@ impl Reader {
 
 impl AppCore {
     /// Read new messages of WebSockets that carry LLM calls; finished calls become sessions
-    /// (called every second). Sessions of loaded archives are left alone: their calls were
-    /// saved with them.
+    /// (called every second). A WebSocket of a loaded archive is read too (`quena-cli
+    /// reverse`, other tools save only the WebSocket), unless the archive holds POSTs to its URL
+    /// already: the app saved the calls with it.
     pub fn ws_llm_tick(&self) {
         let cap = self.capture();
         let numbering = cap.numbering();
-        let mut cands: Vec<(SessionId, bool)> = Vec::new();
+        let mut sockets = Vec::new();
+        let mut saved: HashSet<(String, String)> = HashSet::new();
         cap.index.for_each(|s| {
-            if s.kind == SessionKind::WebSocket && s.archive.is_empty() && s.status == 101 && is_llm_socket(&s.url) {
-                cands.push((s.id, s.state.is_final()));
+            if s.kind == SessionKind::WebSocket && s.status == 101 && is_llm_socket(&s.url) {
+                sockets.push((s.id, s.state.is_final(), s.archive.clone(), s.url.clone()));
+            } else if !s.archive.is_empty() && s.method.eq_ignore_ascii_case("POST") && is_llm_socket(&s.url) {
+                saved.insert((s.archive.clone(), s.url.clone()));
             }
         });
+        let cands: Vec<(SessionId, bool)> = sockets.into_iter().filter(|(_, _, archive, url)| archive.is_empty() || !saved.contains(&(archive.clone(), url.clone()))).map(|(id, done, ..)| (id, done)).collect();
         if cands.is_empty() {
             return;
         }
@@ -259,5 +264,41 @@ mod tests {
         let d = cap.detail(calls[0]).unwrap();
         assert!(d.request.headers.get("upgrade").is_none() && d.request.headers.get("user-agent") == Some("codex_exec/0.154.0"));
         assert_eq!(core.llm_conversations()[0].title, "Fix the parser");
+    }
+
+    #[test]
+    fn websockets_of_archives_are_read_unless_their_calls_were_saved() {
+        use crate::ws::tests::rec_rsv;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("settings.json"), "{}").unwrap();
+        let core = AppCore::new(crate::Paths::at(dir.path().to_path_buf()), crate::logbuf::LogBuffer::new(10)).unwrap();
+        let cap = core.capture();
+        let url = "https://chatgpt.com/backend-api/codex/responses";
+        let mut log = rec_rsv(0, 1, 0, br#"{"type":"response.create","model":"gpt-5","input":[]}"#, 1_000_000);
+        log.extend(rec_rsv(1, 1, 0, br#"{"type":"response.completed","response":{"id":"r","output":[],"usage":{"input_tokens":5,"output_tokens":1}}}"#, 1_100_000));
+        let socket = |archive: &str| {
+            let mut d = SessionDetail::default();
+            d.summary.kind = SessionKind::WebSocket;
+            d.summary.state = SessionState::Done;
+            d.summary.archive = archive.into();
+            d.request = RequestHead { method: "GET".into(), url: url.into(), version: HttpVersion::Http11, headers: Headers::default() };
+            d.response = Some(ResponseHead { status: 101, ..Default::default() });
+            cap.insert(d, cap.bodies.store_bytes(&[]), cap.bodies.store_bytes(&log))
+        };
+        // Recorded by quena-cli: only the WebSocket.
+        socket("cli.saz");
+        // Saved by the app: the WebSocket and its calls.
+        socket("app.saz");
+        let mut d = SessionDetail::default();
+        d.summary.archive = "app.saz".into();
+        d.summary.state = SessionState::Done;
+        d.request = RequestHead { method: "POST".into(), url: url.into(), version: HttpVersion::Http11, headers: Headers::default() };
+        d.response = Some(ResponseHead { status: 200, ..Default::default() });
+        cap.insert(d, cap.bodies.store_bytes(b"{}"), cap.bodies.store_bytes(&[]));
+        cap.index.tick();
+        core.ws_llm_tick();
+        cap.index.tick();
+        let made = cap.index.find_all(|s| s.comment.starts_with("Over WebSocket"));
+        assert_eq!(made.len(), 1, "only the socket of cli.saz");
     }
 }
