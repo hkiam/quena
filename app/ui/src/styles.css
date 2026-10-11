@@ -3749,27 +3749,154 @@ table.hr-table input:not([type="checkbox"]) {
   padding: 0 7px;
 }
 .llm-msg {
-  border-left: 3px solid var(--border);
-  padding: 2px 0 4px 8px;
+  --role: var(--border);
+  border-left: 3px solid var(--role);
+  background: color-mix(in srgb, var(--role) 5%, transparent);
+  border-radius: 0 4px 4px 0;
+  padding: 0 6px 4px 8px;
   margin: 8px 0;
 }
 .llm-user {
-  border-left-color: var(--row-blue);
+  --role: var(--row-blue);
 }
 .llm-assistant,
 .llm-answer {
-  border-left-color: var(--accent);
+  --role: var(--accent);
 }
 .llm-tool,
-.llm-system {
-  border-left-color: var(--muted);
+.llm-system,
+.llm-developer {
+  --role: var(--muted);
 }
+/* Role and section heads stay at the top while their text scrolls past: one scroll area. */
 .llm-role {
+  position: sticky;
+  /* Flush with the top edge of the view: above its padding (.pad), not below it. */
+  top: -8px;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  height: 22px;
+  line-height: 22px;
+  margin: 0 -6px 2px -8px;
+  padding: 0 6px 0 8px;
+  background: color-mix(in srgb, var(--role) 12%, var(--bg));
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
+  color: var(--fg, inherit);
+}
+.llm-role-icon {
+  color: var(--role);
+}
+.llm-role-extra {
+  font-weight: normal;
+  text-transform: none;
   color: var(--muted);
-  margin-bottom: 2px;
+}
+.llm-expand {
+  margin-left: auto;
+  font-weight: normal;
+  text-transform: none;
+}
+.llm-sec {
+  margin: 3px 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.llm-sec-head {
+  position: sticky;
+  top: 14px;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 6px;
+  background: var(--bg);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.llm-sec-head:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+.llm-sec-title {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 3em;
+}
+.llm-sec-size {
+  flex: none;
+}
+.llm-sec-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.llm-sec > .llm-text {
+  padding: 2px 8px 6px 20px;
+}
+.llm-sec > .linklike {
+  margin: 0 0 6px 20px;
+}
+.llm-kind {
+  flex: none;
+  font-size: 10px;
+  border-radius: 8px;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  color: var(--muted);
+}
+.llm-kind-instructions {
+  color: var(--row-green);
+}
+.llm-kind-skills {
+  color: var(--row-purple);
+}
+.llm-kind-context {
+  color: var(--row-blue);
+}
+.llm-kind-reminder {
+  color: var(--row-amber);
+}
+.llm-kind-summary {
+  color: var(--row-red);
+}
+.llm-copy {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+}
+.llm-sec-head:hover .llm-copy,
+.llm-tool-head:hover .llm-copy,
+.llm-plain:hover .llm-copy,
+.llm-copy:focus-visible {
+  opacity: 1;
+}
+.llm-plain {
+  position: relative;
+}
+.llm-plain > .llm-copy {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+.llm-jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 4px 0;
 }
 .llm-part {
   margin: 2px 0;
@@ -3778,8 +3905,6 @@ table.hr-table input:not([type="checkbox"]) {
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
-  max-height: 360px;
-  overflow: auto;
   font-family: inherit;
 }
 pre.llm-text.mono {

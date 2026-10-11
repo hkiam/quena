@@ -1,13 +1,14 @@
 // LLM inspector: a call to an LLM API as a conversation — system prompt, messages, tool
 // calls and results, the answer (assembled from a stream), token usage and estimated cost.
-import { useEffect, useState } from "react";
-import { api, type CallContext, type Detail, type LlmCall, type LlmPart, type ToolTrail } from "../api";
-import { actions } from "../actions";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, type CallContext, type Detail, type LlmCall, type LlmPart, type LlmSection, type ToolTrail } from "../api";
+import { actions, copyText } from "../actions";
 import { useAgentStamp, useListVersion } from "../lib/useSettled";
 import { fmtInt, fmtUsd } from "../lib/format";
 import { t } from "../i18n";
 import { confirmAsk, say, set } from "../store";
 import { CallContextView } from "../panels/CallContext";
+import { KIND, cutAt, preview, sectionTitle } from "../lib/llmSections";
 
 /** URLs of LLM APIs (mirrors the core's recognition; POST only). */
 export function llmCandidate(detail: Detail): boolean {
@@ -22,7 +23,141 @@ export function llmCandidate(detail: Detail): boolean {
   return /\/chat\/completions$|\/responses$|\/v1\/messages$|:(stream)?generateContent|:(stream)?rawPredict$|\/api\/(chat|generate)$|\/model\/[^/]+\/(invoke|invoke-with-response-stream|converse|converse-stream)$/i.test(path);
 }
 
-const ROLE: Record<string, string> = { system: t("System"), user: t("User"), assistant: t("Assistant"), tool: t("Tool"), developer: t("System") };
+const ROLE: Record<string, string> = { system: t("System"), user: t("User"), assistant: t("Assistant"), tool: t("Tool"), developer: t("System (developer)") };
+const ICON: Record<string, string> = { system: "⚙", developer: "⚙", user: "◉", assistant: "✦", tool: "⚒", answer: "✦" };
+
+function LongText({ text, mono }: { text: string; mono?: boolean }) {
+  const [all, setAll] = useState(false);
+  const cut = useMemo(() => cutAt(text), [text]);
+  const short = !all && cut != null && cut < text.length;
+  return (
+    <>
+      <pre className={mono ? "llm-text mono" : "llm-text"}>{short ? text.slice(0, cut) : text}</pre>
+      {short && (
+        <button type="button" className="linklike small" onClick={() => setAll(true)}>
+          {t("Show all ({n} more characters)", { n: fmtInt(text.length - cut) })}
+        </button>
+      )}
+    </>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  return (
+    <button
+      type="button"
+      className="llm-copy"
+      title={t("Copy")}
+      onClick={(e) => {
+        e.stopPropagation();
+        void copyText(text).then(() => say(t("Copied"), "info"));
+      }}
+    >
+      ⧉
+    </button>
+  );
+}
+
+/** Sections the user opened: they stay open in the next call of the conversation. */
+const opened = new Set<string>();
+
+/** "Expand all" / "Collapse all" of a block: a counter, so the same choice twice applies again. */
+type Force = { open: boolean; n: number } | null;
+
+function SectionView({ s, force }: { s: LlmSection; force: Force }) {
+  const title = sectionTitle(s);
+  const key = `${s.kind}|${s.label || title}`;
+  const [open, setOpen] = useState(() => opened.has(key));
+  useEffect(() => {
+    if (force) setOpen(force.open);
+  }, [force]);
+  useEffect(() => {
+    if (open) opened.add(key);
+    else opened.delete(key);
+  }, [open, key]);
+  if (s.kind === "text") return <LongText text={s.text} />;
+  return (
+    <div className={`llm-sec llm-sec-${s.kind}`}>
+      <div className="llm-sec-head" onClick={() => setOpen(!open)} title={open ? t("Collapse") : t("Expand")}>
+        <span className="llm-sec-arrow">{open ? "▾" : "▸"}</span>
+        <b className="llm-sec-title">{title}</b>
+        <span className={`llm-kind llm-kind-${s.kind}`}>{KIND[s.kind]}</span>
+        <span className="muted small llm-sec-size">
+          {t("{n} characters", { n: fmtInt(s.text.length) })} · ≈ {t("{n} tokens", { n: fmtInt(s.tokens) })}
+        </span>
+        {!open && <span className="muted small llm-sec-preview">{s.kind === "prompt" ? "" : preview(s, title)}</span>}
+        <span className="tp-spacer" />
+        <CopyButton text={s.text} />
+      </div>
+      {open && <LongText text={s.text} mono={s.kind !== "base" && s.kind !== "prompt"} />}
+    </div>
+  );
+}
+
+/** The sections of one text or block with "Expand all" when several can be opened. */
+function useForce(): [Force, (open: boolean) => void] {
+  const [force, setForce] = useState<Force>(null);
+  return [force, (open) => setForce((f) => ({ open, n: (f?.n ?? 0) + 1 }))];
+}
+
+function ExpandAll({ count, onSet }: { count: number; onSet: (open: boolean) => void }) {
+  if (count < 2) return null;
+  return (
+    <span className="llm-expand">
+      <button type="button" className="linklike" onClick={() => onSet(true)}>
+        {t("Expand all")}
+      </button>
+      {" · "}
+      <button type="button" className="linklike" onClick={() => onSet(false)}>
+        {t("Collapse all")}
+      </button>
+    </span>
+  );
+}
+
+function RoleHead({ role, label, extra, children }: { role: string; label: string; extra?: string; children?: React.ReactNode }) {
+  return (
+    <div className="llm-role">
+      <span className="llm-role-icon">{ICON[role] ?? "•"}</span> {label}
+      {extra && <span className="llm-role-extra"> · {extra}</span>}
+      {children}
+    </div>
+  );
+}
+
+function SystemBlock({ c, at }: { c: LlmCall; at: React.Ref<HTMLDivElement> }) {
+  const [force, setForce] = useForce();
+  const secs: LlmSection[] = c.systemSections ?? c.system.map((text, i) => ({ kind: i === 0 ? "base" : "prompt", label: "", text, tokens: Math.ceil(text.length / 4) }));
+  const tokens = secs.reduce((n, s) => n + s.tokens, 0);
+  const role = c.systemRole && c.systemRole !== "system" ? c.systemRole : "system";
+  const label = role === "system" ? t("System") : t("System ({role})", { role });
+  return (
+    <div className="llm-msg llm-system" ref={at}>
+      <RoleHead role={role} label={label} extra={`${secs.length === 1 ? t("1 part") : t("{n} parts", { n: secs.length })} · ≈ ${t("{n} tokens", { n: fmtInt(tokens) })}`}>
+        <ExpandAll count={secs.length} onSet={setForce} />
+      </RoleHead>
+      {secs.map((s, i) => (
+        <SectionView key={i} s={s} force={force} />
+      ))}
+    </div>
+  );
+}
+
+function MessageView({ m, sections, at }: { m: LlmCall["messages"][number]; sections: Map<number, LlmSection[]>; at?: React.Ref<HTMLDivElement> }) {
+  const [force, setForce] = useForce();
+  const openable = [...sections.values()].reduce((n, secs) => n + secs.filter((s) => s.kind !== "text").length, 0);
+  return (
+    <div className={`llm-msg llm-${m.role}`} ref={at}>
+      <RoleHead role={m.role} label={ROLE[m.role] ?? m.role}>
+        <ExpandAll count={openable} onSet={setForce} />
+      </RoleHead>
+      {m.parts.map((p, j) => {
+        const secs = sections.get(j);
+        return secs ? secs.map((s, k) => <SectionView key={`${j}:${k}`} s={s} force={force} />) : <PartView key={j} p={p} />;
+      })}
+    </div>
+  );
+}
 
 function PartView({ p }: { p: LlmPart }) {
   const [open, setOpen] = useState(p.kind !== "thinking");
@@ -33,8 +168,9 @@ function PartView({ p }: { p: LlmPart }) {
           <div className="llm-tool-head">
             → {t("calls")} <b className="mono">{p.name ?? "?"}</b>
             {p.id && <span className="muted small mono"> {p.id}</span>}
+            {p.text && <CopyButton text={p.text} />}
           </div>
-          {p.text && <pre className="llm-text mono">{p.text}</pre>}
+          {p.text && <LongText text={p.text} mono />}
         </div>
       );
     case "toolResult":
@@ -44,8 +180,9 @@ function PartView({ p }: { p: LlmPart }) {
             ← {t("result")}
             {p.name && <b className="mono"> {p.name}</b>}
             {p.id && <span className="muted small mono"> {p.id}</span>}
+            <CopyButton text={p.text} />
           </div>
-          <pre className="llm-text mono">{p.text}</pre>
+          <LongText text={p.text} mono />
         </div>
       );
     case "thinking":
@@ -54,14 +191,19 @@ function PartView({ p }: { p: LlmPart }) {
           <span className="linklike small" onClick={() => setOpen(!open)}>
             {open ? "▾" : "▸"} {t("Thinking")}
           </span>
-          {open && <pre className="llm-text">{p.text}</pre>}
+          {open && <LongText text={p.text} />}
         </div>
       );
     case "image":
     case "other":
       return <div className="llm-part muted small mono">{p.text}</div>;
     default:
-      return <pre className="llm-part llm-text">{p.text}</pre>;
+      return (
+        <div className="llm-part llm-plain">
+          <CopyButton text={p.text} />
+          <LongText text={p.text} />
+        </div>
+      );
   }
 }
 
@@ -352,12 +494,51 @@ function ToolTrails({ id, state }: { id: number; state: string }) {
   );
 }
 
+const NONE = new Map<number, LlmSection[]>();
+
+/** Links to the parts of a long call. */
+function JumpBar({ targets }: { targets: [string, React.RefObject<HTMLElement | null> | null][] }) {
+  return (
+    <div className="llm-jump small">
+      <span className="muted">{t("Go to")}</span>
+      {targets
+        .filter(([, r]) => r)
+        .map(([label, r]) => (
+          <button
+            key={label}
+            type="button"
+            className="linklike"
+            onClick={() => {
+              const el = r!.current;
+              if (el instanceof HTMLDetailsElement) el.open = true;
+              el?.scrollIntoView({ block: "start", behavior: "smooth" });
+            }}
+          >
+            {label}
+          </button>
+        ))}
+    </div>
+  );
+}
+
 export function LlmView({ detail }: { detail: Detail }) {
   const [c, setC] = useState<LlmCall | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [play, setPlay] = useState(false);
   const id = detail.summary.id;
   const state = detail.summary.state;
+  const systemAt = useRef<HTMLDivElement>(null);
+  const historyAt = useRef<HTMLDivElement>(null);
+  const answerAt = useRef<HTMLDivElement>(null);
+  const toolsAt = useRef<HTMLDetailsElement>(null);
+  const sectionsOf = useMemo(() => {
+    const m = new Map<number, Map<number, LlmSection[]>>();
+    for (const [i, j, secs] of c?.partSections ?? []) {
+      if (!m.has(i)) m.set(i, new Map());
+      m.get(i)!.set(j, secs);
+    }
+    return m;
+  }, [c]);
   useEffect(() => {
     let alive = true;
     setError(null);
@@ -387,6 +568,14 @@ export function LlmView({ detail }: { detail: Detail }) {
           </button>
         )}
       </div>
+      <JumpBar
+        targets={[
+          [t("System"), c.system.length > 0 ? systemAt : null],
+          [t("History ({n})", { n: c.messages.length }), c.messages.length > 0 ? historyAt : null],
+          [t("Answer"), answerAt],
+          [t("Tools and parameters"), c.tools.length + c.params.length > 0 ? toolsAt : null],
+        ]}
+      />
       {play && <Playground detail={detail} c={c} onClose={() => setPlay(false)} />}
       <CacheBar detail={detail} />
       <ContextBar id={id} state={state} />
@@ -396,31 +585,17 @@ export function LlmView({ detail }: { detail: Detail }) {
           {n}
         </div>
       ))}
-      {c.system.length > 0 && (
-        <div className="llm-msg llm-system">
-          <div className="llm-role">{ROLE.system}</div>
-          {c.system.map((s, i) => (
-            <pre key={i} className="llm-part llm-text">
-              {s}
-            </pre>
-          ))}
-        </div>
-      )}
+      {c.system.length > 0 && <SystemBlock c={c} at={systemAt} />}
       {c.messages.map((m, i) => (
-        <div key={i} className={`llm-msg llm-${m.role}`}>
-          <div className="llm-role">{ROLE[m.role] ?? m.role}</div>
-          {m.parts.map((p, j) => (
-            <PartView key={j} p={p} />
-          ))}
-        </div>
+        <MessageView key={i} m={m} sections={sectionsOf.get(i) ?? NONE} at={i === 0 ? historyAt : undefined} />
       ))}
-      <div className="llm-msg llm-answer">
-        <div className="llm-role">{t("Answer")}</div>
+      <div className="llm-msg llm-answer" ref={answerAt}>
+        <RoleHead role="answer" label={t("Answer")} />
         {c.output.length === 0 ? <div className="muted small">{state === "done" || state === "aborted" ? t("no answer") : t("waiting for the answer…")}</div> : c.output.map((p, j) => <PartView key={j} p={p} />)}
         <ToolTrails id={id} state={state} />
       </div>
       {(c.tools.length > 0 || c.params.length > 0) && (
-        <details className="llm-details">
+        <details className="llm-details" ref={toolsAt}>
           <summary>
             {t("Tools and parameters")} ({c.tools.length + c.params.length})
           </summary>

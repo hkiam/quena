@@ -7,6 +7,20 @@ contain breaking changes (settings, file formats, plugin API).
 
 ## [Unreleased]
 
+### Changed
+- **LLM view: prompt parts you can tell apart.** The system prompt and user messages are
+  taken apart into sections with a title (base prompt, skills, permissions, environment,
+  instruction files, reminders), a label for their kind, characters and estimated tokens.
+  What the agent added starts collapsed, what you or the model wrote stays open; expand or
+  collapse a block at once, opened sections stay open for the next call, ⧉ copies a part.
+  The view scrolls as one (no scroll box per text; role and section heads stay at the top,
+  long texts end in *Show all*), *Go to* jumps to system prompt, history, answer or tools, roles
+  have colours and icons, and Codex's `developer` role is shown as *System (developer)*.
+
+### Fixed
+- A tag an agent names inside its own block (Codex: `<collaboration_mode>`) no longer ends the
+  block early, in the LLM view and in the context breakdown.
+
 ## [0.2.0] — 2026-10-10
 
 ### Highlights

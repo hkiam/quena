@@ -1108,9 +1108,9 @@ async fn collections_reveal(core: State<'_, Core>) -> R<()> {
 
 /// A session as an LLM API call (`None`: it is not one).
 #[tauri::command]
-async fn llm_call(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_core::llm::LlmCall>> {
+async fn llm_call(core: State<'_, Core>, id: SessionId) -> R<Option<quena_app_core::agent::LabelledCall>> {
     let core = core.inner().clone();
-    blocking(move || Ok(core.llm(id))).await
+    blocking(move || Ok(core.llm(id).map(quena_app_core::agent::labelled))).await
 }
 
 /// The conversations (agent runs) of the LLM calls in the capture.

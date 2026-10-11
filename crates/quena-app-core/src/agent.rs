@@ -174,6 +174,10 @@ const TAGS: &[(&str, Seg)] = &[
     ("bash-stderr", Seg::Context),
     ("user_shell_command", Seg::Context),
     ("skills_instructions", Seg::Skills),
+    // Codex: sandbox and approval rules, the collaboration mode, a model switch.
+    ("permissions instructions", Seg::Context),
+    ("collaboration_mode", Seg::Context),
+    ("model_switch", Seg::Reminder),
 ];
 
 /// The stretches of `text` with what they are and a label (the instruction file's path, the
@@ -205,7 +209,7 @@ fn segments(text: &str) -> Vec<(Seg, String, &str)> {
             out.push((Seg::Text, String::new(), &rest[..i]));
         }
         let (open, close) = (format!("<{tag}>"), format!("</{tag}>"));
-        let end = rest[i + open.len()..].find(&close).map(|e| i + open.len() + e + close.len()).unwrap_or(rest.len());
+        let end = closing(rest, i + open.len(), &open, &close);
         let block = &rest[i..end];
         if tag == "system-reminder" {
             out.extend(reminder_parts(block));
@@ -218,6 +222,23 @@ fn segments(text: &str) -> Vec<(Seg, String, &str)> {
         out.push((Seg::Text, String::new(), rest));
     }
     out
+}
+
+/// End of the block whose opening tag ends at `from`: after its closing tag, counting the tag
+/// where the text names it inside (Codex: "a different `<collaboration_mode>...
+/// </collaboration_mode>`"); the end of the text when it is not closed.
+fn closing(text: &str, from: usize, open: &str, close: &str) -> usize {
+    let mut depth = 1;
+    let mut at = from;
+    while let Some(c) = text[at..].find(close).map(|c| at + c) {
+        depth += text[at..c].matches(open).count();
+        depth -= 1;
+        at = c + close.len();
+        if depth == 0 {
+            return at;
+        }
+    }
+    text.len()
 }
 
 /// A `<system-reminder>` block: instruction files it carries (Claude Code: "Contents of
@@ -245,6 +266,81 @@ fn reminder_parts(block: &str) -> Vec<(Seg, String, &str)> {
         out.push((Seg::Instructions, path.trim().to_string(), &block[s..end]));
     }
     out
+}
+
+// ------------------------------------------------------------------ prompt parts for the LLM view
+
+/// A stretch of a prompt text as the LLM view shows it: what it is, a label and its size.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Section {
+    /// `base` (the first system text), `prompt` (more text in the agent's own role), `text`
+    /// (written by the user or the model), `instructions`, `skills`, `context`, `reminder`,
+    /// `summary`.
+    pub kind: &'static str,
+    /// The tag around it, or the instruction file's path; empty when there is none.
+    pub label: String,
+    pub text: String,
+    /// Estimated tokens.
+    pub tokens: u64,
+}
+
+/// An LLM call for the LLM view: its prompt texts taken apart into what the agent added (tags,
+/// instruction files, skills) and what was written.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LabelledCall {
+    #[serde(flatten)]
+    pub call: LlmCall,
+    /// The system texts, one or more sections each.
+    pub system_sections: Vec<Section>,
+    /// Text parts of user, system and developer messages with something added: (message,
+    /// part, its sections). Parts that are only written text are left out.
+    pub part_sections: Vec<(usize, usize, Vec<Section>)>,
+}
+
+fn sections_of(text: &str, own: &'static str) -> Vec<Section> {
+    segments(text)
+        .into_iter()
+        .filter(|(_, _, t)| !t.trim().is_empty())
+        .map(|(seg, label, t)| {
+            let kind = match seg {
+                Seg::Text => own,
+                Seg::Reminder => "reminder",
+                Seg::Instructions => "instructions",
+                Seg::Skills => "skills",
+                Seg::Context => "context",
+                Seg::Summary => "summary",
+            };
+            Section { kind, label, text: t.trim_matches('\n').to_string(), tokens: estimate_tokens(t) }
+        })
+        .collect()
+}
+
+pub fn labelled(call: LlmCall) -> LabelledCall {
+    let mut system_sections = Vec::new();
+    for s in &call.system {
+        for mut sec in sections_of(s, "prompt") {
+            if system_sections.is_empty() && sec.kind == "prompt" {
+                sec.kind = "base";
+            }
+            system_sections.push(sec);
+        }
+    }
+    let mut part_sections = Vec::new();
+    for (i, m) in call.messages.iter().enumerate() {
+        if !matches!(m.role.as_str(), "user" | "system" | "developer") {
+            continue;
+        }
+        let own = if m.role == "user" { "text" } else { "prompt" };
+        for (j, p) in m.parts.iter().enumerate().filter(|(_, p)| p.kind == "text") {
+            let secs = sections_of(&p.text, own);
+            if secs.iter().any(|s| s.kind != own) {
+                part_sections.push((i, j, secs));
+            }
+        }
+    }
+    LabelledCall { call, system_sections, part_sections }
 }
 
 /// The user's own words in a message: its text without what the agent added; a slash command
@@ -1823,6 +1919,7 @@ mod tests {
             attribution: vec![],
             user: None,
             response_id: None,
+            system_role: None,
         }
     }
     fn detail(started_s: i64, headers: &[(&str, &str)]) -> SessionDetail {
@@ -2150,6 +2247,40 @@ mod tests {
         assert!(ch.subagent);
         let b = build(&[p, ch]);
         assert_eq!(b.parent.get(&b.conv_of[&2]), Some(&b.conv_of[&1]));
+    }
+
+    #[test]
+    fn a_tag_named_inside_its_block_does_not_end_it() {
+        let t = "<collaboration_mode># Default\nChanges only with a different `<collaboration_mode>...</collaboration_mode>` block.\n</collaboration_mode>\nWrite a poem";
+        let s = segments(t);
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert_eq!((s[0].0, s[0].2.ends_with("block.\n</collaboration_mode>")), (Seg::Context, true));
+        assert_eq!(s[1].2, "\nWrite a poem");
+        // Not closed: up to the end.
+        assert_eq!(segments("<environment_context>\n<cwd>/r</cwd>").len(), 1);
+    }
+
+    #[test]
+    fn prompt_parts_are_labelled_for_the_llm_view() {
+        // Codex: developer texts as system, AGENTS.md and the environment before the prompt.
+        let mut c = call("You are Codex, an agent.", vec![msg("user", vec![text("# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>\nRun tests.\n</INSTRUCTIONS>"), text("<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>"), text("write a poem")]), msg("assistant", vec![text("Roses…")])], 100, 0);
+        c.system.push("<skills_instructions>\n## Skills\n</skills_instructions>".into());
+        c.system.push("<permissions instructions>\nsandbox\n</permissions instructions>".into());
+        c.system.push("You are `/root`, the primary agent.".into());
+        let l = labelled(c);
+        let kinds: Vec<(&str, &str)> = l.system_sections.iter().map(|s| (s.kind, s.label.as_str())).collect();
+        assert_eq!(kinds, [("base", ""), ("skills", "skills_instructions"), ("context", "permissions instructions"), ("prompt", "")]);
+        assert!(l.system_sections[0].tokens > 0);
+        // The prompt itself and the answer need no sections; what the agent added has them.
+        let parts: Vec<(usize, usize, &str, &str)> = l.part_sections.iter().map(|(i, j, s)| (*i, *j, s[0].kind, s[0].label.as_str())).collect();
+        assert_eq!(parts, [(0, 0, "instructions", "AGENTS.md instructions for /repo"), (0, 1, "context", "environment_context")]);
+        // A Claude Code message: a reminder before the words of the user, in one text part.
+        let c = call("You are Claude Code.", vec![msg("user", vec![text("<system-reminder>\nToday is Monday.\n</system-reminder>\nFix the bug")])], 100, 0);
+        let l = labelled(c);
+        let secs: Vec<(&str, &str)> = l.part_sections[0].2.iter().map(|s| (s.kind, s.text.as_str())).collect();
+        assert_eq!(secs, [("reminder", "<system-reminder>\nToday is Monday.\n</system-reminder>"), ("text", "Fix the bug")]);
+        let json = serde_json::to_value(&l).unwrap();
+        assert!(json.get("model").is_some() && json.get("systemSections").is_some() && json.get("systemRole").is_none(), "flattened: {json}");
     }
 
     #[test]

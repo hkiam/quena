@@ -62,8 +62,9 @@ side):
 - a header with provider, model, whether the answer was streamed, the stop reason
   (`stop`, `end_turn`, `tool_calls`, `max_tokens` …), the **token usage** (input, output,
   read from and written to the provider's cache, reasoning) and the **estimated cost**;
-- the **system prompt** (also `instructions`, `systemInstruction`), without Claude Code's
-  attribution block (`x-anthropic-billing-header: …`), which changes with every request;
+- the **system prompt** (also `instructions`, `systemInstruction`; Codex sends it in the
+  role *developer*, shown as *System (developer)*), without Claude Code's attribution block
+  (`x-anthropic-billing-header: …`), which changes with every request;
 - the **messages** sent, by role: text, images as placeholders, **tool calls** with their
   arguments and **tool results** with the call they answer;
 - the **answer**: text, thinking or reasoning summaries (collapsed), tool calls. Streams
@@ -77,6 +78,21 @@ side):
   panel), the map of what fills its input, the change from the call it continues and the
   provider's cache verdict, described on
   [Agent conversations](agents.md#the-context-section-of-the-llm-view).
+
+**Prompt parts.** Agents put much more into a request than what you typed: their base
+prompt, skills, sandbox rules, instruction files (`CLAUDE.md`, `AGENTS.md`), the environment,
+reminders. The view takes the system prompt and the user messages apart and shows each part
+as a section with a title (*Base prompt*, *Skills*, *Permissions*, *Environment*, the
+instruction file's path, the tag for others), a coloured label for its kind (agent prompt,
+instructions file, skills, context, reminder, summary), its size in characters and estimated
+tokens and, while collapsed, its first line. What the agent added starts collapsed; what you
+or the model wrote is always shown. *Expand all* and *Collapse all* work per block, a section
+you open stays open in the next call you select, and ⧉ copies a part.
+
+The view scrolls as one: texts have no scroll boxes of their own, the heads of the role and of
+the open section stay at the top while their text scrolls past, and texts over 300 lines or
+30,000 characters show their beginning with *Show all*. *Go to* in the header jumps to the
+system prompt, the history, the answer or the tools.
 
 An error the API answered with (rate limit, invalid request) is shown at the top. Texts
 longer than 200,000 characters are shortened in this view; the body views show them

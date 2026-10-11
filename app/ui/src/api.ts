@@ -543,6 +543,14 @@ export interface LlmPart {
   name?: string;
   id?: string;
 }
+/** A stretch of a prompt text: what the agent added (tag, instruction file, skills) or what was written. */
+export interface LlmSection {
+  kind: "base" | "prompt" | "text" | "instructions" | "skills" | "context" | "reminder" | "summary";
+  /** The tag around it or the instruction file's path; empty when there is none. */
+  label: string;
+  text: string;
+  tokens: number;
+}
 export interface LlmCall {
   provider: string;
   api: "chat" | "responses" | "messages" | "gemini" | "ollamaChat" | "ollamaGenerate" | "embeddings" | "converse";
@@ -560,6 +568,12 @@ export interface LlmCall {
   notes: string[];
   /** Where an Anthropic request sets cache_control (`system[0]`, `messages[12]`, `ttl 1h`). */
   cacheMarks?: string[];
+  /** The role the system texts came in when it is not `system` (Codex: `developer`). */
+  systemRole?: string;
+  /** The system texts taken apart (from the llm_call command). */
+  systemSections?: LlmSection[];
+  /** Text parts of user, system and developer messages with something added: [message, part, sections]. */
+  partSections?: [number, number, LlmSection[]][];
 }
 
 export type LlmUsage = NonNullable<LlmCall["usage"]>;

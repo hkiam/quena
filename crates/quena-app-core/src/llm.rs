@@ -158,6 +158,9 @@ pub struct LlmCall {
     /// `previous_response_id` (Claude Code: `thread.previous_message_id`) names.
     #[serde(skip)]
     pub response_id: Option<String>,
+    /// The role the system texts came in when it is not `system` (Codex: `developer`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_role: Option<String>,
 }
 
 /// Claude Code's attribution block as key/value pairs (`None`: not one).
@@ -392,6 +395,9 @@ fn chat_request(v: &Value, call: &mut LlmCall) {
             }
         }
         if (role == "system" || role == "developer") && !started {
+            if role == "developer" {
+                call.system_role = Some(role.clone());
+            }
             call.system.extend(parts.iter().map(|p| p.text.clone()));
         } else {
             started = true;
@@ -444,6 +450,9 @@ fn responses_request(v: &Value, call: &mut LlmCall) {
                         let role = s(it, "role").unwrap_or_else(|| "user".into());
                         let parts = openai_content(it.get("content").unwrap_or(&Value::Null), &mut call.notes);
                         if (role == "system" || role == "developer") && !started {
+                            if role == "developer" {
+                                call.system_role = Some(role.clone());
+                            }
                             call.system.extend(parts.into_iter().map(|p| p.text));
                         } else {
                             started = true;
@@ -1436,6 +1445,7 @@ pub fn parse(method: &str, url: &str, request: &[u8], response: Option<(&[u8], &
         attribution: vec![],
         user: None,
         response_id: None,
+        system_role: None,
     };
     match api {
         Api::Chat => chat_request(&req, &mut call),
@@ -2050,6 +2060,7 @@ mod tests {
         let c = parse("POST", "https://chatgpt.com/backend-api/codex/responses", req, Some((sse.as_bytes(), "text/event-stream")), &prices).unwrap();
         assert_eq!(c.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["exec", "wait", "spawn_agent"]);
         assert_eq!(c.system, ["You are Codex."], "the tools item does not end the system prompt");
+        assert_eq!(c.system_role.as_deref(), Some("developer"));
         assert_eq!(c.messages.len(), 2);
         assert_eq!(c.output.iter().map(|p| (p.kind.as_str(), p.name.as_deref())).collect::<Vec<_>>(), [("text", None), ("toolCall", Some("exec"))]);
         assert_eq!(c.usage.unwrap().input, 15_000);
