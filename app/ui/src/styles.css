@@ -3921,6 +3921,16 @@ pre.llm-text.mono {
 .llm-details {
   margin-top: 10px;
 }
+/* Tool and parameter names keep their width (whole words); descriptions and values give way. */
+.llm-details table.kv td:first-child {
+  word-break: normal;
+  overflow-wrap: break-word;
+  min-width: 8em;
+}
+.llm-details table.kv td + td {
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
 .ws-mark {
   font-size: 11px;
   margin-right: 4px;
